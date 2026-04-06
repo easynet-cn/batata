@@ -26,11 +26,12 @@ use crate::model::{
 #[get("/self")]
 async fn get_agent_self(
     req: HttpRequest,
+    agent: web::Data<crate::agent::ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_agent_self(req, acl_service, dc_config, index_provider).await
+    crate::agent::get_agent_self(req, agent, acl_service, dc_config, index_provider).await
 }
 
 #[get("/members")]

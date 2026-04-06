@@ -797,59 +797,75 @@ pub async fn set_service_maintenance(
 // ============================================================================
 
 /// GET /v1/agent/self
-/// Returns the configuration and member information of the local agent
+/// Returns the configuration and member information of the local agent.
+/// Config is from startup (dc_config), Member/Stats are computed per request.
 pub async fn get_agent_self(
     req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let node_id = uuid::Uuid::new_v4().to_string();
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "batata-node".to_string());
-
+    // Config from startup (like Consul's a.config)
     let config = AgentConfig {
         datacenter: dc_config.datacenter.clone(),
-        node_name: hostname.clone(),
-        node_id: node_id.clone(),
+        node_name: dc_config.node_name.clone(),
+        node_id: dc_config.node_id.clone(),
         server: true,
         revision: dc_config.batata_version.clone(),
         version: dc_config.full_version(),
         primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
+    // Member from real network info (like Consul's a.delegate.AgentLocalMember())
+    let local_ip = batata_common::local_ip();
+    let serf_port = dc_config.consul_port.saturating_sub(199); // Serf LAN port
+
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), dc_config.consul_port.to_string());
-    tags.insert("build".to_string(), dc_config.batata_version.clone());
+    tags.insert("port".to_string(), dc_config.raft_port().to_string());
+    tags.insert("build".to_string(), format!("{}:{}", dc_config.full_version(), dc_config.batata_version));
+    tags.insert("id".to_string(), dc_config.node_id.clone());
+    tags.insert("raft_vsn".to_string(), "3".to_string());
+    tags.insert("vsn".to_string(), "2".to_string());
+    tags.insert("vsn_min".to_string(), "2".to_string());
+    tags.insert("vsn_max".to_string(), "3".to_string());
+    tags.insert("segment".to_string(), "".to_string());
 
     let member = AgentMember {
-        name: hostname.clone(),
-        addr: "127.0.0.1".to_string(),
-        port: 8301,
+        name: dc_config.node_name.clone(),
+        addr: local_ip,
+        port: serf_port,
         tags,
         status: 1, // alive
         ..Default::default()
     };
 
+    // Stats computed per request (like Consul's a.State.Stats())
+    let service_count = agent.naming_store.service_count();
+    let check_count = agent.registry.check_count();
+
     let mut agent_stats = HashMap::new();
     agent_stats.insert("check_monitors".to_string(), "0".to_string());
-    agent_stats.insert("check_ttls".to_string(), "0".to_string());
-    agent_stats.insert("checks".to_string(), "0".to_string());
-    agent_stats.insert("services".to_string(), "0".to_string());
+    agent_stats.insert("check_ttls".to_string(), check_count.to_string());
+    agent_stats.insert("checks".to_string(), check_count.to_string());
+    agent_stats.insert("services".to_string(), service_count.to_string());
 
     let mut runtime_stats = HashMap::new();
     runtime_stats.insert("arch".to_string(), std::env::consts::ARCH.to_string());
     runtime_stats.insert("os".to_string(), std::env::consts::OS.to_string());
     runtime_stats.insert("version".to_string(), "rust".to_string());
+
+    let mut build_stats = HashMap::new();
+    build_stats.insert("version".to_string(), dc_config.full_version());
+    build_stats.insert("revision".to_string(), dc_config.batata_version.clone());
+    build_stats.insert("prerelease".to_string(), String::new());
 
     let stats = AgentStats {
         agent: agent_stats,
@@ -860,6 +876,7 @@ pub async fn get_agent_self(
 
     let mut meta = HashMap::new();
     meta.insert("consul-network-segment".to_string(), "".to_string());
+    meta.insert("consul-version".to_string(), dc_config.full_version());
 
     let response = AgentSelf {
         config,
@@ -896,24 +913,28 @@ pub async fn get_agent_members(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "batata-node".to_string());
+    // Build member with real data from dc_config (like Consul's delegate.LANMembers())
+    let local_ip = batata_common::local_ip();
+    let serf_port = dc_config.consul_port.saturating_sub(199);
 
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), dc_config.consul_port.to_string());
+    tags.insert("port".to_string(), dc_config.raft_port().to_string());
+    tags.insert("build".to_string(), format!("{}:{}", dc_config.full_version(), dc_config.batata_version));
+    tags.insert("id".to_string(), dc_config.node_id.clone());
+    tags.insert("raft_vsn".to_string(), "3".to_string());
     tags.insert("vsn".to_string(), "2".to_string());
-    tags.insert("vsn_min".to_string(), "1".to_string());
+    tags.insert("vsn_min".to_string(), "2".to_string());
     tags.insert("vsn_max".to_string(), "3".to_string());
-    tags.insert("build".to_string(), dc_config.batata_version.clone());
+    tags.insert("segment".to_string(), "".to_string());
+    tags.insert("bootstrap".to_string(), "1".to_string());
+    tags.insert("acls".to_string(), "0".to_string());
 
-    // Return self as the only member (single node mode)
     let member = AgentMember {
-        name: hostname,
-        addr: "127.0.0.1".to_string(),
-        port: 8301,
+        name: dc_config.node_name.clone(),
+        addr: local_ip,
+        port: serf_port,
         tags,
         status: 1, // alive
         ..Default::default()
