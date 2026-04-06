@@ -317,36 +317,46 @@ impl ConsulHealthService {
         status: &batata_naming::healthcheck::registry::InstanceCheckStatus,
         service_id: &str,
     ) -> HealthCheck {
-        let interval_str = if config.interval.as_secs() > 0 {
+        use batata_naming::healthcheck::registry::CheckType;
+
+        // Node-level checks (e.g., serfHealth) have no interval/timeout/definition
+        let is_node_check = config.check_type == CheckType::None;
+
+        let interval_str = if !is_node_check && config.interval.as_secs() > 0 {
             Some(format!("{}s", config.interval.as_secs()))
         } else {
             None
         };
 
-        let timeout_str = if config.timeout.as_secs() > 0 {
+        let timeout_str = if !is_node_check && config.timeout.as_secs() > 0 {
             Some(format!("{}s", config.timeout.as_secs()))
         } else {
             None
         };
 
-        let definition = crate::model::HealthCheckDefinition {
-            http: config.http_url.clone(),
-            tcp: config.tcp_addr.clone(),
-            grpc: config.grpc_addr.clone(),
-            udp: None,
-            method: None,
-            header: None,
-            body: None,
-            tls_server_name: None,
-            tls_skip_verify: None,
-            tcp_use_tls: None,
-            grpc_use_tls: None,
-            interval_duration: config.interval.as_nanos() as u64,
-            timeout_duration: config.timeout.as_nanos() as u64,
-            deregister_critical_service_after_duration: config
-                .deregister_critical_after
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0),
+        // Consul returns empty Definition {} for node checks, full definition for service checks
+        let definition = if is_node_check {
+            Some(crate::model::HealthCheckDefinition::default())
+        } else {
+            Some(crate::model::HealthCheckDefinition {
+                http: config.http_url.clone(),
+                tcp: config.tcp_addr.clone(),
+                grpc: config.grpc_addr.clone(),
+                udp: None,
+                method: None,
+                header: None,
+                body: None,
+                tls_server_name: None,
+                tls_skip_verify: None,
+                tcp_use_tls: None,
+                grpc_use_tls: None,
+                interval_duration: config.interval.as_nanos() as u64,
+                timeout_duration: config.timeout.as_nanos() as u64,
+                deregister_critical_service_after_duration: config
+                    .deregister_critical_after
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0),
+            })
         };
 
         HealthCheck {
@@ -365,7 +375,7 @@ impl ConsulHealthService {
             exposed_port: 0,
             create_index: 1,
             modify_index: 1,
-            definition: Some(definition),
+            definition,
         }
     }
 }

@@ -637,11 +637,26 @@ impl Configuration {
         )
     }
 
-    /// Get the RocksDB data directory for embedded modes
+    /// Get the base data directory for embedded modes.
+    /// This is the root directory for all persistent data (RocksDB, node-id, etc.)
     pub fn embedded_data_dir(&self) -> String {
         self.config
             .get_string("batata.persistence.embedded.data_dir")
-            .unwrap_or_else(|_| "data/batata_rocksdb".to_string())
+            .unwrap_or_else(|_| "data".to_string())
+    }
+
+    /// Get the RocksDB database name (subdirectory under data_dir).
+    pub fn embedded_db_name(&self) -> String {
+        self.config
+            .get_string("batata.persistence.embedded.db_name")
+            .unwrap_or_else(|_| "batata_rocksdb".to_string())
+    }
+
+    /// Get the full RocksDB storage path: {data_dir}/{db_name}
+    pub fn embedded_rocksdb_dir(&self) -> String {
+        let data_dir = self.embedded_data_dir();
+        let db_name = self.embedded_db_name();
+        format!("{}/{}", data_dir, db_name)
     }
 
     // ========================================================================

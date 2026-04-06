@@ -159,7 +159,7 @@ EOF
         -d "$deploy_mode" \
         --batata.server.main.port=${NODE1_PORT} \
         --batata.console.port=${CONSOLE_PORT} \
-        --batata.persistence.embedded.data_dir=data/node1/batata_rocksdb \
+        --batata.persistence.embedded.data_dir=data/node1 \
         --batata.logs.path=logs/node1 \
         --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
         ${common_args} \
@@ -171,7 +171,7 @@ EOF
     nohup $BINARY \
         -d server \
         --batata.server.main.port=${NODE2_PORT} \
-        --batata.persistence.embedded.data_dir=data/node2/batata_rocksdb \
+        --batata.persistence.embedded.data_dir=data/node2 \
         --batata.logs.path=logs/node2 \
         --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
         ${common_args} \
@@ -183,7 +183,7 @@ EOF
     nohup $BINARY \
         -d server \
         --batata.server.main.port=${NODE3_PORT} \
-        --batata.persistence.embedded.data_dir=data/node3/batata_rocksdb \
+        --batata.persistence.embedded.data_dir=data/node3 \
         --batata.logs.path=logs/node3 \
         --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \
         ${common_args} \

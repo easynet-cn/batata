@@ -101,12 +101,12 @@ async fn init_external_db(
 async fn init_embedded_standalone(
     configuration: &Configuration,
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
-    let data_dir = configuration.embedded_data_dir();
-    info!("Initializing standalone embedded storage at: {}", data_dir);
+    let rocksdb_dir = configuration.embedded_rocksdb_dir();
+    info!("Initializing standalone embedded storage at: {}", rocksdb_dir);
 
     let rocks_config = configuration.rocksdb_config();
     let sm = batata_consistency::RocksStateMachine::with_options(
-        &data_dir,
+        &rocksdb_dir,
         Some(rocks_config.to_db_options()),
         Some(rocks_config.to_cf_options()),
     )
@@ -134,7 +134,7 @@ async fn init_embedded_cluster(
     configuration: &Configuration,
     extra_cf_names: &[String],
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
-    let data_dir = configuration.embedded_data_dir();
+    let rocksdb_dir = configuration.embedded_rocksdb_dir();
     let main_port = configuration.server_main_port();
 
     // Determine this node's Raft address from cluster.conf.
@@ -161,8 +161,8 @@ async fn init_embedded_cluster(
 
     let node_id = batata_consistency::calculate_node_id(&node_addr);
     info!(
-        "Initializing distributed embedded storage: node_id={}, addr={}, data_dir={}",
-        node_id, node_addr, data_dir
+        "Initializing distributed embedded storage: node_id={}, addr={}, rocksdb_dir={}",
+        node_id, node_addr, rocksdb_dir
     );
 
     let raft_config = batata_consistency::RaftConfig {
@@ -177,7 +177,7 @@ async fn init_embedded_cluster(
         grpc_tcp_nodelay: configuration.raft_grpc_tcp_nodelay(),
         grpc_http2_keepalive_interval_secs: configuration.raft_grpc_http2_keepalive_interval_secs(),
         grpc_http2_keepalive_timeout_secs: configuration.raft_grpc_http2_keepalive_timeout_secs(),
-        data_dir: std::path::PathBuf::from(&data_dir),
+        data_dir: std::path::PathBuf::from(&rocksdb_dir),
         ..Default::default()
     };
 

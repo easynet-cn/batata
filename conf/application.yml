@@ -81,8 +81,10 @@ batata.db.pool.sqlx_logging: false
 # Auto-run database migrations on startup (only for external DB mode)
 batata.db.migration.enabled: false
 
-# RocksDB data directory (for embedded modes only)
-#batata.persistence.embedded.data_dir: data/batata_rocksdb
+# Base data directory (for embedded modes only)
+#batata.persistence.embedded.data_dir: data
+# RocksDB database name (subdirectory under data_dir, default: batata_rocksdb)
+#batata.persistence.embedded.db_name: batata_rocksdb
 
 # =============================================================================
 # Authentication
