@@ -1220,6 +1220,14 @@ impl Configuration {
             .unwrap_or_else(|_| self.consul_datacenter())
     }
 
+    /// Get Consul node name (defaults to system hostname, like Consul's -node flag)
+    pub fn consul_node_name(&self) -> Option<String> {
+        self.config
+            .get_string("batata.plugin.consul.node_name")
+            .ok()
+            .filter(|s| !s.is_empty())
+    }
+
     /// Get the number of HTTP workers for Consul server.
     /// Defaults to min(4, cpu_cores/2) to avoid CPU contention with the main Nacos server.
     pub fn consul_http_workers(&self) -> usize {

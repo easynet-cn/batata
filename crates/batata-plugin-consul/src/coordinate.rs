@@ -138,6 +138,31 @@ impl ConsulCoordinateService {
         service
     }
 
+    /// Override the node name used for the self coordinate entry.
+    pub fn with_node_name(self, node_name: String) -> Self {
+        // Remove the old self-entry (keyed by hostname) and insert one keyed by node_name
+        let old_keys: Vec<String> = self
+            .coordinates
+            .iter()
+            .filter(|r| {
+                let entry = r.value();
+                entry.segment.is_empty() && entry.coord.vec.iter().all(|v| *v == 0.0)
+            })
+            .map(|r| r.key().clone())
+            .collect();
+        for key in old_keys {
+            self.coordinates.remove(&key);
+        }
+
+        let entry = CoordinateEntry {
+            node: node_name.clone(),
+            segment: String::new(),
+            coord: Coordinate::default(),
+        };
+        self.coordinates.insert(format!("{}:", node_name), entry);
+        self
+    }
+
     pub fn with_rocks(db: Arc<DB>, datacenter: String) -> Self {
         let coordinates = Arc::new(DashMap::new());
 

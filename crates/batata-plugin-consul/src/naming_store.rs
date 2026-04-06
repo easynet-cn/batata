@@ -52,6 +52,11 @@ impl ConsulNamingStore {
         }
     }
 
+    /// Count total registered service instances
+    pub fn service_count(&self) -> usize {
+        self.entries.len()
+    }
+
     /// Build health key from ip and port
     fn health_key(ip: &str, port: i32) -> String {
         format!("{ip}:{port}")

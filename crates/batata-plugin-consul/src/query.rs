@@ -407,10 +407,8 @@ pub async fn execute_query(
             continue;
         }
 
-        let node_id = uuid::Uuid::new_v4().to_string();
-        let node_name = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "batata-node".to_string());
+        let node_id = dc_config.node_id.clone();
+        let node_name = dc_config.node_name.clone();
 
         let mut node_tagged_addresses = std::collections::HashMap::new();
         node_tagged_addresses.insert("lan".to_string(), ip.clone());

@@ -329,11 +329,13 @@ batata.otel.export_timeout_secs: 10
 # --- Webhook Plugin ---
 #batata.plugin.webhook.default_timeout_secs: 30      # default HTTP client timeout for webhooks
 
-batata.plugin.consul.enabled: false
-batata.plugin.consul.port: 8500
+batata.plugin.consul.enabled: true
+batata.plugin.consul.port: 8501
 batata.plugin.consul.version: 1.22.5
 batata.plugin.consul.datacenter: dc1
 #batata.plugin.consul.primary_datacenter: dc1
+# Node name for this agent (defaults to system hostname if not set, like Consul's -node flag)
+batata.plugin.consul.node_name: c1
 batata.plugin.consul.register_self: true
 batata.plugin.consul.acl.enabled: false
 batata.plugin.consul.check_reap_interval: 30

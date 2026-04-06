@@ -27,7 +27,7 @@ use crate::raft::ConsulRaftWriter;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
-use crate::model::ConsulError;
+use crate::model::{ConsulDatacenterConfig, ConsulError};
 
 // ============================================================================
 // Models
@@ -220,14 +220,16 @@ pub struct ConsulOperatorService {
 
 impl ConsulOperatorService {
     pub fn new() -> Self {
-        Self::with_datacenter("dc1".to_string())
+        Self::with_dc_config(&ConsulDatacenterConfig::default())
     }
 
     pub fn with_datacenter(datacenter: String) -> Self {
-        let node_name = hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .unwrap_or_else(|| "batata-node".to_string());
+        let dc_config = ConsulDatacenterConfig::new(datacenter);
+        Self::with_dc_config(&dc_config)
+    }
+
+    pub fn with_dc_config(dc_config: &ConsulDatacenterConfig) -> Self {
+        let local_ip = batata_common::local_ip();
 
         let service = Self {
             servers: Arc::new(DashMap::new()),
@@ -235,16 +237,16 @@ impl ConsulOperatorService {
             keyring: Arc::new(DashMap::new()),
             primary_key: Arc::new(tokio::sync::RwLock::new(None)),
             index: Arc::new(AtomicU64::new(1)),
-            datacenter,
+            datacenter: dc_config.datacenter.clone(),
             rocks_db: None,
             raft_node: None,
         };
 
         // Add self as default server
         let server = RaftServer {
-            id: uuid::Uuid::new_v4().to_string(),
-            node: node_name,
-            address: "127.0.0.1:8300".to_string(),
+            id: dc_config.node_id.clone(),
+            node: dc_config.node_name.clone(),
+            address: format!("{}:{}", local_ip, dc_config.raft_port()),
             leader: true,
             voter: true,
             protocol_version: "3".to_string(),
@@ -264,7 +266,7 @@ impl ConsulOperatorService {
         service
     }
 
-    pub fn with_rocks(db: Arc<DB>) -> Self {
+    pub fn with_rocks(db: Arc<DB>, dc_config: &ConsulDatacenterConfig) -> Self {
         let servers = Arc::new(DashMap::new());
         let keyring = Arc::new(DashMap::new());
         let mut autopilot_config = AutopilotConfiguration::default();
@@ -311,18 +313,15 @@ impl ConsulOperatorService {
             );
         }
 
-        let datacenter = "dc1".to_string();
+        let datacenter = dc_config.datacenter.clone();
 
         // If no servers loaded, add self as default
         if servers.is_empty() {
-            let node_name = hostname::get()
-                .ok()
-                .and_then(|h| h.into_string().ok())
-                .unwrap_or_else(|| "batata-node".to_string());
+            let local_ip = batata_common::local_ip();
             let server = RaftServer {
-                id: uuid::Uuid::new_v4().to_string(),
-                node: node_name,
-                address: "127.0.0.1:8300".to_string(),
+                id: dc_config.node_id.clone(),
+                node: dc_config.node_name.clone(),
+                address: format!("{}:{}", local_ip, dc_config.raft_port()),
                 leader: true,
                 voter: true,
                 protocol_version: "3".to_string(),
@@ -374,8 +373,12 @@ impl ConsulOperatorService {
     }
 
     /// Create an operator service with Raft-replicated storage (cluster mode).
-    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
-        let mut svc = Self::with_rocks(db);
+    pub fn with_raft(
+        db: Arc<DB>,
+        raft_node: Arc<ConsulRaftWriter>,
+        dc_config: &ConsulDatacenterConfig,
+    ) -> Self {
+        let mut svc = Self::with_rocks(db, dc_config);
         svc.raft_node = Some(raft_node);
         svc
     }
@@ -625,9 +628,9 @@ impl ConsulOperatorServiceReal {
             .iter()
             .enumerate()
             .map(|(i, m)| RaftServer {
-                id: m.ip.clone(),
-                node: m.ip.clone(),
-                address: format!("{}:{}", m.ip, m.port),
+                id: m.address.clone(),
+                node: m.address.clone(),
+                address: m.address.clone(),
                 leader: i == 0, // First member is typically the leader
                 voter: true,
                 protocol_version: "3".to_string(),
@@ -660,9 +663,9 @@ impl ConsulOperatorServiceReal {
                 }
                 let last_contact = "0ms".to_string();
                 AutopilotServerHealth {
-                    id: m.ip.clone(),
-                    name: m.ip.clone(),
-                    address: format!("{}:{}", m.ip, m.port),
+                    id: m.address.clone(),
+                    name: m.address.clone(),
+                    address: m.address.clone(),
                     serf_status: serf_status.to_string(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     leader: i == 0,

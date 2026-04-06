@@ -9,12 +9,15 @@ use dashmap::DashMap;
 pub struct ConsulCheckIndex {
     /// consul_service_id → (service_key, instance_key)
     service_index: DashMap<String, (String, String)>,
+    /// check_id → consul_service_id (reverse mapping for check responses)
+    check_to_service: DashMap<String, String>,
 }
 
 impl ConsulCheckIndex {
     pub fn new() -> Self {
         Self {
             service_index: DashMap::new(),
+            check_to_service: DashMap::new(),
         }
     }
 
@@ -24,6 +27,24 @@ impl ConsulCheckIndex {
             consul_svc_id.to_string(),
             (svc_key.to_string(), inst_key.to_string()),
         );
+    }
+
+    /// Register a check_id → consul_service_id mapping
+    pub fn register_check(&self, check_id: &str, consul_svc_id: &str) {
+        self.check_to_service
+            .insert(check_id.to_string(), consul_svc_id.to_string());
+    }
+
+    /// Look up the Consul service ID for a given check_id
+    pub fn lookup_service_id(&self, check_id: &str) -> Option<String> {
+        self.check_to_service
+            .get(check_id)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Remove a check_id mapping
+    pub fn remove_check(&self, check_id: &str) {
+        self.check_to_service.remove(check_id);
     }
 
     /// Look up a Consul service ID to find the (service_key, instance_key)

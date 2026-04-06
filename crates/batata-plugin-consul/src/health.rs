@@ -61,11 +61,19 @@ pub struct ConsulHealthService {
 
 impl ConsulHealthService {
     pub fn new(registry: Arc<InstanceCheckRegistry>, check_index: Arc<ConsulCheckIndex>) -> Self {
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
         Self {
             registry,
             check_index,
-            node_name: "batata-node".to_string(),
+            node_name,
         }
+    }
+
+    pub fn with_node_name(mut self, node_name: String) -> Self {
+        self.node_name = node_name;
+        self
     }
 
     /// Get registry reference
@@ -183,6 +191,8 @@ impl ConsulHealthService {
                     CONSUL_INTERNAL_CLUSTER,
                 );
                 self.check_index.register(svc_id, &svc_key, &inst_key);
+                // Register check_id → consul_service_id reverse mapping
+                self.check_index.register_check(&check_id, svc_id);
             }
         }
 
@@ -195,6 +205,7 @@ impl ConsulHealthService {
         if !self.registry.has_check(check_id) {
             return Err(format!("Check not found: {}", check_id));
         }
+        self.check_index.remove_check(check_id);
         self.registry.deregister_check(check_id);
         Ok(())
     }
@@ -214,7 +225,8 @@ impl ConsulHealthService {
     /// Get a check by ID
     pub async fn get_check(&self, check_id: &str) -> Option<HealthCheck> {
         let (config, status) = self.registry.get_check(check_id)?;
-        Some(self.to_health_check(&config, &status, ""))
+        let svc_id = self.resolve_service_id(&config);
+        Some(self.to_health_check(&config, &status, &svc_id))
     }
 
     /// Get all checks
@@ -222,7 +234,22 @@ impl ConsulHealthService {
         self.registry
             .get_all_checks()
             .into_iter()
-            .map(|(config, status)| self.to_health_check(&config, &status, ""))
+            .map(|(config, status)| {
+                let svc_id = self.resolve_service_id(&config);
+                self.to_health_check(&config, &status, &svc_id)
+            })
+            .collect()
+    }
+
+    /// Get all checks (sync version for non-async contexts)
+    pub fn get_all_checks_sync(&self) -> Vec<HealthCheck> {
+        self.registry
+            .get_all_checks()
+            .into_iter()
+            .map(|(config, status)| {
+                let svc_id = self.resolve_service_id(&config);
+                self.to_health_check(&config, &status, &svc_id)
+            })
             .collect()
     }
 
@@ -232,8 +259,18 @@ impl ConsulHealthService {
         self.registry
             .get_checks_by_status(&check_status)
             .into_iter()
-            .map(|(config, s)| self.to_health_check(&config, &s, ""))
+            .map(|(config, s)| {
+                let svc_id = self.resolve_service_id(&config);
+                self.to_health_check(&config, &s, &svc_id)
+            })
             .collect()
+    }
+
+    /// Resolve the Consul service_id for a check from the check_index reverse mapping
+    fn resolve_service_id(&self, config: &InstanceCheckConfig) -> String {
+        self.check_index
+            .lookup_service_id(&config.check_id)
+            .unwrap_or_default()
     }
 
     /// Create a default health check for a service instance
@@ -386,11 +423,8 @@ pub async fn get_service_health(
 
         let agent_service = AgentService::from(&reg);
 
-        // Get checks for this instance - first try stored checks, then create default
+        // Get checks for this service instance from registry
         let mut checks = health_service.get_service_checks(&service_id).await;
-        if checks.is_empty() {
-            checks.push(health_service.create_default_check(&reg, healthy));
-        }
 
         // Also include maintenance checks if they exist
         let maintenance_check_id = format!("_service_maintenance:{}", service_id);
@@ -398,11 +432,32 @@ pub async fn get_service_health(
             checks.push(maint_check);
         }
 
-        // Update check service info
+        // Include node-level checks (e.g., serfHealth) — Consul always includes
+        // node checks alongside service checks in health/service responses.
+        // Node checks have empty ServiceID/ServiceName.
+        let all_checks = health_service.get_all_checks().await;
+        for check in &all_checks {
+            if check.service_id.is_empty() {
+                // This is a node-level check (like serfHealth)
+                let already_included = checks.iter().any(|c| c.check_id == check.check_id);
+                if !already_included {
+                    checks.push(check.clone());
+                }
+            }
+        }
+
+        // If no checks at all (no service checks AND no node checks), create a default
+        if checks.is_empty() {
+            checks.push(health_service.create_default_check(&reg, healthy));
+        }
+
+        // Update service info on service-level checks (NOT on node-level checks)
         for check in &mut checks {
-            check.service_name = service_name.clone();
-            if let Some(tags) = &agent_service.tags {
-                check.service_tags = Some(tags.clone());
+            if !check.service_id.is_empty() {
+                check.service_name = service_name.clone();
+                if let Some(tags) = &agent_service.tags {
+                    check.service_tags = Some(tags.clone());
+                }
             }
         }
 
@@ -411,14 +466,14 @@ pub async fn get_service_health(
             continue;
         }
 
-        let ip = reg.effective_address();
+        // Use real local IP for node address (not service address which may be empty)
+        let node_ip = batata_common::local_ip();
 
-        // Build node tagged addresses
         let mut node_tagged_addresses = std::collections::HashMap::new();
-        node_tagged_addresses.insert("lan".to_string(), ip.clone());
-        node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
-        node_tagged_addresses.insert("wan".to_string(), ip.clone());
-        node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+        node_tagged_addresses.insert("lan".to_string(), node_ip.clone());
+        node_tagged_addresses.insert("lan_ipv4".to_string(), node_ip.clone());
+        node_tagged_addresses.insert("wan".to_string(), node_ip.clone());
+        node_tagged_addresses.insert("wan_ipv4".to_string(), node_ip.clone());
 
         let mut node_meta = std::collections::HashMap::new();
         node_meta.insert("consul-network-segment".to_string(), "".to_string());
@@ -426,9 +481,9 @@ pub async fn get_service_health(
 
         results.push(ServiceHealth {
             node: Node {
-                id: uuid::Uuid::new_v4().to_string(),
-                node: health_service.node_name.clone(),
-                address: ip.clone(),
+                id: dc_config.node_id.clone(),
+                node: dc_config.node_name.clone(),
+                address: node_ip,
                 datacenter: dc_config.resolve_dc(&query.dc),
                 tagged_addresses: Some(node_tagged_addresses),
                 meta: Some(node_meta),
@@ -1567,7 +1622,10 @@ mod tests {
         service.register_check(reg).await.unwrap();
 
         let check = service.get_check("node-chk-1").await.unwrap();
-        assert_eq!(check.node, "batata-node");
+        let expected_node = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
+        assert_eq!(check.node, expected_node);
     }
 
     #[tokio::test]
@@ -1767,7 +1825,10 @@ mod tests {
     #[test]
     fn test_health_service_creation() {
         let (service, _) = create_test_health_service_with_registry();
-        assert_eq!(service.node_name, "batata-node");
+        let expected_node = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
+        assert_eq!(service.node_name, expected_node);
     }
 
     #[test]

@@ -133,7 +133,7 @@ impl ConsulPlugin {
         registry: Arc<InstanceCheckRegistry>,
     ) -> ConsulPluginInner {
         let index_provider = ConsulIndexProvider::new();
-        let session = ConsulSessionService::new();
+        let session = ConsulSessionService::new().with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::new();
         let kv_arc = Arc::new(kv.clone());
         let session_arc = Arc::new(session.clone());
@@ -148,13 +148,11 @@ impl ConsulPlugin {
                 registry.clone(),
                 check_index.clone(),
             ),
-            health: ConsulHealthService::new(registry.clone(), check_index),
+            health: ConsulHealthService::new(registry.clone(), check_index)
+                .with_node_name(self.dc_config.node_name.clone()),
             kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_store.clone(),
-                self.dc_config.datacenter.clone(),
-            )
-            .with_index_provider(index_provider.clone()),
+            catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
+                .with_index_provider(index_provider.clone()),
             namespace_service: crate::namespace::ConsulNamespaceService::new(
                 index_provider.clone(),
             ),
@@ -173,9 +171,10 @@ impl ConsulPlugin {
             config_entry: ConsulConfigEntryService::new(),
             connect: ConsulConnectService::new(),
             connect_ca: ConsulConnectCAService::new(),
-            coordinate: ConsulCoordinateService::new(),
+            coordinate: ConsulCoordinateService::new()
+                .with_node_name(self.dc_config.node_name.clone()),
             snapshot: ConsulSnapshotService::new(),
-            operator: ConsulOperatorService::new(),
+            operator: ConsulOperatorService::with_dc_config(&self.dc_config),
             dc_config: self.dc_config.clone(),
             registry,
         }
@@ -191,7 +190,8 @@ impl ConsulPlugin {
         table_index: ConsulTableIndex,
     ) -> ConsulPluginInner {
         let index_provider: ConsulIndexProvider = table_index;
-        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
+        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone())
+            .with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::with_raft(db.clone(), consul_raft.clone());
         let kv_arc = Arc::new(kv.clone());
         let session_arc = Arc::new(session.clone());
@@ -206,13 +206,11 @@ impl ConsulPlugin {
                 registry.clone(),
                 check_index.clone(),
             ),
-            health: ConsulHealthService::new(registry.clone(), check_index),
+            health: ConsulHealthService::new(registry.clone(), check_index)
+                .with_node_name(self.dc_config.node_name.clone()),
             kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_store.clone(),
-                self.dc_config.datacenter.clone(),
-            )
-            .with_index_provider(index_provider.clone()),
+            catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
+                .with_index_provider(index_provider.clone()),
             acl: if self.acl_enabled {
                 AclService::with_raft(db.clone(), consul_raft.clone())
             } else {
@@ -236,9 +234,10 @@ impl ConsulPlugin {
                 db.clone(),
                 consul_raft.clone(),
                 self.dc_config.datacenter.clone(),
-            ),
+            )
+            .with_node_name(self.dc_config.node_name.clone()),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
-            operator: ConsulOperatorService::with_raft(db, consul_raft.clone()),
+            operator: ConsulOperatorService::with_raft(db, consul_raft.clone(), &self.dc_config),
             namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
                 consul_raft.clone(),
                 index_provider.clone(),
@@ -466,11 +465,10 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         if self.register_self {
             tracing::info!("Auto-registering Consul service...");
             let agent = inner.agent.clone();
-            let dc = self.dc_config.datacenter.clone();
-            let consul_server_port = self.server_port;
+            let dc_config = self.dc_config.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                if let Err(e) = agent.register_consul_service(consul_server_port, &dc).await {
+                if let Err(e) = agent.register_consul_service(&dc_config).await {
                     tracing::error!("Failed to auto-register Consul service: {}", e);
                 }
             });

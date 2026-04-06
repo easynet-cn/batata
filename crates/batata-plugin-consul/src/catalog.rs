@@ -86,14 +86,14 @@ impl CatalogService {
     /// Create from an AgentServiceRegistration
     pub fn from_registration(
         reg: &crate::model::AgentServiceRegistration,
-        _node_name: &str,
+        node_name: &str,
         datacenter: &str,
         index: u64,
     ) -> Self {
         let ip = reg.effective_address();
 
-        // Derive node name from IP if no metadata override available
-        let instance_node = format!("node-{}", ip.replace('.', "-"));
+        // Use the actual node name from the catalog service
+        let instance_node = node_name.to_string();
 
         // Filter out internal metadata keys for service_meta
         let service_meta: Option<HashMap<String, String>> = reg.meta.as_ref().map(|m| {
@@ -437,8 +437,24 @@ impl ConsulCatalogService {
     ) -> Self {
         Self {
             naming_store,
-            node_name: "batata-node".to_string(),
+            node_name: hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "batata-node".to_string()),
             datacenter,
+            index_provider: ConsulIndexProvider::default(),
+            raft_node: None,
+        }
+    }
+
+    /// Create from ConsulDatacenterConfig (preferred -- uses pre-computed node_name)
+    pub fn with_dc_config(
+        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
+        dc_config: &ConsulDatacenterConfig,
+    ) -> Self {
+        Self {
+            naming_store,
+            node_name: dc_config.node_name.clone(),
+            datacenter: dc_config.datacenter.clone(),
             index_provider: ConsulIndexProvider::default(),
             raft_node: None,
         }
@@ -447,13 +463,13 @@ impl ConsulCatalogService {
     /// Create a catalog service with Raft-replicated storage (cluster mode).
     pub fn with_raft(
         naming_store: Arc<crate::naming_store::ConsulNamingStore>,
-        datacenter: String,
+        dc_config: &ConsulDatacenterConfig,
         raft_node: Arc<ConsulRaftWriter>,
     ) -> Self {
         Self {
             naming_store,
-            node_name: "batata-node".to_string(),
-            datacenter,
+            node_name: dc_config.node_name.clone(),
+            datacenter: dc_config.datacenter.clone(),
             index_provider: ConsulIndexProvider::default(),
             raft_node: Some(raft_node),
         }

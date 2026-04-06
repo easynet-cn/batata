@@ -73,6 +73,12 @@ impl ConsulSessionService {
         }
     }
 
+    /// Override the node name (e.g., from datacenter config).
+    pub fn with_node_name(mut self, node_name: String) -> Self {
+        self.node_name = node_name;
+        self
+    }
+
     /// Create a new session service backed by an existing RocksDB instance.
     /// Cleans up expired sessions on startup.
     pub fn with_rocks(db: Arc<DB>) -> Self {

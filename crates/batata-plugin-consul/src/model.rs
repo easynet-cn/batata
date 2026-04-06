@@ -13,6 +13,50 @@ pub const CONSUL_INTERNAL_GROUP: &str = "CONSUL_GROUP";
 /// Fixed internal cluster for Consul health check registry keys.
 pub const CONSUL_INTERNAL_CLUSTER: &str = "DEFAULT";
 
+/// Load or create a persistent node ID from the given data directory.
+/// Follows Consul's pattern: each instance has its own `consul-node-id` file
+/// in its data directory, ensuring unique IDs per instance even on the same machine.
+fn load_or_create_node_id(data_dir: &str) -> String {
+    use std::path::Path;
+
+    let dir = Path::new(data_dir);
+    let node_id_file = dir.join("consul-node-id");
+
+    // Try to read existing node ID
+    if let Ok(contents) = std::fs::read_to_string(&node_id_file) {
+        let id = contents.trim().to_string();
+        if !id.is_empty() {
+            tracing::info!(
+                "Loaded Consul node ID from {}: {}",
+                node_id_file.display(),
+                id
+            );
+            return id;
+        }
+    }
+
+    // Generate new UUID and persist
+    let id = uuid::Uuid::new_v4().to_string();
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!("Failed to create data dir {}: {}", dir.display(), e);
+        return id;
+    }
+    if let Err(e) = std::fs::write(&node_id_file, &id) {
+        tracing::warn!(
+            "Failed to persist node ID to {}: {}",
+            node_id_file.display(),
+            e
+        );
+    } else {
+        tracing::info!(
+            "Generated and persisted Consul node ID to {}: {}",
+            node_id_file.display(),
+            id
+        );
+    }
+    id
+}
+
 /// Shared datacenter configuration for Consul API handlers.
 /// Registered as `web::Data<ConsulDatacenterConfig>` so all handlers
 /// can resolve the local datacenter name instead of hardcoding "dc1".
@@ -28,16 +72,28 @@ pub struct ConsulDatacenterConfig {
     pub batata_version: String,
     /// The Consul compatibility HTTP port (default 8500)
     pub consul_port: u16,
+    /// The Batata main server port (default 8848), used to derive Raft port
+    pub main_port: u16,
+    /// Persistent node ID (generated once on startup, stable across requests)
+    pub node_id: String,
+    /// Node name (hostname, resolved once at startup like Consul)
+    pub node_name: String,
 }
 
 impl ConsulDatacenterConfig {
     pub fn new(datacenter: String) -> Self {
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
         Self {
             primary_datacenter: datacenter.clone(),
             datacenter,
             consul_version: "1.22.5".to_string(),
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
             consul_port: 8500,
+            main_port: 8848,
+            node_id: uuid::Uuid::new_v4().to_string(),
+            node_name,
         }
     }
 
@@ -58,6 +114,32 @@ impl ConsulDatacenterConfig {
 
     pub fn with_consul_port(mut self, port: u16) -> Self {
         self.consul_port = port;
+        self
+    }
+
+    pub fn with_main_port(mut self, port: u16) -> Self {
+        self.main_port = port;
+        self
+    }
+
+    /// Get the real Batata Raft port: main_port - 1000 (e.g., 8848 -> 7848)
+    /// Uses the same offset as batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
+    pub fn raft_port(&self) -> u16 {
+        self.main_port.saturating_sub(1000)
+    }
+
+    /// Override node name (like Consul's -node flag). If not called, defaults to hostname.
+    pub fn with_node_name(mut self, name: String) -> Self {
+        self.node_name = name;
+        self
+    }
+
+    /// Load or generate a persistent node ID from the data directory.
+    /// Follows Consul's behavior: read from `{data_dir}/consul-node-id` if exists,
+    /// otherwise generate a random UUID and persist it.
+    /// Each instance gets its own unique node ID based on its data directory.
+    pub fn with_data_dir(mut self, data_dir: &str) -> Self {
+        self.node_id = load_or_create_node_id(data_dir);
         self
     }
 

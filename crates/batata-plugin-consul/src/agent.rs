@@ -73,97 +73,90 @@ impl ConsulAgentService {
         &self.naming_store
     }
 
-    /// Register Consul itself as a service
-    /// This is called on startup when register_self is enabled
-    pub async fn register_consul_service(&self, port: u16, datacenter: &str) -> Result<(), String> {
+    /// Register the "consul" service and "serfHealth" check at startup.
+    /// Matches Consul's leader_registrator_v1.go HandleAliveMember() behavior.
+    pub async fn register_consul_service(
+        &self,
+        dc_config: &ConsulDatacenterConfig,
+    ) -> Result<(), String> {
         use batata_common::local_ip;
 
         let ip = local_ip();
-        let service_name = "consul";
+        let raft_port = dc_config.raft_port();
 
-        // Store in naming store (native Consul format)
+        // Build service metadata matching Consul's exact fields
+        let mut service_meta = HashMap::new();
+        service_meta.insert("non_voter".to_string(), "false".to_string());
+        service_meta.insert("read_replica".to_string(), "false".to_string());
+        service_meta.insert("raft_version".to_string(), "3".to_string());
+        service_meta.insert("serf_protocol_current".to_string(), "2".to_string());
+        service_meta.insert("serf_protocol_min".to_string(), "1".to_string());
+        service_meta.insert("serf_protocol_max".to_string(), "5".to_string());
+        service_meta.insert("version".to_string(), dc_config.full_version());
+
         let reg = AgentServiceRegistration {
             id: Some("consul".to_string()),
-            name: service_name.to_string(),
-            port: Some(port),
-            address: Some(ip.clone()),
-            meta: Some({
-                let mut meta = std::collections::HashMap::new();
-                meta.insert("consul_datacenter".to_string(), datacenter.to_string());
-                meta.insert("version".to_string(), env!("CARGO_PKG_VERSION").to_string());
-                meta
-            }),
+            name: "consul".to_string(),
+            tags: Some(vec![]),
+            port: Some(raft_port),
+            address: Some(String::new()),
+            meta: Some(service_meta),
+            weights: Some(crate::model::Weights { passing: 1, warning: 1 }),
+            proxy: Some(serde_json::json!({"Mode": "", "MeshGateway": {}, "Expose": {}})),
+            connect: Some(serde_json::json!({})),
             ..Default::default()
         };
 
-        let store_key = ConsulNamingStore::build_key(
-            crate::namespace::DEFAULT_NAMESPACE,
-            service_name,
-            "consul",
-        );
+        let store_key =
+            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", "consul");
         match serde_json::to_vec(&reg) {
             Ok(data) => {
-                let _ = self
-                    .naming_store
-                    .register(&store_key, bytes::Bytes::from(data));
+                let _ = self.naming_store.register(&store_key, bytes::Bytes::from(data));
             }
             Err(e) => {
                 return Err(format!("Failed to serialize consul registration: {}", e));
             }
         }
 
-        // Register consul_service_id for O(1) lookup during deregistration
-        let service_key = format!(
-            "{}#{}#{}",
-            CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, service_name
-        );
+        let service_key = format!("{}#{}#{}", CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, "consul");
         let instance_key = format!(
             "{}#{}#{}#{}#{}#{}",
-            CONSUL_INTERNAL_NAMESPACE,
-            CONSUL_INTERNAL_GROUP,
-            service_name,
-            ip,
-            port,
-            CONSUL_INTERNAL_CLUSTER
+            CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, "consul", ip, raft_port, CONSUL_INTERNAL_CLUSTER
         );
-        self.check_index
-            .register("consul", &service_key, &instance_key);
+        self.check_index.register("consul", &service_key, &instance_key);
 
-        // Register serfHealth TTL check — aligned with Consul original
+        // Register serfHealth as NODE-level check (not associated with any service)
         {
             use batata_naming::healthcheck::registry::*;
             self.registry.register_check(InstanceCheckConfig {
                 check_id: "serfHealth".to_string(),
                 name: "Serf Health Status".to_string(),
-                check_type: CheckType::Ttl,
+                check_type: CheckType::None,
                 namespace: CONSUL_INTERNAL_NAMESPACE.to_string(),
                 group_name: CONSUL_INTERNAL_GROUP.to_string(),
-                service_name: service_name.to_string(),
+                service_name: String::new(),
                 ip: ip.clone(),
-                port: port as i32,
+                port: 0,
                 cluster_name: CONSUL_INTERNAL_CLUSTER.to_string(),
                 http_url: None,
                 tcp_addr: None,
                 grpc_addr: None,
                 db_url: None,
-                interval: std::time::Duration::from_secs(10),
-                timeout: std::time::Duration::from_secs(5),
-                ttl: Some(std::time::Duration::from_secs(86400)),
+                interval: std::time::Duration::ZERO,
+                timeout: std::time::Duration::ZERO,
+                ttl: None,
                 success_before_passing: 0,
                 failures_before_critical: 0,
                 deregister_critical_after: None,
                 initial_status: CheckStatus::Passing,
-                notes: "Agent alive and reachable".to_string(),
+                notes: String::new(),
             });
+            self.registry.update_check_result("serfHealth", true, "Agent alive and reachable".to_string(), 0);
         }
 
         tracing::info!(
-            "Consul service registered: {}:{} in namespace={} group={} cluster={}",
-            ip,
-            port,
-            CONSUL_INTERNAL_NAMESPACE,
-            CONSUL_INTERNAL_GROUP,
-            CONSUL_INTERNAL_CLUSTER,
+            "Consul self-service registered: node={}, addr={}:{}, dc={}",
+            dc_config.node_name, ip, raft_port, dc_config.datacenter,
         );
         Ok(())
     }
@@ -2010,7 +2003,8 @@ mod tests {
 
         let (agent, _naming_store, registry, check_index) = create_test_agent();
 
-        let result = agent.register_consul_service(8500, "dc1").await;
+        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
+        let result = agent.register_consul_service(&dc_config).await;
         assert!(result.is_ok(), "Self-registration should succeed");
 
         // Verify service is in ConsulNamingStore
@@ -2021,18 +2015,19 @@ mod tests {
 
         let reg: AgentServiceRegistration = serde_json::from_slice(&data.unwrap()).unwrap();
         assert_eq!(reg.service_id(), "consul");
-        assert_eq!(reg.effective_port(), 8500);
+        assert_eq!(reg.effective_port(), dc_config.raft_port());
         assert_eq!(reg.name, "consul");
 
-        // Verify metadata
+        // Verify metadata matches Consul's fields
         let meta = reg.meta.as_ref().unwrap();
-        assert_eq!(meta.get("consul_datacenter").unwrap(), "dc1");
+        assert!(meta.contains_key("version"));
+        assert!(meta.contains_key("raft_version"));
 
         // Verify serfHealth check is registered
         let check = registry.get_check("serfHealth");
         assert!(check.is_some(), "serfHealth check should be registered");
         let (config, status) = check.unwrap();
-        assert_eq!(config.check_type, CheckType::Ttl);
+        assert_eq!(config.check_type, CheckType::None);
         assert_eq!(
             status.status,
             CheckStatus::Passing,
@@ -2048,7 +2043,8 @@ mod tests {
         let (agent, _naming_store, _registry, _check_index) = create_test_agent();
 
         // Register first
-        agent.register_consul_service(8500, "dc1").await.unwrap();
+        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
+        agent.register_consul_service(&dc_config).await.unwrap();
         assert!(
             agent
                 .naming_store

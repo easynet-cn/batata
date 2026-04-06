@@ -93,7 +93,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_primary(configuration.consul_primary_datacenter())
         .with_consul_version(configuration.consul_version())
         .with_batata_version(configuration.batata_version())
-        .with_consul_port(configuration.consul_server_port());
+        .with_consul_port(configuration.consul_server_port())
+        .with_main_port(configuration.server_main_port())
+        .with_data_dir(&configuration.embedded_data_dir());
+
+        // Override node_name from config (like Consul's -node flag)
+        let dc_config = if let Some(node_name) = configuration.consul_node_name() {
+            dc_config.with_node_name(node_name)
+        } else {
+            dc_config
+        };
 
         let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_config(
             true,
