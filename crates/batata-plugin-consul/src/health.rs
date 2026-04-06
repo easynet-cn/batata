@@ -105,27 +105,27 @@ impl ConsulHealthService {
         let ttl = registration
             .ttl
             .as_ref()
-            .and_then(|s| parse_duration_to_std(s));
+            .and_then(|s| crate::consul_meta::parse_go_duration(s));
 
         // Parse interval
         let interval = registration
             .interval
             .as_ref()
-            .and_then(|s| parse_duration_to_std(s))
+            .and_then(|s| crate::consul_meta::parse_go_duration(s))
             .unwrap_or(Duration::from_secs(10));
 
         // Parse timeout
         let timeout = registration
             .timeout
             .as_ref()
-            .and_then(|s| parse_duration_to_std(s))
+            .and_then(|s| crate::consul_meta::parse_go_duration(s))
             .unwrap_or(Duration::from_secs(5));
 
         // Parse deregister critical after
         let deregister_critical_after = registration
             .deregister_critical_service_after
             .as_ref()
-            .and_then(|s| parse_duration_to_std(s));
+            .and_then(|s| crate::consul_meta::parse_go_duration(s));
 
         // Parse initial status
         let initial_status = registration

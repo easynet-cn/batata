@@ -296,6 +296,105 @@ pub fn parse_multi_param(req: &HttpRequest, param_name: &str) -> Vec<String> {
     values
 }
 
+// ---------------------------------------------------------------------------
+// Go time.Duration compatible parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a Go `time.Duration` string to `std::time::Duration`.
+///
+/// Supports all Go duration units: `ns`, `us`/`µs`, `ms`, `s`, `m`, `h`.
+/// Supports compound formats: `1h30m`, `2h0m30s`, `500ms`, etc.
+/// Supports bare numeric strings interpreted as seconds (Consul convention).
+///
+/// This is the **single canonical implementation** — all Consul duration parsing
+/// in Batata should use this function.
+pub fn parse_go_duration(s: &str) -> Option<std::time::Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // If it's a bare number, treat as seconds (Consul convention)
+    if let Ok(secs) = s.parse::<f64>() {
+        return if secs >= 0.0 {
+            Some(std::time::Duration::from_secs_f64(secs))
+        } else {
+            None
+        };
+    }
+
+    let mut total_nanos: u128 = 0;
+    let mut current_num = String::new();
+    let mut chars = s.chars().peekable();
+    let mut matched_any = false;
+
+    while let Some(&ch) = chars.peek() {
+        if ch.is_ascii_digit() || ch == '.' {
+            current_num.push(ch);
+            chars.next();
+        } else {
+            if current_num.is_empty() {
+                return None; // unit without number
+            }
+            let num: f64 = current_num.parse().ok()?;
+            current_num.clear();
+            matched_any = true;
+
+            // Collect unit string (may be multi-char: "ms", "us", "ns", "µs")
+            let mut unit = String::new();
+            unit.push(ch);
+            chars.next();
+
+            // Check for two-char units
+            if let Some(&next_ch) = chars.peek() {
+                if (ch == 'm' && next_ch == 's')
+                    || (ch == 'u' && next_ch == 's')
+                    || (ch == 'n' && next_ch == 's')
+                    || (ch == 'µ' && next_ch == 's')
+                {
+                    unit.push(next_ch);
+                    chars.next();
+                }
+            }
+
+            let nanos_per_unit: f64 = match unit.as_str() {
+                "ns" => 1.0,
+                "us" | "µs" => 1_000.0,
+                "ms" => 1_000_000.0,
+                "s" => 1_000_000_000.0,
+                "m" => 60_000_000_000.0,
+                "h" => 3_600_000_000_000.0,
+                _ => return None,
+            };
+
+            total_nanos += (num * nanos_per_unit) as u128;
+        }
+    }
+
+    // Handle trailing number without unit (treat as seconds)
+    if !current_num.is_empty() {
+        if matched_any {
+            return None; // e.g., "5s30" — trailing number after units is invalid
+        }
+        let num: f64 = current_num.parse().ok()?;
+        total_nanos += (num * 1_000_000_000.0) as u128;
+        matched_any = true;
+    }
+
+    if !matched_any {
+        return None;
+    }
+
+    Some(std::time::Duration::from_nanos(total_nanos as u64))
+}
+
+/// Parse a Go duration string and return seconds (u64).
+///
+/// Convenience wrapper for code that needs seconds instead of Duration.
+pub fn parse_go_duration_secs(s: &str) -> Option<u64> {
+    parse_go_duration(s).map(|d| d.as_secs())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +467,70 @@ mod tests {
     fn test_response_meta_preserves_index() {
         let meta = ConsulResponseMeta::new(42);
         assert_eq!(meta.index, 42);
+    }
+
+    // -----------------------------------------------------------------------
+    // Go duration parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_go_duration_simple_units() {
+        // Nanoseconds
+        assert_eq!(parse_go_duration("100ns"), Some(std::time::Duration::from_nanos(100)));
+        // Microseconds
+        assert_eq!(parse_go_duration("50us"), Some(std::time::Duration::from_micros(50)));
+        assert_eq!(parse_go_duration("50µs"), Some(std::time::Duration::from_micros(50)));
+        // Milliseconds
+        assert_eq!(parse_go_duration("500ms"), Some(std::time::Duration::from_millis(500)));
+        assert_eq!(parse_go_duration("100ms"), Some(std::time::Duration::from_millis(100)));
+        // Seconds
+        assert_eq!(parse_go_duration("30s"), Some(std::time::Duration::from_secs(30)));
+        // Minutes
+        assert_eq!(parse_go_duration("5m"), Some(std::time::Duration::from_secs(300)));
+        // Hours
+        assert_eq!(parse_go_duration("2h"), Some(std::time::Duration::from_secs(7200)));
+    }
+
+    #[test]
+    fn test_parse_go_duration_compound() {
+        // 1h30m
+        assert_eq!(parse_go_duration("1h30m"), Some(std::time::Duration::from_secs(5400)));
+        // 1h0m30s
+        assert_eq!(parse_go_duration("1h0m30s"), Some(std::time::Duration::from_secs(3630)));
+        // 2h30m45s
+        assert_eq!(parse_go_duration("2h30m45s"), Some(std::time::Duration::from_secs(9045)));
+        // 1m30s
+        assert_eq!(parse_go_duration("1m30s"), Some(std::time::Duration::from_secs(90)));
+        // 500ms mixed
+        assert_eq!(
+            parse_go_duration("1s500ms"),
+            Some(std::time::Duration::from_millis(1500))
+        );
+    }
+
+    #[test]
+    fn test_parse_go_duration_bare_number() {
+        // Bare number = seconds (Consul convention)
+        assert_eq!(parse_go_duration("60"), Some(std::time::Duration::from_secs(60)));
+        assert_eq!(parse_go_duration("0"), Some(std::time::Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_parse_go_duration_edge_cases() {
+        assert_eq!(parse_go_duration(""), None);
+        assert_eq!(parse_go_duration("   "), None);
+        assert_eq!(parse_go_duration("abc"), None);
+        assert_eq!(parse_go_duration("0s"), Some(std::time::Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_parse_go_duration_secs_helper() {
+        assert_eq!(parse_go_duration_secs("30s"), Some(30));
+        assert_eq!(parse_go_duration_secs("5m"), Some(300));
+        assert_eq!(parse_go_duration_secs("2h"), Some(7200));
+        assert_eq!(parse_go_duration_secs("1h30m"), Some(5400));
+        // ms rounds down to 0 seconds
+        assert_eq!(parse_go_duration_secs("500ms"), Some(0));
+        assert_eq!(parse_go_duration_secs(""), None);
     }
 }

@@ -191,11 +191,14 @@ struct SemaphoreContender {
     acquired_at: u64,
 }
 
-/// Semaphore lock entry stored at .lock key
+/// Semaphore lock entry stored at .lock key.
+///
+/// Matches Consul's format: `holders` maps session_id → `true`.
+/// (Consul's Go SDK uses `map[string]bool` for holders.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SemaphoreLockEntry {
     limit: u32,
-    holders: HashMap<String, u64>, // session -> acquire_time
+    holders: HashMap<String, bool>, // session -> true (Consul format)
 }
 
 // ============================================================================
@@ -527,10 +530,10 @@ impl ConsulSemaphoreService {
             return false;
         }
 
-        // Add this session as a holder
+        // Add this session as a holder (Consul format: session -> true)
         lock_entry
             .holders
-            .insert(session_id.to_string(), current_unix_time());
+            .insert(session_id.to_string(), true);
 
         // Update the lock entry
         let lock_json = serde_json::to_string(&lock_entry).unwrap_or_default();

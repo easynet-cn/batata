@@ -227,7 +227,7 @@ impl ConsulSessionService {
         let ttl_secs = if ttl_str.is_empty() {
             0 // persistent session
         } else {
-            parse_duration(&ttl_str).unwrap_or(0)
+            crate::consul_meta::parse_go_duration_secs(&ttl_str).unwrap_or(0)
         };
 
         // Consul defaults NodeChecks to ["serfHealth"] if none specified
@@ -242,8 +242,13 @@ impl ConsulSessionService {
             id: session_id.clone(),
             name: req.name.unwrap_or_default(),
             node: req.node.unwrap_or_else(|| self.node_name.clone()),
-            lock_delay: parse_duration(&req.lock_delay.unwrap_or_else(|| "15s".to_string()))
-                .unwrap_or(15),
+            // Consul Go SDK expects LockDelay in nanoseconds (time.Duration).
+            // Default is 15s = 15_000_000_000ns.
+            lock_delay: crate::consul_meta::parse_go_duration(
+                &req.lock_delay.unwrap_or_else(|| "15s".to_string()),
+            )
+            .unwrap_or(std::time::Duration::from_secs(15))
+            .as_nanos() as u64,
             behavior: req.behavior.unwrap_or_else(|| "release".to_string()),
             ttl: ttl_str,
             checks: node_checks.clone(), // backward compatibility
@@ -588,8 +593,20 @@ pub async fn destroy_session(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Release all KV keys held by this session (Consul "release" behavior)
-    kv_service.release_session(&session_id).await;
+    // Get session behavior before destroying (needed to handle KV keys correctly)
+    let behavior = session_service
+        .get_session(&session_id)
+        .map(|s| s.behavior.clone())
+        .unwrap_or_else(|| "release".to_string());
+
+    // Handle KV keys based on session behavior (matches Consul's session.go:378-409)
+    if behavior == "delete" {
+        // Delete behavior: delete all KV keys held by this session
+        kv_service.delete_session_keys(&session_id).await;
+    } else {
+        // Release behavior (default): release locks but keep keys
+        kv_service.release_session(&session_id).await;
+    }
     // Increment KVS index to wake blocking queries (e.g., Go SDK Lock monitor)
     index_provider.increment(ConsulTable::KVS);
 
@@ -859,7 +876,7 @@ mod tests {
             "Default node checks should include serfHealth"
         );
         assert_eq!(session.behavior, "release");
-        assert_eq!(session.lock_delay, 15);
+        assert_eq!(session.lock_delay, 15_000_000_000); // 15s in nanoseconds
     }
 
     #[tokio::test]
@@ -873,7 +890,7 @@ mod tests {
             ..Default::default()
         };
         let session = service.create_session(req).await;
-        assert_eq!(session.lock_delay, 30);
+        assert_eq!(session.lock_delay, 30_000_000_000); // 30s in nanoseconds
     }
 
     #[tokio::test]

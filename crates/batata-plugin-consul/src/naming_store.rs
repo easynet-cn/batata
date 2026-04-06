@@ -95,6 +95,15 @@ impl ConsulNamingStore {
             .collect()
     }
 
+    /// Get all known namespaces
+    pub fn all_namespaces(&self) -> Vec<String> {
+        let mut namespaces: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for entry in self.entries.iter() {
+            namespaces.insert(entry.value().namespace.clone());
+        }
+        namespaces.into_iter().collect()
+    }
+
     /// Get all unique service names within a namespace
     pub fn service_names(&self, ns: &str) -> Vec<String> {
         let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };

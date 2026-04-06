@@ -187,23 +187,13 @@ impl ConsulTableIndex {
         }
     }
 
-    /// Parse the `wait` query parameter from Consul format (e.g. "5m", "30s", "100ms").
+    /// Parse the `wait` query parameter from Consul/Go duration format.
+    ///
+    /// Delegates to the unified `parse_go_duration` which supports all
+    /// Go `time.Duration` units: `ns`, `us`, `ms`, `s`, `m`, `h` and
+    /// compound formats like `1h30m`.
     pub fn parse_wait_duration(wait_str: &str) -> Option<Duration> {
-        let s = wait_str.trim();
-        if s.is_empty() {
-            return None;
-        }
-        if let Some(ms) = s.strip_suffix("ms") {
-            ms.parse::<u64>().ok().map(Duration::from_millis)
-        } else if let Some(secs) = s.strip_suffix('s') {
-            secs.parse::<u64>().ok().map(Duration::from_secs)
-        } else if let Some(mins) = s.strip_suffix('m') {
-            mins.parse::<u64>()
-                .ok()
-                .map(|m| Duration::from_secs(m * 60))
-        } else {
-            s.parse::<u64>().ok().map(Duration::from_secs)
-        }
+        crate::consul_meta::parse_go_duration(wait_str)
     }
 }
 

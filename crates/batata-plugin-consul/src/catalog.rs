@@ -519,75 +519,65 @@ impl ConsulCatalogService {
     }
 
     /// Get all nodes (for simplicity, we return one node per unique IP)
-    pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
+    /// Get all catalog nodes.
+    ///
+    /// In Consul, nodes are a global concept — not scoped to a namespace.
+    /// This scans all known namespaces to collect nodes from all registered services.
+    /// The local node (from `dc_config`) is always included (matching Consul's
+    /// Serf-based auto-registration).
+    pub fn get_nodes(&self, _namespace: &str) -> Vec<CatalogNode> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
-        for service_name in self.naming_store.service_names(namespace) {
-            for entry_bytes in self
-                .naming_store
-                .get_service_entries(namespace, &service_name)
-            {
-                let Ok(reg) =
-                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
-                else {
-                    continue;
-                };
-                let ip = reg.effective_address();
-                if ip.is_empty() {
-                    continue;
-                }
-                if let std::collections::hash_map::Entry::Vacant(e) = nodes.entry(ip.clone()) {
-                    e.insert(CatalogNode {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        node: format!("node-{}", ip.replace('.', "-")),
-                        address: ip,
-                        datacenter: self.datacenter.clone(),
-                        tagged_addresses: None,
-                        meta: None,
-                        create_index: index,
-                        modify_index: index,
-                    });
-                }
-            }
-        }
+        // Always include the local node (Consul registers itself via Serf)
+        let local_addr = hostname::get()
+            .map(|_| "127.0.0.1".to_string())
+            .unwrap_or_else(|_| "127.0.0.1".to_string());
+        nodes.insert(
+            self.node_name.clone(),
+            CatalogNode {
+                id: uuid::Uuid::new_v4().to_string(),
+                node: self.node_name.clone(),
+                address: local_addr,
+                datacenter: self.datacenter.clone(),
+                tagged_addresses: None,
+                meta: None,
+                create_index: 1,
+                modify_index: index,
+            },
+        );
 
-        nodes.into_values().collect()
-    }
-
-    /// Get node details with services
-    pub fn get_node(&self, namespace: &str, node_name: &str) -> Option<NodeServices> {
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "batata-node".to_string());
-
-        let index = self.index_provider.current_index(ConsulTable::Catalog);
-        let mut node: Option<CatalogNode> = None;
-        let mut services: HashMap<String, AgentService> = HashMap::new();
-
-        for service_name in self.naming_store.service_names(namespace) {
-            for entry_bytes in self
-                .naming_store
-                .get_service_entries(namespace, &service_name)
-            {
-                let Ok(reg) =
-                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
-                else {
-                    continue;
-                };
-                let ip = reg.effective_address();
-                let instance_node = format!("node-{}", ip.replace('.', "-"));
-
-                // Match by node name formats: hostname, node-{ip}, raw IP, or "batata-node"
-                if instance_node == node_name
-                    || ip == node_name
-                    || hostname == node_name
-                    || node_name == "batata-node"
+        // Scan all namespaces to find nodes from registered services.
+        // In Consul, nodes are global — not scoped to namespace.
+        let all_ns = self.naming_store.all_namespaces();
+        for ns in &all_ns {
+            for service_name in self.naming_store.service_names(&ns) {
+                for entry_bytes in self
+                    .naming_store
+                    .get_service_entries(&ns, &service_name)
                 {
-                    if node.is_none() {
-                        node = Some(CatalogNode {
+                    let Ok(reg) = serde_json::from_slice::<
+                        crate::model::AgentServiceRegistration,
+                    >(&entry_bytes)
+                    else {
+                        continue;
+                    };
+                    let ip = reg.effective_address();
+                    if ip.is_empty() {
+                        continue;
+                    }
+                    let node_name = reg
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.get("consul_node_name"))
+                        .cloned()
+                        .unwrap_or_else(|| format!("node-{}", ip.replace('.', "-")));
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        nodes.entry(node_name.clone())
+                    {
+                        e.insert(CatalogNode {
                             id: uuid::Uuid::new_v4().to_string(),
-                            node: node_name.to_string(),
+                            node: node_name,
                             address: ip,
                             datacenter: self.datacenter.clone(),
                             tagged_addresses: None,
@@ -596,15 +586,72 @@ impl ConsulCatalogService {
                             modify_index: index,
                         });
                     }
-
-                    let agent_service = AgentService::from(&reg);
-                    services.insert(agent_service.id.clone(), agent_service);
                 }
             }
         }
 
-        // If hostname matches but no services were found, still return the node
-        if node.is_none() && (hostname == node_name || node_name == "batata-node") {
+        nodes.into_values().collect()
+    }
+
+    /// Get node details with services.
+    ///
+    /// Searches across all namespaces (nodes are global in Consul).
+    /// Matches by: configured node_name, hostname, generated node name, or raw IP.
+    pub fn get_node(&self, _namespace: &str, node_name: &str) -> Option<NodeServices> {
+        let index = self.index_provider.current_index(ConsulTable::Catalog);
+        let mut node: Option<CatalogNode> = None;
+        let mut services: HashMap<String, AgentService> = HashMap::new();
+
+        // Check if this is the local node
+        let is_local_node = node_name == self.node_name;
+
+        // Scan all namespaces (nodes are global, not scoped to namespace)
+        for ns in self.naming_store.all_namespaces() {
+            for service_name in self.naming_store.service_names(&ns) {
+                for entry_bytes in self
+                    .naming_store
+                    .get_service_entries(&ns, &service_name)
+                {
+                    let Ok(reg) = serde_json::from_slice::<
+                        crate::model::AgentServiceRegistration,
+                    >(&entry_bytes)
+                    else {
+                        continue;
+                    };
+                    let ip = reg.effective_address();
+                    let instance_node = format!("node-{}", ip.replace('.', "-"));
+
+                    // Match by: self.node_name, generated "node-{ip}", raw IP
+                    if is_local_node
+                        || instance_node == node_name
+                        || ip == node_name
+                    {
+                        if node.is_none() {
+                            node = Some(CatalogNode {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                node: node_name.to_string(),
+                                address: if is_local_node {
+                                    "127.0.0.1".to_string()
+                                } else {
+                                    ip
+                                },
+                                datacenter: self.datacenter.clone(),
+                                tagged_addresses: None,
+                                meta: None,
+                                create_index: index,
+                                modify_index: index,
+                            });
+                        }
+
+                        let agent_service = AgentService::from(&reg);
+                        services.insert(agent_service.id.clone(), agent_service);
+                    }
+                }
+            }
+        }
+
+        // If local node name matches but no services found, still return the node
+        if node.is_none() && is_local_node {
             node = Some(CatalogNode {
                 id: uuid::Uuid::new_v4().to_string(),
                 node: node_name.to_string(),
@@ -1573,11 +1620,11 @@ mod tests {
         register_reg(&store, &simple_reg("web", "web-1", "192.168.1.100", 8080));
         register_reg(&store, &simple_reg("web", "web-2", "192.168.1.101", 8080));
 
-        // Get nodes
+        // Get nodes — includes local node + 2 registered service nodes
         let nodes = catalog.get_nodes("default");
-        assert_eq!(nodes.len(), 2);
+        assert!(nodes.len() >= 2, "Should have at least 2 nodes (may include local node)");
 
-        // Verify node names (generated as "node-{ip with dots replaced by dashes}") and addresses
+        // Verify registered service nodes exist
         let node_names: Vec<&str> = nodes.iter().map(|n| n.node.as_str()).collect();
         assert!(node_names.contains(&"node-192-168-1-100"));
         assert!(node_names.contains(&"node-192-168-1-101"));

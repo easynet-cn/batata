@@ -928,6 +928,73 @@ impl ConsulKVService {
         }
     }
 
+    /// Delete all KV keys held by a session (Consul "delete" behavior).
+    ///
+    /// When a session with `Behavior=delete` is destroyed, all KV keys
+    /// locked by that session are deleted (not just released).
+    /// Matches Consul's `session.go:378-409` behavior.
+    pub async fn delete_session_keys(&self, session_id: &str) {
+        let Some(cf_kv) = self.db.cf_handle(CF_CONSUL_KV) else {
+            return;
+        };
+        let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
+            return;
+        };
+
+        let idx_prefix = format!("kidx:{}:", session_id);
+        let iter = self.db.iterator_cf(
+            cf_sessions,
+            rocksdb::IteratorMode::From(idx_prefix.as_bytes(), rocksdb::Direction::Forward),
+        );
+
+        let mut keys_to_delete: Vec<String> = Vec::new();
+        let mut index_keys_to_delete: Vec<String> = Vec::new();
+
+        for item in iter.flatten() {
+            let (idx_key_bytes, _) = item;
+            let idx_key = match String::from_utf8(idx_key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if !idx_key.starts_with(&idx_prefix) {
+                break;
+            }
+
+            let kv_key = &idx_key[idx_prefix.len()..];
+
+            // Only delete if actually held by this session
+            if let Ok(Some(kv_bytes)) = self.db.get_cf(cf_kv, kv_key.as_bytes())
+                && let Ok(stored) = serde_json::from_slice::<StoredKV>(&kv_bytes)
+                && stored.pair.session.as_deref() == Some(session_id)
+            {
+                keys_to_delete.push(kv_key.to_string());
+            }
+
+            index_keys_to_delete.push(idx_key);
+        }
+
+        if keys_to_delete.is_empty() && index_keys_to_delete.is_empty() {
+            return;
+        }
+
+        // For now, handle standalone mode only (Raft path can be added later)
+        let mut batch = WriteBatch::default();
+        for kv_key in &keys_to_delete {
+            batch.delete_cf(cf_kv, kv_key.as_bytes());
+        }
+        for idx_key in &index_keys_to_delete {
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+        if let Err(e) = self.db.write(batch) {
+            error!(
+                "Failed to delete session keys for '{}': {}",
+                session_id, e
+            );
+            return;
+        }
+        self.notify.notify_waiters();
+    }
+
     /// Delete a key
     pub async fn delete(&self, key: &str) -> bool {
         // Check if key exists and get session info for cleanup
