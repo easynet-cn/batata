@@ -176,6 +176,137 @@ impl Default for ConsulDatacenterConfig {
     }
 }
 
+/// Configuration for the Consul compatibility plugin.
+///
+/// All consul-specific configuration is encapsulated here, read from
+/// the application config under `batata.plugin.consul.*` keys.
+/// This keeps the core `Configuration` free of plugin-specific methods.
+#[derive(Debug, Clone)]
+pub struct ConsulPluginConfig {
+    pub enabled: bool,
+    pub acl_enabled: bool,
+    pub initial_management_token: Option<String>,
+    pub register_self: bool,
+    pub http_workers: usize,
+    pub check_reap_interval_secs: u64,
+    pub client_connect_timeout_secs: u64,
+    pub client_read_timeout_secs: u64,
+    pub dc_config: ConsulDatacenterConfig,
+}
+
+impl ConsulPluginConfig {
+    /// Read all Consul plugin configuration from the application config.
+    ///
+    /// Reads from keys under `batata.plugin.consul.*` with sensible defaults.
+    /// Also reads `batata.version`, `nacos.server.main.port`, and
+    /// `batata.embedded.data_dir` for `ConsulDatacenterConfig`.
+    pub fn from_config(config: &config::Config) -> Self {
+        let enabled = config
+            .get_bool("batata.plugin.consul.enabled")
+            .unwrap_or(false);
+        let acl_enabled = config
+            .get_bool("batata.plugin.consul.acl.enabled")
+            .unwrap_or(false);
+        let initial_management_token = config
+            .get_string("batata.plugin.consul.acl.tokens.initial_management")
+            .ok();
+        let register_self = config
+            .get_bool("batata.plugin.consul.register_self")
+            .unwrap_or(true);
+        let check_reap_interval_secs = config
+            .get_int("batata.plugin.consul.check_reap_interval")
+            .unwrap_or(30) as u64;
+        let client_connect_timeout_secs = config
+            .get_int("batata.plugin.consul.client.connect_timeout_secs")
+            .unwrap_or(5) as u64;
+        let client_read_timeout_secs = config
+            .get_int("batata.plugin.consul.client.read_timeout_secs")
+            .unwrap_or(30) as u64;
+
+        let http_workers = {
+            let v = config
+                .get_int("batata.plugin.consul.http.workers")
+                .unwrap_or(0) as usize;
+            if v == 0 {
+                let cpus = std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4);
+                std::cmp::min(4, cpus / 2).max(2)
+            } else {
+                v
+            }
+        };
+
+        let datacenter = config
+            .get_string("batata.plugin.consul.datacenter")
+            .unwrap_or_else(|_| "dc1".to_string());
+        let primary_datacenter = config
+            .get_string("batata.plugin.consul.primary_datacenter")
+            .unwrap_or_else(|_| datacenter.clone());
+        let consul_version = config
+            .get_string("batata.plugin.consul.version")
+            .unwrap_or_default();
+        let consul_port = config
+            .get_int("batata.plugin.consul.port")
+            .unwrap_or(8500) as u16;
+        let node_name_override = config
+            .get_string("batata.plugin.consul.node_name")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        // Non-consul config needed for dc_config
+        let batata_version = config
+            .get_string("batata.version")
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let main_port = config
+            .get_int("nacos.server.main.port")
+            .unwrap_or(8848) as u16;
+        let data_dir = config
+            .get_string("batata.embedded.data_dir")
+            .unwrap_or_else(|_| "data".to_string());
+
+        let mut dc_config = ConsulDatacenterConfig::new(datacenter)
+            .with_primary(primary_datacenter)
+            .with_consul_version(consul_version)
+            .with_batata_version(batata_version)
+            .with_consul_port(consul_port)
+            .with_main_port(main_port)
+            .with_data_dir(&data_dir);
+
+        if let Some(name) = node_name_override {
+            dc_config = dc_config.with_node_name(name);
+        }
+
+        Self {
+            enabled,
+            acl_enabled,
+            initial_management_token,
+            register_self,
+            http_workers,
+            check_reap_interval_secs,
+            client_connect_timeout_secs,
+            client_read_timeout_secs,
+            dc_config,
+        }
+    }
+}
+
+impl Default for ConsulPluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            acl_enabled: false,
+            initial_management_token: None,
+            register_self: true,
+            http_workers: 2,
+            check_reap_interval_secs: 30,
+            client_connect_timeout_secs: 5,
+            client_read_timeout_secs: 30,
+            dc_config: ConsulDatacenterConfig::default(),
+        }
+    }
+}
+
 /// Consul-compatible boolean query parameter deserialization.
 /// In Consul, query parameters like `?recurse` (key-present with empty value) mean `true`.
 /// Standard serde can't parse empty string "" as bool.

@@ -213,6 +213,15 @@ pub trait ProtocolAdapterPlugin: Send + Sync {
     /// Default HTTP port for this protocol's server (e.g., 8500 for Consul)
     fn default_port(&self) -> u16;
 
+    /// Number of HTTP workers for this protocol's server.
+    /// Default: min(4, cpu_cores/2), at least 2.
+    fn http_workers(&self) -> usize {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        std::cmp::min(4, cpus / 2).max(2)
+    }
+
     // ========================================================================
     // Lifecycle
     // ========================================================================
@@ -390,6 +399,29 @@ pub enum PluginNamingStoreError {
 
     #[error("Storage error: {0}")]
     Storage(String),
+}
+
+/// Plugin state provider for exposing plugin configuration to server state APIs.
+///
+/// Protocol adapter plugins (Consul, Eureka, etc.) implement this trait to
+/// contribute their configuration state (enabled, port, version, etc.) to
+/// the server state endpoint without the core needing to know about specific plugins.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl PluginStateProvider for ConsulPlugin {
+///     fn plugin_state(&self) -> HashMap<String, Option<String>> {
+///         let mut state = HashMap::new();
+///         state.insert("consul_enabled".into(), Some("true".into()));
+///         state.insert("consul_port".into(), Some("8500".into()));
+///         state
+///     }
+/// }
+/// ```
+pub trait PluginStateProvider: Send + Sync {
+    /// Return plugin state as key-value pairs for server state API responses.
+    fn plugin_state(&self) -> HashMap<String, Option<String>>;
 }
 
 /// Plugin manager for registering and invoking plugins

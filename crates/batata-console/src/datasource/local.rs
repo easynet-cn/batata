@@ -24,12 +24,13 @@ use batata_server_common::console::model::{
 
 use std::collections::{HashMap, HashSet};
 
+use batata_plugin::PluginStateProvider;
 use batata_server_common::model::{
     AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, BATATA_VERSION_KEY,
-    CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE, CONSUL_PORT_STATE,
-    CONSUL_VERSION_KEY, Configuration, DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA,
-    DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE,
-    FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
+    CONFIG_RENTENTION_DAYS_PROPERTY_STATE, Configuration,
+    DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
+    DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
+    IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
     MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
     NACOS_VERSION_KEY, NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE,
     STARTUP_MODE_STATE,
@@ -45,6 +46,7 @@ pub struct LocalDataSource {
     _config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
     configuration: Configuration,
     naming_service: Option<Arc<dyn NamingServiceProvider>>,
+    plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
 }
 
 impl LocalDataSource {
@@ -54,6 +56,7 @@ impl LocalDataSource {
         config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
         configuration: Configuration,
         naming_service: Option<Arc<dyn NamingServiceProvider>>,
+        plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
     ) -> Self {
         Self {
             persistence,
@@ -61,6 +64,7 @@ impl LocalDataSource {
             _config_subscriber_manager: config_subscriber_manager,
             configuration,
             naming_service,
+            plugin_state_providers,
         }
     }
 }
@@ -971,7 +975,6 @@ impl ConsoleDataSource for LocalDataSource {
         state_map.insert(FUNCTION_MODE_STATE.to_string(), cfg.function_mode());
         state_map.insert(NACOS_VERSION.to_string(), Some(cfg.version()));
         state_map.insert(NACOS_VERSION_KEY.to_string(), Some(cfg.nacos_version()));
-        state_map.insert(CONSUL_VERSION_KEY.to_string(), Some(cfg.consul_version()));
         state_map.insert(BATATA_VERSION_KEY.to_string(), Some(cfg.batata_version()));
 
         // Console module state
@@ -984,15 +987,10 @@ impl ConsoleDataSource for LocalDataSource {
             Some(format!("{}", cfg.auth_console_enabled())),
         );
 
-        // Plugin module state
-        state_map.insert(
-            CONSUL_ENABLED_STATE.to_string(),
-            Some(format!("{}", cfg.consul_enabled())),
-        );
-        state_map.insert(
-            CONSUL_PORT_STATE.to_string(),
-            Some(format!("{}", cfg.consul_server_port())),
-        );
+        // Plugin module state (dynamically collected from providers)
+        for provider in &self.plugin_state_providers {
+            state_map.extend(provider.plugin_state());
+        }
         state_map
     }
 

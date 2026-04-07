@@ -57,6 +57,9 @@ rand = { workspace = true }
 # System info
 sysinfo = { workspace = true }
 
+# Configuration
+config = { workspace = true }
+
 # Hostname
 hostname = { workspace = true }
 

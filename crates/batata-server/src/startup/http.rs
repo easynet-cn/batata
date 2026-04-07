@@ -163,7 +163,7 @@ pub fn plugin_http_server(
     port: u16,
 ) -> Result<Server, std::io::Error> {
     let rate_limit_config = app_state.configuration.rate_limit_config();
-    let consul_workers = app_state.configuration.consul_http_workers();
+    let plugin_workers = plugin.http_workers();
     let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
@@ -210,7 +210,7 @@ pub fn plugin_http_server(
             // Delegate all app_data and routes to the protocol adapter plugin
             .configure(|cfg| plugin.configure(cfg))
     })
-    .workers(consul_workers)
+    .workers(plugin_workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .client_request_timeout(std::time::Duration::from_secs(client_request_timeout_secs))
     .bind((address, port))?

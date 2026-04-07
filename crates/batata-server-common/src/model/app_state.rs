@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuthProvider};
 use batata_consistency::RaftNode;
 use batata_persistence::PersistenceService;
-use batata_plugin::ControlPlugin;
+use batata_plugin::{ControlPlugin, PluginStateProvider};
 
 use crate::console::datasource::ConsoleDataSource;
 
@@ -17,12 +17,11 @@ use super::{
     config::Configuration,
     constants::{
         AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE,
-        CONSUL_ENABLED_STATE, CONSUL_PORT_STATE, DATASOURCE_PLATFORM_PROPERTY_STATE,
-        DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE,
-        DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
-        IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
-        NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION, NOTIFY_CONNECT_TIMEOUT,
-        NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
+        DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
+        DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
+        IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
+        MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
+        NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
     },
 };
 
@@ -56,6 +55,8 @@ pub struct AppState {
     pub control_plugin: Option<Arc<dyn ControlPlugin>>,
     /// Config encryption provider for encrypting/decrypting configuration values
     pub encryption_service: Option<Arc<dyn batata_common::ConfigEncryptionProvider>>,
+    /// Plugin state providers for dynamic plugin state collection
+    pub plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -76,6 +77,10 @@ impl std::fmt::Debug for AppState {
             .field("server_status", &self.server_status)
             .field("control_plugin", &self.control_plugin.is_some())
             .field("encryption_service", &self.encryption_service.is_some())
+            .field(
+                "plugin_state_providers",
+                &self.plugin_state_providers.len(),
+            )
             .finish()
     }
 }
@@ -95,6 +100,7 @@ impl Clone for AppState {
             server_status: self.server_status.clone(),
             control_plugin: self.control_plugin.clone(),
             encryption_service: self.encryption_service.clone(),
+            plugin_state_providers: self.plugin_state_providers.clone(),
         }
     }
 }
@@ -360,18 +366,15 @@ impl AppState {
         state
     }
 
-    /// Get plugin state as a HashMap for API responses
+    /// Get plugin state as a HashMap for API responses.
+    ///
+    /// Dynamically collects state from all registered `PluginStateProvider`s,
+    /// so the core doesn't need to know about specific plugins.
     pub fn plugin_state(&self) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(4);
-
-        state.insert(
-            CONSUL_ENABLED_STATE.to_string(),
-            Some(format!("{}", self.configuration.consul_enabled())),
-        );
-        state.insert(
-            CONSUL_PORT_STATE.to_string(),
-            Some(format!("{}", self.configuration.consul_server_port())),
-        );
+        let mut state = HashMap::new();
+        for provider in &self.plugin_state_providers {
+            state.extend(provider.plugin_state());
+        }
         state
     }
 }

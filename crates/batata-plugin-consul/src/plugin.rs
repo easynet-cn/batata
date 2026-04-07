@@ -4,9 +4,10 @@
 //! all Consul services, routes, and app_data configuration.
 //!
 //! Supports two-phase initialization:
-//! 1. Construction via `from_config()` — lightweight, no DB or Raft needed
+//! 1. Construction via `from_plugin_config()` — lightweight, no DB or Raft needed
 //! 2. Initialization via `init(ctx)` — creates stores, registers Raft, builds services
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,7 +15,7 @@ use rocksdb::DB;
 
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
-use batata_plugin::ProtocolAdapterPlugin;
+use batata_plugin::{PluginStateProvider, ProtocolAdapterPlugin};
 
 use crate::acl::AclService;
 use crate::agent::ConsulAgentService;
@@ -28,7 +29,7 @@ use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTableIndex};
 use crate::kv::ConsulKVService;
 use crate::lock::{ConsulLockService, ConsulSemaphoreService};
-use crate::model::ConsulDatacenterConfig;
+use crate::model::{ConsulDatacenterConfig, ConsulPluginConfig};
 use crate::operator::ConsulOperatorService;
 use crate::peering::ConsulPeeringService;
 use crate::query::ConsulQueryService;
@@ -69,22 +70,16 @@ pub struct ConsulPluginInner {
 /// Consul compatibility protocol adapter plugin.
 ///
 /// Supports two-phase initialization:
-/// - Phase 1: `from_config()` creates a lightweight plugin with only config
+/// - Phase 1: `from_plugin_config()` creates a lightweight plugin with only config
 /// - Phase 2: `init(ctx)` reads Raft/cluster info from context, builds all services
 ///
 /// Legacy constructors (`new()`, `with_consul_raft()`) are preserved for backward
 /// compatibility but will be removed once `consul_init.rs` is deleted.
 pub struct ConsulPlugin {
-    /// Whether this plugin is enabled.
-    enabled: bool,
-    /// Whether ACL is enabled.
-    acl_enabled: bool,
-    /// Initial management token for ACL bootstrap (like Consul's `acl.tokens.initial_management`).
-    initial_management_token: Option<String>,
-    /// Datacenter configuration.
+    /// Plugin configuration (all consul-specific settings).
+    config: ConsulPluginConfig,
+    /// Datacenter configuration (convenience alias for config.dc_config).
     pub dc_config: ConsulDatacenterConfig,
-    /// Whether to auto-register the Consul service on startup.
-    register_self: bool,
     /// Lazily initialized inner state (populated during `init()`).
     inner: std::sync::OnceLock<ConsulPluginInner>,
 }
@@ -98,21 +93,11 @@ impl ConsulPlugin {
     ///
     /// No database, Raft, or heavy services are created here. Call `init(ctx)`
     /// to complete initialization with server context.
-    pub fn from_config(
-        enabled: bool,
-        acl_enabled: bool,
-        initial_management_token: Option<String>,
-        dc_config: ConsulDatacenterConfig,
-        register_self: bool,
-        _server_address: String,
-        _server_port: u16,
-    ) -> Self {
+    pub fn from_plugin_config(config: ConsulPluginConfig) -> Self {
+        let dc_config = config.dc_config.clone();
         Self {
-            enabled,
-            acl_enabled,
-            initial_management_token,
+            config,
             dc_config,
-            register_self,
             inner: std::sync::OnceLock::new(),
         }
     }
@@ -156,8 +141,8 @@ impl ConsulPlugin {
             ),
             event: ConsulEventService::new(index_provider.clone()),
             index_provider,
-            acl: if self.acl_enabled {
-                match &self.initial_management_token {
+            acl: if self.config.acl_enabled {
+                match &self.config.initial_management_token {
                     Some(token) => AclService::with_initial_management_token(token.clone()),
                     None => AclService::new(),
                 }
@@ -212,7 +197,7 @@ impl ConsulPlugin {
             kv,
             catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
                 .with_index_provider(index_provider.clone()),
-            acl: if self.acl_enabled {
+            acl: if self.config.acl_enabled {
                 AclService::with_raft(db.clone(), consul_raft.clone())
             } else {
                 AclService::disabled()
@@ -255,7 +240,7 @@ impl ConsulPlugin {
 
     /// Creates Consul plugin with in-memory storage.
     ///
-    /// **Deprecated**: Use `from_config()` + `init()` instead. Kept for backward
+    /// **Deprecated**: Use `from_plugin_config()` + `init()` instead. Kept for backward
     /// compatibility with `consul_init.rs`.
     ///
     /// If `naming_store` is provided, uses it. Otherwise creates a new one.
@@ -268,12 +253,17 @@ impl ConsulPlugin {
         let naming_store =
             naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
-        let plugin = Self {
+        let config = ConsulPluginConfig {
             enabled: true,
             acl_enabled,
             initial_management_token: None,
-            dc_config: dc_config.clone(),
             register_self: false,
+            dc_config: dc_config.clone(),
+            ..ConsulPluginConfig::default()
+        };
+        let plugin = Self {
+            config,
+            dc_config,
             inner: std::sync::OnceLock::new(),
         };
 
@@ -284,7 +274,7 @@ impl ConsulPlugin {
 
     /// Creates Consul plugin with Raft-replicated RocksDB storage (cluster mode).
     ///
-    /// **Deprecated**: Use `from_config()` + `init()` instead. Kept for backward
+    /// **Deprecated**: Use `from_plugin_config()` + `init()` instead. Kept for backward
     /// compatibility with `consul_init.rs`.
     ///
     /// Uses `ConsulRaftWriter` to route Consul writes through the core Raft group
@@ -301,12 +291,17 @@ impl ConsulPlugin {
         let naming_store =
             naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
-        let plugin = Self {
+        let config = ConsulPluginConfig {
             enabled: true,
             acl_enabled,
             initial_management_token: None,
-            dc_config: dc_config.clone(),
             register_self: false,
+            dc_config: dc_config.clone(),
+            ..ConsulPluginConfig::default()
+        };
+        let plugin = Self {
+            config,
+            dc_config,
             inner: std::sync::OnceLock::new(),
         };
 
@@ -358,11 +353,15 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.config.enabled
     }
 
     fn default_port(&self) -> u16 {
         self.dc_config.consul_port
+    }
+
+    fn http_workers(&self) -> usize {
+        self.config.http_workers
     }
 
     fn required_column_families(&self) -> Vec<String> {
@@ -466,7 +465,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         let inner = self.inner();
 
         // Auto-register Consul service if enabled
-        if self.register_self {
+        if self.config.register_self {
             tracing::info!("Auto-registering Consul service...");
             let agent = inner.agent.clone();
             let dc_config = self.dc_config.clone();
@@ -560,6 +559,29 @@ impl ConsulPlugin {
     }
 }
 
+impl PluginStateProvider for ConsulPlugin {
+    fn plugin_state(&self) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(4);
+        state.insert(
+            "consul_enabled".to_string(),
+            Some(format!("{}", self.config.enabled)),
+        );
+        state.insert(
+            "consul_port".to_string(),
+            Some(format!("{}", self.dc_config.consul_port)),
+        );
+        state.insert(
+            "consul_version".to_string(),
+            Some(self.dc_config.consul_version.clone()),
+        );
+        state.insert(
+            "consul_acl_enabled".to_string(),
+            Some(format!("{}", self.config.acl_enabled)),
+        );
+        state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,17 +607,13 @@ mod tests {
     }
 
     #[test]
-    fn test_consul_plugin_from_config() {
-        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin = ConsulPlugin::from_config(
-            true,
-            false,
-            None,
-            dc_config,
-            false,
-            "127.0.0.1".to_string(),
-            8500,
-        );
+    fn test_consul_plugin_from_plugin_config() {
+        let config = ConsulPluginConfig {
+            enabled: true,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        };
+        let plugin = ConsulPlugin::from_plugin_config(config);
         assert!(plugin.is_enabled());
         assert_eq!(plugin.protocol(), "consul");
         assert_eq!(plugin.default_port(), 8500);
@@ -605,16 +623,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_consul_plugin_from_config_init() {
-        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin = ConsulPlugin::from_config(
-            true,
-            false,
-            None,
-            dc_config,
-            false,
-            "127.0.0.1".to_string(),
-            8500,
-        );
+        let config = ConsulPluginConfig {
+            enabled: true,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        };
+        let plugin = ConsulPlugin::from_plugin_config(config);
 
         // Initialize with empty context (standalone mode)
         let ctx = batata_plugin::PluginContext::new();
@@ -635,6 +649,41 @@ mod tests {
         let ctx = batata_plugin::PluginContext::new();
         assert!(plugin.init(&ctx).await.is_ok());
         // Should not panic or error
+    }
+
+    #[test]
+    fn test_consul_plugin_state_provider() {
+        let plugin = create_test_plugin();
+        let state = plugin.plugin_state();
+        assert_eq!(
+            state.get("consul_enabled"),
+            Some(&Some("true".to_string()))
+        );
+        assert_eq!(
+            state.get("consul_port"),
+            Some(&Some("8500".to_string()))
+        );
+        assert!(state.contains_key("consul_version"));
+        assert_eq!(
+            state.get("consul_acl_enabled"),
+            Some(&Some("false".to_string()))
+        );
+        assert_eq!(state.len(), 4);
+    }
+
+    #[test]
+    fn test_consul_plugin_state_provider_disabled() {
+        let config = ConsulPluginConfig {
+            enabled: false,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        };
+        let plugin = ConsulPlugin::from_plugin_config(config);
+        let state = plugin.plugin_state();
+        assert_eq!(
+            state.get("consul_enabled"),
+            Some(&Some("false".to_string()))
+        );
     }
 
     fn create_test_plugin() -> ConsulPlugin {

@@ -26,6 +26,11 @@ async fn test_v1_auth_login_success() {
         auth_plugin: None,
         persistence,
         health_check_manager,
+        raft_node: None,
+        server_status: std::sync::Arc::new(batata_server_common::ServerStatusManager::new()),
+        control_plugin: None,
+        encryption_service: None,
+        plugin_state_providers: vec![],
     });
 
     // Create test app
@@ -81,6 +86,11 @@ async fn test_v3_auth_login_success() {
         auth_plugin: None,
         persistence,
         health_check_manager,
+        raft_node: None,
+        server_status: std::sync::Arc::new(batata_server_common::ServerStatusManager::new()),
+        control_plugin: None,
+        encryption_service: None,
+        plugin_state_providers: vec![],
     });
 
     // Create test app

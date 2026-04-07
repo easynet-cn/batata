@@ -5,6 +5,7 @@ pub mod local;
 pub mod remote;
 
 use batata_common::ClusterManager;
+use batata_plugin::PluginStateProvider;
 
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ pub async fn create_datasource(
     config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
     naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>>,
     persistence: Option<Arc<dyn batata_persistence::PersistenceService>>,
+    plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {
         // Remote mode: use HTTP client to connect to server
@@ -48,6 +50,7 @@ pub async fn create_datasource(
             config_subscriber_manager,
             configuration.clone(),
             naming_service,
+            plugin_state_providers,
         );
         Ok(Arc::new(local_datasource))
     }

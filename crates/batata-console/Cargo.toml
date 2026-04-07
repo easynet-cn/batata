@@ -13,6 +13,7 @@ batata-api = { workspace = true }
 batata-persistence = { workspace = true }
 batata-config = { workspace = true }
 batata-maintainer-client = { workspace = true }
+batata-plugin = { workspace = true }
 batata-server-common = { workspace = true }
 
 # Web framework

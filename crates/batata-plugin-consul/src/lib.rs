@@ -58,7 +58,8 @@ pub mod status;
 // Re-export route functions for easy integration
 pub use route::routes;
 
-// Re-export the plugin
+// Re-export the plugin and its config
+pub use model::ConsulPluginConfig;
 pub use plugin::ConsulPlugin;
 
 // Re-export key services

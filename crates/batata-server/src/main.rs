@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
-use batata_plugin::Plugin as _;
+use batata_plugin::{Plugin as _, ProtocolAdapterPlugin as _};
 use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
@@ -87,35 +87,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut plugin_manager = batata_plugin::spi::PluginManager::new();
     let mut consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>> = None;
 
-    if configuration.consul_enabled() {
-        let dc_config = batata_plugin_consul::model::ConsulDatacenterConfig::new(
-            configuration.consul_datacenter(),
-        )
-        .with_primary(configuration.consul_primary_datacenter())
-        .with_consul_version(configuration.consul_version())
-        .with_batata_version(configuration.batata_version())
-        .with_consul_port(configuration.consul_server_port())
-        .with_main_port(configuration.server_main_port())
-        .with_data_dir(&configuration.embedded_data_dir());
-
-        // Override node_name from config (like Consul's -node flag)
-        let dc_config = if let Some(node_name) = configuration.consul_node_name() {
-            dc_config.with_node_name(node_name)
-        } else {
-            dc_config
-        };
-
-        let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_config(
-            true,
-            configuration.consul_acl_enabled(),
-            configuration.consul_acl_initial_management_token(),
-            dc_config,
-            configuration.consul_register_self(),
-            configuration.server_address(),
-            configuration.consul_server_port(),
-        ));
+    let consul_config = batata_plugin_consul::ConsulPluginConfig::from_config(&configuration.config);
+    let consul_plugin = Arc::new(
+        batata_plugin_consul::ConsulPlugin::from_plugin_config(consul_config),
+    );
+    if consul_plugin.is_enabled() {
         plugin_manager.register_protocol_adapter(consul_plugin.clone());
-        consul_plugin_ref = Some(consul_plugin);
+        consul_plugin_ref = Some(consul_plugin.clone());
     }
 
     // Collect plugin CFs before creating RocksDB
@@ -147,12 +125,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .clone()
             .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>);
 
+    // Build plugin state providers for server state API.
+    // Always include consul plugin so state API returns consul_enabled even when disabled.
+    let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> =
+        vec![consul_plugin.clone() as Arc<dyn batata_plugin::PluginStateProvider>];
+
     let console_datasource = batata_console::create_datasource(
         &configuration,
         persistence_ctx.cluster_manager.clone(),
         config_subscriber_manager.clone(),
         naming_service.clone(),
         persistence_ctx.persistence.clone(),
+        plugin_state_providers.clone(),
     )
     .await?;
 
@@ -223,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         encryption_service: Some(
             encryption_service.clone() as Arc<dyn batata_common::ConfigEncryptionProvider>
         ),
+        plugin_state_providers,
     });
 
     if !app_state.configuration.data_warmup() {

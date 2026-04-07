@@ -673,7 +673,7 @@ pub async fn get_checks_by_state(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
-    _query: web::Query<HealthQueryParams>,
+    query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let state = path.into_inner();
@@ -696,11 +696,16 @@ pub async fn get_checks_by_state(
             .json(ConsulError::new(format!("Invalid state: {}", state)));
     }
 
-    let checks = if state == "any" {
+    let mut checks = if state == "any" {
         health_service.get_all_checks().await
     } else {
         health_service.get_checks_by_status(&state).await
     };
+
+    // Apply filter expression if provided
+    if let Some(ref filter) = query.filter {
+        checks = apply_health_check_filter(checks, filter);
+    }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).json(checks)
@@ -713,7 +718,7 @@ pub async fn get_node_checks(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
-    _query: web::Query<HealthQueryParams>,
+    query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node = path.into_inner();
@@ -725,12 +730,17 @@ pub async fn get_node_checks(
     }
 
     // Filter checks by node
-    let checks: Vec<HealthCheck> = health_service
+    let mut checks: Vec<HealthCheck> = health_service
         .get_all_checks()
         .await
         .into_iter()
         .filter(|c| c.node == node)
         .collect();
+
+    // Apply filter expression if provided
+    if let Some(ref filter) = query.filter {
+        checks = apply_health_check_filter(checks, filter);
+    }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).json(checks)

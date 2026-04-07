@@ -211,11 +211,7 @@ impl Configuration {
         self.config.get_string("nacos.version").unwrap_or_default()
     }
 
-    pub fn consul_version(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.version")
-            .unwrap_or_default()
-    }
+
 
     pub fn batata_version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -1181,95 +1177,6 @@ impl Configuration {
     }
 
     // ========================================================================
-    // Consul Compatibility Plugin Configuration
-    // ========================================================================
-
-    /// Check if Consul compatibility server is enabled
-    pub fn consul_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.plugin.consul.enabled")
-            .unwrap_or(false)
-    }
-
-    /// Get Consul compatibility server port (default: 8500)
-    pub fn consul_server_port(&self) -> u16 {
-        self.config
-            .get_int("batata.plugin.consul.port")
-            .unwrap_or(8500) as u16
-    }
-
-    /// Check if Consul ACL is enabled (default: false)
-    pub fn consul_acl_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.plugin.consul.acl.enabled")
-            .unwrap_or(false)
-    }
-
-    /// Get the initial management token for Consul ACL bootstrap.
-    /// Similar to Consul's `acl.tokens.initial_management`.
-    /// When set, this value is used as the bootstrap token's secret_id.
-    pub fn consul_acl_initial_management_token(&self) -> Option<String> {
-        self.config
-            .get_string("batata.plugin.consul.acl.tokens.initial_management")
-            .ok()
-    }
-
-    /// Check if Consul should register itself as a service (default: true)
-    pub fn consul_register_self(&self) -> bool {
-        self.config
-            .get_bool("batata.plugin.consul.register_self")
-            .unwrap_or(true)
-    }
-
-    /// Get Consul check reap interval in seconds (default: 30)
-    /// This is the interval at which services with critical health checks
-    /// will be checked for automatic deregistration.
-    pub fn consul_check_reap_interval(&self) -> u64 {
-        self.config
-            .get_int("batata.plugin.consul.check_reap_interval")
-            .unwrap_or(30) as u64
-    }
-
-    /// Get Consul datacenter name (default: "dc1")
-    pub fn consul_datacenter(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.datacenter")
-            .unwrap_or_else(|_| "dc1".to_string())
-    }
-
-    /// Get Consul primary datacenter name (defaults to consul_datacenter)
-    pub fn consul_primary_datacenter(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.primary_datacenter")
-            .unwrap_or_else(|_| self.consul_datacenter())
-    }
-
-    /// Get Consul node name (defaults to system hostname, like Consul's -node flag)
-    pub fn consul_node_name(&self) -> Option<String> {
-        self.config
-            .get_string("batata.plugin.consul.node_name")
-            .ok()
-            .filter(|s| !s.is_empty())
-    }
-
-    /// Get the number of HTTP workers for Consul server.
-    /// Defaults to min(4, cpu_cores/2) to avoid CPU contention with the main Nacos server.
-    pub fn consul_http_workers(&self) -> usize {
-        let v = self
-            .config
-            .get_int("batata.plugin.consul.http.workers")
-            .unwrap_or(0) as usize;
-        if v == 0 {
-            let cpus = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4);
-            std::cmp::min(4, cpus / 2).max(2)
-        } else {
-            v
-        }
-    }
-
-    // ========================================================================
     // MCP Registry Configuration
     // ========================================================================
 
@@ -1845,24 +1752,6 @@ impl Configuration {
     }
 
     // ========================================================================
-    // Consul Client Configuration
-    // ========================================================================
-
-    /// Consul client connect timeout in seconds (default: 5)
-    pub fn consul_client_connect_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.plugin.consul.client.connect_timeout_secs")
-            .unwrap_or(5) as u64
-    }
-
-    /// Consul client read timeout in seconds (default: 30)
-    pub fn consul_client_read_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.plugin.consul.client.read_timeout_secs")
-            .unwrap_or(30) as u64
-    }
-
-    // ========================================================================
     // Naming Health Check Intervals
     // ========================================================================
 
@@ -2256,48 +2145,6 @@ mod tests {
         ]);
         assert_eq!(cfg.server_identity_key(), "serverIdentity");
         assert_eq!(cfg.server_identity_value(), "cluster-node-1");
-    }
-
-    #[test]
-    fn test_consul_enabled_default_false() {
-        let cfg = build_config(vec![]);
-        assert!(!cfg.consul_enabled());
-    }
-
-    #[test]
-    fn test_consul_enabled_false() {
-        let cfg = build_config(vec![("batata.plugin.consul.enabled", false.into())]);
-        assert!(!cfg.consul_enabled());
-    }
-
-    #[test]
-    fn test_consul_server_port_default() {
-        let cfg = build_config(vec![]);
-        assert_eq!(cfg.consul_server_port(), 8500);
-    }
-
-    #[test]
-    fn test_consul_server_port_custom() {
-        let cfg = build_config(vec![("batata.plugin.consul.port", 9500_i64.into())]);
-        assert_eq!(cfg.consul_server_port(), 9500);
-    }
-
-    #[test]
-    fn test_consul_register_self_default() {
-        let cfg = build_config(vec![]);
-        assert!(cfg.consul_register_self());
-    }
-
-    #[test]
-    fn test_consul_register_self_true() {
-        let cfg = build_config(vec![("batata.plugin.consul.register_self", true.into())]);
-        assert!(cfg.consul_register_self());
-    }
-
-    #[test]
-    fn test_consul_register_self_false() {
-        let cfg = build_config(vec![("batata.plugin.consul.register_self", false.into())]);
-        assert!(!cfg.consul_register_self());
     }
 
     // Rate Limit Configuration Tests

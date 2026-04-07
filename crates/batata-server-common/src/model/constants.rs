@@ -136,7 +136,6 @@ pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "batata.preferHostnameOv
 pub const ROOT_WEB_CONTEXT_PATH: &str = "/";
 pub const NACOS_VERSION: &str = "version";
 pub const NACOS_VERSION_KEY: &str = "nacos_version";
-pub const CONSUL_VERSION_KEY: &str = "consul_version";
 pub const BATATA_VERSION_KEY: &str = "batata_version";
 pub const NACOS_SERVER_IP: &str = "batata.server.ip";
 pub const NACOS_SERVER_IP_STATE: &str = "nacos_server_ip";
@@ -194,13 +193,6 @@ pub const DERBY_BASE_DIR: &str = "derby-data";
 pub const NACOS_PLUGIN_DATASOURCE_LOG: &str = "batata.plugin.datasource.log.enabled";
 pub const NACOS_PLUGIN_DATASOURCE_LOG_STATE: &str = "plugin_datasource_log_enabled";
 pub const DATASOURCE_PLATFORM_PROPERTY_STATE: &str = "datasource_platform";
-
-// ============================================================================
-// Plugin State Constants
-// ============================================================================
-
-pub const CONSUL_ENABLED_STATE: &str = "consul_enabled";
-pub const CONSUL_PORT_STATE: &str = "consul_port";
 
 // ============================================================================
 // Config Model Constants

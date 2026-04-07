@@ -1,5 +1,4 @@
 // Common types shared across different registry implementations
-// These types are registry-agnostic and can be mapped to/from Nacos, Consul, etc.
 
 use md5::Digest;
 use serde::{Deserialize, Serialize};

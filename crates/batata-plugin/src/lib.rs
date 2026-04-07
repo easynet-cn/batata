@@ -41,6 +41,9 @@ pub use spi::PluginContext;
 /// Plugin naming store trait and error type (re-exported from spi)
 pub use spi::{PluginNamingStore, PluginNamingStoreError};
 
+/// Plugin state provider trait (re-exported from spi)
+pub use spi::PluginStateProvider;
+
 /// Health check result handler trait (re-exported from spi)
 pub use spi::HealthCheckResultHandler;
 
