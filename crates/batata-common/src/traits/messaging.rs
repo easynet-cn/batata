@@ -34,7 +34,10 @@ pub trait PayloadHandler: Send + Sync {
 /// Abstracts heartbeat recording and removal operations,
 /// allowing AppState to hold a trait object instead of `Arc<dyn Any>`.
 pub trait HeartbeatService: Send + Sync {
-    /// Record a heartbeat for an instance
+    /// Record a heartbeat for an instance.
+    ///
+    /// `ephemeral` indicates whether this is an ephemeral instance. Persistent
+    /// instances (ephemeral=false) are not subject to heartbeat-based expiry.
     #[allow(clippy::too_many_arguments)]
     fn record_heartbeat(
         &self,
@@ -46,6 +49,7 @@ pub trait HeartbeatService: Send + Sync {
         cluster_name: &str,
         heartbeat_timeout: i64,
         ip_delete_timeout: i64,
+        ephemeral: bool,
     );
 
     /// Remove heartbeat tracking for an instance

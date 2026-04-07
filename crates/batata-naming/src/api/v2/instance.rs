@@ -161,6 +161,7 @@ pub async fn register_instance(
             cluster_name,
             instance.get_heartbeat_timeout(),
             instance.get_ip_delete_timeout(),
+            instance.ephemeral,
         );
     }
 
@@ -988,7 +989,7 @@ pub async fn beat_instance(
             heartbeat_instance,
         );
 
-        // Update heartbeat tracking
+        // Update heartbeat tracking (beat API is always ephemeral)
         if result && let Some(ref hc_service) = data.health_check_manager {
             hc_service.record_heartbeat(
                 namespace_id,
@@ -999,6 +1000,7 @@ pub async fn beat_instance(
                 cluster_name,
                 15000, // default heartbeat_timeout
                 30000, // default ip_delete_timeout
+                true,  // beat API is always ephemeral
             );
         }
 
@@ -1025,7 +1027,7 @@ pub async fn beat_instance(
             heartbeat_instance,
         );
 
-        // Update heartbeat tracking
+        // Update heartbeat tracking (heartbeat API is always ephemeral)
         if result && let Some(ref hc_service) = data.health_check_manager {
             hc_service.record_heartbeat(
                 namespace_id,
@@ -1036,6 +1038,7 @@ pub async fn beat_instance(
                 cluster_name,
                 15000, // default heartbeat_timeout
                 30000, // default ip_delete_timeout
+                true,  // heartbeat API is always ephemeral
             );
         }
 

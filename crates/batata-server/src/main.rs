@@ -157,6 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ns.clone(),
                 health_check_config,
                 expire_enabled,
+                None,
+                None,
             ));
             info!(
                 "Health check manager created (expire_enabled={}, health_check_enabled={})",
@@ -291,6 +293,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ====================================================================
     // Phase 8: Start background tasks
     // ====================================================================
+
+    // Upgrade health check to cluster mode if not standalone.
+    // DistroProtocol (and its DistroMapper) is now available from gRPC servers.
+    if !app_state.configuration.is_standalone()
+        && let Some(ref hc_manager) = health_check_manager
+    {
+        let distro = grpc_servers.distro_protocol();
+        hc_manager.upgrade_to_cluster(
+            Arc::new(HealthCheckConfig {
+                heartbeat_interval_secs: app_state
+                    .configuration
+                    .naming_heartbeat_check_interval_secs(),
+                ttl_monitor_interval_secs: app_state
+                    .configuration
+                    .naming_ttl_monitor_interval_secs(),
+                deregister_monitor_interval_secs: app_state
+                    .configuration
+                    .naming_deregister_monitor_interval_secs(),
+                ..HealthCheckConfig::default()
+            }),
+            distro.mapper().clone(),
+            distro.local_address().to_string(),
+            distro.clone(),
+        );
+        info!(
+            "Health check upgraded to cluster mode (local_address={})",
+            distro.local_address()
+        );
+    }
+
     start_health_checkers(&health_check_manager);
     start_warmup_poller(
         &app_state,

@@ -4,6 +4,7 @@
 //! responsible for scheduling health check tasks for all instances.
 
 use super::config::HealthCheckConfig;
+use super::interceptor::HealthCheckInterceptorChain;
 use super::processor::{
     HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor,
 };
@@ -56,6 +57,11 @@ pub struct HealthCheckReactor {
 
     /// Optional registry for unified health checks
     registry: Option<Arc<InstanceCheckRegistry>>,
+
+    /// Interceptor chain for cluster-aware health check execution.
+    /// Wrapped in Arc<RwLock<>> so the event loop always sees the latest chain
+    /// even after `upgrade_to_cluster()` replaces it.
+    interceptor_chain: Arc<std::sync::RwLock<Arc<HealthCheckInterceptorChain>>>,
 }
 
 impl HealthCheckReactor {
@@ -63,6 +69,7 @@ impl HealthCheckReactor {
     pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
 
+        let standalone_chain = Arc::new(HealthCheckInterceptorChain::standalone(config.clone()));
         let reactor = Self {
             naming_service,
             config,
@@ -70,6 +77,7 @@ impl HealthCheckReactor {
             sender,
             task_handles: Arc::new(DashMap::new()),
             registry: None,
+            interceptor_chain: Arc::new(std::sync::RwLock::new(standalone_chain)),
         };
 
         // Start the reactor event loop
@@ -83,6 +91,15 @@ impl HealthCheckReactor {
         self.registry = Some(registry);
     }
 
+    /// Replace the interceptor chain (e.g., upgrading from standalone to cluster mode).
+    /// Must be called **before** health check tasks are scheduled.
+    pub fn set_interceptor_chain(&self, chain: Arc<HealthCheckInterceptorChain>) {
+        *self
+            .interceptor_chain
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = chain;
+    }
+
     /// Start the reactor event loop
     fn start_event_loop(&self, mut receiver: mpsc::UnboundedReceiver<ReactorMessage>) {
         let naming_service = self.naming_service.clone();
@@ -90,6 +107,7 @@ impl HealthCheckReactor {
         let tasks = self.tasks.clone();
         let task_handles = self.task_handles.clone();
         let registry = self.registry.clone();
+        let interceptor_chain_lock = self.interceptor_chain.clone();
 
         tokio::spawn(async move {
             info!("Health check reactor started");
@@ -108,6 +126,12 @@ impl HealthCheckReactor {
                         // Store the task
                         tasks.insert(task_id.clone(), task.clone());
 
+                        // Read the latest interceptor chain (lock released immediately)
+                        let chain = interceptor_chain_lock
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
+
                         // Schedule the task
                         Self::schedule_task_loop(
                             task,
@@ -115,6 +139,7 @@ impl HealthCheckReactor {
                             config.clone(),
                             tasks.clone(),
                             task_handles.clone(),
+                            chain,
                         )
                         .await;
                     }
@@ -189,6 +214,7 @@ impl HealthCheckReactor {
         _config: Arc<HealthCheckConfig>,
         tasks: Arc<DashMap<String, HealthCheckTask>>,
         task_handles: Arc<DashMap<String, JoinHandle<()>>>,
+        interceptor_chain: Arc<HealthCheckInterceptorChain>,
     ) {
         let task_id = task.get_task_id().to_string();
         let task_id_clone = task_id.clone();
@@ -197,6 +223,16 @@ impl HealthCheckReactor {
             let mut task = task;
 
             loop {
+                // Responsibility check: skip if this node is not responsible
+                if !interceptor_chain.should_execute(task.get_task_id()) {
+                    // Still sleep and re-check — responsibility can change when members change
+                    tokio::time::sleep(task.get_check_rt_normalized()).await;
+                    if tasks.get(&task_id_clone).is_none() {
+                        break;
+                    }
+                    continue;
+                }
+
                 // Perform health check
                 let result = match task.get_check_type() {
                     HealthCheckType::Tcp => task.do_check(&TcpHealthCheckProcessor::new()).await,

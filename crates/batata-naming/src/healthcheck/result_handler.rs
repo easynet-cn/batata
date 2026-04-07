@@ -6,20 +6,59 @@
 use std::sync::Arc;
 
 use batata_api::naming::NamingServiceProvider;
+use batata_core::service::distro::{DistroDataType, DistroProtocol};
 use batata_plugin::HealthCheckResultHandler;
+use tracing::debug;
 
 /// Core result handler — updates NamingService instance health.
 ///
 /// This is the built-in handler for batata's core Nacos-compatible naming service.
 /// It maps the tri-state health (passing/warning/critical) to Nacos's binary
 /// healthy/unhealthy model: passing/warning → healthy, critical → unhealthy.
+///
+/// When a `DistroProtocol` is set, health state changes are also propagated
+/// to other cluster nodes via the Distro sync protocol.
 pub struct CoreResultHandler {
     naming_service: Arc<dyn NamingServiceProvider>,
+    distro_protocol: std::sync::RwLock<Option<Arc<DistroProtocol>>>,
 }
 
 impl CoreResultHandler {
     pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
-        Self { naming_service }
+        Self {
+            naming_service,
+            distro_protocol: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// Set the DistroProtocol for cluster-aware health state propagation.
+    pub fn set_distro_protocol(&self, distro: Arc<DistroProtocol>) {
+        *self
+            .distro_protocol
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(distro);
+    }
+
+    /// Trigger Distro sync to propagate health state change to cluster peers.
+    fn trigger_distro_sync(&self, namespace: &str, group: &str, service: &str) {
+        let distro = self
+            .distro_protocol
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        if let Some(distro) = distro {
+            let service_key = format!("{}@@{}@@{}", namespace, group, service);
+            tokio::spawn(async move {
+                debug!(
+                    "Triggering distro sync for health change: {}",
+                    service_key
+                );
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
     }
 }
 
@@ -36,6 +75,9 @@ impl HealthCheckResultHandler for CoreResultHandler {
     ) {
         self.naming_service
             .update_instance_health(namespace, group, service, ip, port, cluster, healthy);
+
+        // Propagate health state change to cluster peers
+        self.trigger_distro_sync(namespace, group, service);
     }
 
     fn on_deregister(

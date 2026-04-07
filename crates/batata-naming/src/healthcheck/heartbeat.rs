@@ -8,6 +8,7 @@
 //! which allows full functionality without modifying the Instance model.
 
 use super::config::HealthCheckConfig;
+use super::interceptor::HealthCheckInterceptorChain;
 use crate::service::NamingService;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -29,6 +30,9 @@ pub struct HeartbeatEntry {
     last_heartbeat: i64,
     heartbeat_timeout: i64,
     ip_delete_timeout: i64,
+    /// Whether this is an ephemeral instance. Persistent instances (false) are
+    /// not auto-deleted on heartbeat timeout — they use server-side active checks.
+    ephemeral: bool,
 }
 
 /// Unhealthy instance checker (matches Nacos UnhealthyInstanceChecker)
@@ -40,17 +44,32 @@ pub struct UnhealthyInstanceChecker {
     config: Arc<HealthCheckConfig>,
     pub(crate) heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
     running: Arc<std::sync::atomic::AtomicBool>,
+    interceptor_chain: std::sync::RwLock<Arc<HealthCheckInterceptorChain>>,
 }
 
 impl UnhealthyInstanceChecker {
     /// Create a new unhealthy instance checker
-    pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
+    pub fn new(
+        naming_service: Arc<NamingService>,
+        config: Arc<HealthCheckConfig>,
+        interceptor_chain: Arc<HealthCheckInterceptorChain>,
+    ) -> Self {
         Self {
             naming_service,
             config,
             heartbeat_map: Arc::new(DashMap::new()),
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            interceptor_chain: std::sync::RwLock::new(interceptor_chain),
         }
+    }
+
+    /// Replace the interceptor chain (e.g., upgrading from standalone to cluster mode).
+    /// Must be called **before** `start()`.
+    pub fn set_interceptor_chain(&self, chain: Arc<HealthCheckInterceptorChain>) {
+        *self
+            .interceptor_chain
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = chain;
     }
 
     /// Record a heartbeat for an instance
@@ -65,6 +84,7 @@ impl UnhealthyInstanceChecker {
         cluster_name: &str,
         heartbeat_timeout: i64,
         ip_delete_timeout: i64,
+        ephemeral: bool,
     ) {
         let key = Self::make_key(namespace, group_name, service_name, ip, port, cluster_name);
         let now = chrono::Utc::now().timestamp_millis();
@@ -79,10 +99,11 @@ impl UnhealthyInstanceChecker {
             last_heartbeat: now,
             heartbeat_timeout,
             ip_delete_timeout,
+            ephemeral,
         };
 
         self.heartbeat_map.insert(key.clone(), entry);
-        debug!("Recorded heartbeat for {}", key);
+        debug!("Recorded heartbeat for {} (ephemeral={})", key, ephemeral);
     }
 
     /// Remove heartbeat tracking for an instance
@@ -141,8 +162,19 @@ impl UnhealthyInstanceChecker {
             let now = chrono::Utc::now().timestamp_millis();
             let mut unhealthy_instances = Vec::new();
 
-            // Check all tracked instances
+            // Check all tracked instances (only those this node is responsible for)
+            let chain = self
+                .interceptor_chain
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             for entry in heartbeat_map.iter() {
+                // Responsibility check: skip instances assigned to other nodes
+                let responsible_id = format!("{}:{}", entry.ip, entry.port);
+                if !chain.should_execute(&responsible_id) {
+                    continue;
+                }
+
                 let elapsed = now - entry.last_heartbeat;
                 if elapsed > entry.heartbeat_timeout {
                     unhealthy_instances.push((entry.key().clone(), elapsed));
@@ -232,6 +264,7 @@ pub struct ExpiredInstanceChecker {
     heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
     expire_enabled: bool,
     running: Arc<std::sync::atomic::AtomicBool>,
+    interceptor_chain: std::sync::RwLock<Arc<HealthCheckInterceptorChain>>,
 }
 
 impl ExpiredInstanceChecker {
@@ -241,6 +274,7 @@ impl ExpiredInstanceChecker {
         config: Arc<HealthCheckConfig>,
         expire_enabled: bool,
         heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
+        interceptor_chain: Arc<HealthCheckInterceptorChain>,
     ) -> Self {
         Self {
             naming_service,
@@ -248,7 +282,17 @@ impl ExpiredInstanceChecker {
             heartbeat_map,
             expire_enabled,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            interceptor_chain: std::sync::RwLock::new(interceptor_chain),
         }
+    }
+
+    /// Replace the interceptor chain (e.g., upgrading from standalone to cluster mode).
+    /// Must be called **before** `start()`.
+    pub fn set_interceptor_chain(&self, chain: Arc<HealthCheckInterceptorChain>) {
+        *self
+            .interceptor_chain
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = chain;
     }
 
     /// Start the checker
@@ -277,8 +321,25 @@ impl ExpiredInstanceChecker {
             let now = chrono::Utc::now().timestamp_millis();
             let mut expired_instances = Vec::new();
 
-            // Check all tracked instances
+            // Check all tracked instances (only those this node is responsible for)
+            let chain = self
+                .interceptor_chain
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             for entry in heartbeat_map.iter() {
+                // Persistent instances are NOT subject to heartbeat-based expiry.
+                // They use server-side active health checks instead (TCP/HTTP/MySQL).
+                if !entry.ephemeral {
+                    continue;
+                }
+
+                // Responsibility check: skip instances assigned to other nodes
+                let responsible_id = format!("{}:{}", entry.ip, entry.port);
+                if !chain.should_execute(&responsible_id) {
+                    continue;
+                }
+
                 let elapsed = now - entry.last_heartbeat;
                 if elapsed > entry.ip_delete_timeout {
                     expired_instances.push((entry.key().clone(), elapsed));
@@ -352,6 +413,13 @@ mod tests {
 
     use std::sync::atomic::Ordering;
 
+    /// Create a standalone interceptor chain for tests (always allows execution)
+    fn test_chain() -> Arc<HealthCheckInterceptorChain> {
+        Arc::new(HealthCheckInterceptorChain::standalone(Arc::new(
+            HealthCheckConfig::default(),
+        )))
+    }
+
     #[test]
     fn test_checker_creation() {
         let naming_service = Arc::new(NamingService::new());
@@ -359,10 +427,10 @@ mod tests {
         let heartbeat_map = Arc::new(DashMap::new());
 
         let unhealthy_checker =
-            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone(), test_chain());
 
         let expired_checker =
-            ExpiredInstanceChecker::new(naming_service, config, true, heartbeat_map);
+            ExpiredInstanceChecker::new(naming_service, config, true, heartbeat_map, test_chain());
 
         // Test that checkers can be created
         assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
@@ -373,7 +441,7 @@ mod tests {
     fn test_heartbeat_recording() {
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         checker.record_heartbeat(
             "public",
@@ -384,6 +452,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         assert_eq!(checker.get_tracked_count(), 1);
@@ -420,7 +489,7 @@ mod tests {
     fn test_heartbeat_entry_fields() {
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         checker.record_heartbeat(
             "test-namespace",
@@ -431,6 +500,7 @@ mod tests {
             "test-cluster",
             20000,
             40000,
+            true, // ephemeral
         );
 
         let key = checker.heartbeat_map.iter().next().unwrap();
@@ -444,6 +514,7 @@ mod tests {
         assert_eq!(entry.cluster_name, "test-cluster");
         assert_eq!(entry.heartbeat_timeout, 20000);
         assert_eq!(entry.ip_delete_timeout, 40000);
+        assert!(entry.ephemeral);
         assert!(entry.last_heartbeat > 0);
     }
 
@@ -451,7 +522,7 @@ mod tests {
     fn test_multiple_heartbeats_same_instance() {
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Record initial heartbeat
         checker.record_heartbeat(
@@ -463,6 +534,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         let first_time = {
@@ -483,6 +555,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Should still have only one entry
@@ -500,7 +573,7 @@ mod tests {
     fn test_multiple_instances_different_keys() {
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Register multiple instances
         checker.record_heartbeat(
@@ -512,6 +585,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         checker.record_heartbeat(
@@ -523,6 +597,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         checker.record_heartbeat(
@@ -534,6 +609,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Should track 3 instances
@@ -552,6 +628,7 @@ mod tests {
             config,
             false, // expire disabled
             heartbeat_map,
+            test_chain(),
         );
 
         assert!(!expired_checker.expire_enabled);
@@ -569,6 +646,7 @@ mod tests {
             config,
             true, // expire enabled
             heartbeat_map,
+            test_chain(),
         );
 
         assert!(expired_checker.expire_enabled);
@@ -578,7 +656,7 @@ mod tests {
     fn test_stop_checker() {
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let unhealthy_checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let unhealthy_checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Initially not running
         assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
@@ -601,7 +679,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Simulate instance with recent heartbeat
         let now = chrono::Utc::now().timestamp_millis();
@@ -614,6 +692,7 @@ mod tests {
             "DEFAULT",
             15000, // heartbeat_timeout
             30000, // ip_delete_timeout
+            true,  // ephemeral
         );
 
         // Verify the entry is tracked
@@ -640,7 +719,7 @@ mod tests {
 
         // Create unhealthy checker
         let unhealthy_checker =
-            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone(), test_chain());
 
         // Record a heartbeat that will time out
         unhealthy_checker.record_heartbeat(
@@ -652,6 +731,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Create expired checker sharing the same heartbeat_map
@@ -660,6 +740,7 @@ mod tests {
             config,
             false, // expire disabled
             unhealthy_checker.heartbeat_map.clone(),
+            test_chain(),
         );
 
         // Verify instance is tracked in both (shared map)
@@ -681,7 +762,7 @@ mod tests {
 
         // Create unhealthy checker
         let unhealthy_checker =
-            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone(), test_chain());
 
         // Record a heartbeat
         unhealthy_checker.record_heartbeat(
@@ -693,6 +774,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Create expired checker sharing the same heartbeat_map
@@ -701,6 +783,7 @@ mod tests {
             config,
             true, // expire enabled
             unhealthy_checker.heartbeat_map.clone(),
+            test_chain(),
         );
 
         // Verify instance is tracked
@@ -718,7 +801,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Set a short timeout for testing
         let short_timeout = 500; // 500ms
@@ -732,6 +815,7 @@ mod tests {
             "DEFAULT",
             short_timeout,
             1000,
+            true, // ephemeral
         );
 
         // Wait for timeout
@@ -760,7 +844,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         let heartbeat_timeout = 15000;
         let ip_delete_timeout = 30000;
@@ -774,6 +858,7 @@ mod tests {
             "DEFAULT",
             heartbeat_timeout,
             ip_delete_timeout,
+            true, // ephemeral
         );
 
         let entry = checker.heartbeat_map.iter().next().unwrap();
@@ -790,7 +875,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Register same instance in different namespaces
         checker.record_heartbeat(
@@ -802,6 +887,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         checker.record_heartbeat(
@@ -813,6 +899,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Should have 2 separate entries
@@ -825,7 +912,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Register same instance in different groups
         checker.record_heartbeat(
@@ -837,6 +924,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         checker.record_heartbeat(
@@ -848,6 +936,7 @@ mod tests {
             "DEFAULT",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Should have 2 separate entries
@@ -860,7 +949,7 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+        let checker = UnhealthyInstanceChecker::new(naming_service, config, test_chain());
 
         // Register same instance in different clusters
         checker.record_heartbeat(
@@ -872,6 +961,7 @@ mod tests {
             "cluster-A",
             15000,
             30000,
+            true, // ephemeral
         );
 
         checker.record_heartbeat(
@@ -883,6 +973,7 @@ mod tests {
             "cluster-B",
             15000,
             30000,
+            true, // ephemeral
         );
 
         // Should have 2 separate entries
