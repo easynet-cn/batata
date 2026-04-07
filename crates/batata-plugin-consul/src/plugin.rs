@@ -407,12 +407,13 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // Create Consul naming store and result handler
         let consul_naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
         let consul_index_provider = Arc::new(ConsulIndexProvider::new());
-        let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> =
-            Arc::new(crate::result_handler::ConsulResultHandler::new(
-                consul_naming_store.clone(),
-                consul_index_provider.clone(),
-            ));
-        let consul_registry = Arc::new(InstanceCheckRegistry::new(consul_result_handler));
+        let consul_result_handler = Arc::new(crate::result_handler::ConsulResultHandler::new(
+            consul_naming_store.clone(),
+            consul_index_provider.clone(),
+        ));
+        let consul_registry = Arc::new(InstanceCheckRegistry::new(
+            consul_result_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>,
+        ));
 
         let inner = if is_cluster {
             self.init_cluster(raft_node, consul_naming_store, consul_registry)
@@ -421,6 +422,15 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             tracing::info!("Consul services using in-memory storage (standalone/console mode)");
             self.build_inner_standalone(consul_naming_store, consul_registry)
         };
+
+        // Wire ConsulResultHandler to session/kv/check_index for:
+        // - on_deregister: check_id → service_id → store_key chain
+        // - on_check_critical: session invalidation + KV lock release
+        consul_result_handler.set_services(
+            inner.health.check_index(),
+            Arc::new(inner.session.clone()),
+            Arc::new(inner.kv.clone()),
+        );
 
         self.inner
             .set(inner)
@@ -484,12 +494,39 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             ttl_monitor.start().await;
         });
 
-        // Deregister monitor
+        // Deregister monitor (5s interval for responsive service cleanup)
         tracing::info!("Starting Consul deregister monitor...");
-        let deregister_monitor = DeregisterMonitor::new(inner.registry.clone(), 30);
+        let deregister_monitor = DeregisterMonitor::new(inner.registry.clone(), 5);
         tokio::spawn(async move {
             deregister_monitor.start().await;
         });
+
+        // Active health check execution (HTTP/TCP/gRPC/MySQL).
+        // Creates a reactor for the Consul registry. When checks are registered
+        // with HTTP/TCP/gRPC type, the reactor periodically executes them.
+        {
+            let naming_service = Arc::new(batata_naming::NamingService::new());
+            let config = Arc::new(batata_naming::healthcheck::HealthCheckConfig::default());
+            let mut reactor =
+                batata_naming::healthcheck::HealthCheckReactor::new(naming_service, config);
+            reactor.set_registry(inner.registry.clone());
+
+            // Wire the check scheduler so new active check registrations are auto-scheduled
+            let reactor_ref = Arc::new(reactor);
+            let reactor_for_scheduler = reactor_ref.clone();
+            inner.health.set_check_scheduler(Arc::new(move |check_key| {
+                reactor_for_scheduler.schedule_registry_check(check_key);
+            }));
+
+            // Schedule any active checks that were registered before this point
+            for (config, _status) in inner.registry.get_all_checks() {
+                if config.check_type.is_active() {
+                    reactor_ref.schedule_registry_check(&config.check_id);
+                }
+            }
+
+            tracing::info!("Consul active health check reactor started");
+        }
 
         // Session TTL cleanup
         let session_svc = inner.session.clone();

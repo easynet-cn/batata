@@ -82,6 +82,7 @@ impl HealthCheckResultHandler for CoreResultHandler {
 
     fn on_deregister(
         &self,
+        _check_id: &str,
         namespace: &str,
         group: &str,
         service: &str,
@@ -170,6 +171,7 @@ mod tests {
 
         let handler = CoreResultHandler::new(naming.clone());
         handler.on_deregister(
+            "test-check",
             "public",
             "DEFAULT_GROUP",
             "test-svc",

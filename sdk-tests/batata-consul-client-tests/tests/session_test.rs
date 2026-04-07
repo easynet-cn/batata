@@ -1,6 +1,8 @@
 mod common;
 
-use batata_consul_client::SessionEntry;
+use batata_consul_client::{
+    AgentServiceCheck, AgentServiceRegistration, KVPair, ServiceCheck, SessionEntry,
+};
 
 #[tokio::test]
 async fn test_session_create_and_destroy() {
@@ -247,6 +249,142 @@ async fn test_session_with_behavior() {
         Some("delete"),
         "session behavior should be 'delete'"
     );
+
+    // Cleanup
+    let _ = client.session_destroy(&session_id, &common::w()).await;
+}
+
+// ==================== Health-Check → Session Invalidation ====================
+
+/// Test session auto-invalidation when linked check becomes Critical.
+///
+/// Consul core behavior: sessions are automatically destroyed when their
+/// associated health checks fail. This is the safety mechanism for distributed
+/// locking — if a node holding a lock becomes unhealthy, its sessions are
+/// invalidated and locks are released so other nodes can acquire them.
+#[tokio::test]
+async fn test_session_invalidated_on_check_critical() {
+    common::init_tracing();
+    let client = common::create_client();
+    let suffix = common::test_id();
+    let svc_id = format!("session-inval-svc-{}", suffix);
+    let check_id = format!("service:{}", svc_id);
+
+    // Step 1: Register a service with a TTL check (starts passing)
+    let reg = AgentServiceRegistration {
+        id: Some(svc_id.clone()),
+        name: svc_id.clone(),
+        port: Some(8080),
+        check: Some(AgentServiceCheck {
+            check_id: Some(check_id.clone()),
+            ttl: Some("30s".to_string()),
+            status: Some("passing".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    client
+        .agent_service_register(&reg, &common::w())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Step 2: Create a session linked to this service check
+    let entry = SessionEntry {
+        name: Some(format!("check-linked-{}", suffix)),
+        ttl: Some("60s".to_string()),
+        node_checks: Some(vec![]),
+        service_checks: Some(vec![ServiceCheck {
+            id: check_id.clone(),
+            namespace: None,
+        }]),
+        ..Default::default()
+    };
+    let (session_id, _) = client.session_create(&entry, &common::w()).await.unwrap();
+    assert!(!session_id.is_empty());
+
+    // Step 3: Acquire a KV lock with this session
+    let kv_key = format!("test/session-inval/{}", suffix);
+    let kv_pair = KVPair {
+        key: kv_key.clone(),
+        value: Some("locked-by-session".to_string()),
+        session: Some(session_id.clone()),
+        ..Default::default()
+    };
+    let (acquired, _) = client.kv_acquire(&kv_pair, &common::w()).await.unwrap();
+    assert!(acquired, "KV lock should be acquired");
+
+    // Verify session exists
+    let (entries, _) = client
+        .session_info(&session_id, &common::q())
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1, "Session should exist before check failure");
+
+    // Step 4: Fail the check (mark as Critical)
+    client
+        .agent_check_fail(&check_id, "node crashed", &common::w())
+        .await
+        .unwrap();
+
+    // Wait for session invalidation to propagate
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Step 5: Verify session was automatically invalidated
+    let (entries, _) = client
+        .session_info(&session_id, &common::q())
+        .await
+        .unwrap();
+    assert!(
+        entries.is_empty(),
+        "Session must be automatically destroyed when linked check becomes Critical"
+    );
+
+    // Step 6: Verify KV lock was released
+    let (pair, _) = client.kv_get(&kv_key, &common::q()).await.unwrap();
+    if let Some(pair) = pair {
+        assert!(
+            pair.session.as_deref().unwrap_or("").is_empty(),
+            "KV lock must be released after session invalidation"
+        );
+    }
+
+    // Cleanup
+    let _ = client.kv_delete(&kv_key, &common::w()).await;
+    let _ = client.agent_service_deregister(&svc_id, &common::w()).await;
+}
+
+/// Test session survives when serfHealth is passing (default behavior).
+#[tokio::test]
+async fn test_session_survives_with_healthy_serf_check() {
+    let client = common::create_client();
+    let suffix = common::test_id();
+
+    // Create session with default checks (serfHealth)
+    let entry = SessionEntry {
+        name: Some(format!("serf-healthy-{}", suffix)),
+        ttl: Some("30s".to_string()),
+        ..Default::default()
+    };
+    let (session_id, _) = client.session_create(&entry, &common::w()).await.unwrap();
+
+    // Session should exist (serfHealth is passing)
+    let (entries, _) = client
+        .session_info(&session_id, &common::q())
+        .await
+        .unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "Session should exist while serfHealth is passing"
+    );
+    assert_eq!(entries[0].id.as_deref(), Some(session_id.as_str()));
+
+    // serfHealth should be passing
+    let (checks, _) = client.health_state("passing", &common::q()).await.unwrap();
+    let serf = checks.iter().find(|c| c.check_id == "serfHealth");
+    assert!(serf.is_some(), "serfHealth check should exist and be passing");
 
     // Cleanup
     let _ = client.session_destroy(&session_id, &common::w()).await;

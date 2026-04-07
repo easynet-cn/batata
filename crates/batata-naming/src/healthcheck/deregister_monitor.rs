@@ -71,6 +71,7 @@ impl DeregisterMonitor {
 
                 // Deregister via result handler
                 self.registry.result_handler().on_deregister(
+                    &config.check_id,
                     &config.namespace,
                     &config.group_name,
                     &config.service_name,

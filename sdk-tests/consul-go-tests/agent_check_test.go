@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
@@ -229,4 +230,59 @@ func TestAgentChecksList(t *testing.T) {
 		assert.NotEmpty(t, found.Name)
 		assert.Contains(t, []string{"passing", "warning", "critical"}, found.Status)
 	}
+}
+
+// CA-023: Test DeregisterCriticalServiceAfter auto-deregisters unhealthy services.
+// When a check stays Critical beyond the specified threshold, the entire service
+// should be automatically deregistered by the health check system.
+func TestAgentDeregisterCriticalServiceAfter(t *testing.T) {
+	client := getClient(t)
+	agent := client.Agent()
+
+	serviceID := "ca023-deregister-" + randomID()
+	checkID := "service:" + serviceID
+
+	// Register service with a short DeregisterCriticalServiceAfter (5s)
+	err := agent.ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceID,
+		Name: serviceID,
+		Port: 8080,
+		Check: &api.AgentServiceCheck{
+			CheckID:                        checkID,
+			TTL:                            "30s",
+			Status:                         "passing",
+			DeregisterCriticalServiceAfter: "5s",
+		},
+	})
+	require.NoError(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify service is registered
+	services, err := agent.Services()
+	require.NoError(t, err)
+	_, exists := services[serviceID]
+	require.True(t, exists, "Service should be registered initially")
+
+	// Fail the check
+	err = agent.FailTTL(checkID, "deliberately failing for deregister test")
+	require.NoError(t, err)
+
+	// Verify check is critical
+	checks, err := agent.Checks()
+	require.NoError(t, err)
+	if c, ok := checks[checkID]; ok {
+		assert.Equal(t, "critical", c.Status)
+	}
+
+	// Wait for DeregisterCriticalServiceAfter to kick in (5s + buffer)
+	// The deregister monitor runs every 10s by default, so wait accordingly
+	time.Sleep(20 * time.Second)
+
+	// Service should be automatically deregistered
+	services, err = agent.Services()
+	require.NoError(t, err)
+	_, stillExists := services[serviceID]
+	assert.False(t, stillExists,
+		"Service should be automatically deregistered after check stays Critical beyond DeregisterCriticalServiceAfter threshold")
 }

@@ -383,6 +383,47 @@ impl ConsulSessionService {
         Some(stored.session)
     }
 
+    /// Invalidate (destroy) all sessions linked to a check that became Critical.
+    ///
+    /// Matches Consul's `checkSessionsTxn()`: when a check enters Critical state,
+    /// all sessions that reference that check (via NodeChecks or ServiceChecks)
+    /// are automatically destroyed. The session's Behavior determines how KV
+    /// locks are handled (release vs delete), but lock handling is delegated to
+    /// the caller since this service doesn't hold a KV reference.
+    ///
+    /// Returns the list of destroyed session IDs (so the caller can release KV locks).
+    pub fn invalidate_sessions_for_check(&self, check_id: &str) -> Vec<Session> {
+        let sessions = self.list_sessions();
+        let mut invalidated = Vec::new();
+
+        for session in sessions {
+            let linked = session
+                .node_checks
+                .as_ref()
+                .is_some_and(|checks| checks.iter().any(|c| c == check_id))
+                || session
+                    .service_checks
+                    .as_ref()
+                    .is_some_and(|checks| checks.iter().any(|c| c.id == check_id));
+
+            if linked {
+                info!(
+                    "Invalidating session '{}' (name='{}') because check '{}' became critical",
+                    session.id, session.name, check_id
+                );
+
+                // Delete the session from storage
+                if let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+                    let _ = self.db.delete_cf(cf, session.id.as_bytes());
+                }
+
+                invalidated.push(session);
+            }
+        }
+
+        invalidated
+    }
+
     /// List all active sessions (skips kidx: index entries and expired sessions)
     pub fn list_sessions(&self) -> Vec<Session> {
         let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
@@ -902,14 +943,14 @@ mod tests {
             name: Some("checked-session".to_string()),
             ttl: Some("60s".to_string()),
             node_checks: Some(vec!["serfHealth".to_string()]),
-            service_checks: Some(vec!["service:web".to_string()]),
+            service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:web".to_string(), namespace: None }]),
             ..Default::default()
         };
         let session = service.create_session(req).await;
         assert_eq!(session.node_checks, Some(vec!["serfHealth".to_string()]));
         assert_eq!(
             session.service_checks,
-            Some(vec!["service:web".to_string()])
+            Some(vec![crate::model::SessionServiceCheck { id: "service:web".to_string(), namespace: None }])
         );
     }
 
@@ -948,5 +989,89 @@ mod tests {
 
         service.destroy_session(&session.id).await;
         assert_eq!(service.list_sessions().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_sessions_for_node_check() {
+        let service = ConsulSessionService::new();
+
+        // Create sessions linked to serfHealth (default)
+        let s1 = service
+            .create_session(SessionCreateRequest {
+                name: Some("session-1".to_string()),
+                ttl: Some("60s".to_string()),
+                ..Default::default() // NodeChecks defaults to ["serfHealth"]
+            })
+            .await;
+        let _s2 = service
+            .create_session(SessionCreateRequest {
+                name: Some("session-2".to_string()),
+                ttl: Some("60s".to_string()),
+                node_checks: Some(vec!["custom-check".to_string()]),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(service.list_sessions().len(), 2);
+
+        // Invalidate sessions linked to serfHealth
+        let invalidated = service.invalidate_sessions_for_check("serfHealth");
+        assert_eq!(invalidated.len(), 1);
+        assert_eq!(invalidated[0].id, s1.id);
+
+        // Only session-2 survives (linked to custom-check, not serfHealth)
+        let remaining = service.list_sessions();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].name, "session-2");
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_sessions_for_service_check() {
+        let service = ConsulSessionService::new();
+
+        let _s1 = service
+            .create_session(SessionCreateRequest {
+                name: Some("web-session".to_string()),
+                ttl: Some("60s".to_string()),
+                node_checks: Some(vec![]),
+                service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:web-1".to_string(), namespace: None }]),
+                ..Default::default()
+            })
+            .await;
+        let _s2 = service
+            .create_session(SessionCreateRequest {
+                name: Some("db-session".to_string()),
+                ttl: Some("60s".to_string()),
+                node_checks: Some(vec![]),
+                service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:db-1".to_string(), namespace: None }]),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(service.list_sessions().len(), 2);
+
+        // Only web-1 fails
+        let invalidated = service.invalidate_sessions_for_check("service:web-1");
+        assert_eq!(invalidated.len(), 1);
+        assert_eq!(invalidated[0].name, "web-session");
+
+        let remaining = service.list_sessions();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].name, "db-session");
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_sessions_no_matches() {
+        let service = ConsulSessionService::new();
+
+        let _s1 = service
+            .create_session(SessionCreateRequest {
+                name: Some("session-1".to_string()),
+                ttl: Some("60s".to_string()),
+                ..Default::default()
+            })
+            .await;
+
+        let invalidated = service.invalidate_sessions_for_check("nonexistent-check");
+        assert!(invalidated.is_empty());
+        assert_eq!(service.list_sessions().len(), 1);
     }
 }

@@ -448,3 +448,182 @@ func TestSessionRenewPeriodic(t *testing.T) {
 	assert.Nil(t, info,
 		"Session must be destroyed after RenewPeriodic stops")
 }
+
+// ==================== Health-Check → Session Invalidation ====================
+
+// CS-016: Test session auto-invalidation when linked check becomes Critical.
+// Consul core behavior: sessions are automatically destroyed when their associated
+// health checks fail. This is the safety mechanism for distributed locking —
+// if a node holding a lock becomes unhealthy, its sessions are invalidated and
+// locks are released so other nodes can acquire them.
+func TestSessionInvalidatedOnCheckCritical(t *testing.T) {
+	client := getClient(t)
+
+	serviceID := "cs016-session-inval-" + randomID()
+	checkID := "service:" + serviceID
+
+	// Step 1: Register a service with a TTL check (starts passing)
+	err := client.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceID,
+		Name: serviceID,
+		Port: 8080,
+		Check: &api.AgentServiceCheck{
+			CheckID: checkID,
+			TTL:     "30s",
+			Status:  "passing",
+		},
+	})
+	require.NoError(t, err, "Service registration should succeed")
+	defer client.Agent().ServiceDeregister(serviceID)
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Create a session linked to this service check
+	sessionID, _, err := client.Session().Create(&api.SessionEntry{
+		Name:          "check-linked-" + randomID(),
+		TTL:           "60s",
+		NodeChecks:    []string{},                // no node checks
+		ServiceChecks: []api.ServiceCheck{{ID: checkID}},
+	}, nil)
+	require.NoError(t, err, "Session create should succeed")
+	require.NotEmpty(t, sessionID)
+
+	// Step 3: Acquire a KV lock with this session
+	kvKey := "test/session-inval/" + randomID()
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
+		Key:     kvKey,
+		Value:   []byte("locked-by-session"),
+		Session: sessionID,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, acquired, "KV lock should be acquired")
+	defer client.KV().Delete(kvKey, nil)
+
+	// Verify session exists and lock is held
+	info, _, err := client.Session().Info(sessionID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, info, "Session should exist before check failure")
+
+	pair, _, err := client.KV().Get(kvKey, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Equal(t, sessionID, pair.Session, "KV should be locked by session")
+
+	// Step 4: Fail the check (mark as Critical)
+	err = client.Agent().FailTTL(checkID, "node crashed")
+	require.NoError(t, err, "FailTTL should succeed")
+
+	// Wait for session invalidation to propagate
+	time.Sleep(2 * time.Second)
+
+	// Step 5: Verify session was automatically invalidated
+	info, _, err = client.Session().Info(sessionID, nil)
+	require.NoError(t, err)
+	assert.Nil(t, info,
+		"Session must be automatically destroyed when linked check becomes Critical")
+
+	// Step 6: Verify KV lock was released (release behavior is default)
+	pair, _, err = client.KV().Get(kvKey, nil)
+	require.NoError(t, err)
+	if pair != nil {
+		assert.Empty(t, pair.Session,
+			"KV lock must be released after session invalidation")
+	}
+}
+
+// CS-017: Test session with serfHealth — session should survive while node is healthy.
+// This is the default session behavior: NodeChecks=["serfHealth"].
+func TestSessionSurvivesWithHealthySerfCheck(t *testing.T) {
+	client := getClient(t)
+
+	// Create session with default checks (serfHealth)
+	sessionID, _, err := client.Session().Create(&api.SessionEntry{
+		Name: "serf-healthy-" + randomID(),
+		TTL:  "30s",
+	}, nil)
+	require.NoError(t, err)
+	defer client.Session().Destroy(sessionID, nil)
+
+	// Session should exist (serfHealth is passing)
+	info, _, err := client.Session().Info(sessionID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, info, "Session should exist while serfHealth is passing")
+	assert.Equal(t, sessionID, info.ID)
+
+	// serfHealth should be passing
+	checks, _, err := client.Health().State("passing", nil)
+	require.NoError(t, err)
+	found := false
+	for _, c := range checks {
+		if c.CheckID == "serfHealth" {
+			found = true
+			assert.Equal(t, api.HealthPassing, c.Status)
+			break
+		}
+	}
+	assert.True(t, found, "serfHealth check should exist and be passing")
+}
+
+// CS-018: Test session invalidation with delete behavior — KV keys should be deleted.
+func TestSessionInvalidatedOnCheckCriticalDeleteBehavior(t *testing.T) {
+	client := getClient(t)
+
+	serviceID := "cs018-del-inval-" + randomID()
+	checkID := "service:" + serviceID
+
+	// Register service with TTL check
+	err := client.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceID,
+		Name: serviceID,
+		Port: 8081,
+		Check: &api.AgentServiceCheck{
+			CheckID: checkID,
+			TTL:     "30s",
+			Status:  "passing",
+		},
+	})
+	require.NoError(t, err)
+	defer client.Agent().ServiceDeregister(serviceID)
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Create session with DELETE behavior linked to service check
+	sessionID, _, err := client.Session().Create(&api.SessionEntry{
+		Name:          "delete-inval-" + randomID(),
+		TTL:           "60s",
+		Behavior:      api.SessionBehaviorDelete,
+		NodeChecks:    []string{},
+		ServiceChecks: []api.ServiceCheck{{ID: checkID}},
+	}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+
+	// Acquire KV lock
+	kvKey := "test/session-del-inval/" + randomID()
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
+		Key:     kvKey,
+		Value:   []byte("will-be-deleted"),
+		Session: sessionID,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer client.KV().Delete(kvKey, nil)
+
+	// Fail the check
+	err = client.Agent().FailTTL(checkID, "check failed")
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Second)
+
+	// Session should be invalidated
+	info, _, err := client.Session().Info(sessionID, nil)
+	require.NoError(t, err)
+	assert.Nil(t, info,
+		"Session with delete behavior must be invalidated on check Critical")
+
+	// KV key should be DELETED (not just released)
+	pair, _, err := client.KV().Get(kvKey, nil)
+	require.NoError(t, err)
+	assert.Nil(t, pair,
+		"KV key must be deleted when session with delete behavior is invalidated")
+}

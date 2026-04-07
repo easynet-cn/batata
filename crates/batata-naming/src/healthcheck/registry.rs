@@ -394,6 +394,8 @@ impl InstanceCheckRegistry {
                         "Check {} transitioned to Critical after {} failures",
                         check_key, status.consecutive_failures
                     );
+                    // Notify handler of individual check failure (e.g., Consul session invalidation)
+                    self.result_handler.on_check_critical(check_key);
                 }
             }
         }
@@ -429,6 +431,8 @@ impl InstanceCheckRegistry {
                     check_status.consecutive_successes = 0;
                     if !was_critical {
                         check_status.critical_since = Some(now);
+                        // Notify handler of individual check failure
+                        self.result_handler.on_check_critical(check_key);
                     }
                 }
                 CheckStatus::Passing => {

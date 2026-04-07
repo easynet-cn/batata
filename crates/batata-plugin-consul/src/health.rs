@@ -49,15 +49,23 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
     }
 }
 
+/// Callback type for scheduling active health checks in the reactor.
+pub type CheckScheduler = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Consul Health Check service backed by InstanceCheckRegistry.
 /// All check operations delegate to the unified registry, which immediately
 /// syncs health status changes to the naming service.
+///
+/// When a scheduler is set, active checks (HTTP/TCP/gRPC) are automatically
+/// scheduled for periodic execution upon registration.
 #[derive(Clone)]
 pub struct ConsulHealthService {
     registry: Arc<InstanceCheckRegistry>,
     check_index: Arc<ConsulCheckIndex>,
     /// Node name for this agent
     node_name: String,
+    /// Optional callback for scheduling active health checks in the reactor.
+    check_scheduler: Arc<std::sync::RwLock<Option<CheckScheduler>>>,
 }
 
 impl ConsulHealthService {
@@ -69,6 +77,7 @@ impl ConsulHealthService {
             registry,
             check_index,
             node_name,
+            check_scheduler: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -77,9 +86,25 @@ impl ConsulHealthService {
         self
     }
 
+    /// Set a callback for scheduling active health checks.
+    ///
+    /// When set, registering an active check (HTTP/TCP/gRPC/MySQL) will
+    /// automatically call this to schedule periodic execution.
+    pub fn set_check_scheduler(&self, scheduler: CheckScheduler) {
+        *self
+            .check_scheduler
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(scheduler);
+    }
+
     /// Get registry reference
     pub fn registry(&self) -> &Arc<InstanceCheckRegistry> {
         &self.registry
+    }
+
+    /// Get check index reference
+    pub fn check_index(&self) -> Arc<ConsulCheckIndex> {
+        self.check_index.clone()
     }
 
     /// Update check status (pass/warn/fail). Immediately syncs to NamingService.
@@ -197,7 +222,20 @@ impl ConsulHealthService {
             self.check_index.register_check(&check_id, svc_id);
         }
 
+        let is_active = config.check_type.is_active();
         self.registry.register_check(config);
+
+        // Schedule active checks (HTTP/TCP/gRPC/MySQL) for periodic execution
+        if is_active
+            && let Some(scheduler) = self
+                .check_scheduler
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+        {
+            scheduler(&check_id);
+        }
+
         Ok(())
     }
 

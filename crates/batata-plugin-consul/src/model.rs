@@ -1607,6 +1607,18 @@ pub struct AgentMaintenanceRequest {
 // Session Models
 // ============================================================================
 
+/// Service check reference in a session (matches Consul Go SDK `api.ServiceCheck`).
+///
+/// Used in `Session.ServiceChecks` and `SessionCreateRequest.ServiceChecks`.
+/// The Go SDK sends `[{ID: "check-id", Namespace: ""}]` — an array of objects.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct SessionServiceCheck {
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "Namespace", default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
 /// Session info - for Session API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -1628,7 +1640,7 @@ pub struct Session {
     #[serde(rename = "NodeChecks", skip_serializing_if = "Option::is_none")]
     pub node_checks: Option<Vec<String>>,
     #[serde(rename = "ServiceChecks", skip_serializing_if = "Option::is_none")]
-    pub service_checks: Option<Vec<String>>,
+    pub service_checks: Option<Vec<SessionServiceCheck>>,
     #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
     #[serde(rename = "CreateIndex")]
@@ -1653,7 +1665,7 @@ pub struct SessionCreateRequest {
     #[serde(rename = "NodeChecks", default)]
     pub node_checks: Option<Vec<String>>,
     #[serde(rename = "ServiceChecks", default)]
-    pub service_checks: Option<Vec<String>>,
+    pub service_checks: Option<Vec<SessionServiceCheck>>,
 }
 
 /// Session create response

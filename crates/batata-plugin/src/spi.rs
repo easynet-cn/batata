@@ -306,11 +306,25 @@ pub trait HealthCheckResultHandler: Send + Sync {
         healthy: bool,
     );
 
+    /// Called when an individual check transitions to Critical.
+    ///
+    /// This is called per-check, before the aggregated `on_health_changed`.
+    /// Used by Consul to invalidate sessions linked to the failed check.
+    ///
+    /// Default: no-op. Override to react to individual check failures.
+    fn on_check_critical(&self, check_id: &str) {
+        let _ = check_id;
+    }
+
     /// Called when an instance should be deregistered (critical too long).
+    ///
+    /// `check_id` is the ID of the check that triggered the deregistration.
+    /// Consul uses this to look up the ServiceID and deregister by service key.
     ///
     /// Default: no-op. Override for auto-deregister behavior.
     fn on_deregister(
         &self,
+        check_id: &str,
         namespace: &str,
         group: &str,
         service: &str,
@@ -318,7 +332,7 @@ pub trait HealthCheckResultHandler: Send + Sync {
         port: i32,
         cluster: &str,
     ) {
-        let _ = (namespace, group, service, ip, port, cluster);
+        let _ = (check_id, namespace, group, service, ip, port, cluster);
     }
 }
 
