@@ -271,7 +271,20 @@ impl Default for AclService {
 impl AclService {
     pub fn new() -> Self {
         // Initialize with bootstrap token and global-management policy
-        Self::init_bootstrap();
+        Self::init_bootstrap(None);
+
+        Self {
+            enabled: true,
+            default_policy: RulePolicy::Deny,
+            rocks_db: None,
+            raft_node: None,
+        }
+    }
+
+    /// Create an enabled ACL service with a pre-configured initial management token.
+    /// Similar to Consul's `acl.tokens.initial_management` config.
+    pub fn with_initial_management_token(token: String) -> Self {
+        Self::init_bootstrap(Some(token));
 
         Self {
             enabled: true,
@@ -349,7 +362,7 @@ impl AclService {
 
         // Only create bootstrap token/policy if not loaded from RocksDB
         if !loaded_bootstrap {
-            Self::init_bootstrap();
+            Self::init_bootstrap(None);
         }
 
         let svc = Self {
@@ -431,7 +444,7 @@ impl AclService {
         }
     }
 
-    fn init_bootstrap() {
+    fn init_bootstrap(initial_management_token: Option<String>) {
         // Create global-management policy
         let mgmt_policy = AclPolicy {
             id: "00000000-0000-0000-0000-000000000001".to_string(),
@@ -453,8 +466,13 @@ query_prefix "" { policy = "write" }
         MEMORY_POLICIES.insert(mgmt_policy.id.clone(), mgmt_policy.clone());
         MEMORY_POLICIES.insert(mgmt_policy.name.clone(), mgmt_policy);
 
-        // Create bootstrap token with a generated UUID as the secret_id
-        let bootstrap_secret = uuid::Uuid::new_v4().to_string();
+        // Use configured initial management token or generate a random UUID
+        let bootstrap_secret = initial_management_token
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        info!(
+            "ACL bootstrap token secret_id: {}",
+            bootstrap_secret
+        );
         let bootstrap_token = AclToken {
             accessor_id: BOOTSTRAP_ACCESSOR_ID.to_string(),
             secret_id: Some(bootstrap_secret.clone()),
@@ -1446,7 +1464,7 @@ pub async fn acl_bootstrap(
     }
 
     // Re-initialize bootstrap (this will create the token)
-    AclService::init_bootstrap();
+    AclService::init_bootstrap(None);
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     if let Some(token) = AclService::find_bootstrap_token() {

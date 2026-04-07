@@ -107,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_config(
             true,
             configuration.consul_acl_enabled(),
+            configuration.consul_acl_initial_management_token(),
             dc_config,
             configuration.consul_register_self(),
             configuration.server_address(),

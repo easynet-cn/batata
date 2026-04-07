@@ -79,6 +79,8 @@ pub struct ConsulPlugin {
     enabled: bool,
     /// Whether ACL is enabled.
     acl_enabled: bool,
+    /// Initial management token for ACL bootstrap (like Consul's `acl.tokens.initial_management`).
+    initial_management_token: Option<String>,
     /// Datacenter configuration.
     pub dc_config: ConsulDatacenterConfig,
     /// Whether to auto-register the Consul service on startup.
@@ -103,6 +105,7 @@ impl ConsulPlugin {
     pub fn from_config(
         enabled: bool,
         acl_enabled: bool,
+        initial_management_token: Option<String>,
         dc_config: ConsulDatacenterConfig,
         register_self: bool,
         server_address: String,
@@ -111,6 +114,7 @@ impl ConsulPlugin {
         Self {
             enabled,
             acl_enabled,
+            initial_management_token,
             dc_config,
             register_self,
             server_address,
@@ -158,7 +162,10 @@ impl ConsulPlugin {
             ),
             index_provider,
             acl: if self.acl_enabled {
-                AclService::new()
+                match &self.initial_management_token {
+                    Some(token) => AclService::with_initial_management_token(token.clone()),
+                    None => AclService::new(),
+                }
             } else {
                 AclService::disabled()
             },
@@ -270,6 +277,7 @@ impl ConsulPlugin {
         let plugin = Self {
             enabled: true,
             acl_enabled,
+            initial_management_token: None,
             dc_config: dc_config.clone(),
             register_self: false,
             server_address: String::new(),
@@ -304,6 +312,7 @@ impl ConsulPlugin {
         let plugin = Self {
             enabled: true,
             acl_enabled,
+            initial_management_token: None,
             dc_config: dc_config.clone(),
             register_self: false,
             server_address: String::new(),
@@ -584,7 +593,7 @@ mod tests {
     fn test_consul_plugin_from_config() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
         let plugin =
-            ConsulPlugin::from_config(true, false, dc_config, false, "127.0.0.1".to_string(), 8500);
+            ConsulPlugin::from_config(true, false, None, dc_config, false, "127.0.0.1".to_string(), 8500);
         assert!(plugin.is_enabled());
         assert_eq!(plugin.protocol(), "consul");
         assert_eq!(plugin.default_port(), 8500);
@@ -596,7 +605,7 @@ mod tests {
     async fn test_consul_plugin_from_config_init() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
         let plugin =
-            ConsulPlugin::from_config(true, false, dc_config, false, "127.0.0.1".to_string(), 8500);
+            ConsulPlugin::from_config(true, false, None, dc_config, false, "127.0.0.1".to_string(), 8500);
 
         // Initialize with empty context (standalone mode)
         let ctx = batata_plugin::PluginContext::new();

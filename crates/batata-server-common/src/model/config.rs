@@ -1205,6 +1205,15 @@ impl Configuration {
             .unwrap_or(false)
     }
 
+    /// Get the initial management token for Consul ACL bootstrap.
+    /// Similar to Consul's `acl.tokens.initial_management`.
+    /// When set, this value is used as the bootstrap token's secret_id.
+    pub fn consul_acl_initial_management_token(&self) -> Option<String> {
+        self.config
+            .get_string("batata.plugin.consul.acl.tokens.initial_management")
+            .ok()
+    }
+
     /// Check if Consul should register itself as a service (default: true)
     pub fn consul_register_self(&self) -> bool {
         self.config

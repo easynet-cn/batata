@@ -340,6 +340,9 @@ batata.plugin.consul.datacenter: dc1
 batata.plugin.consul.node_name: c1
 batata.plugin.consul.register_self: true
 batata.plugin.consul.acl.enabled: false
+# Initial management token for ACL bootstrap (like Consul's acl.tokens.initial_management)
+# When set, this value is used as the bootstrap token's secret_id instead of a random UUID
+#batata.plugin.consul.acl.tokens.initial_management: root
 batata.plugin.consul.check_reap_interval: 30
 
 # Consul client HTTP timeouts
