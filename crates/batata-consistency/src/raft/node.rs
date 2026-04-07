@@ -90,6 +90,31 @@ impl RaftNode {
         cf_opts: Option<Options>,
         extra_cf_names: &[String],
     ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_full_options(
+            node_id,
+            addr,
+            config,
+            db_opts,
+            cf_opts,
+            None,
+            None,
+            extra_cf_names,
+        )
+        .await
+    }
+
+    /// Create a new Raft node with full RocksDB customization including
+    /// separate history CF options and WriteOptions.
+    pub async fn new_with_full_options(
+        node_id: NodeId,
+        addr: String,
+        config: RaftConfig,
+        db_opts: Option<Options>,
+        cf_opts: Option<Options>,
+        history_cf_opts: Option<Options>,
+        write_opts: Option<rocksdb::WriteOptions>,
+        extra_cf_names: &[String],
+    ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
         info!(
             "Creating Raft node: id={}, addr={}, data_dir={:?}",
             node_id, addr, config.data_dir
@@ -102,11 +127,13 @@ impl RaftNode {
         let log_store =
             RocksLogStore::with_options(config.log_dir(), db_opts.clone(), cf_opts.clone()).await?;
 
-        // Create state machine with custom options and plugin CFs
-        let state_machine = RocksStateMachine::with_options_and_cfs(
+        // Create state machine with full options (history CF, WriteOptions)
+        let state_machine = RocksStateMachine::with_full_options(
             config.state_machine_dir(),
             db_opts,
             cf_opts,
+            history_cf_opts,
+            write_opts,
             extra_cf_names,
         )
         .await?;

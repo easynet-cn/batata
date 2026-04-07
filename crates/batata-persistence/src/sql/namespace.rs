@@ -136,10 +136,16 @@ impl NamespacePersistence for ExternalDbPersistService {
             .await?
         {
             let mut active: tenant_info::ActiveModel = entity.into();
-            active.tenant_name = Set(Some(name.to_string()));
-            active.tenant_desc = Set(Some(desc.to_string()));
-            active.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
-            active.update(&self.db).await?;
+            active
+                .tenant_name
+                .set_if_not_equals(Some(name.to_string()));
+            active
+                .tenant_desc
+                .set_if_not_equals(Some(desc.to_string()));
+            if active.is_changed() {
+                active.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
+                active.update(&self.db).await?;
+            }
             Ok(true)
         } else {
             Ok(false)

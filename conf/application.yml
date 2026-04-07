@@ -462,6 +462,12 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.rocksdb.compression: lz4                  # default compression for non-bottommost levels
 #batata.rocksdb.whole_key_filtering: true          # whole-key bloom filtering for point lookups
 #batata.rocksdb.data_block_hash_ratio: 0.75        # hash index ratio in data blocks (0.0 = disabled)
+# State-machine write options:
+#batata.rocksdb.sm_sync: false                     # fsync WAL on every SM write (false = OS page cache, faster)
+#batata.rocksdb.sm_disable_wal: false              # disable WAL for SM writes (safe in Raft mode, Raft log provides durability)
+# History column family tuning (append-only, infrequent reads):
+#batata.rocksdb.history_write_buffer_mb: 0         # write buffer for history CF (0 = same as write_buffer_mb)
+#batata.rocksdb.history_bloom_filter: false         # bloom filter for history CF (false = skip, history is prefix-scanned)
 
 # --- Rate Limiting ---
 # Maximum tracked IPs to prevent unbounded memory growth under DoS

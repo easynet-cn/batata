@@ -38,7 +38,8 @@ impl NamingService {
             .entry(service_key.clone())
             .or_default();
 
-        // Increment service revision for change detection
+        // Update service name index and revision
+        self.index_service_name(&service_key);
         self.increment_service_revision(&service_key);
         true
     }
@@ -140,18 +141,21 @@ impl NamingService {
         };
         // --- outer shard lock released here ---
 
-        // Filter on Arc references (no clones needed for reads)
-        let cluster_filtered: Vec<&Arc<Instance>> = snapshot
-            .iter()
-            .filter(|inst| {
-                cluster.is_empty()
-                    || cluster == "*"
-                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
-            })
-            .collect();
-
-        let total = cluster_filtered.len();
-        let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
+        // Single-pass: count total and healthy instances matching cluster filter.
+        // Avoids intermediate Vec allocation for cluster_filtered.
+        let mut total = 0usize;
+        let mut healthy_count = 0usize;
+        for inst in &snapshot {
+            let cluster_match = cluster.is_empty()
+                || cluster == "*"
+                || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
+            if cluster_match {
+                total += 1;
+                if inst.healthy {
+                    healthy_count += 1;
+                }
+            }
+        }
 
         let healthy_ratio = if total > 0 {
             healthy_count as f32 / total as f32
@@ -161,24 +165,19 @@ impl NamingService {
 
         let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
 
-        // Clone only the final set of instances to return
-        let instances: Vec<Instance> = if protection_triggered {
-            cluster_filtered
-                .iter()
-                .map(|i| Instance::clone(i))
-                .collect()
-        } else if healthy_only {
-            cluster_filtered
-                .iter()
-                .filter(|i| i.healthy)
-                .map(|i| Instance::clone(i))
-                .collect()
-        } else {
-            cluster_filtered
-                .iter()
-                .map(|i| Instance::clone(i))
-                .collect()
-        };
+        // Second pass: clone only the final set of instances matching all filters.
+        // We must iterate again because protection_triggered depends on full counts.
+        let instances: Vec<Instance> = snapshot
+            .iter()
+            .filter(|inst| {
+                let cluster_match = cluster.is_empty()
+                    || cluster == "*"
+                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
+                let health_match = protection_triggered || !healthy_only || inst.healthy;
+                cluster_match && health_match
+            })
+            .map(|inst| Instance::clone(inst))
+            .collect();
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -195,7 +194,7 @@ impl NamingService {
             checksum: String::new(),
             all_ips: has_any_instances,
             reach_protection_threshold: protection_triggered,
-            metadata: service_meta_map.clone(),
+            metadata: service_meta_map,
             protect_threshold,
         }
     }
@@ -228,19 +227,22 @@ impl NamingService {
             .unwrap_or_default();
         // --- outer shard lock released ---
 
-        // Filter on Arc references (no clones needed for reads)
-        let cluster_filtered: Vec<&Arc<Instance>> = snapshot
-            .iter()
-            .filter(|inst| {
-                cluster.is_empty()
-                    || cluster == "*"
-                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
-            })
-            .collect();
+        // Single-pass: count total and healthy instances matching cluster filter
+        let mut total = 0usize;
+        let mut healthy_count = 0usize;
+        for inst in &snapshot {
+            let cluster_match = cluster.is_empty()
+                || cluster == "*"
+                || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
+            if cluster_match {
+                total += 1;
+                if inst.healthy {
+                    healthy_count += 1;
+                }
+            }
+        }
 
-        let total = cluster_filtered.len();
-        let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
-        let has_any = !cluster_filtered.is_empty();
+        let has_any = total > 0;
 
         let healthy_ratio = if total > 0 {
             healthy_count as f32 / total as f32
@@ -250,24 +252,18 @@ impl NamingService {
 
         let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
 
-        // Clone only the final set of instances to return
-        let instances: Vec<Instance> = if protection_triggered {
-            cluster_filtered
-                .iter()
-                .map(|i| Instance::clone(i))
-                .collect()
-        } else if healthy_only {
-            cluster_filtered
-                .iter()
-                .filter(|i| i.healthy)
-                .map(|i| Instance::clone(i))
-                .collect()
-        } else {
-            cluster_filtered
-                .iter()
-                .map(|i| Instance::clone(i))
-                .collect()
-        };
+        // Second pass: clone only the final set of instances matching all filters
+        let instances: Vec<Instance> = snapshot
+            .iter()
+            .filter(|inst| {
+                let cluster_match = cluster.is_empty()
+                    || cluster == "*"
+                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
+                let health_match = protection_triggered || !healthy_only || inst.healthy;
+                cluster_match && health_match
+            })
+            .map(|inst| Instance::clone(inst))
+            .collect();
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -284,7 +280,7 @@ impl NamingService {
             checksum: String::new(),
             all_ips: has_any,
             reach_protection_threshold: protection_triggered,
-            metadata: service_meta_map.clone(),
+            metadata: service_meta_map,
             protect_threshold,
         };
 
@@ -305,9 +301,8 @@ impl NamingService {
         self.services.iter().map(|e| e.key().clone()).collect()
     }
 
-    /// List all services in a namespace
-    /// Includes both services with instances AND empty services created via admin API.
-    /// Single-pass iteration to minimize DashMap lock hold time
+    /// List all services in a namespace.
+    /// Uses the service_name_index for O(1) prefix lookup instead of scanning all services.
     pub fn list_services(
         &self,
         namespace: &str,
@@ -315,33 +310,27 @@ impl NamingService {
         page_no: i32,
         page_size: i32,
     ) -> (i32, Vec<String>) {
-        let prefix = if group_name.is_empty() {
-            format!("{}@@", namespace)
+        let mut all_names: Vec<String> = if group_name.is_empty() {
+            // No group filter: collect from all groups matching the namespace
+            let ns_prefix = format!("{}@@", namespace);
+            let mut name_set = std::collections::HashSet::new();
+            for entry in self.service_name_index.iter() {
+                if entry.key().starts_with(&ns_prefix) {
+                    for name in entry.value().iter() {
+                        name_set.insert(name.clone());
+                    }
+                }
+            }
+            name_set.into_iter().collect()
         } else {
-            format!("{}@@{}@@", namespace, group_name)
+            // Specific group: direct O(1) lookup
+            let prefix = format!("{}@@{}", namespace, group_name);
+            self.service_name_index
+                .get(&prefix)
+                .map(|names| names.iter().cloned().collect())
+                .unwrap_or_default()
         };
 
-        // Collect service names from both services (with instances) and service_metadata
-        // (empty services created via admin API). Use a set to deduplicate.
-        let mut name_set = std::collections::HashSet::new();
-
-        for entry in self.services.iter() {
-            if entry.key().starts_with(&prefix)
-                && let Some((_, _, svc)) = super::parse_service_key(entry.key())
-            {
-                name_set.insert(svc.to_string());
-            }
-        }
-
-        for entry in self.service_metadata.iter() {
-            if entry.key().starts_with(&prefix)
-                && let Some((_, _, svc)) = super::parse_service_key(entry.key())
-            {
-                name_set.insert(svc.to_string());
-            }
-        }
-
-        let mut all_names: Vec<String> = name_set.into_iter().collect();
         all_names.sort(); // deterministic ordering for pagination
 
         let total = all_names.len() as i32;
@@ -384,7 +373,8 @@ impl NamingService {
             entry.insert(instance_key, Arc::new(instance));
         }
 
-        // Increment service revision for change detection
+        // Update service name index and revision
+        self.index_service_name(&service_key);
         self.increment_service_revision(&service_key);
         true
     }

@@ -1660,6 +1660,34 @@ impl Configuration {
             .unwrap_or(0.75)
     }
 
+    /// Whether to fsync WAL on every state-machine write (default: false)
+    pub fn rocksdb_sm_sync(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.sm_sync")
+            .unwrap_or(false)
+    }
+
+    /// Whether to disable WAL for state-machine writes (default: false)
+    pub fn rocksdb_sm_disable_wal(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.sm_disable_wal")
+            .unwrap_or(false)
+    }
+
+    /// Write buffer size in MB for history column family (default: 0 = same as write_buffer_mb)
+    pub fn rocksdb_history_write_buffer_mb(&self) -> usize {
+        self.config
+            .get_int("batata.rocksdb.history_write_buffer_mb")
+            .unwrap_or(0) as usize
+    }
+
+    /// Whether to enable bloom filter for history CF (default: false)
+    pub fn rocksdb_history_bloom_filter(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.history_bloom_filter")
+            .unwrap_or(false)
+    }
+
     // ========================================================================
     // Rate Limiting Advanced
     // ========================================================================
@@ -1930,6 +1958,10 @@ impl Configuration {
             enable_statistics: self.rocksdb_enable_statistics(),
             whole_key_filtering: self.rocksdb_whole_key_filtering(),
             data_block_hash_ratio: self.rocksdb_data_block_hash_ratio(),
+            sm_sync: self.rocksdb_sm_sync(),
+            sm_disable_wal: self.rocksdb_sm_disable_wal(),
+            history_write_buffer_mb: self.rocksdb_history_write_buffer_mb(),
+            history_bloom_filter: self.rocksdb_history_bloom_filter(),
         }
     }
 }
@@ -1950,6 +1982,20 @@ pub struct RocksDbConfig {
     pub whole_key_filtering: bool,
     /// Hash ratio for binary-and-hash data block index (0.0 = disabled, 0.75 = recommended)
     pub data_block_hash_ratio: f64,
+    /// Whether to fsync WAL on every state-machine write (default: false).
+    /// When false, WAL is still written but not fsynced per write (OS page cache provides durability).
+    /// For Raft mode, Raft log already provides durability so sync is unnecessary.
+    pub sm_sync: bool,
+    /// Whether to disable WAL for state-machine writes (default: false).
+    /// In Raft mode, the Raft log provides durability, so disabling WAL is safe and faster.
+    /// In standalone embedded mode, keep WAL enabled (false) for crash safety.
+    pub sm_disable_wal: bool,
+    /// Write buffer size in MB for history column family (default: same as write_buffer_mb).
+    /// History CF is append-only with infrequent reads, so a larger buffer reduces compaction.
+    pub history_write_buffer_mb: usize,
+    /// Whether to enable bloom filter for history column family (default: false).
+    /// History CF is mostly scanned by prefix, not point-queried, so bloom filter adds overhead.
+    pub history_bloom_filter: bool,
 }
 
 impl Default for RocksDbConfig {
@@ -1966,6 +2012,10 @@ impl Default for RocksDbConfig {
             enable_statistics: false,
             whole_key_filtering: true,
             data_block_hash_ratio: 0.75,
+            sm_sync: false,
+            sm_disable_wal: false,
+            history_write_buffer_mb: 0, // 0 = use same as write_buffer_mb
+            history_bloom_filter: false,
         }
     }
 }
@@ -2009,13 +2059,50 @@ impl RocksDbConfig {
         db_opts
     }
 
+    /// Create WriteOptions for state-machine writes.
+    pub fn to_write_options(&self) -> rocksdb::WriteOptions {
+        let mut opts = rocksdb::WriteOptions::default();
+        opts.set_sync(self.sm_sync);
+        opts.disable_wal(self.sm_disable_wal);
+        opts
+    }
+
+    /// Create column family Options optimized for history (append-only, infrequent reads).
+    /// Accepts a shared block cache to avoid allocating a separate 256MB cache.
+    pub fn to_history_cf_options(&self, shared_cache: &rocksdb::Cache) -> rocksdb::Options {
+        let mut cf_opts = rocksdb::Options::default();
+        let buf_mb = if self.history_write_buffer_mb > 0 {
+            self.history_write_buffer_mb
+        } else {
+            self.write_buffer_mb
+        };
+        cf_opts.set_write_buffer_size(buf_mb * 1024 * 1024);
+        // History is append-only: use zstd for all levels (better compression ratio)
+        cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+        cf_opts
+            .set_bottommost_compression_type(Self::parse_compression(&self.bottommost_compression));
+        if self.level_compaction_dynamic {
+            cf_opts.set_level_compaction_dynamic_level_bytes(true);
+        }
+
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.set_block_cache(shared_cache);
+        // Only add bloom filter for history if explicitly enabled (default off)
+        if self.history_bloom_filter && self.bloom_filter_bits > 0.0 {
+            block_opts.set_bloom_filter(self.bloom_filter_bits, false);
+        }
+        cf_opts.set_block_based_table_factory(&block_opts);
+        cf_opts
+    }
+
+    /// Create a shared LRU block cache for all column families.
+    pub fn create_shared_block_cache(&self) -> rocksdb::Cache {
+        rocksdb::Cache::new_lru_cache(self.block_cache_mb * 1024 * 1024)
+    }
+
     /// Create column family Options with block cache, bloom filter, and optimizations.
-    ///
-    /// Includes:
-    /// - Block-based table with LRU cache and bloom filter for point lookups
-    /// - `optimize_for_point_lookup` hint when bloom filter is enabled
-    /// - Level compaction dynamic bytes for better space amplification
-    pub fn to_cf_options(&self) -> rocksdb::Options {
+    /// Uses a shared block cache to avoid multiple 256MB allocations across CFs.
+    pub fn to_cf_options_with_cache(&self, shared_cache: &rocksdb::Cache) -> rocksdb::Options {
         let mut cf_opts = rocksdb::Options::default();
         cf_opts.set_write_buffer_size(self.write_buffer_mb * 1024 * 1024);
         cf_opts.set_compression_type(Self::parse_compression(&self.compression));
@@ -2027,8 +2114,7 @@ impl RocksDbConfig {
         }
 
         let mut block_opts = rocksdb::BlockBasedOptions::default();
-        let cache = rocksdb::Cache::new_lru_cache(self.block_cache_mb * 1024 * 1024);
-        block_opts.set_block_cache(&cache);
+        block_opts.set_block_cache(shared_cache);
         if self.bloom_filter_bits > 0.0 {
             block_opts.set_bloom_filter(self.bloom_filter_bits, false);
             block_opts.set_whole_key_filtering(self.whole_key_filtering);
@@ -2039,6 +2125,13 @@ impl RocksDbConfig {
         }
         cf_opts.set_block_based_table_factory(&block_opts);
         cf_opts
+    }
+
+    /// Create column family Options (convenience: creates its own block cache).
+    /// Use `to_cf_options_with_cache` when multiple CFs should share one cache.
+    pub fn to_cf_options(&self) -> rocksdb::Options {
+        let cache = self.create_shared_block_cache();
+        self.to_cf_options_with_cache(&cache)
     }
 }
 

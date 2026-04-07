@@ -79,6 +79,14 @@ pub struct RocksStateMachine {
     /// Wrapped in Arc so the registry can be shared with RaftNode for
     /// post-initialization plugin registration (after state_machine is moved into Raft).
     plugin_registry: Arc<RwLock<PluginRegistry>>,
+    /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
+    write_opts: rocksdb::WriteOptions,
+}
+
+/// Serialize a JSON value directly to bytes, avoiding intermediate String allocation.
+#[inline]
+fn json_to_bytes(value: &serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(value).unwrap_or_default()
 }
 
 impl RocksStateMachine {
@@ -137,10 +145,33 @@ impl RocksStateMachine {
     ///
     /// `extra_cf_names` are additional column families (e.g., from plugins) that
     /// will be created alongside the core CFs. The same `cf_opts` are applied to all.
+    /// `custom_history_cf_opts` allows separate tuning for history CF (append-only workload).
+    /// `custom_write_opts` configures sync/WAL behavior for state-machine writes.
     pub async fn with_options_and_cfs<P: AsRef<Path>>(
         path: P,
         custom_db_opts: Option<Options>,
         custom_cf_opts: Option<Options>,
+        extra_cf_names: &[String],
+    ) -> Result<Self, StorageError<NodeId>> {
+        Self::with_full_options(
+            path,
+            custom_db_opts,
+            custom_cf_opts,
+            None,
+            None,
+            extra_cf_names,
+        )
+        .await
+    }
+
+    /// Create a new RocksDB state machine with full customization including
+    /// separate history CF options and WriteOptions.
+    pub async fn with_full_options<P: AsRef<Path>>(
+        path: P,
+        custom_db_opts: Option<Options>,
+        custom_cf_opts: Option<Options>,
+        custom_history_cf_opts: Option<Options>,
+        custom_write_opts: Option<rocksdb::WriteOptions>,
         extra_cf_names: &[String],
     ) -> Result<Self, StorageError<NodeId>> {
         let db_opts = custom_db_opts.unwrap_or_else(|| {
@@ -176,9 +207,11 @@ impl RocksStateMachine {
             opts
         });
 
+        let history_cf_opts = custom_history_cf_opts.unwrap_or_else(|| cf_opts.clone());
+
         let mut cfs = vec![
             ColumnFamilyDescriptor::new(CF_CONFIG, cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_CONFIG_HISTORY, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_CONFIG_HISTORY, history_cf_opts),
             ColumnFamilyDescriptor::new(CF_CONFIG_GRAY, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_NAMESPACE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_USERS, cf_opts.clone()),
@@ -205,6 +238,7 @@ impl RocksStateMachine {
             last_applied: RwLock::new(None),
             last_membership: RwLock::new(StoredMembership::default()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+            write_opts: custom_write_opts.unwrap_or_default(),
         };
 
         // Load cached values asynchronously
@@ -760,7 +794,7 @@ impl RocksStateMachine {
         batch.put_cf(
             self.cf_config(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
         );
 
         // If history info is provided, add history entry to the same batch
@@ -793,11 +827,11 @@ impl RocksStateMachine {
             batch.put_cf(
                 self.cf_config_history(),
                 history_key.as_bytes(),
-                history_value.to_string().as_bytes(),
+                json_to_bytes(&history_value),
             );
         }
 
-        match self.db.write(batch) {
+        match self.db.write_opt(batch, &self.write_opts) {
             Ok(_) => {
                 debug!("Config published: {}", key);
                 RaftResponse::success()
@@ -846,11 +880,11 @@ impl RocksStateMachine {
             batch.put_cf(
                 self.cf_config_history(),
                 history_key.as_bytes(),
-                history_value.to_string().as_bytes(),
+                json_to_bytes(&history_value),
             );
         }
 
-        match self.db.write(batch) {
+        match self.db.write_opt(batch, &self.write_opts) {
             Ok(_) => {
                 debug!("Config removed: {}", key);
                 RaftResponse::success()
@@ -926,10 +960,11 @@ impl RocksStateMachine {
             "modified_time": now,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_config_gray(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Gray config published: {}", key);
@@ -954,7 +989,7 @@ impl RocksStateMachine {
         // If gray_name is specified, delete only that specific gray config
         if !gray_name.is_empty() {
             let key = Self::config_gray_key(data_id, group, tenant, gray_name);
-            match self.db.delete_cf(cf, key.as_bytes()) {
+            match self.db.delete_cf_opt(cf, key.as_bytes(), &self.write_opts) {
                 Ok(_) => {
                     debug!("Gray config removed: {}", key);
                     return RaftResponse::success();
@@ -996,7 +1031,7 @@ impl RocksStateMachine {
             batch.delete_cf(cf, key);
         }
 
-        match self.db.write(batch) {
+        match self.db.write_opt(batch, &self.write_opts) {
             Ok(_) => {
                 debug!(
                     "Gray configs removed for {}/{}/{}: {} entries",
@@ -1056,10 +1091,11 @@ impl RocksStateMachine {
             "modified_time": last_modified_time,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_config_history(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Config history inserted: {}", key);
@@ -1092,10 +1128,11 @@ impl RocksStateMachine {
             existing["config_tags"] = serde_json::json!(tag);
             existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
 
-            match self.db.put_cf(
+            match self.db.put_cf_opt(
                 self.cf_config(),
                 key.as_bytes(),
-                existing.to_string().as_bytes(),
+                json_to_bytes(&existing),
+            &self.write_opts,
             ) {
                 Ok(_) => {
                     debug!("Config tags updated: {}", key);
@@ -1130,10 +1167,11 @@ impl RocksStateMachine {
             existing["config_tags"] = serde_json::json!("");
             existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
 
-            match self.db.put_cf(
+            match self.db.put_cf_opt(
                 self.cf_config(),
                 key.as_bytes(),
-                existing.to_string().as_bytes(),
+                json_to_bytes(&existing),
+            &self.write_opts,
             ) {
                 Ok(_) => {
                     debug!("Config tags deleted: {}", key);
@@ -1164,10 +1202,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_namespace(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Namespace created: {}", namespace_id);
@@ -1194,10 +1233,11 @@ impl RocksStateMachine {
             "modified_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_namespace(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Namespace updated: {}", namespace_id);
@@ -1213,7 +1253,7 @@ impl RocksStateMachine {
     fn apply_namespace_delete(&self, namespace_id: &str) -> RaftResponse {
         let key = Self::namespace_key(namespace_id);
 
-        match self.db.delete_cf(self.cf_namespace(), key.as_bytes()) {
+        match self.db.delete_cf_opt(self.cf_namespace(), key.as_bytes(), &self.write_opts) {
             Ok(_) => {
                 debug!("Namespace deleted: {}", namespace_id);
                 RaftResponse::success()
@@ -1240,10 +1280,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_users(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("User created: {}", username);
@@ -1283,10 +1324,11 @@ impl RocksStateMachine {
             return RaftResponse::failure("User not found");
         };
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_users(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("User updated: {}", username);
@@ -1302,7 +1344,7 @@ impl RocksStateMachine {
     fn apply_user_delete(&self, username: &str) -> RaftResponse {
         let key = Self::user_key(username);
 
-        match self.db.delete_cf(self.cf_users(), key.as_bytes()) {
+        match self.db.delete_cf_opt(self.cf_users(), key.as_bytes(), &self.write_opts) {
             Ok(_) => {
                 debug!("User deleted: {}", username);
                 RaftResponse::success()
@@ -1323,10 +1365,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_roles(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Role assigned: {} -> {}", role, username);
@@ -1342,7 +1385,7 @@ impl RocksStateMachine {
     fn apply_role_delete(&self, role: &str, username: &str) -> RaftResponse {
         let key = Self::role_key(role, username);
 
-        match self.db.delete_cf(self.cf_roles(), key.as_bytes()) {
+        match self.db.delete_cf_opt(self.cf_roles(), key.as_bytes(), &self.write_opts) {
             Ok(_) => {
                 debug!("Role removed: {} -> {}", role, username);
                 RaftResponse::success()
@@ -1364,10 +1407,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_permissions(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Permission granted: {} -> {}:{}", role, resource, action);
@@ -1383,7 +1427,7 @@ impl RocksStateMachine {
     fn apply_permission_revoke(&self, role: &str, resource: &str, action: &str) -> RaftResponse {
         let key = Self::permission_key(role, resource, action);
 
-        match self.db.delete_cf(self.cf_permissions(), key.as_bytes()) {
+        match self.db.delete_cf_opt(self.cf_permissions(), key.as_bytes(), &self.write_opts) {
             Ok(_) => {
                 debug!("Permission revoked: {} -> {}:{}", role, resource, action);
                 RaftResponse::success()
@@ -1426,10 +1470,11 @@ impl RocksStateMachine {
             "registered_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_instances(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Instance registered: {}", key);
@@ -1451,7 +1496,7 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
 
-        match self.db.delete_cf(self.cf_instances(), key.as_bytes()) {
+        match self.db.delete_cf_opt(self.cf_instances(), key.as_bytes(), &self.write_opts) {
             Ok(_) => {
                 debug!("Instance deregistered: {}", key);
                 RaftResponse::success()
@@ -1509,10 +1554,11 @@ impl RocksStateMachine {
             return RaftResponse::failure("Instance not found");
         };
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_instances(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Instance updated: {}", key);
@@ -1563,10 +1609,11 @@ impl RocksStateMachine {
                         "owner_metadata": owner_metadata,
                     });
 
-                    match self.db.put_cf(
+                    match self.db.put_cf_opt(
                         self.cf_locks(),
                         key.as_bytes(),
-                        value.to_string().as_bytes(),
+                        json_to_bytes(&value),
+                    &self.write_opts,
                     ) {
                         Ok(_) => {
                             debug!("Lock re-acquired by same owner: {}", key);
@@ -1602,10 +1649,11 @@ impl RocksStateMachine {
             "owner_metadata": owner_metadata,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_locks(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Lock acquired: {}", key);
@@ -1663,10 +1711,11 @@ impl RocksStateMachine {
             "owner_metadata": null,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_locks(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Lock released: {}", key);
@@ -1720,10 +1769,11 @@ impl RocksStateMachine {
         existing["expires_at"] = serde_json::json!(expires_at);
         existing["renewal_count"] = serde_json::json!(renewal_count);
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_locks(),
             key.as_bytes(),
-            existing.to_string().as_bytes(),
+            json_to_bytes(&existing),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Lock renewed: {} (renewal #{})", key, renewal_count);
@@ -1753,10 +1803,11 @@ impl RocksStateMachine {
             "owner_metadata": null,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_locks(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Lock force released: {}", key);
@@ -1791,10 +1842,11 @@ impl RocksStateMachine {
             "owner_metadata": null,
         });
 
-        match self.db.put_cf(
+        match self.db.put_cf_opt(
             self.cf_locks(),
             key.as_bytes(),
-            value.to_string().as_bytes(),
+            json_to_bytes(&value),
+        &self.write_opts,
         ) {
             Ok(_) => {
                 debug!("Lock expired: {}", key);
@@ -1962,11 +2014,13 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        // Snapshot builder uses default WriteOptions (snapshots don't need the same tuning)
         RocksStateMachine {
             db: self.db.clone(),
             last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+            write_opts: rocksdb::WriteOptions::default(),
         }
     }
 

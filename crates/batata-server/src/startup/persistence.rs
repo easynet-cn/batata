@@ -108,10 +108,14 @@ async fn init_embedded_standalone(
     );
 
     let rocks_config = configuration.rocksdb_config();
-    let sm = batata_consistency::RocksStateMachine::with_options(
+    let shared_cache = rocks_config.create_shared_block_cache();
+    let sm = batata_consistency::RocksStateMachine::with_full_options(
         &rocksdb_dir,
         Some(rocks_config.to_db_options()),
-        Some(rocks_config.to_cf_options()),
+        Some(rocks_config.to_cf_options_with_cache(&shared_cache)),
+        Some(rocks_config.to_history_cf_options(&shared_cache)),
+        Some(rocks_config.to_write_options()),
+        &[],
     )
     .await
     .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
@@ -185,12 +189,15 @@ async fn init_embedded_cluster(
     };
 
     let rocks_config = configuration.rocksdb_config();
-    let (raft_node, rdb) = batata_consistency::RaftNode::new_with_db_and_options(
+    let shared_cache = rocks_config.create_shared_block_cache();
+    let (raft_node, rdb) = batata_consistency::RaftNode::new_with_full_options(
         node_id,
         node_addr.clone(),
         raft_config,
         Some(rocks_config.to_db_options()),
-        Some(rocks_config.to_cf_options()),
+        Some(rocks_config.to_cf_options_with_cache(&shared_cache)),
+        Some(rocks_config.to_history_cf_options(&shared_cache)),
+        Some(rocks_config.to_write_options()),
         extra_cf_names,
     )
     .await

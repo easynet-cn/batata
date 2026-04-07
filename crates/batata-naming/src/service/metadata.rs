@@ -14,7 +14,8 @@ impl NamingService {
         metadata: ServiceMetadata,
     ) {
         let service_key = build_service_key(namespace, group_name, service_name);
-        self.service_metadata.insert(service_key, metadata);
+        self.service_metadata.insert(service_key.clone(), metadata);
+        self.index_service_name(&service_key);
     }
 
     /// Get service metadata
@@ -77,5 +78,6 @@ impl NamingService {
     pub fn delete_service_metadata(&self, namespace: &str, group_name: &str, service_name: &str) {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.remove(&service_key);
+        self.maybe_unindex_service_name(&service_key);
     }
 }

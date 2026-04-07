@@ -327,45 +327,69 @@ impl ConfigPersistence for ExternalDbPersistService {
                 // Capture entity ID before moving into ActiveModel
                 let entity_id = entity.id;
 
-                // Update config
+                // Update config — use set_if_not_equals to skip unchanged columns,
+                // reducing the SQL UPDATE SET clause to only changed fields.
+                // If nothing changed, skip the UPDATE entirely.
                 let mut active: config_info::ActiveModel = entity.into();
-                active.content = Set(Some(content.to_string()));
-                active.md5 = Set(Some(md5_hash));
-                active.src_user = Set(Some(src_user.to_string()));
-                active.src_ip = Set(Some(src_ip.to_string()));
-                active.app_name = Set(Some(app_name.to_string()));
-                active.c_desc = Set(Some(desc.to_string()));
-                active.c_use = Set(Some(r#use.to_string()));
-                active.effect = Set(Some(effect.to_string()));
-                active.r#type = Set(Some(r#type.to_string()));
-                active.c_schema = Set(Some(schema.to_string()));
-                active.encrypted_data_key = Set(Some(encrypted_data_key.to_string()));
-                active.gmt_modified = Set(Some(now));
-                active.update(&tx).await?;
-
-                // Update tags
-                if !old_tags.is_empty() {
-                    config_tags_relation::Entity::delete_many()
-                        .filter(config_tags_relation::Column::Id.eq(entity_id))
-                        .exec(&tx)
-                        .await?;
+                active
+                    .content
+                    .set_if_not_equals(Some(content.to_string()));
+                active.md5.set_if_not_equals(Some(md5_hash));
+                active
+                    .src_user
+                    .set_if_not_equals(Some(src_user.to_string()));
+                active.src_ip.set_if_not_equals(Some(src_ip.to_string()));
+                active
+                    .app_name
+                    .set_if_not_equals(Some(app_name.to_string()));
+                active.c_desc.set_if_not_equals(Some(desc.to_string()));
+                active.c_use.set_if_not_equals(Some(r#use.to_string()));
+                active.effect.set_if_not_equals(Some(effect.to_string()));
+                active.r#type.set_if_not_equals(Some(r#type.to_string()));
+                active
+                    .c_schema
+                    .set_if_not_equals(Some(schema.to_string()));
+                active
+                    .encrypted_data_key
+                    .set_if_not_equals(Some(encrypted_data_key.to_string()));
+                if active.is_changed() {
+                    // Only set gmt_modified when there are actual changes
+                    active.gmt_modified = Set(Some(now));
+                    active.update(&tx).await?;
                 }
-                if !tags.is_empty() {
-                    let tag_entities: Vec<config_tags_relation::ActiveModel> = tags
-                        .iter()
-                        .map(|tag| config_tags_relation::ActiveModel {
-                            tag_name: Set((*tag).to_owned()),
-                            tag_type: Set(None),
-                            data_id: Set(data_id.to_string()),
-                            group_id: Set(group_id.to_string()),
-                            tenant_id: Set(Some(tenant_id.to_string())),
-                            id: Set(entity_id),
-                            ..Default::default()
-                        })
-                        .collect();
-                    config_tags_relation::Entity::insert_many(tag_entities)
-                        .exec(&tx)
-                        .await?;
+
+                // Update tags only if changed — skip delete+insert when tags are identical.
+                // Build sorted old tag names for comparison.
+                let mut old_tag_names: Vec<&str> =
+                    old_tags.iter().map(|t| t.tag_name.as_str()).collect();
+                old_tag_names.sort_unstable();
+                let mut new_tag_names: Vec<&str> = tags.clone();
+                new_tag_names.sort_unstable();
+
+                if old_tag_names != new_tag_names {
+                    if !old_tags.is_empty() {
+                        config_tags_relation::Entity::delete_many()
+                            .filter(config_tags_relation::Column::Id.eq(entity_id))
+                            .exec(&tx)
+                            .await?;
+                    }
+                    if !tags.is_empty() {
+                        let tag_entities: Vec<config_tags_relation::ActiveModel> = tags
+                            .iter()
+                            .map(|tag| config_tags_relation::ActiveModel {
+                                tag_name: Set((*tag).to_owned()),
+                                tag_type: Set(None),
+                                data_id: Set(data_id.to_string()),
+                                group_id: Set(group_id.to_string()),
+                                tenant_id: Set(Some(tenant_id.to_string())),
+                                id: Set(entity_id),
+                                ..Default::default()
+                            })
+                            .collect();
+                        config_tags_relation::Entity::insert_many(tag_entities)
+                            .exec(&tx)
+                            .await?;
+                    }
                 }
             }
             None => {
@@ -374,7 +398,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                     data_id: Set(data_id.to_string()),
                     group_id: Set(Some(group_id.to_string())),
                     content: Set(Some(content.to_string())),
-                    md5: Set(Some(md5_hash)),
+                    md5: Set(Some(md5_hash.clone())),
                     src_user: Set(Some(src_user.to_string())),
                     src_ip: Set(Some(src_ip.to_string())),
                     app_name: Set(Some(app_name.to_string())),
@@ -393,7 +417,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                 let result = config_info::Entity::insert(entity).exec(&tx).await?;
                 let new_id = result.last_insert_id;
 
-                // Record creation in history
+                // Record creation in history — reuse md5_hash instead of recomputing
                 let his = his_config_info::ActiveModel {
                     id: Set(new_id as u64),
                     nid: Set(0),
@@ -401,7 +425,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                     group_id: Set(group_id.to_string()),
                     app_name: Set(Some(app_name.to_string())),
                     content: Set(content.to_string()),
-                    md5: Set(Some(const_hex::encode(md5::Md5::digest(content)))),
+                    md5: Set(Some(md5_hash)),
                     gmt_create: Set(now),
                     gmt_modified: Set(now),
                     src_user: Set(Some(src_user.to_string())),
@@ -577,16 +601,30 @@ impl ConfigPersistence for ExternalDbPersistService {
         match existing {
             Some(entity) => {
                 let mut active: config_info_gray::ActiveModel = entity.into();
-                active.content = Set(content.to_string());
-                active.md5 = Set(Some(md5_hash));
-                active.gray_name = Set(gray_name.to_string());
-                active.gray_rule = Set(gray_rule.to_string());
-                active.src_user = Set(Some(src_user.to_string()));
-                active.src_ip = Set(Some(src_ip.to_string()));
-                active.app_name = Set(Some(app_name.to_string()));
-                active.encrypted_data_key = Set(encrypted_data_key.to_string());
-                active.gmt_modified = Set(now);
-                active.update(&self.db).await?;
+                active.content.set_if_not_equals(content.to_string());
+                active.md5.set_if_not_equals(Some(md5_hash));
+                active
+                    .gray_name
+                    .set_if_not_equals(gray_name.to_string());
+                active
+                    .gray_rule
+                    .set_if_not_equals(gray_rule.to_string());
+                active
+                    .src_user
+                    .set_if_not_equals(Some(src_user.to_string()));
+                active
+                    .src_ip
+                    .set_if_not_equals(Some(src_ip.to_string()));
+                active
+                    .app_name
+                    .set_if_not_equals(Some(app_name.to_string()));
+                active
+                    .encrypted_data_key
+                    .set_if_not_equals(encrypted_data_key.to_string());
+                if active.is_changed() {
+                    active.gmt_modified = Set(now);
+                    active.update(&self.db).await?;
+                }
             }
             None => {
                 let entity = config_info_gray::ActiveModel {

@@ -103,6 +103,9 @@ pub struct NamingService {
     connection_instances: Arc<DashMap<String, HashSet<(String, String)>>>,
     /// Connections currently being deregistered (prevents concurrent register during cleanup)
     closing_connections: Arc<DashMap<String, ()>>,
+    /// Index: namespace@@group prefix -> set of service names.
+    /// Enables O(page_size) list_services instead of O(total_services) full scan.
+    service_name_index: Arc<DashMap<String, HashSet<String>>>,
 }
 
 /// Build cluster config key format: service_key##clusterName (pre-allocated)
@@ -126,6 +129,42 @@ impl NamingService {
             publishers: Arc::new(DashMap::new()),
             connection_instances: Arc::new(DashMap::new()),
             closing_connections: Arc::new(DashMap::new()),
+            service_name_index: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Add a service name to the namespace-group index.
+    fn index_service_name(&self, service_key: &str) {
+        if let Some((ns, group, svc)) = parse_service_key(service_key) {
+            let prefix = format!("{}@@{}", ns, group);
+            self.service_name_index
+                .entry(prefix)
+                .or_default()
+                .insert(svc.to_string());
+        }
+    }
+
+    /// Remove a service name from the namespace-group index.
+    /// Only removes if the service has no instances AND no metadata.
+    fn maybe_unindex_service_name(&self, service_key: &str) {
+        let has_instances = self
+            .services
+            .get(service_key)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        let has_metadata = self.service_metadata.contains_key(service_key);
+        if !has_instances
+            && !has_metadata
+            && let Some((ns, group, svc)) = parse_service_key(service_key)
+        {
+            let prefix = format!("{}@@{}", ns, group);
+            if let Some(mut names) = self.service_name_index.get_mut(&prefix) {
+                names.remove(svc);
+                if names.is_empty() {
+                    drop(names);
+                    self.service_name_index.remove(&prefix);
+                }
+            }
         }
     }
 

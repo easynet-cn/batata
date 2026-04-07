@@ -52,21 +52,11 @@ impl ConfigChangeNotifier {
     }
 
     /// Evict notifier entries that have no active waiters (strong_count == 1).
+    /// Uses `retain` for atomic check-and-remove, avoiding TOCTOU races where
+    /// a waiter acquires the Arc between the check and removal.
     fn evict_idle_entries(&self) {
-        let idle_keys: Vec<String> = self
-            .notifiers
-            .iter()
-            .filter(|entry| Arc::strong_count(entry.value()) <= 1)
-            .map(|entry| entry.key().clone())
-            .take(1000) // evict in batches
-            .collect();
-        for key in idle_keys {
-            if let Some((_, notify)) = self.notifiers.remove(&key)
-                && Arc::strong_count(&notify) > 1
-            {
-                self.notifiers.insert(key, notify);
-            }
-        }
+        self.notifiers
+            .retain(|_, notify| Arc::strong_count(notify) > 1);
     }
 
     /// Notify all waiters for a specific config key

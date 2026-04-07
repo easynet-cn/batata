@@ -59,11 +59,14 @@ impl EmbeddedPersistService {
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", name))
     }
 
-    /// Write a JSON value to a column family
+    /// Write a JSON value to a column family.
+    /// Uses `serde_json::to_vec` to serialize directly to bytes, avoiding
+    /// intermediate String allocation from `.to_string().as_bytes()`.
     fn put_json(&self, cf_name: &str, key: &str, value: &serde_json::Value) -> anyhow::Result<()> {
         let cf = self.cf(cf_name)?;
+        let bytes = serde_json::to_vec(value)?;
         self.db
-            .put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
+            .put_cf(cf, key.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
     }
 
@@ -343,7 +346,8 @@ impl ConfigPersistence for EmbeddedPersistService {
             "modified_time": now,
         });
 
-        // Atomic config + history write using WriteBatch
+        // Atomic config + history write using WriteBatch.
+        // Use serde_json::to_vec for direct bytes serialization (no intermediate String).
         let cf_config = self
             .db
             .cf_handle(CF_CONFIG)
@@ -352,13 +356,11 @@ impl ConfigPersistence for EmbeddedPersistService {
             .db
             .cf_handle(CF_CONFIG_HISTORY)
             .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
+        let config_bytes = serde_json::to_vec(&value)?;
+        let history_bytes = serde_json::to_vec(&history_value)?;
         let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf_config, key.as_bytes(), value.to_string().as_bytes());
-        batch.put_cf(
-            &cf_history,
-            history_key.as_bytes(),
-            history_value.to_string().as_bytes(),
-        );
+        batch.put_cf(&cf_config, key.as_bytes(), &config_bytes);
+        batch.put_cf(&cf_history, history_key.as_bytes(), &history_bytes);
         self.db.write(batch)?;
 
         Ok(true)
@@ -423,13 +425,10 @@ impl ConfigPersistence for EmbeddedPersistService {
             .db
             .cf_handle(CF_CONFIG_HISTORY)
             .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
+        let history_bytes = serde_json::to_vec(&history_value)?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.delete_cf(&cf_config, key.as_bytes());
-        batch.put_cf(
-            &cf_history,
-            history_key.as_bytes(),
-            history_value.to_string().as_bytes(),
-        );
+        batch.put_cf(&cf_history, history_key.as_bytes(), &history_bytes);
         self.db.write(batch)?;
 
         Ok(true)
