@@ -554,15 +554,11 @@ impl ConsulCatalogService {
         // In Consul, nodes are global — not scoped to namespace.
         let all_ns = self.naming_store.all_namespaces();
         for ns in &all_ns {
-            for service_name in self.naming_store.service_names(&ns) {
-                for entry_bytes in self
-                    .naming_store
-                    .get_service_entries(&ns, &service_name)
-                {
-                    let Ok(reg) = serde_json::from_slice::<
-                        crate::model::AgentServiceRegistration,
-                    >(&entry_bytes)
-                    else {
+            for service_name in self.naming_store.service_names(ns) {
+                for entry_bytes in self.naming_store.get_service_entries(ns, &service_name) {
+                    let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                        &entry_bytes,
+                    ) else {
                         continue;
                     };
                     let ip = reg.effective_address();
@@ -611,24 +607,17 @@ impl ConsulCatalogService {
         // Scan all namespaces (nodes are global, not scoped to namespace)
         for ns in self.naming_store.all_namespaces() {
             for service_name in self.naming_store.service_names(&ns) {
-                for entry_bytes in self
-                    .naming_store
-                    .get_service_entries(&ns, &service_name)
-                {
-                    let Ok(reg) = serde_json::from_slice::<
-                        crate::model::AgentServiceRegistration,
-                    >(&entry_bytes)
-                    else {
+                for entry_bytes in self.naming_store.get_service_entries(&ns, &service_name) {
+                    let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                        &entry_bytes,
+                    ) else {
                         continue;
                     };
                     let ip = reg.effective_address();
                     let instance_node = format!("node-{}", ip.replace('.', "-"));
 
                     // Match by: self.node_name, generated "node-{ip}", raw IP
-                    if is_local_node
-                        || instance_node == node_name
-                        || ip == node_name
-                    {
+                    if is_local_node || instance_node == node_name || ip == node_name {
                         if node.is_none() {
                             node = Some(CatalogNode {
                                 id: uuid::Uuid::new_v4().to_string(),
@@ -922,30 +911,26 @@ impl ConsulCatalogService {
         target_service: &str,
     ) -> bool {
         // Check if it's a connect-proxy targeting this service
-        if reg.kind.as_deref() == Some("connect-proxy") {
-            if let Some(proxy_val) = &reg.proxy {
-                if let Some(dest) = proxy_val
-                    .get("DestinationServiceName")
-                    .or_else(|| proxy_val.get("destination_service_name"))
-                    .and_then(|v| v.as_str())
-                {
-                    return dest == target_service;
-                }
-            }
+        if reg.kind.as_deref() == Some("connect-proxy")
+            && let Some(proxy_val) = &reg.proxy
+            && let Some(dest) = proxy_val
+                .get("DestinationServiceName")
+                .or_else(|| proxy_val.get("destination_service_name"))
+                .and_then(|v| v.as_str())
+        {
+            return dest == target_service;
         }
 
         // Check if it's a native Connect service with matching name
-        if reg.name == target_service {
-            if let Some(connect_val) = &reg.connect {
-                if connect_val
-                    .get("Native")
-                    .or_else(|| connect_val.get("native"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    return true;
-                }
-            }
+        if reg.name == target_service
+            && let Some(connect_val) = &reg.connect
+            && connect_val
+                .get("Native")
+                .or_else(|| connect_val.get("native"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            return true;
         }
 
         false
@@ -1453,8 +1438,7 @@ pub async fn get_node_services(
                 node,
                 services: node_services.services.into_values().collect(),
             };
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
             consul_ok(&meta).json(list)
         }
         None => HttpResponse::NotFound()
@@ -1625,7 +1609,10 @@ mod tests {
 
         // Get nodes — includes local node + 2 registered service nodes
         let nodes = catalog.get_nodes("default");
-        assert!(nodes.len() >= 2, "Should have at least 2 nodes (may include local node)");
+        assert!(
+            nodes.len() >= 2,
+            "Should have at least 2 nodes (may include local node)"
+        );
 
         // Verify registered service nodes exist
         let node_names: Vec<&str> = nodes.iter().map(|n| n.node.as_str()).collect();

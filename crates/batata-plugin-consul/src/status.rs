@@ -115,10 +115,7 @@ pub async fn get_peers_real(
         .collect();
 
     let peers = if peers.is_empty() {
-        vec![to_raft_address(
-            member_manager.local_address(),
-            raft_port,
-        )]
+        vec![to_raft_address(member_manager.local_address(), raft_port)]
     } else {
         peers
     };
@@ -137,7 +134,10 @@ mod tests {
 
     #[test]
     fn test_to_raft_address() {
-        assert_eq!(to_raft_address("192.168.1.1:8848", 7848), "192.168.1.1:7848");
+        assert_eq!(
+            to_raft_address("192.168.1.1:8848", 7848),
+            "192.168.1.1:7848"
+        );
         assert_eq!(to_raft_address("10.0.0.1:9848", 8848), "10.0.0.1:8848");
         assert_eq!(to_raft_address("[::1]:8848", 7848), "[::1]:7848");
         assert_eq!(to_raft_address("10.0.0.1", 7848), "10.0.0.1:7848");

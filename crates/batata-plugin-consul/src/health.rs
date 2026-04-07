@@ -27,8 +27,8 @@ fn check_type_from_consul(s: &str) -> RegistryCheckType {
 }
 
 use crate::acl::{AclService, ResourceType};
-use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::check_index::ConsulCheckIndex;
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
@@ -166,35 +166,35 @@ impl ConsulHealthService {
         };
 
         // Register in check index for service_id → instance lookup
-        if let Some(ref svc_id) = registration.service_id {
-            if !svc_id.is_empty() {
-                use batata_naming::healthcheck::registry::{
-                    build_check_service_key, build_instance_key,
-                };
-                let service_name = registration
-                    .service_name
-                    .as_deref()
-                    .or(registration.service_id.as_deref())
-                    .unwrap_or_default();
-                let ip = registration.ip.as_deref().unwrap_or("0.0.0.0");
-                let port = registration.port.unwrap_or(0);
-                let svc_key = build_check_service_key(
-                    CONSUL_INTERNAL_NAMESPACE,
-                    CONSUL_INTERNAL_GROUP,
-                    service_name,
-                );
-                let inst_key = build_instance_key(
-                    CONSUL_INTERNAL_NAMESPACE,
-                    CONSUL_INTERNAL_GROUP,
-                    service_name,
-                    ip,
-                    port,
-                    CONSUL_INTERNAL_CLUSTER,
-                );
-                self.check_index.register(svc_id, &svc_key, &inst_key);
-                // Register check_id → consul_service_id reverse mapping
-                self.check_index.register_check(&check_id, svc_id);
-            }
+        if let Some(ref svc_id) = registration.service_id
+            && !svc_id.is_empty()
+        {
+            use batata_naming::healthcheck::registry::{
+                build_check_service_key, build_instance_key,
+            };
+            let service_name = registration
+                .service_name
+                .as_deref()
+                .or(registration.service_id.as_deref())
+                .unwrap_or_default();
+            let ip = registration.ip.as_deref().unwrap_or("0.0.0.0");
+            let port = registration.port.unwrap_or(0);
+            let svc_key = build_check_service_key(
+                CONSUL_INTERNAL_NAMESPACE,
+                CONSUL_INTERNAL_GROUP,
+                service_name,
+            );
+            let inst_key = build_instance_key(
+                CONSUL_INTERNAL_NAMESPACE,
+                CONSUL_INTERNAL_GROUP,
+                service_name,
+                ip,
+                port,
+                CONSUL_INTERNAL_CLUSTER,
+            );
+            self.check_index.register(svc_id, &svc_key, &inst_key);
+            // Register check_id → consul_service_id reverse mapping
+            self.check_index.register_check(&check_id, svc_id);
         }
 
         self.registry.register_check(config);
@@ -1097,29 +1097,29 @@ pub async fn get_ingress_health(
 /// Check if an AgentServiceRegistration is a Connect-enabled instance for the given target service.
 fn is_connect_reg_for(reg: &AgentServiceRegistration, target_service: &str) -> bool {
     // Check if it's a connect-proxy targeting this service
-    if reg.kind.as_deref() == Some("connect-proxy") {
-        if let Some(ref proxy) = reg.proxy {
-            let dest = proxy
-                .get("DestinationServiceName")
-                .or_else(|| proxy.get("destination_service_name"))
-                .and_then(|v| v.as_str());
-            if dest == Some(target_service) {
-                return true;
-            }
+    if reg.kind.as_deref() == Some("connect-proxy")
+        && let Some(ref proxy) = reg.proxy
+    {
+        let dest = proxy
+            .get("DestinationServiceName")
+            .or_else(|| proxy.get("destination_service_name"))
+            .and_then(|v| v.as_str());
+        if dest == Some(target_service) {
+            return true;
         }
     }
 
     // Check if it's a native Connect service with matching name
-    if reg.name == target_service {
-        if let Some(ref connect) = reg.connect {
-            let is_native = connect
-                .get("Native")
-                .or_else(|| connect.get("native"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if is_native {
-                return true;
-            }
+    if reg.name == target_service
+        && let Some(ref connect) = reg.connect
+    {
+        let is_native = connect
+            .get("Native")
+            .or_else(|| connect.get("native"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_native {
+            return true;
         }
     }
 
@@ -1159,12 +1159,6 @@ fn parse_duration(s: &str) -> Option<u64> {
         "h" => Some(num * 3600),
         _ => None,
     }
-}
-
-/// Parse a duration string into std::time::Duration
-#[cfg(test)]
-fn parse_duration_to_std(s: &str) -> Option<Duration> {
-    parse_duration(s).map(Duration::from_secs)
 }
 
 /// Apply a Consul bexpr-style filter to health checks.

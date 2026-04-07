@@ -780,38 +780,35 @@ impl BatataConfigService {
                 .map(|e| e.receive_notify_changed.load(Ordering::Relaxed))
                 .unwrap_or(false);
 
-            if was_pushed {
-                if let Some(entry) = self.cache_map.get(&key) {
-                    entry.receive_notify_changed.store(false, Ordering::Relaxed);
-                    let is_initializing = entry.is_initializing;
-                    let data_id = entry.data_id.clone();
-                    let group = entry.group.clone();
-                    let tenant = entry.tenant.clone();
-                    drop(entry);
+            if was_pushed && let Some(entry) = self.cache_map.get(&key) {
+                entry.receive_notify_changed.store(false, Ordering::Relaxed);
+                let is_initializing = entry.is_initializing;
+                let data_id = entry.data_id.clone();
+                let group = entry.group.clone();
+                let tenant = entry.tenant.clone();
+                drop(entry);
 
-                    if let Err(e) = self
-                        .refresh_content_and_check(&data_id, &group, &tenant, !is_initializing)
-                        .await
-                    {
-                        warn!("Failed to refresh pushed config: {}", e);
-                    }
-                    changed_keys.insert(key);
+                if let Err(e) = self
+                    .refresh_content_and_check(&data_id, &group, &tenant, !is_initializing)
+                    .await
+                {
+                    warn!("Failed to refresh pushed config: {}", e);
                 }
+                changed_keys.insert(key);
             }
         }
 
         // Step 6: Mark unchanged configs as consistent with server
         for ctx in &listen_contexts {
             let key = build_cache_key(&ctx.data_id, &ctx.group, &ctx.tenant);
-            if !changed_keys.contains(&key) {
-                if let Some(mut entry) = self.cache_map.get_mut(&key) {
-                    if !entry.receive_notify_changed.load(Ordering::Relaxed) {
-                        entry
-                            .is_consistent_with_server
-                            .store(true, Ordering::Relaxed);
-                        entry.is_initializing = false;
-                    }
-                }
+            if !changed_keys.contains(&key)
+                && let Some(mut entry) = self.cache_map.get_mut(&key)
+                && !entry.receive_notify_changed.load(Ordering::Relaxed)
+            {
+                entry
+                    .is_consistent_with_server
+                    .store(true, Ordering::Relaxed);
+                entry.is_initializing = false;
             }
         }
 

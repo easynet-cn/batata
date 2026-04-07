@@ -4,6 +4,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use tokio::sync::Semaphore;
+
 use batata_core::{
     GrpcResource, PermissionAction,
     handler::rpc::{AuthRequirement, PayloadHandler},
@@ -31,6 +33,13 @@ use batata_api::{
 use batata_api::naming::NamingServiceProvider;
 
 use crate::handler::naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern};
+
+/// Max concurrent background notification tasks to prevent unbounded spawning under load.
+const MAX_CONCURRENT_PUSH_TASKS: usize = 1024;
+
+/// Shared semaphore for limiting concurrent push notification tasks.
+static PUSH_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> =
+    std::sync::LazyLock::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PUSH_TASKS)));
 
 // Handler for InstanceRequest - registers or deregisters a service instance
 #[derive(Clone)]
@@ -275,10 +284,13 @@ impl InstanceRequestHandler {
             service_name
         );
 
-        // Push notifications in background to avoid blocking the registration response
+        // Push notifications in background to avoid blocking the registration response.
+        // Use semaphore to bound concurrent push tasks under high load.
         let cm = self.connection_manager.clone();
         let subscriber_count = subscribers.len();
+        let semaphore = PUSH_SEMAPHORE.clone();
         tokio::spawn(async move {
+            let _permit = semaphore.acquire().await;
             let sent = cm.push_message_to_many(&subscribers, payload).await;
             tracing::debug!(
                 "Pushed subscriber notification to {}/{} connections",
@@ -1219,10 +1231,10 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                     .into_iter()
                     .filter(|key| {
                         // Service keys are in format: namespace##group@@serviceName
-                        if let Some((ns, rest)) = key.split_once("##") {
-                            if let Some((group, svc)) = rest.split_once("@@") {
-                                return pattern.matches(ns, group, svc);
-                            }
+                        if let Some((ns, rest)) = key.split_once("##")
+                            && let Some((group, svc)) = rest.split_once("@@")
+                        {
+                            return pattern.matches(ns, group, svc);
                         }
                         false
                     })

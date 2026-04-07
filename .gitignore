@@ -28,6 +28,8 @@ target/
 .DS_Store
 .vscode/*
 
+.claude/
+
 .VSCodeCounter
 Cargo.lock
 

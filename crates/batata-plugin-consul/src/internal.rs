@@ -443,42 +443,40 @@ pub async fn ui_service_topology(
 
     // Also check proxy config for upstream dependencies
     for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            if reg.kind.as_deref() == Some("connect-proxy") {
-                if let Some(ref proxy) = reg.proxy {
-                    let dest = proxy
-                        .get("DestinationServiceName")
-                        .or_else(|| proxy.get("destination_service_name"))
-                        .and_then(|v| v.as_str());
-                    if dest == Some(&service_name) {
-                        if let Some(upstream_arr) = proxy
-                            .get("Upstreams")
-                            .or_else(|| proxy.get("upstreams"))
-                            .and_then(|v| v.as_array())
-                        {
-                            for upstream in upstream_arr {
-                                let upstream_name = upstream
-                                    .get("DestinationName")
-                                    .or_else(|| upstream.get("destination_name"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                if !upstream_name.is_empty()
-                                    && !upstreams.iter().any(|u| u.name == upstream_name)
-                                {
-                                    upstreams.push(ServiceTopologySummary {
-                                        name: upstream_name,
-                                        datacenter: dc.clone(),
-                                        namespace: "default".to_string(),
-                                        intention: ServiceTopologyIntention {
-                                            allowed: true,
-                                            has_permissions: false,
-                                            external_source: String::new(),
-                                        },
-                                    });
-                                }
-                            }
-                        }
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
+            && reg.kind.as_deref() == Some("connect-proxy")
+            && let Some(ref proxy) = reg.proxy
+        {
+            let dest = proxy
+                .get("DestinationServiceName")
+                .or_else(|| proxy.get("destination_service_name"))
+                .and_then(|v| v.as_str());
+            if dest == Some(&service_name)
+                && let Some(upstream_arr) = proxy
+                    .get("Upstreams")
+                    .or_else(|| proxy.get("upstreams"))
+                    .and_then(|v| v.as_array())
+            {
+                for upstream in upstream_arr {
+                    let upstream_name = upstream
+                        .get("DestinationName")
+                        .or_else(|| upstream.get("destination_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if !upstream_name.is_empty()
+                        && !upstreams.iter().any(|u| u.name == upstream_name)
+                    {
+                        upstreams.push(ServiceTopologySummary {
+                            name: upstream_name,
+                            datacenter: dc.clone(),
+                            namespace: "default".to_string(),
+                            intention: ServiceTopologyIntention {
+                                allowed: true,
+                                has_permissions: false,
+                                external_source: String::new(),
+                            },
+                        });
                     }
                 }
             }
@@ -524,30 +522,30 @@ fn collect_mesh_gateways(
     let mut gateways = Vec::new();
 
     for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            if reg.kind.as_deref() == Some("mesh-gateway") {
-                let ip = reg.effective_address();
-                let port = reg.effective_port();
-                let svc_id = reg.service_id();
-                let node_name = format!("node-{}", ip.replace('.', "-"));
-                gateways.push(serde_json::json!({
-                    "WAN": { "Address": ip, "Port": port },
-                    "LAN": { "Address": ip, "Port": port },
-                    "Service": {
-                        "ID": svc_id,
-                        "Service": reg.name,
-                        "Address": ip,
-                        "Port": port,
-                        "Meta": {},
-                        "Datacenter": datacenter
-                    },
-                    "Node": {
-                        "Node": node_name,
-                        "Address": ip,
-                        "Datacenter": datacenter
-                    }
-                }));
-            }
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
+            && reg.kind.as_deref() == Some("mesh-gateway")
+        {
+            let ip = reg.effective_address();
+            let port = reg.effective_port();
+            let svc_id = reg.service_id();
+            let node_name = format!("node-{}", ip.replace('.', "-"));
+            gateways.push(serde_json::json!({
+                "WAN": { "Address": ip, "Port": port },
+                "LAN": { "Address": ip, "Port": port },
+                "Service": {
+                    "ID": svc_id,
+                    "Service": reg.name,
+                    "Address": ip,
+                    "Port": port,
+                    "Meta": {},
+                    "Datacenter": datacenter
+                },
+                "Node": {
+                    "Node": node_name,
+                    "Address": ip,
+                    "Datacenter": datacenter
+                }
+            }));
         }
     }
 
@@ -600,16 +598,16 @@ pub async fn federation_state_mesh_gateways(
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
     for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            if reg.kind.as_deref() == Some("mesh-gateway") {
-                let dc = dc_config.datacenter.clone();
-                let entry = serde_json::json!({
-                    "Address": reg.effective_address(),
-                    "Port": reg.effective_port(),
-                    "Service": reg.name,
-                });
-                gateways_by_dc.entry(dc).or_default().push(entry);
-            }
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
+            && reg.kind.as_deref() == Some("mesh-gateway")
+        {
+            let dc = dc_config.datacenter.clone();
+            let entry = serde_json::json!({
+                "Address": reg.effective_address(),
+                "Port": reg.effective_port(),
+                "Service": reg.name,
+            });
+            gateways_by_dc.entry(dc).or_default().push(entry);
         }
     }
 
@@ -758,12 +756,8 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             node: "member-node-1".to_string(),
             address: "192.168.1.100".to_string(),
-            tagged_addresses: HashMap::from([
-                ("lan".to_string(), "192.168.1.100".to_string()),
-            ]),
-            meta: HashMap::from([
-                ("consul-version".to_string(), "1.22.5".to_string()),
-            ]),
+            tagged_addresses: HashMap::from([("lan".to_string(), "192.168.1.100".to_string())]),
+            meta: HashMap::from([("consul-version".to_string(), "1.22.5".to_string())]),
             services: vec![],
             checks: vec![],
         };

@@ -5,7 +5,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use batata_server::auth::service::auth::{
     clear_token_cache, decode_jwt_token, decode_jwt_token_cached, encode_jwt_token,
 };
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 fn test_secret_key() -> String {
     STANDARD.encode("benchmark-secret-key-that-is-long-enough-for-hs256")

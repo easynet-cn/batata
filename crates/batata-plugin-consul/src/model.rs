@@ -425,13 +425,22 @@ impl AgentServiceRegistration {
                     return Err("Metadata key cannot be blank".to_string());
                 }
                 if key.len() > 128 {
-                    return Err(format!("Metadata key is too long (limit: 128 characters): {}", key));
+                    return Err(format!(
+                        "Metadata key is too long (limit: 128 characters): {}",
+                        key
+                    ));
                 }
                 if value.len() > 512 {
-                    return Err(format!("Metadata value is too long (limit: 512 characters) for key: {}", key));
+                    return Err(format!(
+                        "Metadata value is too long (limit: 512 characters) for key: {}",
+                        key
+                    ));
                 }
                 if key.starts_with("consul-") {
-                    return Err(format!("Metadata key prefix 'consul-' is reserved for internal use: {}", key));
+                    return Err(format!(
+                        "Metadata key prefix 'consul-' is reserved for internal use: {}",
+                        key
+                    ));
                 }
             }
         }

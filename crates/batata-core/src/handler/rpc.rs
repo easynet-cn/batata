@@ -501,7 +501,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                         return Ok(Response::new(build_auth_error_payload(
                             &response_type,
                             NO_RIGHT,
-                            &e.message(),
+                            e.message(),
                         )));
                     }
                 }
@@ -525,7 +525,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                                 return Ok(Response::new(build_auth_error_payload(
                                     &response_type,
                                     NO_RIGHT,
-                                    &e.message(),
+                                    e.message(),
                                 )));
                             }
 
@@ -548,7 +548,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                                         return Ok(Response::new(build_auth_error_payload(
                                             &response_type,
                                             NO_RIGHT,
-                                            &e.message(),
+                                            e.message(),
                                         )));
                                     }
                                 }
@@ -850,7 +850,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 // to match Nacos behavior - SDK checks errorCode in response body
                                 let resp_type = message_type.replace("Request", "Response");
                                 let auth_payload =
-                                    build_auth_error_payload(&resp_type, NO_RIGHT, &e.message());
+                                    build_auth_error_payload(&resp_type, NO_RIGHT, e.message());
                                 if let Err(send_err) = bistream_send(&tx, Ok(auth_payload)).await {
                                     tracing::error!(
                                         "Failed to send auth error response: {}",
@@ -942,7 +942,9 @@ mod tests {
     #[test]
     fn test_register_and_get_handler() {
         let registry = HandlerRegistry::new();
-        registry.register_handler(Arc::new(TestHandler { message_type: "TestRequest" }));
+        registry.register_handler(Arc::new(TestHandler {
+            message_type: "TestRequest",
+        }));
 
         let handler = registry.get_handler("TestRequest");
         assert_eq!(handler.can_handle(), "TestRequest");
@@ -959,7 +961,9 @@ mod tests {
     #[test]
     fn test_unregister_handler() {
         let registry = HandlerRegistry::new();
-        registry.register_handler(Arc::new(TestHandler { message_type: "ToRemove" }));
+        registry.register_handler(Arc::new(TestHandler {
+            message_type: "ToRemove",
+        }));
         assert!(registry.unregister_handler("ToRemove"));
         assert!(!registry.unregister_handler("ToRemove")); // Already removed
     }
@@ -967,8 +971,12 @@ mod tests {
     #[test]
     fn test_registered_message_types() {
         let registry = HandlerRegistry::new();
-        registry.register_handler(Arc::new(TestHandler { message_type: "TypeA" }));
-        registry.register_handler(Arc::new(TestHandler { message_type: "TypeB" }));
+        registry.register_handler(Arc::new(TestHandler {
+            message_type: "TypeA",
+        }));
+        registry.register_handler(Arc::new(TestHandler {
+            message_type: "TypeB",
+        }));
 
         let types = registry.registered_message_types();
         assert!(types.contains(&"TypeA".to_string()));
@@ -982,7 +990,9 @@ mod tests {
         let registry = Arc::new(HandlerRegistry::new());
 
         // Register through Arc reference (using &self, not &mut self)
-        registry.register_handler(Arc::new(TestHandler { message_type: "DynamicType" }));
+        registry.register_handler(Arc::new(TestHandler {
+            message_type: "DynamicType",
+        }));
 
         let handler = registry.get_handler("DynamicType");
         assert_eq!(handler.can_handle(), "DynamicType");
@@ -997,8 +1007,11 @@ mod tests {
             let reg = registry.clone();
             let handle = std::thread::spawn(move || {
                 // Use a static str via Box::leak for test purposes
-                let msg_type: &'static str = Box::leak(format!("ConcurrentType{}", i).into_boxed_str());
-                reg.register_handler(Arc::new(TestHandler { message_type: msg_type }));
+                let msg_type: &'static str =
+                    Box::leak(format!("ConcurrentType{}", i).into_boxed_str());
+                reg.register_handler(Arc::new(TestHandler {
+                    message_type: msg_type,
+                }));
             });
             handles.push(handle);
         }

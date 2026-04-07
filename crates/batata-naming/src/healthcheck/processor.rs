@@ -360,6 +360,9 @@ impl HealthCheckProcessor for NoneHealthCheckProcessor {
     }
 }
 
+/// Maximum number of cached database connections to prevent unbounded growth.
+const MAX_MYSQL_CONNECTIONS: usize = 128;
+
 /// MySQL/Database health check processor (matches Nacos MysqlHealthCheckProcessor)
 ///
 /// Connects to a database using sea-orm and executes a health check query.
@@ -383,6 +386,13 @@ impl MysqlHealthCheckProcessor {
     async fn get_connection(&self, url: &str) -> anyhow::Result<DatabaseConnection> {
         if let Some(conn) = self.connections.get(url) {
             return Ok(conn.clone());
+        }
+
+        // Evict oldest entries if at capacity to prevent unbounded memory growth
+        if self.connections.len() >= MAX_MYSQL_CONNECTIONS
+            && let Some(key) = self.connections.iter().next().map(|e| e.key().clone())
+        {
+            self.connections.remove(&key);
         }
 
         let mut opts = sea_orm::ConnectOptions::new(url);

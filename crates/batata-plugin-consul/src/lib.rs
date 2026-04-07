@@ -78,14 +78,14 @@ pub use snapshot::{ConsulSnapshotService, ConsulSnapshotServicePersistent};
 // Tier 2 services
 pub use connect::ConsulConnectService;
 pub use connect_ca::ConsulConnectCAService;
+pub use consul_meta::{
+    ConsulQueryOptions, ConsulResponseMeta, consul_not_found, consul_ok, parse_go_duration,
+    parse_go_duration_secs,
+};
 pub use coordinate::{ConsulCoordinateService, ConsulCoordinateServicePersistent};
 pub use index_provider::ConsulIndexProvider;
 pub use namespace::ConsulNamespaceService;
 pub use naming_store::ConsulNamingStore;
 pub use peering::ConsulPeeringService;
 pub use raft::plugin_handler::{CONSUL_PLUGIN_ID, ConsulRaftPluginHandler, ConsulRaftWriter};
-pub use consul_meta::{
-    ConsulQueryOptions, ConsulResponseMeta, consul_not_found, consul_ok, parse_go_duration,
-    parse_go_duration_secs,
-};
 pub use result_handler::ConsulResultHandler;

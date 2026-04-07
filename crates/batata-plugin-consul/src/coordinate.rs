@@ -317,17 +317,17 @@ impl ConsulCoordinateService {
 
     /// Persist a coordinate entry to RocksDB
     fn persist_to_rocks(&self, key: &str, entry: &CoordinateEntry) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
-                match serde_json::to_vec(entry) {
-                    Ok(bytes) => {
-                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
-                            error!("Failed to persist coordinate '{}': {}", key, e);
-                        }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES)
+        {
+            match serde_json::to_vec(entry) {
+                Ok(bytes) => {
+                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                        error!("Failed to persist coordinate '{}': {}", key, e);
                     }
-                    Err(e) => {
-                        error!("Failed to serialize coordinate '{}': {}", key, e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize coordinate '{}': {}", key, e);
                 }
             }
         }
@@ -336,12 +336,11 @@ impl ConsulCoordinateService {
     /// Delete a coordinate entry from RocksDB
     #[allow(dead_code)]
     fn delete_from_rocks(&self, key: &str) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
-                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                    error!("Failed to delete coordinate '{}': {}", key, e);
-                }
-            }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES)
+            && let Err(e) = db.delete_cf(cf, key.as_bytes())
+        {
+            error!("Failed to delete coordinate '{}': {}", key, e);
         }
     }
 }
@@ -481,17 +480,17 @@ impl ConsulCoordinateServicePersistent {
 
     /// Persist a coordinate entry to RocksDB
     fn persist_to_rocks(&self, key: &str, entry: &CoordinateEntry) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
-                match serde_json::to_vec(entry) {
-                    Ok(bytes) => {
-                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
-                            error!("Failed to persist persistent coordinate '{}': {}", key, e);
-                        }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES)
+        {
+            match serde_json::to_vec(entry) {
+                Ok(bytes) => {
+                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                        error!("Failed to persist persistent coordinate '{}': {}", key, e);
                     }
-                    Err(e) => {
-                        error!("Failed to serialize persistent coordinate '{}': {}", key, e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize persistent coordinate '{}': {}", key, e);
                 }
             }
         }
@@ -500,12 +499,11 @@ impl ConsulCoordinateServicePersistent {
     /// Delete a coordinate entry from RocksDB
     #[allow(dead_code)]
     fn delete_from_rocks(&self, key: &str) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
-                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                    error!("Failed to delete persistent coordinate '{}': {}", key, e);
-                }
-            }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES)
+            && let Err(e) = db.delete_cf(cf, key.as_bytes())
+        {
+            error!("Failed to delete persistent coordinate '{}': {}", key, e);
         }
     }
 }
@@ -573,7 +571,8 @@ pub async fn get_coordinate_node(
     let node = path.into_inner();
     match coord_service.get_node(&node) {
         Some(entries) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
             consul_ok(&meta).json(entries)
         }
         None => {
@@ -663,7 +662,8 @@ pub async fn get_coordinate_node_persistent(
     let node = path.into_inner();
     match coord_service.get_node(&node) {
         Some(entries) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
             consul_ok(&meta).json(entries)
         }
         None => {

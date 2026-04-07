@@ -102,7 +102,10 @@ async fn init_embedded_standalone(
     configuration: &Configuration,
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
     let rocksdb_dir = configuration.embedded_rocksdb_dir();
-    info!("Initializing standalone embedded storage at: {}", rocksdb_dir);
+    info!(
+        "Initializing standalone embedded storage at: {}",
+        rocksdb_dir
+    );
 
     let rocks_config = configuration.rocksdb_config();
     let sm = batata_consistency::RocksStateMachine::with_options(

@@ -587,8 +587,15 @@ mod tests {
     #[test]
     fn test_consul_plugin_from_config() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin =
-            ConsulPlugin::from_config(true, false, None, dc_config, false, "127.0.0.1".to_string(), 8500);
+        let plugin = ConsulPlugin::from_config(
+            true,
+            false,
+            None,
+            dc_config,
+            false,
+            "127.0.0.1".to_string(),
+            8500,
+        );
         assert!(plugin.is_enabled());
         assert_eq!(plugin.protocol(), "consul");
         assert_eq!(plugin.default_port(), 8500);
@@ -599,8 +606,15 @@ mod tests {
     #[tokio::test]
     async fn test_consul_plugin_from_config_init() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin =
-            ConsulPlugin::from_config(true, false, None, dc_config, false, "127.0.0.1".to_string(), 8500);
+        let plugin = ConsulPlugin::from_config(
+            true,
+            false,
+            None,
+            dc_config,
+            false,
+            "127.0.0.1".to_string(),
+            8500,
+        );
 
         // Initialize with empty context (standalone mode)
         let ctx = batata_plugin::PluginContext::new();

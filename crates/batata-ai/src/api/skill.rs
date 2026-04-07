@@ -435,7 +435,7 @@ async fn update_draft(
         .skill_name
         .as_deref()
         .filter(|n| !n.is_empty())
-        .or_else(|| {
+        .or({
             if !skill.name.is_empty() {
                 Some(skill.name.as_str())
             } else {

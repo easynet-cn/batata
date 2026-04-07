@@ -467,12 +467,9 @@ query_prefix "" { policy = "write" }
         MEMORY_POLICIES.insert(mgmt_policy.name.clone(), mgmt_policy);
 
         // Use configured initial management token or generate a random UUID
-        let bootstrap_secret = initial_management_token
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        info!(
-            "ACL bootstrap token secret_id: {}",
-            bootstrap_secret
-        );
+        let bootstrap_secret =
+            initial_management_token.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        info!("ACL bootstrap token secret_id: {}", bootstrap_secret);
         let bootstrap_token = AclToken {
             accessor_id: BOOTSTRAP_ACCESSOR_ID.to_string(),
             secret_id: Some(bootstrap_secret.clone()),
@@ -522,21 +519,19 @@ query_prefix "" { policy = "write" }
         // 1. X-Consul-Token header (highest priority)
         if let Some(token) = req.headers().get(X_CONSUL_TOKEN)
             && let Ok(token_str) = token.to_str()
+            && !token_str.is_empty()
         {
-            if !token_str.is_empty() {
-                return Some(token_str.to_string());
-            }
+            return Some(token_str.to_string());
         }
 
         // 2. Authorization: Bearer <token>
         if let Some(auth) = req.headers().get("Authorization")
             && let Ok(auth_str) = auth.to_str()
+            && let Some(token) = auth_str.strip_prefix("Bearer ")
         {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                let token = token.trim();
-                if !token.is_empty() {
-                    return Some(token.to_string());
-                }
+            let token = token.trim();
+            if !token.is_empty() {
+                return Some(token.to_string());
             }
         }
 
@@ -777,9 +772,7 @@ query_prefix "" { policy = "write" }
             MEMORY_POLICIES.remove(&policy.name);
             if let Some(ref raft) = self.raft_node {
                 match raft
-                    .write(ConsulRaftRequest::ACLPolicyDelete {
-                        id: id.to_string(),
-                    })
+                    .write(ConsulRaftRequest::ACLPolicyDelete { id: id.to_string() })
                     .await
                 {
                     Ok(r) if !r.success => {
@@ -837,7 +830,12 @@ query_prefix "" { policy = "write" }
     }
 
     /// Create a new role
-    pub async fn create_role(&self, name: &str, description: &str, policies: Vec<String>) -> AclRole {
+    pub async fn create_role(
+        &self,
+        name: &str,
+        description: &str,
+        policies: Vec<String>,
+    ) -> AclRole {
         let now = chrono::Utc::now().to_rfc3339();
         let role_id = uuid::Uuid::new_v4().to_string();
 
@@ -977,9 +975,7 @@ query_prefix "" { policy = "write" }
             MEMORY_ROLES.remove(&role.name);
             if let Some(ref raft) = self.raft_node {
                 match raft
-                    .write(ConsulRaftRequest::ACLRoleDelete {
-                        id: id.to_string(),
-                    })
+                    .write(ConsulRaftRequest::ACLRoleDelete { id: id.to_string() })
                     .await
                 {
                     Ok(r) if !r.success => {
@@ -2416,17 +2412,17 @@ pub async fn acl_replication(
 ) -> HttpResponse {
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(AclReplicationStatus {
-            enabled: false,
-            running: false,
-            source_datacenter: dc_config.primary_datacenter.clone(),
-            replication_type: "tokens".to_string(),
-            replicated_index: 0,
-            replicated_role_index: 0,
-            replicated_token_index: 0,
-            last_success: None,
-            last_error: None,
-            last_error_message: None,
-        })
+        enabled: false,
+        running: false,
+        source_datacenter: dc_config.primary_datacenter.clone(),
+        replication_type: "tokens".to_string(),
+        replicated_index: 0,
+        replicated_role_index: 0,
+        replicated_token_index: 0,
+        last_success: None,
+        last_error: None,
+        last_error_message: None,
+    })
 }
 
 /// GET /v1/acl/binding-rules - List binding rules

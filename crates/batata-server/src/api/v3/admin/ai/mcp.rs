@@ -58,27 +58,25 @@ impl McpForm {
             .map_err(|e| format!("Invalid serverSpecification: {}", e))?;
 
         // Nacos behavior: if name is empty in serverSpecification, fill from mcpName form param
-        if reg.name.is_empty() {
-            if let Some(mcp_name) = &self.mcp_name {
-                if !mcp_name.is_empty() {
-                    reg.name = mcp_name.clone();
-                }
-            }
+        if reg.name.is_empty()
+            && let Some(mcp_name) = &self.mcp_name
+            && !mcp_name.is_empty()
+        {
+            reg.name = mcp_name.clone();
         }
 
-        if let Some(ns) = self.namespace_id {
-            if !ns.is_empty() {
-                reg.namespace = ns;
-            }
+        if let Some(ns) = self.namespace_id
+            && !ns.is_empty()
+        {
+            reg.namespace = ns;
         }
 
         // Parse toolSpecification if present
-        if let Some(tool_json) = self.tool_specification {
-            if !tool_json.is_empty() {
-                if let Ok(tools) = serde_json::from_str(&tool_json) {
-                    reg.tools = tools;
-                }
-            }
+        if let Some(tool_json) = self.tool_specification
+            && !tool_json.is_empty()
+            && let Ok(tools) = serde_json::from_str(&tool_json)
+        {
+            reg.tools = tools;
         }
 
         Ok(reg)

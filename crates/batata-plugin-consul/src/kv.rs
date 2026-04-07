@@ -16,7 +16,9 @@ use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
-use crate::consul_meta::{ConsulResponseMeta, apply_kv_raw_security_headers, consul_not_found, consul_ok};
+use crate::consul_meta::{
+    ConsulResponseMeta, apply_kv_raw_security_headers, consul_not_found, consul_ok,
+};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
@@ -986,10 +988,7 @@ impl ConsulKVService {
             batch.delete_cf(cf_sessions, idx_key.as_bytes());
         }
         if let Err(e) = self.db.write(batch) {
-            error!(
-                "Failed to delete session keys for '{}': {}",
-                session_id, e
-            );
+            error!("Failed to delete session keys for '{}': {}", session_id, e);
             return;
         }
         self.notify.notify_waiters();
@@ -1453,10 +1452,7 @@ pub async fn get_kv(
 
     // Handle keys-only request — support both ?separator and ?seperator (Consul legacy)
     if keys_only {
-        let sep = query
-            .separator
-            .as_deref()
-            .or(query.seperator.as_deref());
+        let sep = query.separator.as_deref().or(query.seperator.as_deref());
         let keys = kv_service.get_keys(&key, sep);
         let body = serde_json::to_vec(&keys).unwrap_or_default();
         let len = body.len();

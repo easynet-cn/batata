@@ -58,12 +58,11 @@ impl ServiceInfoHolder {
             .insert(key.to_string(), new_service.clone());
 
         // Persist to disk (non-blocking best-effort)
-        if let Some(reactor) = &self.failover_reactor {
-            if let Err(e) =
+        if let Some(reactor) = &self.failover_reactor
+            && let Err(e) =
                 reactor.save_failover(&new_service.group_name, &new_service.name, &new_service)
-            {
-                warn!("Failed to save failover for service {}: {}", key, e);
-            }
+        {
+            warn!("Failed to save failover for service {}: {}", key, e);
         }
 
         debug!(

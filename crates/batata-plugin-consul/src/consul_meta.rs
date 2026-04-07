@@ -346,15 +346,14 @@ pub fn parse_go_duration(s: &str) -> Option<std::time::Duration> {
             chars.next();
 
             // Check for two-char units
-            if let Some(&next_ch) = chars.peek() {
-                if (ch == 'm' && next_ch == 's')
+            if let Some(&next_ch) = chars.peek()
+                && ((ch == 'm' && next_ch == 's')
                     || (ch == 'u' && next_ch == 's')
                     || (ch == 'n' && next_ch == 's')
-                    || (ch == 'µ' && next_ch == 's')
-                {
-                    unit.push(next_ch);
-                    chars.next();
-                }
+                    || (ch == 'µ' && next_ch == 's'))
+            {
+                unit.push(next_ch);
+                chars.next();
             }
 
             let nanos_per_unit: f64 = match unit.as_str() {
@@ -476,31 +475,67 @@ mod tests {
     #[test]
     fn test_parse_go_duration_simple_units() {
         // Nanoseconds
-        assert_eq!(parse_go_duration("100ns"), Some(std::time::Duration::from_nanos(100)));
+        assert_eq!(
+            parse_go_duration("100ns"),
+            Some(std::time::Duration::from_nanos(100))
+        );
         // Microseconds
-        assert_eq!(parse_go_duration("50us"), Some(std::time::Duration::from_micros(50)));
-        assert_eq!(parse_go_duration("50µs"), Some(std::time::Duration::from_micros(50)));
+        assert_eq!(
+            parse_go_duration("50us"),
+            Some(std::time::Duration::from_micros(50))
+        );
+        assert_eq!(
+            parse_go_duration("50µs"),
+            Some(std::time::Duration::from_micros(50))
+        );
         // Milliseconds
-        assert_eq!(parse_go_duration("500ms"), Some(std::time::Duration::from_millis(500)));
-        assert_eq!(parse_go_duration("100ms"), Some(std::time::Duration::from_millis(100)));
+        assert_eq!(
+            parse_go_duration("500ms"),
+            Some(std::time::Duration::from_millis(500))
+        );
+        assert_eq!(
+            parse_go_duration("100ms"),
+            Some(std::time::Duration::from_millis(100))
+        );
         // Seconds
-        assert_eq!(parse_go_duration("30s"), Some(std::time::Duration::from_secs(30)));
+        assert_eq!(
+            parse_go_duration("30s"),
+            Some(std::time::Duration::from_secs(30))
+        );
         // Minutes
-        assert_eq!(parse_go_duration("5m"), Some(std::time::Duration::from_secs(300)));
+        assert_eq!(
+            parse_go_duration("5m"),
+            Some(std::time::Duration::from_secs(300))
+        );
         // Hours
-        assert_eq!(parse_go_duration("2h"), Some(std::time::Duration::from_secs(7200)));
+        assert_eq!(
+            parse_go_duration("2h"),
+            Some(std::time::Duration::from_secs(7200))
+        );
     }
 
     #[test]
     fn test_parse_go_duration_compound() {
         // 1h30m
-        assert_eq!(parse_go_duration("1h30m"), Some(std::time::Duration::from_secs(5400)));
+        assert_eq!(
+            parse_go_duration("1h30m"),
+            Some(std::time::Duration::from_secs(5400))
+        );
         // 1h0m30s
-        assert_eq!(parse_go_duration("1h0m30s"), Some(std::time::Duration::from_secs(3630)));
+        assert_eq!(
+            parse_go_duration("1h0m30s"),
+            Some(std::time::Duration::from_secs(3630))
+        );
         // 2h30m45s
-        assert_eq!(parse_go_duration("2h30m45s"), Some(std::time::Duration::from_secs(9045)));
+        assert_eq!(
+            parse_go_duration("2h30m45s"),
+            Some(std::time::Duration::from_secs(9045))
+        );
         // 1m30s
-        assert_eq!(parse_go_duration("1m30s"), Some(std::time::Duration::from_secs(90)));
+        assert_eq!(
+            parse_go_duration("1m30s"),
+            Some(std::time::Duration::from_secs(90))
+        );
         // 500ms mixed
         assert_eq!(
             parse_go_duration("1s500ms"),
@@ -511,8 +546,14 @@ mod tests {
     #[test]
     fn test_parse_go_duration_bare_number() {
         // Bare number = seconds (Consul convention)
-        assert_eq!(parse_go_duration("60"), Some(std::time::Duration::from_secs(60)));
-        assert_eq!(parse_go_duration("0"), Some(std::time::Duration::from_secs(0)));
+        assert_eq!(
+            parse_go_duration("60"),
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert_eq!(
+            parse_go_duration("0"),
+            Some(std::time::Duration::from_secs(0))
+        );
     }
 
     #[test]
@@ -520,7 +561,10 @@ mod tests {
         assert_eq!(parse_go_duration(""), None);
         assert_eq!(parse_go_duration("   "), None);
         assert_eq!(parse_go_duration("abc"), None);
-        assert_eq!(parse_go_duration("0s"), Some(std::time::Duration::from_secs(0)));
+        assert_eq!(
+            parse_go_duration("0s"),
+            Some(std::time::Duration::from_secs(0))
+        );
     }
 
     #[test]

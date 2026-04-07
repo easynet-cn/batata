@@ -220,35 +220,42 @@ impl ConfigCacheService {
     }
 
     /// Batch check MD5 changes for multiple configs.
-    /// Returns list of (tenant, group, data_id, server_md5) for changed configs.
-    pub fn batch_check_md5(
+    /// Returns indices of changed configs and their server MD5 values.
+    /// Callers can use the indices to reference the original input slice, avoiding clones.
+    pub fn batch_check_md5_indices(
         &self,
         configs: &[(String, String, String, String)], // (tenant, group, dataId, clientMd5)
-    ) -> Vec<(String, String, String, String)> {
+    ) -> Vec<(usize, String)> {
         configs
             .iter()
-            .filter_map(|(tenant, group, data_id, client_md5)| {
+            .enumerate()
+            .filter_map(|(idx, (tenant, group, data_id, client_md5))| {
                 let key = Self::build_key(tenant, group, data_id);
                 if let Some(item) = self.cache.get(&key) {
                     if item.md5 != *client_md5 {
-                        Some((
-                            tenant.clone(),
-                            group.clone(),
-                            data_id.clone(),
-                            item.md5.clone(),
-                        ))
+                        Some((idx, item.md5.clone()))
                     } else {
                         None
                     }
                 } else {
                     // Config not in cache -- treat as changed
-                    Some((
-                        tenant.clone(),
-                        group.clone(),
-                        data_id.clone(),
-                        String::new(),
-                    ))
+                    Some((idx, String::new()))
                 }
+            })
+            .collect()
+    }
+
+    /// Batch check MD5 changes for multiple configs.
+    /// Returns list of (tenant, group, data_id, server_md5) for changed configs.
+    pub fn batch_check_md5(
+        &self,
+        configs: &[(String, String, String, String)], // (tenant, group, dataId, clientMd5)
+    ) -> Vec<(String, String, String, String)> {
+        self.batch_check_md5_indices(configs)
+            .into_iter()
+            .map(|(idx, server_md5)| {
+                let (tenant, group, data_id, _) = &configs[idx];
+                (tenant.clone(), group.clone(), data_id.clone(), server_md5)
             })
             .collect()
     }

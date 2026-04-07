@@ -20,8 +20,16 @@ async fn fire_event(
     event_service: web::Data<ConsulEventService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::event::fire_event(req, path, query, body, acl_service, event_service, index_provider)
-        .await
+    crate::event::fire_event(
+        req,
+        path,
+        query,
+        body,
+        acl_service,
+        event_service,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/list")]

@@ -186,6 +186,7 @@ tonic-prost-build = "0.14.5"
 
 [profile.dev]
 incremental = true
+split-debuginfo = "unpacked"  # Faster incremental builds on macOS
 
 # Optimize third-party dependencies even in dev builds for faster runtime
 [profile.dev.package."*"]

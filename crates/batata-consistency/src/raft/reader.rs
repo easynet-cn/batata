@@ -228,20 +228,21 @@ fn glob_match(pattern: &str, value: &str) -> bool {
     let mut pos = 0;
 
     // First segment must match at the start (if non-empty)
-    if let Some(first) = segments.first() {
-        if !first.is_empty() {
-            if !value.starts_with(first) {
-                return false;
-            }
-            pos = first.len();
+    if let Some(first) = segments.first()
+        && !first.is_empty()
+    {
+        if !value.starts_with(first) {
+            return false;
         }
+        pos = first.len();
     }
 
     // Last segment must match at the end (if non-empty)
-    if let Some(last) = segments.last() {
-        if !last.is_empty() && !value.ends_with(last) {
-            return false;
-        }
+    if let Some(last) = segments.last()
+        && !last.is_empty()
+        && !value.ends_with(last)
+    {
+        return false;
     }
 
     // Middle segments must appear in order

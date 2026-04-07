@@ -353,21 +353,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Register gRPC handler for receiving event broadcasts from peers
         let event_service = consul_plugin.event_service().clone();
         grpc_servers.handler_registry().register_handler(Arc::new(
-            batata_server::service::consul_event_handler::ConsulEventBroadcastHandler { event_service: event_service.clone() },
+            batata_server::service::consul_event_handler::ConsulEventBroadcastHandler {
+                event_service: event_service.clone(),
+            },
         ));
 
         // Set broadcaster for sending events to peers
-        if let Some(ref client_manager) = *grpc_servers.cluster_client_manager() {
-            if let Some(ref smm) = persistence_ctx.server_member_manager {
-                let broadcaster = Arc::new(
-                    batata_server::service::consul_event_handler::ConsulEventBroadcasterImpl::new(
-                        client_manager.clone(),
-                        smm.clone(),
-                    ),
-                );
-                event_service.set_broadcaster(broadcaster).await;
-                info!("Consul event cluster broadcast enabled");
-            }
+        if let Some(ref client_manager) = *grpc_servers.cluster_client_manager()
+            && let Some(ref smm) = persistence_ctx.server_member_manager
+        {
+            let broadcaster = Arc::new(
+                batata_server::service::consul_event_handler::ConsulEventBroadcasterImpl::new(
+                    client_manager.clone(),
+                    smm.clone(),
+                ),
+            );
+            event_service.set_broadcaster(broadcaster).await;
+            info!("Consul event cluster broadcast enabled");
         }
     }
 

@@ -154,10 +154,7 @@ impl ConsulQueryService {
         if let Some(ref raft) = self.raft_node {
             let query_json = serde_json::to_string(&query).unwrap_or_default();
             match raft
-                .write(ConsulRaftRequest::QueryCreate {
-                    id,
-                    query_json,
-                })
+                .write(ConsulRaftRequest::QueryCreate { id, query_json })
                 .await
             {
                 Ok(r) if !r.success => {
@@ -245,9 +242,7 @@ impl ConsulQueryService {
         if removed {
             if let Some(ref raft) = self.raft_node {
                 match raft
-                    .write(ConsulRaftRequest::QueryDelete {
-                        id: id.to_string(),
-                    })
+                    .write(ConsulRaftRequest::QueryDelete { id: id.to_string() })
                     .await
                 {
                     Ok(r) if !r.success => {
@@ -662,22 +657,24 @@ mod tests {
         let unique = uuid::Uuid::new_v4().to_string();
         let mut created_ids = Vec::new();
         for i in 0..3 {
-            let q = service.create_query(PreparedQueryCreateRequest {
-                name: Some(format!("list-query-{}-{}", unique, i)),
-                session: None,
-                token: None,
-                service: PreparedQueryService {
-                    service: format!("list-svc-{}", i),
-                    failover: None,
-                    only_passing: false,
-                    near: None,
-                    tags: None,
-                    node_meta: None,
-                    service_meta: None,
-                },
-                dns: None,
-                template: None,
-            }).await;
+            let q = service
+                .create_query(PreparedQueryCreateRequest {
+                    name: Some(format!("list-query-{}-{}", unique, i)),
+                    session: None,
+                    token: None,
+                    service: PreparedQueryService {
+                        service: format!("list-svc-{}", i),
+                        failover: None,
+                        only_passing: false,
+                        near: None,
+                        tags: None,
+                        node_meta: None,
+                        service_meta: None,
+                    },
+                    dns: None,
+                    template: None,
+                })
+                .await;
             created_ids.push(q.id);
         }
 
@@ -699,42 +696,46 @@ mod tests {
     async fn test_update_query() {
         let service = ConsulQueryService::new();
 
-        let created = service.create_query(PreparedQueryCreateRequest {
-            name: Some("original".to_string()),
-            session: None,
-            token: None,
-            service: PreparedQueryService {
-                service: "web".to_string(),
-                failover: None,
-                only_passing: false,
-                near: None,
-                tags: None,
-                node_meta: None,
-                service_meta: None,
-            },
-            dns: None,
-            template: None,
-        }).await;
-
-        let updated = service.update_query(
-            &created.id,
-            PreparedQueryCreateRequest {
-                name: Some("updated".to_string()),
+        let created = service
+            .create_query(PreparedQueryCreateRequest {
+                name: Some("original".to_string()),
                 session: None,
                 token: None,
                 service: PreparedQueryService {
-                    service: "api".to_string(),
+                    service: "web".to_string(),
                     failover: None,
-                    only_passing: true,
+                    only_passing: false,
                     near: None,
-                    tags: Some(vec!["v2".to_string()]),
+                    tags: None,
                     node_meta: None,
                     service_meta: None,
                 },
                 dns: None,
                 template: None,
-            },
-        ).await;
+            })
+            .await;
+
+        let updated = service
+            .update_query(
+                &created.id,
+                PreparedQueryCreateRequest {
+                    name: Some("updated".to_string()),
+                    session: None,
+                    token: None,
+                    service: PreparedQueryService {
+                        service: "api".to_string(),
+                        failover: None,
+                        only_passing: true,
+                        near: None,
+                        tags: Some(vec!["v2".to_string()]),
+                        node_meta: None,
+                        service_meta: None,
+                    },
+                    dns: None,
+                    template: None,
+                },
+            )
+            .await;
 
         assert!(updated.is_some());
         let q = updated.unwrap();
@@ -748,25 +749,27 @@ mod tests {
     async fn test_update_nonexistent_query() {
         let service = ConsulQueryService::new();
 
-        let result = service.update_query(
-            "nonexistent",
-            PreparedQueryCreateRequest {
-                name: Some("x".to_string()),
-                session: None,
-                token: None,
-                service: PreparedQueryService {
-                    service: "x".to_string(),
-                    failover: None,
-                    only_passing: false,
-                    near: None,
-                    tags: None,
-                    node_meta: None,
-                    service_meta: None,
+        let result = service
+            .update_query(
+                "nonexistent",
+                PreparedQueryCreateRequest {
+                    name: Some("x".to_string()),
+                    session: None,
+                    token: None,
+                    service: PreparedQueryService {
+                        service: "x".to_string(),
+                        failover: None,
+                        only_passing: false,
+                        near: None,
+                        tags: None,
+                        node_meta: None,
+                        service_meta: None,
+                    },
+                    dns: None,
+                    template: None,
                 },
-                dns: None,
-                template: None,
-            },
-        ).await;
+            )
+            .await;
         assert!(result.is_none());
     }
 
@@ -792,7 +795,8 @@ mod tests {
                     },
                     dns: None,
                     template: None,
-                }).await;
+                })
+                .await;
             ids.push(q.id);
         }
 

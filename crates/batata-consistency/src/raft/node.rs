@@ -317,13 +317,12 @@ impl RaftNode {
                             // Wait for local state machine to catch up to the
                             // leader's committed index before returning, ensuring
                             // subsequent local reads see the written data.
-                            if leader_log_index > 0 {
-                                if let Err(e) = self
+                            if leader_log_index > 0
+                                && let Err(e) = self
                                     .wait_for_applied(leader_log_index, Duration::from_secs(5))
                                     .await
-                                {
-                                    tracing::warn!("Follower wait-for-applied timed out: {}", e);
-                                }
+                            {
+                                tracing::warn!("Follower wait-for-applied timed out: {}", e);
                             }
                             let idx = self.last_applied_index().unwrap_or(leader_log_index);
                             return Ok((resp, idx));

@@ -261,10 +261,10 @@ impl ConnectionManager {
                 Ok(Ok(_)) => {
                     tracing::debug!(connection_id, "Message pushed successfully");
                     // Reset timeout counter on success
-                    if self.max_push_timeouts > 0 {
-                        if let Some(counter) = self.timeout_counters.get(connection_id) {
-                            counter.store(0, Ordering::Relaxed);
-                        }
+                    if self.max_push_timeouts > 0
+                        && let Some(counter) = self.timeout_counters.get(connection_id)
+                    {
+                        counter.store(0, Ordering::Relaxed);
                     }
                     true
                 }

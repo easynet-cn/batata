@@ -52,6 +52,11 @@ where
 pub trait RequestTrait {
     fn headers(&self) -> HashMap<String, String>;
 
+    /// Get a reference to a specific header value without cloning the entire map.
+    fn get_header(&self, key: &str) -> Option<String> {
+        self.headers().get(key).cloned()
+    }
+
     fn request_type(&self) -> &'static str {
         ""
     }
@@ -157,6 +162,10 @@ impl Request {
 impl RequestTrait for Request {
     fn headers(&self) -> HashMap<String, String> {
         self.headers.clone()
+    }
+
+    fn get_header(&self, key: &str) -> Option<String> {
+        self.headers.get(key).cloned()
     }
 
     fn insert_headers(&mut self, headers: HashMap<String, String>) {

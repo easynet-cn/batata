@@ -231,6 +231,22 @@ impl Default for LdapConfig {
     }
 }
 
+/// Escape special characters in an LDAP filter value per RFC 4515.
+fn ldap_escape_filter_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => escaped.push_str("\\5c"),
+            '*' => escaped.push_str("\\2a"),
+            '(' => escaped.push_str("\\28"),
+            ')' => escaped.push_str("\\29"),
+            '\0' => escaped.push_str("\\00"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 impl LdapConfig {
     /// Check if LDAP is configured (has a URL)
     pub fn is_configured(&self) -> bool {
@@ -239,17 +255,19 @@ impl LdapConfig {
 
     /// Build the user DN from the pattern and username
     pub fn build_user_dn(&self, username: &str) -> String {
+        let escaped = ldap_escape_filter_value(username);
         if self.user_dn_pattern.is_empty() {
             // Default pattern: uid=username,base_dn
-            format!("{}={},{}", self.filter_prefix, username, self.base_dn)
+            format!("{}={},{}", self.filter_prefix, escaped, self.base_dn)
         } else {
-            self.user_dn_pattern.replace("{0}", username)
+            self.user_dn_pattern.replace("{0}", &escaped)
         }
     }
 
     /// Build the search filter for a user
     pub fn build_search_filter(&self, username: &str) -> String {
-        format!("({}={})", self.filter_prefix, username)
+        let escaped = ldap_escape_filter_value(username);
+        format!("({}={})", self.filter_prefix, escaped)
     }
 }
 
@@ -356,6 +374,28 @@ mod tests {
 
         config.filter_prefix = "cn".to_string();
         assert_eq!(config.build_search_filter("john"), "(cn=john)");
+    }
+
+    #[test]
+    fn test_ldap_escape_filter_value() {
+        assert_eq!(ldap_escape_filter_value("normal"), "normal");
+        assert_eq!(ldap_escape_filter_value("user*"), "user\\2a");
+        assert_eq!(ldap_escape_filter_value("user(name)"), "user\\28name\\29");
+        assert_eq!(ldap_escape_filter_value("back\\slash"), "back\\5cslash");
+        assert_eq!(ldap_escape_filter_value("null\0byte"), "null\\00byte");
+        assert_eq!(ldap_escape_filter_value("*()\\\0"), "\\2a\\28\\29\\5c\\00");
+    }
+
+    #[test]
+    fn test_ldap_filter_injection_prevented() {
+        let config = LdapConfig {
+            filter_prefix: "uid".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.build_search_filter("user)(uid=*)"),
+            "(uid=user\\29\\28uid=\\2a\\29)"
+        );
     }
 
     #[test]

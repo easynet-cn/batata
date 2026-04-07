@@ -10,8 +10,8 @@
 // - Events are NOT persisted to RocksDB or Raft (by design)
 // - Blocking queries use UUID-based index (XOR of UUID halves)
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use base64::Engine;
@@ -84,10 +84,8 @@ impl EventRingBuffer {
 
         // If buffer hasn't wrapped yet, read from 0..write_index
         if self.total_written <= len as u64 {
-            for slot in &self.buffer[..self.write_index] {
-                if let Some(event) = slot {
-                    result.push(event);
-                }
+            for event in self.buffer[..self.write_index].iter().flatten() {
+                result.push(event);
             }
         } else {
             // Buffer has wrapped — read from write_index (oldest) to write_index-1 (newest)
@@ -200,13 +198,15 @@ impl ConsulEventService {
 
         // Update LTime if incoming event has a higher LTime (cluster sync)
         let incoming_ltime = event.ltime;
-        let _ = self.ltime.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-            if incoming_ltime >= current {
-                Some(incoming_ltime + 1)
-            } else {
-                None
-            }
-        });
+        let _ = self
+            .ltime
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                if incoming_ltime >= current {
+                    Some(incoming_ltime + 1)
+                } else {
+                    None
+                }
+            });
 
         {
             let mut buf = self.buffer.write().await;
@@ -233,10 +233,10 @@ impl ConsulEventService {
             .into_iter()
             .filter(|e| {
                 // Filter by name (exact match, like Consul)
-                if let Some(n) = name {
-                    if e.name != n {
-                        return false;
-                    }
+                if let Some(n) = name
+                    && e.name != n
+                {
+                    return false;
                 }
                 true
             })
@@ -383,9 +383,7 @@ mod tests {
     async fn test_list_events_filter_by_name() {
         let service = ConsulEventService::new(test_index_provider());
 
-        service
-            .fire_event("specific-event", None, "", "", "")
-            .await;
+        service.fire_event("specific-event", None, "", "", "").await;
         service.fire_event("other-event", None, "", "", "").await;
 
         let events = service
@@ -438,7 +436,10 @@ mod tests {
         // Oldest events should be overwritten — first event should be evt-10
         assert_eq!(events[0].name, "evt-10");
         // Last event should be the most recent
-        assert_eq!(events[MAX_EVENTS - 1].name, format!("evt-{}", MAX_EVENTS + 9));
+        assert_eq!(
+            events[MAX_EVENTS - 1].name,
+            format!("evt-{}", MAX_EVENTS + 9)
+        );
     }
 
     #[tokio::test]
@@ -590,7 +591,9 @@ mod tests {
 
         // Start a blocking wait with short timeout
         let handle = tokio::spawn(async move {
-            service2.wait_for_event(Some(std::time::Duration::from_secs(5))).await;
+            service2
+                .wait_for_event(Some(std::time::Duration::from_secs(5)))
+                .await;
             true
         });
 
@@ -601,10 +604,7 @@ mod tests {
         service.fire_event("wake", None, "", "", "").await;
 
         // Waiter should complete quickly (not timeout)
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            handle,
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         assert!(result.is_ok(), "Blocking query should have been woken up");
     }
 
@@ -613,7 +613,9 @@ mod tests {
         let service = ConsulEventService::new(test_index_provider());
 
         let start = std::time::Instant::now();
-        service.wait_for_event(Some(std::time::Duration::from_millis(100))).await;
+        service
+            .wait_for_event(Some(std::time::Duration::from_millis(100)))
+            .await;
         let elapsed = start.elapsed();
 
         // Should have waited ~100ms, not 5 minutes

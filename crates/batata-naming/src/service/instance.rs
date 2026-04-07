@@ -5,8 +5,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use batata_api::naming::ServiceMetadata;
-
 use crate::model::{Instance, Service};
 
 use super::{NamingService, build_instance_key, build_instance_key_parts, build_service_key};
@@ -38,7 +36,7 @@ impl NamingService {
         // Auto-create ServiceMetadata if it doesn't exist yet
         self.service_metadata
             .entry(service_key.clone())
-            .or_insert_with(ServiceMetadata::default);
+            .or_default();
 
         // Increment service revision for change detection
         self.increment_service_revision(&service_key);
@@ -328,18 +326,18 @@ impl NamingService {
         let mut name_set = std::collections::HashSet::new();
 
         for entry in self.services.iter() {
-            if entry.key().starts_with(&prefix) {
-                if let Some((_, _, svc)) = super::parse_service_key(entry.key()) {
-                    name_set.insert(svc.to_string());
-                }
+            if entry.key().starts_with(&prefix)
+                && let Some((_, _, svc)) = super::parse_service_key(entry.key())
+            {
+                name_set.insert(svc.to_string());
             }
         }
 
         for entry in self.service_metadata.iter() {
-            if entry.key().starts_with(&prefix) {
-                if let Some((_, _, svc)) = super::parse_service_key(entry.key()) {
-                    name_set.insert(svc.to_string());
-                }
+            if entry.key().starts_with(&prefix)
+                && let Some((_, _, svc)) = super::parse_service_key(entry.key())
+            {
+                name_set.insert(svc.to_string());
             }
         }
 

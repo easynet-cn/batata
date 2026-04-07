@@ -326,7 +326,7 @@ async fn list_services(
             .collect();
 
         let response = ServiceListResponse {
-            total_count: total_count,
+            total_count,
             page_number: params.page_no,
             pages_available,
             page_items: service_list,

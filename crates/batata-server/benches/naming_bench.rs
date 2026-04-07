@@ -3,7 +3,9 @@
 
 use batata_server::api::naming::model::Instance;
 use batata_server::service::naming::NamingService;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 
 fn create_test_instance(ip: &str, port: i32) -> Instance {

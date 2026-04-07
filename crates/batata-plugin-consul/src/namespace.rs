@@ -22,6 +22,7 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 /// Consul Namespace
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[derive(Default)]
 pub struct Namespace {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -234,7 +235,8 @@ pub async fn read_namespace(
     let name = path.into_inner();
     match ns_service.get(&name) {
         Some(ns) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
             consul_ok(&meta).json(ns)
         }
         None => HttpResponse::NotFound()
@@ -306,7 +308,8 @@ pub async fn delete_namespace(
     let name = path.into_inner();
     match ns_service.delete(&name).await {
         Ok(()) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
             consul_ok(&meta).finish()
         }
         Err(msg) => HttpResponse::BadRequest().json(ConsulError::new(msg)),
@@ -420,20 +423,5 @@ mod tests {
     async fn test_delete_nonexistent() {
         let svc = create_test_service();
         assert!(svc.delete("nonexistent").await.is_err());
-    }
-}
-
-impl Default for Namespace {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            description: String::new(),
-            acls: None,
-            meta: None,
-            deleted_at: None,
-            partition: String::new(),
-            create_index: 0,
-            modify_index: 0,
-        }
     }
 }

@@ -16,12 +16,12 @@ use batata_api::remote::model::{
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_core::model::Connection;
 use batata_core::service::cluster_client::ClusterClientManager;
+use batata_plugin_consul::ConsulEventService;
 use batata_plugin_consul::event::EventBroadcaster;
 use batata_plugin_consul::model::UserEvent;
-use batata_plugin_consul::ConsulEventService;
 
-use batata_common::ClusterManager;
 use batata_api::Member;
+use batata_common::ClusterManager;
 
 // ============================================================================
 // gRPC Handler: receives event broadcasts from peers

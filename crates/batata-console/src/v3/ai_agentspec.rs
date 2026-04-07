@@ -404,7 +404,7 @@ async fn update_draft(
         .agent_spec_name
         .as_deref()
         .filter(|n| !n.is_empty())
-        .or_else(|| {
+        .or({
             if !spec.name.is_empty() {
                 Some(spec.name.as_str())
             } else {

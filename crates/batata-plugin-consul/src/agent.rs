@@ -11,8 +11,8 @@ use batata_common::{ClusterManager, MemberState};
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 
 use crate::acl::{AclService, ResourceType};
-use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::check_index::ConsulCheckIndex;
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
@@ -102,7 +102,10 @@ impl ConsulAgentService {
             port: Some(raft_port),
             address: Some(String::new()),
             meta: Some(service_meta),
-            weights: Some(crate::model::Weights { passing: 1, warning: 1 }),
+            weights: Some(crate::model::Weights {
+                passing: 1,
+                warning: 1,
+            }),
             proxy: Some(serde_json::json!({"Mode": "", "MeshGateway": {}, "Expose": {}})),
             connect: Some(serde_json::json!({})),
             ..Default::default()
@@ -113,7 +116,9 @@ impl ConsulAgentService {
         let reg_json = serde_json::to_vec(&reg)
             .map_err(|e| format!("Failed to serialize consul registration: {}", e))?;
 
-        let _ = self.naming_store.register(&store_key, bytes::Bytes::from(reg_json.clone()));
+        let _ = self
+            .naming_store
+            .register(&store_key, bytes::Bytes::from(reg_json.clone()));
 
         if let Some(ref raft) = self.raft_node {
             let registration_json = String::from_utf8_lossy(&reg_json).to_string();
@@ -134,12 +139,21 @@ impl ConsulAgentService {
             }
         }
 
-        let service_key = format!("{}#{}#{}", CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, "consul");
+        let service_key = format!(
+            "{}#{}#{}",
+            CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, "consul"
+        );
         let instance_key = format!(
             "{}#{}#{}#{}#{}#{}",
-            CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, "consul", ip, raft_port, CONSUL_INTERNAL_CLUSTER
+            CONSUL_INTERNAL_NAMESPACE,
+            CONSUL_INTERNAL_GROUP,
+            "consul",
+            ip,
+            raft_port,
+            CONSUL_INTERNAL_CLUSTER
         );
-        self.check_index.register("consul", &service_key, &instance_key);
+        self.check_index
+            .register("consul", &service_key, &instance_key);
 
         // Register serfHealth as NODE-level check (not associated with any service)
         {
@@ -167,12 +181,20 @@ impl ConsulAgentService {
                 initial_status: CheckStatus::Passing,
                 notes: String::new(),
             });
-            self.registry.update_check_result("serfHealth", true, "Agent alive and reachable".to_string(), 0);
+            self.registry.update_check_result(
+                "serfHealth",
+                true,
+                "Agent alive and reachable".to_string(),
+                0,
+            );
         }
 
         tracing::info!(
             "Consul self-service registered: node={}, addr={}:{}, dc={}",
-            dc_config.node_name, ip, raft_port, dc_config.datacenter,
+            dc_config.node_name,
+            ip,
+            raft_port,
+            dc_config.datacenter,
         );
         Ok(())
     }
@@ -187,9 +209,7 @@ impl ConsulAgentService {
 
         if let Some(ref raft) = self.raft_node {
             match raft
-                .write(ConsulRaftRequest::CatalogDeregister {
-                    key: store_key,
-                })
+                .write(ConsulRaftRequest::CatalogDeregister { key: store_key })
                 .await
             {
                 Ok(r) if !r.success => {
@@ -444,7 +464,9 @@ pub async fn deregister_service(
     }
 
     // Find the store key before removal (needed for Raft replication)
-    let store_key = agent.naming_store.find_key_by_service_id(&namespace, &service_id);
+    let store_key = agent
+        .naming_store
+        .find_key_by_service_id(&namespace, &service_id);
 
     // Remove from Consul naming store
     let deregistered = agent
@@ -459,22 +481,20 @@ pub async fn deregister_service(
         agent.check_index.remove(&service_id);
 
         // Replicate through Raft in cluster mode
-        if let Some(ref raft) = agent.raft_node {
-            if let Some(key) = &store_key {
-                match raft
-                    .write(ConsulRaftRequest::CatalogDeregister {
-                        key: key.clone(),
-                    })
-                    .await
-                {
-                    Ok(r) if !r.success => {
-                        tracing::error!("Raft CatalogDeregister rejected: {:?}", r.message);
-                    }
-                    Err(e) => {
-                        tracing::error!("Raft CatalogDeregister failed: {}", e);
-                    }
-                    _ => {}
+        if let Some(ref raft) = agent.raft_node
+            && let Some(key) = &store_key
+        {
+            match raft
+                .write(ConsulRaftRequest::CatalogDeregister { key: key.clone() })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    tracing::error!("Raft CatalogDeregister rejected: {:?}", r.message);
                 }
+                Err(e) => {
+                    tracing::error!("Raft CatalogDeregister failed: {}", e);
+                }
+                _ => {}
             }
         }
     }
@@ -564,20 +584,19 @@ pub async fn get_service(
     if let Some(data) = agent
         .naming_store
         .get_by_service_id(&namespace, &service_id)
+        && let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
     {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let agent_service = AgentService::from(&reg);
-            let healthy = agent
-                .naming_store
-                .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
-            let checks = vec![create_service_health_check_from_reg(&reg, healthy)];
-            let response = AgentServiceWithChecks {
-                service: agent_service,
-                checks: Some(checks),
-            };
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-            return consul_ok(&meta).json(response);
-        }
+        let agent_service = AgentService::from(&reg);
+        let healthy = agent
+            .naming_store
+            .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+        let checks = vec![create_service_health_check_from_reg(&reg, healthy)];
+        let response = AgentServiceWithChecks {
+            service: agent_service,
+            checks: Some(checks),
+        };
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        return consul_ok(&meta).json(response);
     }
 
     HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -662,44 +681,43 @@ pub async fn agent_health_service_by_id(
     if let Some(data) = agent
         .naming_store
         .get_by_service_id(&namespace, &service_id)
+        && let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
     {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let healthy = agent
-                .naming_store
-                .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
-            let agent_service = AgentService::from(&reg);
-            let checks = health_service.get_service_checks(&service_id).await;
-            let status = if checks.is_empty() {
-                if healthy {
-                    "passing".to_string()
-                } else {
-                    "critical".to_string()
-                }
+        let healthy = agent
+            .naming_store
+            .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+        let agent_service = AgentService::from(&reg);
+        let checks = health_service.get_service_checks(&service_id).await;
+        let status = if checks.is_empty() {
+            if healthy {
+                "passing".to_string()
             } else {
-                aggregate_status(&checks)
-            };
+                "critical".to_string()
+            }
+        } else {
+            aggregate_status(&checks)
+        };
 
-            let info = AgentServiceChecksInfo {
-                aggregated_status: status.clone(),
-                service: agent_service,
-                checks,
-            };
+        let info = AgentServiceChecksInfo {
+            aggregated_status: status.clone(),
+            service: agent_service,
+            checks,
+        };
 
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-            return match status.as_str() {
-                "passing" => consul_ok(&meta).json(info),
-                "warning" => {
-                    let mut b = HttpResponse::TooManyRequests();
-                    meta.apply_headers(&mut b);
-                    b.json(info)
-                }
-                _ => {
-                    let mut b = HttpResponse::ServiceUnavailable();
-                    meta.apply_headers(&mut b);
-                    b.json(info)
-                }
-            };
-        }
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        return match status.as_str() {
+            "passing" => consul_ok(&meta).json(info),
+            "warning" => {
+                let mut b = HttpResponse::TooManyRequests();
+                meta.apply_headers(&mut b);
+                b.json(info)
+            }
+            _ => {
+                let mut b = HttpResponse::ServiceUnavailable();
+                meta.apply_headers(&mut b);
+                b.json(info)
+            }
+        };
     }
 
     HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -882,7 +900,10 @@ pub async fn get_agent_self(
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), dc_config.raft_port().to_string());
-    tags.insert("build".to_string(), format!("{}:{}", dc_config.full_version(), dc_config.batata_version));
+    tags.insert(
+        "build".to_string(),
+        format!("{}:{}", dc_config.full_version(), dc_config.batata_version),
+    );
     tags.insert("id".to_string(), dc_config.node_id.clone());
     tags.insert("raft_vsn".to_string(), "3".to_string());
     tags.insert("vsn".to_string(), "2".to_string());
@@ -967,7 +988,10 @@ pub async fn get_agent_members(
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), dc_config.raft_port().to_string());
-    tags.insert("build".to_string(), format!("{}:{}", dc_config.full_version(), dc_config.batata_version));
+    tags.insert(
+        "build".to_string(),
+        format!("{}:{}", dc_config.full_version(), dc_config.batata_version),
+    );
     tags.insert("id".to_string(), dc_config.node_id.clone());
     tags.insert("raft_vsn".to_string(), "3".to_string());
     tags.insert("vsn".to_string(), "2".to_string());
@@ -1777,10 +1801,10 @@ fn collect_metrics_snapshot(
     // Count healthy instances by scanning all entries
     let mut healthy_instances: usize = 0;
     for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            if naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32) {
-                healthy_instances += 1;
-            }
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
+            && naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32)
+        {
+            healthy_instances += 1;
         }
     }
 

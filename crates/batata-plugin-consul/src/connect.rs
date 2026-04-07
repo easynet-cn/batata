@@ -723,7 +723,8 @@ pub async fn post_discovery_chain(
 
     let service_name = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
+    consul_ok(&meta)
+        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
 // ============================================================================
@@ -766,7 +767,8 @@ pub async fn post_discovery_chain_persistent(
 
     let service_name = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
+    consul_ok(&meta)
+        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
 /// GET /v1/exported-services (persistent)

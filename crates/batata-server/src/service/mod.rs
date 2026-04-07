@@ -18,9 +18,9 @@ pub mod ai;
 #[cfg(feature = "ai")]
 pub mod ai_handler; // AI module gRPC handlers (MCP + A2A)
 pub mod cluster_handler; // Cluster module gRPC handlers
-pub mod consul_event_handler; // Consul event broadcast handler
 pub mod config_handler; // Config module gRPC handlers
 pub mod connection_limit; // Connection limit checker for gRPC
+pub mod consul_event_handler; // Consul event broadcast handler
 pub mod distro_handler; // Distro protocol gRPC handlers
 pub mod encryption_manager; // Encryption manager with hot reload
 pub mod handler; // Request handlers for gRPC communication

@@ -194,20 +194,20 @@ impl ConsulConfigEntryService {
 
     /// Persist an entry to RocksDB (write-through)
     fn persist_to_rocks(&self, key: &str, entry: &ConfigEntry) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES) {
-                match serde_json::to_vec(entry) {
-                    Ok(json_bytes) => {
-                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &json_bytes) {
-                            error!("Failed to persist config entry '{}' to RocksDB: {}", key, e);
-                        }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES)
+        {
+            match serde_json::to_vec(entry) {
+                Ok(json_bytes) => {
+                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &json_bytes) {
+                        error!("Failed to persist config entry '{}' to RocksDB: {}", key, e);
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to serialize config entry '{}' for RocksDB: {}",
-                            key, e
-                        );
-                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to serialize config entry '{}' for RocksDB: {}",
+                        key, e
+                    );
                 }
             }
         }
@@ -215,15 +215,14 @@ impl ConsulConfigEntryService {
 
     /// Delete an entry from RocksDB
     fn delete_from_rocks(&self, key: &str) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES) {
-                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                    error!(
-                        "Failed to delete config entry '{}' from RocksDB: {}",
-                        key, e
-                    );
-                }
-            }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES)
+            && let Err(e) = db.delete_cf(cf, key.as_bytes())
+        {
+            error!(
+                "Failed to delete config entry '{}' from RocksDB: {}",
+                key, e
+            );
         }
     }
 
@@ -395,7 +394,8 @@ pub async fn get_config_entry(
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name) {
         Some(entry) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             consul_ok(&meta).json(entry)
         }
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
@@ -444,7 +444,8 @@ pub async fn apply_config_entry(
 
     match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             consul_ok(&meta).json(success)
         }
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
@@ -468,7 +469,8 @@ pub async fn delete_config_entry(
     let (kind, name) = path.into_inner();
     match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             if query.cas.is_some() {
                 consul_ok(&meta).json(success)
             } else {

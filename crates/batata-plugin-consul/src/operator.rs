@@ -364,10 +364,8 @@ impl ConsulOperatorService {
                 svc.persist_to_rocks(&format!("keyring:{}", entry.key()), entry.value());
             }
         }
-        if !loaded_autopilot {
-            if let Ok(guard) = svc.autopilot_config.try_read() {
-                svc.persist_to_rocks("autopilot_config", &*guard);
-            }
+        if !loaded_autopilot && let Ok(guard) = svc.autopilot_config.try_read() {
+            svc.persist_to_rocks("autopilot_config", &*guard);
         }
 
         svc
@@ -606,17 +604,17 @@ impl ConsulOperatorService {
 
     /// Persist a value to RocksDB
     fn persist_to_rocks<T: Serialize>(&self, key: &str, value: &T) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
-                match serde_json::to_vec(value) {
-                    Ok(bytes) => {
-                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
-                            error!("Failed to persist operator '{}': {}", key, e);
-                        }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR)
+        {
+            match serde_json::to_vec(value) {
+                Ok(bytes) => {
+                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                        error!("Failed to persist operator '{}': {}", key, e);
                     }
-                    Err(e) => {
-                        error!("Failed to serialize operator '{}': {}", key, e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize operator '{}': {}", key, e);
                 }
             }
         }
@@ -624,12 +622,11 @@ impl ConsulOperatorService {
 
     /// Delete a key from RocksDB
     fn delete_from_rocks(&self, key: &str) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
-                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                    error!("Failed to delete operator '{}': {}", key, e);
-                }
-            }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR)
+            && let Err(e) = db.delete_cf(cf, key.as_bytes())
+        {
+            error!("Failed to delete operator '{}': {}", key, e);
         }
     }
 }
@@ -1426,7 +1423,12 @@ mod tests {
     #[tokio::test]
     async fn test_remove_peer_not_found() {
         let service = ConsulOperatorService::new();
-        assert!(service.remove_peer(Some("nonexistent"), None).await.is_err());
+        assert!(
+            service
+                .remove_peer(Some("nonexistent"), None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

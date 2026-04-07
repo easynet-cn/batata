@@ -571,10 +571,10 @@ impl BatataNamingService {
         if subscribe {
             // Try cache first
             let key = build_service_key(group_name, service_name);
-            if let Some(cached) = self.service_info_holder.get(&key) {
-                if !cached.hosts.is_empty() {
-                    return Ok(cached.hosts);
-                }
+            if let Some(cached) = self.service_info_holder.get(&key)
+                && !cached.hosts.is_empty()
+            {
+                return Ok(cached.hosts);
             }
         }
         // Direct server query

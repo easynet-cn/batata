@@ -531,9 +531,7 @@ impl ConsulSemaphoreService {
         }
 
         // Add this session as a holder (Consul format: session -> true)
-        lock_entry
-            .holders
-            .insert(session_id.to_string(), true);
+        lock_entry.holders.insert(session_id.to_string(), true);
 
         // Update the lock entry
         let lock_json = serde_json::to_string(&lock_entry).unwrap_or_default();

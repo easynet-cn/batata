@@ -9,6 +9,9 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::Notify;
 
+/// Maximum number of tracked notifier entries to prevent unbounded memory growth.
+const MAX_NOTIFIER_ENTRIES: usize = 100_000;
+
 /// Global config change notifier for long-polling support.
 ///
 /// Listeners register interest in specific config keys and wait for notifications.
@@ -32,12 +35,38 @@ impl ConfigChangeNotifier {
         batata_common::build_config_key(tenant, group, data_id)
     }
 
-    /// Get or create a Notify handle for a config key
+    /// Get or create a Notify handle for a config key.
+    /// If the map exceeds MAX_NOTIFIER_ENTRIES, stale entries with no active waiters are evicted.
     pub fn get_or_create(&self, key: &str) -> Arc<Notify> {
+        if let Some(existing) = self.notifiers.get(key) {
+            return existing.clone();
+        }
+        // Evict entries with no active waiters if at capacity
+        if self.notifiers.len() >= MAX_NOTIFIER_ENTRIES {
+            self.evict_idle_entries();
+        }
         self.notifiers
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(Notify::new()))
             .clone()
+    }
+
+    /// Evict notifier entries that have no active waiters (strong_count == 1).
+    fn evict_idle_entries(&self) {
+        let idle_keys: Vec<String> = self
+            .notifiers
+            .iter()
+            .filter(|entry| Arc::strong_count(entry.value()) <= 1)
+            .map(|entry| entry.key().clone())
+            .take(1000) // evict in batches
+            .collect();
+        for key in idle_keys {
+            if let Some((_, notify)) = self.notifiers.remove(&key)
+                && Arc::strong_count(&notify) > 1
+            {
+                self.notifiers.insert(key, notify);
+            }
+        }
     }
 
     /// Notify all waiters for a specific config key
@@ -82,11 +111,11 @@ impl ConfigChangeNotifier {
         let removed = stale_keys.len();
         for key in stale_keys {
             // Only remove if no one is actively waiting (strong_count == 1 means only the map holds it)
-            if let Some((_, notify)) = self.notifiers.remove(&key) {
-                if Arc::strong_count(&notify) > 1 {
-                    // Someone is still waiting, put it back
-                    self.notifiers.insert(key, notify);
-                }
+            if let Some((_, notify)) = self.notifiers.remove(&key)
+                && Arc::strong_count(&notify) > 1
+            {
+                // Someone is still waiting, put it back
+                self.notifiers.insert(key, notify);
             }
         }
         if removed > 0 {

@@ -268,7 +268,7 @@ impl AuthPlugin for LdapAuthPlugin {
             if !user_exists {
                 // Auto-create LDAP user in local DB with unusable password
                 let placeholder_hash =
-                    bcrypt::hash("LDAP_USER_NO_LOCAL_PASSWORD", 4).unwrap_or_default();
+                    bcrypt::hash("LDAP_USER_NO_LOCAL_PASSWORD", 10).unwrap_or_default();
                 let _ = self
                     .nacos_plugin
                     .persistence

@@ -450,17 +450,17 @@ impl ConsulPeeringService {
 
     /// Persist a peering entry to RocksDB
     fn persist_to_rocks(&self, name: &str, peering: &Peering) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_PEERING) {
-                match serde_json::to_vec(peering) {
-                    Ok(bytes) => {
-                        if let Err(e) = db.put_cf(cf, name.as_bytes(), &bytes) {
-                            error!("Failed to persist peering '{}': {}", name, e);
-                        }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_PEERING)
+        {
+            match serde_json::to_vec(peering) {
+                Ok(bytes) => {
+                    if let Err(e) = db.put_cf(cf, name.as_bytes(), &bytes) {
+                        error!("Failed to persist peering '{}': {}", name, e);
                     }
-                    Err(e) => {
-                        error!("Failed to serialize peering '{}': {}", name, e);
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize peering '{}': {}", name, e);
                 }
             }
         }
@@ -469,12 +469,11 @@ impl ConsulPeeringService {
     /// Delete a peering entry from RocksDB
     #[allow(dead_code)]
     fn delete_from_rocks(&self, name: &str) {
-        if let Some(ref db) = self.rocks_db {
-            if let Some(cf) = db.cf_handle(CF_CONSUL_PEERING) {
-                if let Err(e) = db.delete_cf(cf, name.as_bytes()) {
-                    error!("Failed to delete peering '{}': {}", name, e);
-                }
-            }
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_PEERING)
+            && let Err(e) = db.delete_cf(cf, name.as_bytes())
+        {
+            error!("Failed to delete peering '{}': {}", name, e);
         }
     }
 }
@@ -504,8 +503,7 @@ pub async fn generate_peering_token(
 
     match peering_service.generate_token(body.into_inner()).await {
         Ok(resp) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(resp)
         }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
@@ -527,8 +525,7 @@ pub async fn establish_peering(
 
     match peering_service.establish(body.into_inner()).await {
         Ok(()) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(serde_json::json!({}))
         }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
@@ -556,8 +553,7 @@ pub async fn get_peering(
 
     match peering_service.get_peering(&name) {
         Some(peering) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(peering)
         }
         None => {
@@ -629,8 +625,7 @@ pub async fn generate_peering_token_persistent(
 
     match peering_service.generate_token(body.into_inner()).await {
         Ok(resp) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(resp)
         }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
@@ -652,8 +647,7 @@ pub async fn establish_peering_persistent(
 
     match peering_service.establish(body.into_inner()).await {
         Ok(()) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(serde_json::json!({}))
         }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
@@ -681,8 +675,7 @@ pub async fn get_peering_persistent(
 
     match peering_service.get_peering(&name) {
         Some(peering) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(peering)
         }
         None => {
@@ -742,13 +735,14 @@ mod tests {
     #[tokio::test]
     async fn test_generate_token() {
         let service = ConsulPeeringService::new();
-        let result = service.generate_token(PeeringGenerateTokenRequest {
-            peer_name: "cluster-02".to_string(),
-            partition: String::new(),
-            meta: Default::default(),
-            server_external_addresses: vec![],
-        })
-        .await;
+        let result = service
+            .generate_token(PeeringGenerateTokenRequest {
+                peer_name: "cluster-02".to_string(),
+                partition: String::new(),
+                meta: Default::default(),
+                server_external_addresses: vec![],
+            })
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(!resp.peering_token.is_empty());
@@ -789,13 +783,14 @@ mod tests {
 
         // Create another service and establish
         let service2 = ConsulPeeringService::new();
-        let result = service2.establish(PeeringEstablishRequest {
-            peer_name: "cluster-01".to_string(),
-            peering_token: token_resp.peering_token,
-            partition: String::new(),
-            meta: Default::default(),
-        })
-        .await;
+        let result = service2
+            .establish(PeeringEstablishRequest {
+                peer_name: "cluster-01".to_string(),
+                peering_token: token_resp.peering_token,
+                partition: String::new(),
+                meta: Default::default(),
+            })
+            .await;
         assert!(result.is_ok());
 
         let peering = service2.get_peering("cluster-01").unwrap();
