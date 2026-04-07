@@ -87,6 +87,8 @@ pub struct GrpcServers {
     cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Config change notifier for long-polling HTTP listeners.
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
+    /// Handler registry for dynamic handler registration (e.g., plugin handlers).
+    handler_registry: Arc<HandlerRegistry>,
 }
 
 impl GrpcServers {
@@ -129,6 +131,11 @@ impl GrpcServers {
     /// Get config change notifier reference.
     pub fn config_change_notifier(&self) -> &Arc<batata_config::ConfigChangeNotifier> {
         &self.config_change_notifier
+    }
+
+    /// Get handler registry for dynamic handler registration (e.g., plugin handlers).
+    pub fn handler_registry(&self) -> &Arc<HandlerRegistry> {
+        &self.handler_registry
     }
 }
 
@@ -647,7 +654,7 @@ pub fn start_grpc_servers(
     // Create gRPC services (reuse connection_manager created earlier)
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
     let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(
-        handler_registry_arc,
+        handler_registry_arc.clone(),
         connection_manager,
         config_subscriber_manager,
         Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
@@ -870,5 +877,6 @@ pub fn start_grpc_servers(
         distro_protocol,
         cluster_client_manager,
         config_change_notifier,
+        handler_registry: handler_registry_arc,
     })
 }

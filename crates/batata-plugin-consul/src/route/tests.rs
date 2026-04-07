@@ -36,7 +36,8 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     let naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
     let agent_service = ConsulAgentService::new(naming_store.clone(), registry, check_index);
     let acl_service = AclService::disabled();
-    let event_service = ConsulEventService::new();
+    let index_provider = crate::index_provider::ConsulIndexProvider::new();
+    let event_service = ConsulEventService::new(index_provider.clone());
     let snapshot_service = ConsulSnapshotService::new();
     let query_service = ConsulQueryService::new();
     let kv_arc = Arc::new(kv_service.clone());

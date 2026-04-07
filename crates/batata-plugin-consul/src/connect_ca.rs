@@ -17,7 +17,7 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
 // CA Models
@@ -644,7 +644,23 @@ impl ConsulConnectCAService {
         }
         let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         config.modify_index = index;
-        self.persist_ca_config_to_rocks(&config);
+        if let Some(ref raft) = self.raft_node {
+            let config_json = serde_json::to_string(&config).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::CAConfigUpdate { config_json })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft CAConfigUpdate rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft CAConfigUpdate failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_ca_config_to_rocks(&config);
+        }
         *self.ca_config.write().await = config;
         Ok(())
     }
@@ -720,7 +736,7 @@ impl ConsulConnectCAService {
     // Intention operations
     // ========================================================================
 
-    pub fn create_intention(&self, req: IntentionRequest) -> Intention {
+    pub async fn create_intention(&self, req: IntentionRequest) -> Intention {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -753,7 +769,26 @@ impl ConsulConnectCAService {
         };
 
         self.intentions.insert(id.clone(), intention.clone());
-        self.persist_intention_to_rocks(&id, &intention);
+        if let Some(ref raft) = self.raft_node {
+            let intention_json = serde_json::to_string(&intention).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::IntentionUpsert {
+                    id: id.clone(),
+                    intention_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft IntentionUpsert rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft IntentionUpsert failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_intention_to_rocks(&id, &intention);
+        }
         intention
     }
 
@@ -761,7 +796,7 @@ impl ConsulConnectCAService {
         self.intentions.get(id).map(|r| r.value().clone())
     }
 
-    pub fn update_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
+    pub async fn update_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
         if let Some(mut entry) = self.intentions.get_mut(id) {
             let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             entry.description = req.description;
@@ -784,17 +819,53 @@ impl ConsulConnectCAService {
             entry.updated_at = Utc::now().to_rfc3339();
             entry.modify_index = index;
             let updated = entry.clone();
-            self.persist_intention_to_rocks(id, &updated);
+            if let Some(ref raft) = self.raft_node {
+                let intention_json = serde_json::to_string(&updated).unwrap_or_default();
+                match raft
+                    .write(ConsulRaftRequest::IntentionUpsert {
+                        id: id.to_string(),
+                        intention_json,
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft IntentionUpsert rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft IntentionUpsert failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.persist_intention_to_rocks(id, &updated);
+            }
             Some(updated)
         } else {
             None
         }
     }
 
-    pub fn delete_intention(&self, id: &str) -> bool {
+    pub async fn delete_intention(&self, id: &str) -> bool {
         let removed = self.intentions.remove(id).is_some();
         if removed {
-            self.delete_intention_from_rocks(id);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::IntentionDelete {
+                        id: id.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft IntentionDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft IntentionDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_intention_from_rocks(id);
+            }
         }
         removed
     }
@@ -865,7 +936,7 @@ impl ConsulConnectCAService {
     }
 
     /// Delete an intention by exact source and destination name match
-    pub fn delete_intention_exact(&self, source: &str, destination: &str) -> bool {
+    pub async fn delete_intention_exact(&self, source: &str, destination: &str) -> bool {
         let key_to_remove = self
             .intentions
             .iter()
@@ -873,7 +944,24 @@ impl ConsulConnectCAService {
             .map(|r| r.key().clone());
         if let Some(key) = key_to_remove {
             self.intentions.remove(&key);
-            self.delete_intention_from_rocks(&key);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::IntentionDelete {
+                        id: key.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft IntentionDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft IntentionDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_intention_from_rocks(&key);
+            }
             true
         } else {
             false
@@ -881,7 +969,7 @@ impl ConsulConnectCAService {
     }
 
     /// Create or update an intention by exact source and destination name match
-    pub fn upsert_intention_exact(&self, req: IntentionRequest) -> Intention {
+    pub async fn upsert_intention_exact(&self, req: IntentionRequest) -> Intention {
         // Find existing intention with same source/destination
         let existing_id = self
             .intentions
@@ -894,10 +982,10 @@ impl ConsulConnectCAService {
 
         if let Some(id) = existing_id {
             // Update existing
-            self.update_intention(&id, req).unwrap()
+            self.update_intention(&id, req).await.unwrap()
         } else {
             // Create new
-            self.create_intention(req)
+            self.create_intention(req).await
         }
     }
 
@@ -1083,7 +1171,7 @@ pub async fn create_intention(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.create_intention(body.into_inner());
+    let intention = ca_service.create_intention(body.into_inner()).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "ID": intention.id }))
 }
@@ -1126,7 +1214,7 @@ pub async fn update_intention(
     }
 
     let id = path.into_inner();
-    match ca_service.update_intention(&id, body.into_inner()) {
+    match ca_service.update_intention(&id, body.into_inner()).await {
         Some(_) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(serde_json::json!({ "ID": id }))
@@ -1149,7 +1237,7 @@ pub async fn delete_intention(
     }
 
     let id = path.into_inner();
-    if ca_service.delete_intention(&id) {
+    if ca_service.delete_intention(&id).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
@@ -1253,7 +1341,7 @@ pub async fn upsert_intention_exact(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.upsert_intention_exact(body.into_inner());
+    let intention = ca_service.upsert_intention_exact(body.into_inner()).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
@@ -1273,7 +1361,7 @@ pub async fn delete_intention_exact(
 
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
-    if ca_service.delete_intention_exact(source, destination) {
+    if ca_service.delete_intention_exact(source, destination).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
@@ -1429,7 +1517,7 @@ pub async fn create_intention_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.create_intention(body.into_inner());
+    let intention = ca_service.create_intention(body.into_inner()).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "ID": intention.id }))
 }
@@ -1472,7 +1560,7 @@ pub async fn update_intention_persistent(
     }
 
     let id = path.into_inner();
-    match ca_service.update_intention(&id, body.into_inner()) {
+    match ca_service.update_intention(&id, body.into_inner()).await {
         Some(_) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(serde_json::json!({ "ID": id }))
@@ -1495,7 +1583,7 @@ pub async fn delete_intention_persistent(
     }
 
     let id = path.into_inner();
-    if ca_service.delete_intention(&id) {
+    if ca_service.delete_intention(&id).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
@@ -1599,7 +1687,7 @@ pub async fn upsert_intention_exact_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.upsert_intention_exact(body.into_inner());
+    let intention = ca_service.upsert_intention_exact(body.into_inner()).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
@@ -1619,7 +1707,7 @@ pub async fn delete_intention_exact_persistent(
 
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
-    if ca_service.delete_intention_exact(source, destination) {
+    if ca_service.delete_intention_exact(source, destination).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
@@ -1678,8 +1766,8 @@ mod tests {
         assert!(!leaf.cert_pem.is_empty());
     }
 
-    #[test]
-    fn test_create_intention() {
+    #[tokio::test]
+    async fn test_create_intention() {
         let service = ConsulConnectCAService::new();
         let intention = service.create_intention(IntentionRequest {
             description: "Allow web to api".to_string(),
@@ -1690,15 +1778,15 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
         assert_eq!(intention.source_name, "web");
         assert_eq!(intention.destination_name, "api");
         assert_eq!(intention.action, IntentionAction::Allow);
         assert_eq!(intention.precedence, 4); // specific to specific
     }
 
-    #[test]
-    fn test_intention_precedence() {
+    #[tokio::test]
+    async fn test_intention_precedence() {
         let service = ConsulConnectCAService::new();
         // Create a deny-all intention (lowest precedence)
         service.create_intention(IntentionRequest {
@@ -1710,7 +1798,7 @@ mod tests {
             action: IntentionAction::Deny,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
         // Create a specific allow
         service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1721,7 +1809,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         // Specific allow should win over wildcard deny
         assert!(service.check_intention("web", "api"));
@@ -1729,8 +1817,8 @@ mod tests {
         assert!(!service.check_intention("unknown", "other"));
     }
 
-    #[test]
-    fn test_list_intentions() {
+    #[tokio::test]
+    async fn test_list_intentions() {
         let service = ConsulConnectCAService::new();
         service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1741,7 +1829,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
         service.create_intention(IntentionRequest {
             description: String::new(),
             source_ns: String::new(),
@@ -1751,7 +1839,7 @@ mod tests {
             action: IntentionAction::Deny,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         let intentions = service.list_intentions();
         assert_eq!(intentions.len(), 2);
@@ -1764,8 +1852,8 @@ mod tests {
         assert_eq!(intentions[1].destination_name, "*");
     }
 
-    #[test]
-    fn test_delete_intention() {
+    #[tokio::test]
+    async fn test_delete_intention() {
         let service = ConsulConnectCAService::new();
         let intention = service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1776,13 +1864,13 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
-        assert!(service.delete_intention(&intention.id));
+        }).await;
+        assert!(service.delete_intention(&intention.id).await);
         assert!(service.get_intention(&intention.id).is_none());
     }
 
-    #[test]
-    fn test_authorize() {
+    #[tokio::test]
+    async fn test_authorize() {
         let service = ConsulConnectCAService::new();
         service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1793,14 +1881,14 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/web");
         assert!(result.authorized);
     }
 
-    #[test]
-    fn test_match_intentions() {
+    #[tokio::test]
+    async fn test_match_intentions() {
         let service = ConsulConnectCAService::new();
         service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1811,7 +1899,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         let matched = service.match_intentions("source", "web");
         assert_eq!(matched.len(), 1);
@@ -1823,10 +1911,10 @@ mod tests {
         assert_eq!(matched[0].destination_name, "api");
     }
 
-    #[test]
-    fn test_delete_nonexistent_intention() {
+    #[tokio::test]
+    async fn test_delete_nonexistent_intention() {
         let service = ConsulConnectCAService::new();
-        assert!(!service.delete_intention("nonexistent-id"));
+        assert!(!service.delete_intention("nonexistent-id").await);
     }
 
     #[test]
@@ -1835,8 +1923,8 @@ mod tests {
         assert!(service.get_intention("nonexistent-id").is_none());
     }
 
-    #[test]
-    fn test_update_intention() {
+    #[tokio::test]
+    async fn test_update_intention() {
         let service = ConsulConnectCAService::new();
         let intention = service.create_intention(IntentionRequest {
             description: "original".to_string(),
@@ -1847,7 +1935,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         let updated = service.update_intention(
             &intention.id,
@@ -1861,7 +1949,7 @@ mod tests {
                 permissions: vec![],
                 meta: Default::default(),
             },
-        );
+        ).await;
 
         assert!(updated.is_some());
         let u = updated.unwrap();
@@ -1872,8 +1960,8 @@ mod tests {
         assert_eq!(u.id, intention.id); // ID preserved
     }
 
-    #[test]
-    fn test_update_nonexistent_intention() {
+    #[tokio::test]
+    async fn test_update_nonexistent_intention() {
         let service = ConsulConnectCAService::new();
         let result = service.update_intention(
             "nonexistent",
@@ -1887,12 +1975,12 @@ mod tests {
                 permissions: vec![],
                 meta: Default::default(),
             },
-        );
+        ).await;
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_authorize_deny() {
+    #[tokio::test]
+    async fn test_authorize_deny() {
         let service = ConsulConnectCAService::new();
         service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1903,7 +1991,7 @@ mod tests {
             action: IntentionAction::Deny,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/malicious");
         assert!(!result.authorized);
@@ -1918,8 +2006,8 @@ mod tests {
         assert!(result.authorized);
     }
 
-    #[test]
-    fn test_intention_precedence_wildcard_vs_specific() {
+    #[tokio::test]
+    async fn test_intention_precedence_wildcard_vs_specific() {
         let service = ConsulConnectCAService::new();
 
         // Wildcard deny-all
@@ -1932,7 +2020,7 @@ mod tests {
             action: IntentionAction::Deny,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         // Specific allow
         service.create_intention(IntentionRequest {
@@ -1944,7 +2032,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         // Specific rule (precedence 4) should beat wildcard (precedence 1)
         assert!(service.check_intention("web", "api"));
@@ -1971,24 +2059,23 @@ mod tests {
         assert!(!cert.valid_before.is_empty());
     }
 
-    #[test]
-    fn test_ca_config_empty_provider() {
+    #[tokio::test]
+    async fn test_ca_config_empty_provider() {
         let service = ConsulConnectCAService::new();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(service.set_ca_config(CAConfig {
+        let result = service.set_ca_config(CAConfig {
             provider: String::new(),
             config: Default::default(),
             state: Default::default(),
             force_without_cross_signing: false,
             create_index: 0,
             modify_index: 0,
-        }));
+        }).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Provider is required"));
     }
 
-    #[test]
-    fn test_intention_default_namespace() {
+    #[tokio::test]
+    async fn test_intention_default_namespace() {
         let service = ConsulConnectCAService::new();
         let intention = service.create_intention(IntentionRequest {
             description: String::new(),
@@ -1999,14 +2086,14 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         assert_eq!(intention.source_ns, "default");
         assert_eq!(intention.destination_ns, "default");
     }
 
-    #[test]
-    fn test_match_intentions_wildcard() {
+    #[tokio::test]
+    async fn test_match_intentions_wildcard() {
         let service = ConsulConnectCAService::new();
 
         service.create_intention(IntentionRequest {
@@ -2018,15 +2105,15 @@ mod tests {
             action: IntentionAction::Deny,
             permissions: vec![],
             meta: Default::default(),
-        });
+        }).await;
 
         // Wildcard source matches any source query
         let matched = service.match_intentions("source", "anything");
         assert_eq!(matched.len(), 1);
     }
 
-    #[test]
-    fn test_intention_with_meta() {
+    #[tokio::test]
+    async fn test_intention_with_meta() {
         let service = ConsulConnectCAService::new();
         let mut meta = std::collections::HashMap::new();
         meta.insert("env".to_string(), "production".to_string());
@@ -2041,7 +2128,7 @@ mod tests {
             action: IntentionAction::Allow,
             permissions: vec![],
             meta,
-        });
+        }).await;
 
         assert_eq!(intention.meta.len(), 2);
         assert_eq!(intention.meta.get("env").unwrap(), "production");

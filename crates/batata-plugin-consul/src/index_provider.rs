@@ -42,6 +42,8 @@ pub enum ConsulTable {
     Queries,
     /// Namespaces
     Namespaces,
+    /// User events
+    Events,
 }
 
 /// Per-table state: high water mark + change notification.
@@ -80,6 +82,7 @@ pub struct ConsulTableIndex {
     operator: Arc<TableState>,
     queries: Arc<TableState>,
     namespaces: Arc<TableState>,
+    events: Arc<TableState>,
 }
 
 impl ConsulTableIndex {
@@ -97,6 +100,7 @@ impl ConsulTableIndex {
             operator: Arc::new(TableState::new(1)),
             queries: Arc::new(TableState::new(1)),
             namespaces: Arc::new(TableState::new(1)),
+            events: Arc::new(TableState::new(1)),
         }
     }
 
@@ -114,6 +118,7 @@ impl ConsulTableIndex {
             ConsulTable::Operator => &self.operator,
             ConsulTable::Queries => &self.queries,
             ConsulTable::Namespaces => &self.namespaces,
+            ConsulTable::Events => &self.events,
         }
     }
 

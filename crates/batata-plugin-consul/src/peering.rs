@@ -16,7 +16,7 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
 // Models
@@ -248,7 +248,7 @@ impl ConsulPeeringService {
         svc
     }
 
-    pub fn generate_token(
+    pub async fn generate_token(
         &self,
         req: PeeringGenerateTokenRequest,
     ) -> Result<PeeringGenerateTokenResponse, String> {
@@ -278,7 +278,26 @@ impl ConsulPeeringService {
             deleted_at: None,
         };
         self.peerings.insert(req.peer_name.clone(), peering.clone());
-        self.persist_to_rocks(&req.peer_name, &peering);
+        if let Some(ref raft) = self.raft_node {
+            let peering_json = serde_json::to_string(&peering).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::PeeringWrite {
+                    name: req.peer_name.clone(),
+                    peering_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft PeeringWrite rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft PeeringWrite failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_to_rocks(&req.peer_name, &peering);
+        }
 
         // Generate the token
         let token = PeeringToken {
@@ -309,7 +328,7 @@ impl ConsulPeeringService {
         })
     }
 
-    pub fn establish(&self, req: PeeringEstablishRequest) -> Result<(), String> {
+    pub async fn establish(&self, req: PeeringEstablishRequest) -> Result<(), String> {
         if req.peer_name.is_empty() {
             return Err("PeerName is required".to_string());
         }
@@ -355,7 +374,26 @@ impl ConsulPeeringService {
         };
 
         self.peerings.insert(req.peer_name.clone(), peering.clone());
-        self.persist_to_rocks(&req.peer_name, &peering);
+        if let Some(ref raft) = self.raft_node {
+            let peering_json = serde_json::to_string(&peering).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::PeeringWrite {
+                    name: req.peer_name.clone(),
+                    peering_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft PeeringWrite rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft PeeringWrite failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_to_rocks(&req.peer_name, &peering);
+        }
         Ok(())
     }
 
@@ -377,14 +415,33 @@ impl ConsulPeeringService {
         peerings
     }
 
-    pub fn delete_peering(&self, name: &str) -> bool {
+    pub async fn delete_peering(&self, name: &str) -> bool {
         if let Some(mut peering) = self.peerings.get_mut(name) {
             peering.state = PeeringState::Deleting;
             peering.deleted_at = Some(Utc::now().to_rfc3339());
             peering.modify_index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let updated = peering.clone();
             drop(peering);
-            self.persist_to_rocks(name, &updated);
+            if let Some(ref raft) = self.raft_node {
+                let peering_json = serde_json::to_string(&updated).unwrap_or_default();
+                match raft
+                    .write(ConsulRaftRequest::PeeringWrite {
+                        name: name.to_string(),
+                        peering_json,
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft PeeringWrite rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft PeeringWrite failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.persist_to_rocks(name, &updated);
+            }
             true
         } else {
             false
@@ -445,7 +502,7 @@ pub async fn generate_peering_token(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    match peering_service.generate_token(body.into_inner()) {
+    match peering_service.generate_token(body.into_inner()).await {
         Ok(resp) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
@@ -468,7 +525,7 @@ pub async fn establish_peering(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    match peering_service.establish(body.into_inner()) {
+    match peering_service.establish(body.into_inner()).await {
         Ok(()) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
@@ -528,7 +585,7 @@ pub async fn delete_peering(
         return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
     }
 
-    if peering_service.delete_peering(&name) {
+    if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
@@ -570,7 +627,7 @@ pub async fn generate_peering_token_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    match peering_service.generate_token(body.into_inner()) {
+    match peering_service.generate_token(body.into_inner()).await {
         Ok(resp) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
@@ -593,7 +650,7 @@ pub async fn establish_peering_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    match peering_service.establish(body.into_inner()) {
+    match peering_service.establish(body.into_inner()).await {
         Ok(()) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
@@ -653,7 +710,7 @@ pub async fn delete_peering_persistent(
         return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
     }
 
-    if peering_service.delete_peering(&name) {
+    if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
@@ -682,15 +739,16 @@ pub async fn list_peerings_persistent(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_generate_token() {
+    #[tokio::test]
+    async fn test_generate_token() {
         let service = ConsulPeeringService::new();
         let result = service.generate_token(PeeringGenerateTokenRequest {
             peer_name: "cluster-02".to_string(),
             partition: String::new(),
             meta: Default::default(),
             server_external_addresses: vec![],
-        });
+        })
+        .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(!resp.peering_token.is_empty());
@@ -700,20 +758,22 @@ mod tests {
         assert_eq!(peering.state, PeeringState::Pending);
     }
 
-    #[test]
-    fn test_generate_token_empty_name() {
+    #[tokio::test]
+    async fn test_generate_token_empty_name() {
         let service = ConsulPeeringService::new();
-        let result = service.generate_token(PeeringGenerateTokenRequest {
-            peer_name: String::new(),
-            partition: String::new(),
-            meta: Default::default(),
-            server_external_addresses: vec![],
-        });
+        let result = service
+            .generate_token(PeeringGenerateTokenRequest {
+                peer_name: String::new(),
+                partition: String::new(),
+                meta: Default::default(),
+                server_external_addresses: vec![],
+            })
+            .await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_establish_peering() {
+    #[tokio::test]
+    async fn test_establish_peering() {
         let service = ConsulPeeringService::new();
 
         // First generate a token
@@ -724,6 +784,7 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
         // Create another service and establish
@@ -733,15 +794,16 @@ mod tests {
             peering_token: token_resp.peering_token,
             partition: String::new(),
             meta: Default::default(),
-        });
+        })
+        .await;
         assert!(result.is_ok());
 
         let peering = service2.get_peering("cluster-01").unwrap();
         assert_eq!(peering.state, PeeringState::Active);
     }
 
-    #[test]
-    fn test_list_peerings() {
+    #[tokio::test]
+    async fn test_list_peerings() {
         let service = ConsulPeeringService::new();
         service
             .generate_token(PeeringGenerateTokenRequest {
@@ -750,6 +812,7 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
         service
             .generate_token(PeeringGenerateTokenRequest {
@@ -758,6 +821,7 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
         let peerings = service.list_peerings();
@@ -767,8 +831,8 @@ mod tests {
         assert_eq!(peerings[1].name, "peer-b");
     }
 
-    #[test]
-    fn test_delete_peering() {
+    #[tokio::test]
+    async fn test_delete_peering() {
         let service = ConsulPeeringService::new();
         service
             .generate_token(PeeringGenerateTokenRequest {
@@ -777,18 +841,19 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
-        assert!(service.delete_peering("to-delete"));
+        assert!(service.delete_peering("to-delete").await);
         // Should not appear in list after deletion
         assert!(service.get_peering("to-delete").is_none());
         assert!(service.list_peerings().is_empty());
     }
 
-    #[test]
-    fn test_delete_nonexistent() {
+    #[tokio::test]
+    async fn test_delete_nonexistent() {
         let service = ConsulPeeringService::new();
-        assert!(!service.delete_peering("nonexistent"));
+        assert!(!service.delete_peering("nonexistent").await);
     }
 
     #[test]
@@ -797,8 +862,8 @@ mod tests {
         assert!(service.get_peering("nonexistent").is_none());
     }
 
-    #[test]
-    fn test_generate_token_creates_pending_peering() {
+    #[tokio::test]
+    async fn test_generate_token_creates_pending_peering() {
         let service = ConsulPeeringService::new();
         service
             .generate_token(PeeringGenerateTokenRequest {
@@ -807,6 +872,7 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
         let peering = service.get_peering("pending-peer").unwrap();
@@ -815,8 +881,8 @@ mod tests {
         assert!(!peering.id.is_empty());
     }
 
-    #[test]
-    fn test_generate_token_duplicate_name_overwrites() {
+    #[tokio::test]
+    async fn test_generate_token_duplicate_name_overwrites() {
         let service = ConsulPeeringService::new();
 
         service
@@ -826,15 +892,18 @@ mod tests {
                 meta: Default::default(),
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
         // Second token for same name overwrites (insert into DashMap)
-        let result = service.generate_token(PeeringGenerateTokenRequest {
-            peer_name: "dup-peer".to_string(),
-            partition: String::new(),
-            meta: Default::default(),
-            server_external_addresses: vec![],
-        });
+        let result = service
+            .generate_token(PeeringGenerateTokenRequest {
+                peer_name: "dup-peer".to_string(),
+                partition: String::new(),
+                meta: Default::default(),
+                server_external_addresses: vec![],
+            })
+            .await;
         assert!(result.is_ok());
 
         // Should still only be one peering
@@ -848,21 +917,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_establish_with_invalid_token() {
+    #[tokio::test]
+    async fn test_establish_with_invalid_token() {
         let service = ConsulPeeringService::new();
 
-        let result = service.establish(PeeringEstablishRequest {
-            peer_name: "bad-peer".to_string(),
-            peering_token: "not-valid-base64!@#$".to_string(),
-            partition: String::new(),
-            meta: Default::default(),
-        });
+        let result = service
+            .establish(PeeringEstablishRequest {
+                peer_name: "bad-peer".to_string(),
+                peering_token: "not-valid-base64!@#$".to_string(),
+                partition: String::new(),
+                meta: Default::default(),
+            })
+            .await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_peering_with_meta() {
+    #[tokio::test]
+    async fn test_peering_with_meta() {
         let service = ConsulPeeringService::new();
         let mut meta = std::collections::HashMap::new();
         meta.insert("env".to_string(), "production".to_string());
@@ -874,14 +945,15 @@ mod tests {
                 meta,
                 server_external_addresses: vec![],
             })
+            .await
             .unwrap();
 
         let peering = service.get_peering("meta-peer").unwrap();
         assert_eq!(peering.meta.get("env").unwrap(), "production");
     }
 
-    #[test]
-    fn test_generate_token_with_external_addresses() {
+    #[tokio::test]
+    async fn test_generate_token_with_external_addresses() {
         let service = ConsulPeeringService::new();
 
         let resp = service
@@ -894,6 +966,7 @@ mod tests {
                     "10.0.1.2:8502".to_string(),
                 ],
             })
+            .await
             .unwrap();
 
         // Token should contain the addresses (base64 encoded)

@@ -85,10 +85,6 @@ pub struct ConsulPlugin {
     pub dc_config: ConsulDatacenterConfig,
     /// Whether to auto-register the Consul service on startup.
     register_self: bool,
-    /// Server address for self-registration.
-    server_address: String,
-    /// Server port for self-registration.
-    server_port: u16,
     /// Lazily initialized inner state (populated during `init()`).
     inner: std::sync::OnceLock<ConsulPluginInner>,
 }
@@ -108,8 +104,8 @@ impl ConsulPlugin {
         initial_management_token: Option<String>,
         dc_config: ConsulDatacenterConfig,
         register_self: bool,
-        server_address: String,
-        server_port: u16,
+        _server_address: String,
+        _server_port: u16,
     ) -> Self {
         Self {
             enabled,
@@ -117,8 +113,6 @@ impl ConsulPlugin {
             initial_management_token,
             dc_config,
             register_self,
-            server_address,
-            server_port,
             inner: std::sync::OnceLock::new(),
         }
     }
@@ -160,6 +154,7 @@ impl ConsulPlugin {
             namespace_service: crate::namespace::ConsulNamespaceService::new(
                 index_provider.clone(),
             ),
+            event: ConsulEventService::new(index_provider.clone()),
             index_provider,
             acl: if self.acl_enabled {
                 match &self.initial_management_token {
@@ -170,7 +165,6 @@ impl ConsulPlugin {
                 AclService::disabled()
             },
             session,
-            event: ConsulEventService::new(),
             query: ConsulQueryService::new(),
             lock,
             semaphore,
@@ -224,7 +218,7 @@ impl ConsulPlugin {
                 AclService::disabled()
             },
             session,
-            event: ConsulEventService::new(),
+            event: ConsulEventService::new(index_provider.clone()),
             query: ConsulQueryService::with_raft(db.clone(), consul_raft.clone()),
             lock,
             semaphore,
@@ -246,7 +240,7 @@ impl ConsulPlugin {
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_raft(db, consul_raft.clone(), &self.dc_config),
             namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
-                consul_raft.clone(),
+                consul_raft,
                 index_provider.clone(),
             ),
             dc_config: self.dc_config.clone(),
@@ -280,8 +274,6 @@ impl ConsulPlugin {
             initial_management_token: None,
             dc_config: dc_config.clone(),
             register_self: false,
-            server_address: String::new(),
-            server_port: 0,
             inner: std::sync::OnceLock::new(),
         };
 
@@ -315,8 +307,6 @@ impl ConsulPlugin {
             initial_management_token: None,
             dc_config: dc_config.clone(),
             register_self: false,
-            server_address: String::new(),
-            server_port: 0,
             inner: std::sync::OnceLock::new(),
         };
 
@@ -348,6 +338,11 @@ impl ConsulPlugin {
     /// Get the registry. Panics if not initialized.
     pub fn registry(&self) -> &Arc<InstanceCheckRegistry> {
         &self.inner().registry
+    }
+
+    /// Get the event service. Panics if not initialized.
+    pub fn event_service(&self) -> &ConsulEventService {
+        &self.inner().event
     }
 }
 

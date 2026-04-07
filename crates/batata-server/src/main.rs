@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 2.5: Register protocol adapter plugins (lightweight, config only)
     // ====================================================================
     let mut plugin_manager = batata_plugin::spi::PluginManager::new();
+    let mut consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>> = None;
 
     if configuration.consul_enabled() {
         let dc_config = batata_plugin_consul::model::ConsulDatacenterConfig::new(
@@ -113,7 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             configuration.server_address(),
             configuration.consul_server_port(),
         ));
-        plugin_manager.register_protocol_adapter(consul_plugin);
+        plugin_manager.register_protocol_adapter(consul_plugin.clone());
+        consul_plugin_ref = Some(consul_plugin);
     }
 
     // Collect plugin CFs before creating RocksDB
@@ -345,6 +347,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize all plugins
     plugin_manager.init_protocol_adapters(&plugin_ctx).await?;
+
+    // Wire Consul event broadcast (cluster mode only)
+    if let Some(ref consul_plugin) = consul_plugin_ref {
+        // Register gRPC handler for receiving event broadcasts from peers
+        let event_service = consul_plugin.event_service().clone();
+        grpc_servers.handler_registry().register_handler(Arc::new(
+            batata_server::service::consul_event_handler::ConsulEventBroadcastHandler { event_service: event_service.clone() },
+        ));
+
+        // Set broadcaster for sending events to peers
+        if let Some(ref client_manager) = *grpc_servers.cluster_client_manager() {
+            if let Some(ref smm) = persistence_ctx.server_member_manager {
+                let broadcaster = Arc::new(
+                    batata_server::service::consul_event_handler::ConsulEventBroadcasterImpl::new(
+                        client_manager.clone(),
+                        smm.clone(),
+                    ),
+                );
+                event_service.set_broadcaster(broadcaster).await;
+                info!("Consul event cluster broadcast enabled");
+            }
+        }
+    }
 
     // ====================================================================
     // Phase 12: Start HTTP servers and wait for shutdown

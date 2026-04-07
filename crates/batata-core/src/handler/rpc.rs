@@ -308,7 +308,7 @@ pub trait TpsChecker: Send + Sync {
 // Registry for managing payload handlers by message type
 // Supports dynamic handler registration with logging for debugging
 pub struct HandlerRegistry {
-    handlers: HashMap<String, Arc<dyn PayloadHandler>>,
+    handlers: dashmap::DashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
     auth_service: Arc<GrpcAuthService>,
     tps_checker: Option<Arc<dyn TpsChecker>>,
@@ -323,7 +323,7 @@ impl Default for HandlerRegistry {
 impl HandlerRegistry {
     pub fn new() -> Self {
         Self {
-            handlers: HashMap::new(),
+            handlers: dashmap::DashMap::new(),
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(GrpcAuthService::default()),
             tps_checker: None,
@@ -333,7 +333,7 @@ impl HandlerRegistry {
     /// Create a new HandlerRegistry with auth service
     pub fn with_auth(auth_service: GrpcAuthService) -> Self {
         Self {
-            handlers: HashMap::new(),
+            handlers: dashmap::DashMap::new(),
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(auth_service),
             tps_checker: None,
@@ -359,13 +359,13 @@ impl HandlerRegistry {
     pub fn get_handler(&self, message_type: &str) -> Arc<dyn PayloadHandler> {
         self.handlers
             .get(message_type)
-            .unwrap_or(&self.default_handler)
-            .clone()
+            .map(|r| r.value().clone())
+            .unwrap_or_else(|| self.default_handler.clone())
     }
 
-    /// Register a new handler for a specific message type
-    /// Logs the registration for debugging purposes
-    pub fn register_handler(&mut self, handler: Arc<dyn PayloadHandler>) {
+    /// Register a new handler for a specific message type.
+    /// Thread-safe: can be called after the registry is wrapped in Arc.
+    pub fn register_handler(&self, handler: Arc<dyn PayloadHandler>) {
         let message_type = handler.can_handle();
         info!(
             message_type = %message_type,
@@ -376,8 +376,7 @@ impl HandlerRegistry {
     }
 
     /// Unregister a handler for a specific message type
-    /// Useful for dynamic handler management
-    pub fn unregister_handler(&mut self, message_type: &str) -> bool {
+    pub fn unregister_handler(&self, message_type: &str) -> bool {
         if let Some(_handler) = self.handlers.remove(message_type) {
             info!(
                 message_type = %message_type,
@@ -398,7 +397,7 @@ impl HandlerRegistry {
     /// Get a list of all registered message types
     /// Useful for debugging and monitoring
     pub fn registered_message_types(&self) -> Vec<String> {
-        self.handlers.keys().cloned().collect()
+        self.handlers.iter().map(|r| r.key().clone()).collect()
     }
 
     /// Get the auth service
@@ -915,5 +914,100 @@ impl BiRequestStream for GrpcBiRequestStreamService {
         Ok(Response::new(
             Box::pin(output_stream) as Self::requestBiStreamStream
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal PayloadHandler for testing
+    struct TestHandler {
+        message_type: &'static str,
+    }
+
+    #[tonic::async_trait]
+    impl PayloadHandler for TestHandler {
+        async fn handle(&self, _conn: &Connection, _payload: &Payload) -> Result<Payload, Status> {
+            Ok(Payload::default())
+        }
+        fn can_handle(&self) -> &'static str {
+            self.message_type
+        }
+        fn auth_requirement(&self) -> AuthRequirement {
+            AuthRequirement::None
+        }
+    }
+
+    #[test]
+    fn test_register_and_get_handler() {
+        let registry = HandlerRegistry::new();
+        registry.register_handler(Arc::new(TestHandler { message_type: "TestRequest" }));
+
+        let handler = registry.get_handler("TestRequest");
+        assert_eq!(handler.can_handle(), "TestRequest");
+    }
+
+    #[test]
+    fn test_get_default_handler_for_unknown() {
+        let registry = HandlerRegistry::new();
+        let handler = registry.get_handler("NonExistentRequest");
+        // Default handler returns empty string for can_handle
+        assert_ne!(handler.can_handle(), "NonExistentRequest");
+    }
+
+    #[test]
+    fn test_unregister_handler() {
+        let registry = HandlerRegistry::new();
+        registry.register_handler(Arc::new(TestHandler { message_type: "ToRemove" }));
+        assert!(registry.unregister_handler("ToRemove"));
+        assert!(!registry.unregister_handler("ToRemove")); // Already removed
+    }
+
+    #[test]
+    fn test_registered_message_types() {
+        let registry = HandlerRegistry::new();
+        registry.register_handler(Arc::new(TestHandler { message_type: "TypeA" }));
+        registry.register_handler(Arc::new(TestHandler { message_type: "TypeB" }));
+
+        let types = registry.registered_message_types();
+        assert!(types.contains(&"TypeA".to_string()));
+        assert!(types.contains(&"TypeB".to_string()));
+    }
+
+    #[test]
+    fn test_dynamic_registration_after_arc() {
+        // Verify handlers can be registered even after wrapping in Arc
+        // (this is the key change from HashMap to DashMap)
+        let registry = Arc::new(HandlerRegistry::new());
+
+        // Register through Arc reference (using &self, not &mut self)
+        registry.register_handler(Arc::new(TestHandler { message_type: "DynamicType" }));
+
+        let handler = registry.get_handler("DynamicType");
+        assert_eq!(handler.can_handle(), "DynamicType");
+    }
+
+    #[test]
+    fn test_concurrent_registration() {
+        let registry = Arc::new(HandlerRegistry::new());
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let reg = registry.clone();
+            let handle = std::thread::spawn(move || {
+                // Use a static str via Box::leak for test purposes
+                let msg_type: &'static str = Box::leak(format!("ConcurrentType{}", i).into_boxed_str());
+                reg.register_handler(Arc::new(TestHandler { message_type: msg_type }));
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let types = registry.registered_message_types();
+        assert_eq!(types.len(), 10);
     }
 }

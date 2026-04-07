@@ -60,9 +60,6 @@ sysinfo = { workspace = true }
 # Hostname
 hostname = { workspace = true }
 
-# HTTP client
-reqwest = { workspace = true }
-
 # X.509 certificate generation
 rcgen = { workspace = true }
 

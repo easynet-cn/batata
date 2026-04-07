@@ -509,6 +509,7 @@ impl Default for ConsulSessionService {
 }
 
 /// Parse duration string (e.g., "15s", "1m", "1h")
+#[cfg(test)]
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {

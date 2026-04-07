@@ -1131,6 +1131,7 @@ fn is_connect_reg_for(reg: &AgentServiceRegistration, target_service: &str) -> b
 // ============================================================================
 
 /// Parse a duration string like "30s", "5m", "1h" into seconds
+#[cfg(test)]
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
@@ -1161,6 +1162,7 @@ fn parse_duration(s: &str) -> Option<u64> {
 }
 
 /// Parse a duration string into std::time::Duration
+#[cfg(test)]
 fn parse_duration_to_std(s: &str) -> Option<Duration> {
     parse_duration(s).map(Duration::from_secs)
 }

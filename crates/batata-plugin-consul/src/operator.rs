@@ -23,7 +23,7 @@ use tracing::{error, info, warn};
 use base64::Engine;
 
 use crate::constants::CF_CONSUL_OPERATOR;
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
@@ -390,11 +390,28 @@ impl ConsulOperatorService {
         RaftConfigurationResponse { servers, index }
     }
 
-    pub fn remove_peer(&self, id: Option<&str>, address: Option<&str>) -> Result<(), String> {
+    pub async fn remove_peer(&self, id: Option<&str>, address: Option<&str>) -> Result<(), String> {
         if let Some(id) = id {
             if self.servers.remove(id).is_some() {
                 self.index.fetch_add(1, Ordering::SeqCst);
-                self.delete_from_rocks(&format!("server:{}", id));
+                if let Some(ref raft) = self.raft_node {
+                    match raft
+                        .write(ConsulRaftRequest::OperatorRemovePeer {
+                            server_key: id.to_string(),
+                        })
+                        .await
+                    {
+                        Ok(r) if !r.success => {
+                            error!("Raft OperatorRemovePeer rejected: {:?}", r.message);
+                        }
+                        Err(e) => {
+                            error!("Raft OperatorRemovePeer failed: {}", e);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.delete_from_rocks(&format!("server:{}", id));
+                }
                 return Ok(());
             }
             return Err(format!("Peer with ID '{}' not found", id));
@@ -408,7 +425,24 @@ impl ConsulOperatorService {
             if let Some(key) = key_to_remove {
                 self.servers.remove(&key);
                 self.index.fetch_add(1, Ordering::SeqCst);
-                self.delete_from_rocks(&format!("server:{}", key));
+                if let Some(ref raft) = self.raft_node {
+                    match raft
+                        .write(ConsulRaftRequest::OperatorRemovePeer {
+                            server_key: key.clone(),
+                        })
+                        .await
+                    {
+                        Ok(r) if !r.success => {
+                            error!("Raft OperatorRemovePeer rejected: {:?}", r.message);
+                        }
+                        Err(e) => {
+                            error!("Raft OperatorRemovePeer failed: {}", e);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.delete_from_rocks(&format!("server:{}", key));
+                }
                 return Ok(());
             }
             return Err(format!("Peer with address '{}' not found", address));
@@ -441,7 +475,23 @@ impl ConsulOperatorService {
         new_config.modify_index = new_index;
         new_config.create_index = current.create_index;
         *current = new_config.clone();
-        self.persist_to_rocks("autopilot_config", &new_config);
+        if let Some(ref raft) = self.raft_node {
+            let config_json = serde_json::to_string(&new_config).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::OperatorAutopilotUpdate { config_json })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft OperatorAutopilotUpdate rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft OperatorAutopilotUpdate failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_to_rocks("autopilot_config", &new_config);
+        }
         Ok(true)
     }
 
@@ -890,7 +940,10 @@ pub async fn remove_raft_peer(
             .json(ConsulError::new("Must specify either id or address"));
     }
 
-    match operator_service.remove_peer(query.id.as_deref(), query.address.as_deref()) {
+    match operator_service
+        .remove_peer(query.id.as_deref(), query.address.as_deref())
+        .await
+    {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
@@ -1359,27 +1412,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_remove_peer_by_id() {
+    #[tokio::test]
+    async fn test_remove_peer_by_id() {
         let service = ConsulOperatorService::new();
         let server_id = {
             let first = service.servers.iter().next().unwrap();
             first.key().clone()
         };
-        assert!(service.remove_peer(Some(&server_id), None).is_ok());
+        assert!(service.remove_peer(Some(&server_id), None).await.is_ok());
         assert_eq!(service.servers.len(), 0);
     }
 
-    #[test]
-    fn test_remove_peer_not_found() {
+    #[tokio::test]
+    async fn test_remove_peer_not_found() {
         let service = ConsulOperatorService::new();
-        assert!(service.remove_peer(Some("nonexistent"), None).is_err());
+        assert!(service.remove_peer(Some("nonexistent"), None).await.is_err());
     }
 
-    #[test]
-    fn test_remove_peer_must_specify() {
+    #[tokio::test]
+    async fn test_remove_peer_must_specify() {
         let service = ConsulOperatorService::new();
-        assert!(service.remove_peer(None, None).is_err());
+        assert!(service.remove_peer(None, None).await.is_err());
     }
 
     #[tokio::test]
@@ -1507,14 +1560,14 @@ mod tests {
         assert!(!service.list_keys()[0].keys.contains_key("key-2"));
     }
 
-    #[test]
-    fn test_remove_peer_by_address() {
+    #[tokio::test]
+    async fn test_remove_peer_by_address() {
         let service = ConsulOperatorService::new();
         let addr = {
             let first = service.servers.iter().next().unwrap();
             first.value().address.clone()
         };
-        assert!(service.remove_peer(None, Some(&addr)).is_ok());
+        assert!(service.remove_peer(None, Some(&addr)).await.is_ok());
         assert_eq!(service.servers.len(), 0);
     }
 

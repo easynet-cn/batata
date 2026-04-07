@@ -858,6 +858,90 @@ impl From<AuthCacheInvalidateResponse> for Any {
 }
 
 // =============================================================================
+// Consul: Event Broadcast (cluster-internal)
+// =============================================================================
+
+/// Request to broadcast a Consul user event to all cluster nodes.
+/// Sent via cluster gRPC port when an event is fired via `/v1/event/fire/{name}`.
+/// This mirrors Consul's Serf gossip-based event propagation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConsulEventBroadcastRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+    /// Event UUID
+    pub event_id: String,
+    /// Event name
+    pub event_name: String,
+    /// Base64-encoded payload (max 300 bytes raw)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
+    /// Regex filter for target nodes
+    pub node_filter: String,
+    /// Regex filter for target services
+    pub service_filter: String,
+    /// Regex filter for target tags
+    pub tag_filter: String,
+    /// Lamport time
+    pub ltime: u64,
+}
+
+impl ConsulEventBroadcastRequest {
+    pub fn new(
+        event_id: String,
+        event_name: String,
+        payload: Option<String>,
+        node_filter: String,
+        service_filter: String,
+        tag_filter: String,
+        ltime: u64,
+    ) -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            event_id,
+            event_name,
+            payload,
+            node_filter,
+            service_filter,
+            tag_filter,
+            ltime,
+        }
+    }
+}
+
+impl_request_trait!(ConsulEventBroadcastRequest, internal_request);
+
+impl From<&Payload> for ConsulEventBroadcastRequest {
+    fn from(value: &Payload) -> Self {
+        ConsulEventBroadcastRequest::from_payload(value)
+    }
+}
+
+/// Response to event broadcast
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsulEventBroadcastResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl ConsulEventBroadcastResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl_response_trait!(ConsulEventBroadcastResponse);
+
+impl From<ConsulEventBroadcastResponse> for Any {
+    fn from(val: ConsulEventBroadcastResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
 // Lock: LockOperation
 // =============================================================================
 

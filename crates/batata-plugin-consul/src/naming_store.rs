@@ -156,6 +156,15 @@ impl ConsulNamingStore {
             .map(|e| e.value().data.clone())
     }
 
+    /// Find the store key for a service_id within a namespace (without removing)
+    pub fn find_key_by_service_id(&self, ns: &str, service_id: &str) -> Option<String> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
+        self.entries
+            .iter()
+            .find(|e| e.value().namespace == ns && e.value().service_id == service_id)
+            .map(|e| e.key().clone())
+    }
+
     /// Remove by service_id within a namespace
     pub fn remove_by_service_id(&self, ns: &str, service_id: &str) -> bool {
         let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
@@ -499,5 +508,26 @@ mod tests {
     fn test_empty_namespace_defaults_to_default() {
         let key = ConsulNamingStore::build_key("", "web", "web-1");
         assert!(key.starts_with("default/"));
+    }
+
+    #[test]
+    fn test_find_key_by_service_id() {
+        let store = ConsulNamingStore::new();
+        let key = ConsulNamingStore::build_key("default", "web", "web-1");
+        let data = br#"{"name":"web","id":"web-1"}"#;
+        store.register(&key, bytes::Bytes::from(&data[..])).unwrap();
+
+        // Should find the key
+        let found = store.find_key_by_service_id("default", "web-1");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), key);
+
+        // Should not find non-existent service
+        let not_found = store.find_key_by_service_id("default", "web-99");
+        assert!(not_found.is_none());
+
+        // Should not find in wrong namespace
+        let wrong_ns = store.find_key_by_service_id("other", "web-1");
+        assert!(wrong_ns.is_none());
     }
 }

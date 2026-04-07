@@ -24,7 +24,7 @@ use crate::model::{
     MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use batata_plugin::PluginNamingStore;
 
 /// Consul Agent service adapter
@@ -110,12 +110,27 @@ impl ConsulAgentService {
 
         let store_key =
             ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", "consul");
-        match serde_json::to_vec(&reg) {
-            Ok(data) => {
-                let _ = self.naming_store.register(&store_key, bytes::Bytes::from(data));
-            }
-            Err(e) => {
-                return Err(format!("Failed to serialize consul registration: {}", e));
+        let reg_json = serde_json::to_vec(&reg)
+            .map_err(|e| format!("Failed to serialize consul registration: {}", e))?;
+
+        let _ = self.naming_store.register(&store_key, bytes::Bytes::from(reg_json.clone()));
+
+        if let Some(ref raft) = self.raft_node {
+            let registration_json = String::from_utf8_lossy(&reg_json).to_string();
+            match raft
+                .write(ConsulRaftRequest::CatalogRegister {
+                    key: store_key.clone(),
+                    registration_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    tracing::error!("Raft CatalogRegister rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    tracing::error!("Raft CatalogRegister failed: {}", e);
+                }
+                _ => {}
             }
         }
 
@@ -164,9 +179,29 @@ impl ConsulAgentService {
 
     /// Deregister Consul service
     pub async fn deregister_consul_service(&self) {
+        let store_key =
+            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", "consul");
         self.naming_store
             .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
         self.check_index.remove("consul");
+
+        if let Some(ref raft) = self.raft_node {
+            match raft
+                .write(ConsulRaftRequest::CatalogDeregister {
+                    key: store_key,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    tracing::error!("Raft CatalogDeregister rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    tracing::error!("Raft CatalogDeregister failed: {}", e);
+                }
+                _ => {}
+            }
+        }
+
         tracing::info!("Consul service deregistered");
     }
 }
@@ -275,18 +310,43 @@ pub async fn register_service(
     // Store in Consul naming store (native format — no conversion overhead)
     let namespace = dc_config.resolve_ns(&query.ns);
     let store_key = ConsulNamingStore::build_key(&namespace, &registration.name, &service_id);
-    if let Err(e) = serde_json::to_vec(&registration)
+    let reg_data = match serde_json::to_vec(&registration) {
+        Ok(data) => data,
+        Err(e) => {
+            tracing::error!("Failed to serialize service registration: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(ConsulError::new("Failed to register service"));
+        }
+    };
+
+    if let Err(e) = agent
+        .naming_store
+        .register(&store_key, bytes::Bytes::from(reg_data.clone()))
         .map_err(|e| e.to_string())
-        .and_then(|data| {
-            agent
-                .naming_store
-                .register(&store_key, bytes::Bytes::from(data))
-                .map_err(|e| e.to_string())
-        })
     {
         tracing::error!("Failed to store service in ConsulNamingStore: {}", e);
         return HttpResponse::InternalServerError()
             .json(ConsulError::new("Failed to register service"));
+    }
+
+    // Replicate through Raft in cluster mode
+    if let Some(ref raft) = agent.raft_node {
+        let registration_json = String::from_utf8_lossy(&reg_data).to_string();
+        match raft
+            .write(ConsulRaftRequest::CatalogRegister {
+                key: store_key.clone(),
+                registration_json,
+            })
+            .await
+        {
+            Ok(r) if !r.success => {
+                tracing::error!("Raft CatalogRegister rejected: {:?}", r.message);
+            }
+            Err(e) => {
+                tracing::error!("Raft CatalogRegister failed: {}", e);
+            }
+            _ => {}
+        }
     }
 
     index_provider.increment(ConsulTable::Catalog);
@@ -383,6 +443,9 @@ pub async fn deregister_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Find the store key before removal (needed for Raft replication)
+    let store_key = agent.naming_store.find_key_by_service_id(&namespace, &service_id);
+
     // Remove from Consul naming store
     let deregistered = agent
         .naming_store
@@ -394,6 +457,26 @@ pub async fn deregister_service(
             agent.registry.deregister_all_instance_checks(&instance_key);
         }
         agent.check_index.remove(&service_id);
+
+        // Replicate through Raft in cluster mode
+        if let Some(ref raft) = agent.raft_node {
+            if let Some(key) = &store_key {
+                match raft
+                    .write(ConsulRaftRequest::CatalogDeregister {
+                        key: key.clone(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        tracing::error!("Raft CatalogDeregister rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        tracing::error!("Raft CatalogDeregister failed: {}", e);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     if deregistered {

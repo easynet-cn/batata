@@ -19,7 +19,7 @@ use crate::constants::CF_CONSUL_ACL;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulDatacenterConfig, ConsulError};
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ACL Token header name
 pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
@@ -556,8 +556,8 @@ query_prefix "" { policy = "write" }
         }
 
         // Check memory store
-        if let Some(token) = MEMORY_TOKENS.get(secret_id) {
-            let token = token.clone();
+        if let Some(entry) = MEMORY_TOKENS.get(secret_id) {
+            let token = entry.value().clone();
             TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
             return Some(token);
         }
@@ -582,7 +582,7 @@ query_prefix "" { policy = "write" }
     }
 
     /// Create a new token
-    pub fn create_token(
+    pub async fn create_token(
         &self,
         description: &str,
         policies: Vec<String>,
@@ -643,12 +643,31 @@ query_prefix "" { policy = "write" }
         };
 
         MEMORY_TOKENS.insert(secret_id.clone(), token.clone());
-        self.persist_acl("token", &secret_id, &token);
+        if let Some(ref raft) = self.raft_node {
+            let token_json = serde_json::to_string(&token).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLTokenSet {
+                    accessor_id: token.accessor_id.clone(),
+                    token_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLTokenSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLTokenSet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("token", &secret_id, &token);
+        }
         token
     }
 
     /// Delete a token
-    pub fn delete_token(&self, accessor_id: &str) -> bool {
+    pub async fn delete_token(&self, accessor_id: &str) -> bool {
         let mut found = false;
         let mut removed_secret_ids = Vec::new();
         MEMORY_TOKENS.retain(|secret_id, token| {
@@ -661,7 +680,24 @@ query_prefix "" { policy = "write" }
             }
         });
         for secret_id in &removed_secret_ids {
-            self.delete_acl("token", secret_id);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::ACLTokenDelete {
+                        accessor_id: accessor_id.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft ACLTokenDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft ACLTokenDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_acl("token", secret_id);
+            }
         }
         found
     }
@@ -682,7 +718,7 @@ query_prefix "" { policy = "write" }
     ///
     /// Returns `Err` if a policy with the same name already exists
     /// (Consul enforces unique policy names).
-    pub fn create_policy(
+    pub async fn create_policy(
         &self,
         name: &str,
         description: &str,
@@ -712,15 +748,51 @@ query_prefix "" { policy = "write" }
 
         MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
         MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
-        self.persist_acl("policy", &policy.id, &policy);
+        if let Some(ref raft) = self.raft_node {
+            let policy_json = serde_json::to_string(&policy).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLPolicySet {
+                    id: policy.id.clone(),
+                    policy_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLPolicySet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLPolicySet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("policy", &policy.id, &policy);
+        }
         Ok(policy)
     }
 
     /// Delete a policy by ID
-    pub fn delete_policy(&self, id: &str) -> bool {
+    pub async fn delete_policy(&self, id: &str) -> bool {
         if let Some((_, policy)) = MEMORY_POLICIES.remove(id) {
             MEMORY_POLICIES.remove(&policy.name);
-            self.delete_acl("policy", id);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::ACLPolicyDelete {
+                        id: id.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft ACLPolicyDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft ACLPolicyDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_acl("policy", id);
+            }
             true
         } else {
             false
@@ -765,7 +837,7 @@ query_prefix "" { policy = "write" }
     }
 
     /// Create a new role
-    pub fn create_role(&self, name: &str, description: &str, policies: Vec<String>) -> AclRole {
+    pub async fn create_role(&self, name: &str, description: &str, policies: Vec<String>) -> AclRole {
         let now = chrono::Utc::now().to_rfc3339();
         let role_id = uuid::Uuid::new_v4().to_string();
 
@@ -792,7 +864,26 @@ query_prefix "" { policy = "write" }
 
         MEMORY_ROLES.insert(role.id.clone(), role.clone());
         MEMORY_ROLES.insert(role.name.clone(), role.clone());
-        self.persist_acl("role", &role.id, &role);
+        if let Some(ref raft) = self.raft_node {
+            let role_json = serde_json::to_string(&role).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLRoleSet {
+                    id: role.id.clone(),
+                    role_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLRoleSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLRoleSet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("role", &role.id, &role);
+        }
         role
     }
 
@@ -818,7 +909,7 @@ query_prefix "" { policy = "write" }
     }
 
     /// Update a role
-    pub fn update_role(
+    pub async fn update_role(
         &self,
         id: &str,
         name: Option<&str>,
@@ -857,15 +948,51 @@ query_prefix "" { policy = "write" }
 
         MEMORY_ROLES.insert(role.id.clone(), role.clone());
         MEMORY_ROLES.insert(role.name.clone(), role.clone());
-        self.persist_acl("role", &role.id, &role);
+        if let Some(ref raft) = self.raft_node {
+            let role_json = serde_json::to_string(&role).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLRoleSet {
+                    id: role.id.clone(),
+                    role_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLRoleSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLRoleSet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("role", &role.id, &role);
+        }
         Some(role)
     }
 
     /// Delete a role
-    pub fn delete_role(&self, id: &str) -> bool {
+    pub async fn delete_role(&self, id: &str) -> bool {
         if let Some((_, role)) = MEMORY_ROLES.remove(id) {
             MEMORY_ROLES.remove(&role.name);
-            self.delete_acl("role", id);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::ACLRoleDelete {
+                        id: id.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft ACLRoleDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft ACLRoleDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_acl("role", id);
+            }
             true
         } else {
             false
@@ -890,7 +1017,7 @@ query_prefix "" { policy = "write" }
 
     /// Create a new auth method
     #[allow(clippy::too_many_arguments)]
-    pub fn create_auth_method(
+    pub async fn create_auth_method(
         &self,
         name: &str,
         method_type: &str,
@@ -919,7 +1046,26 @@ query_prefix "" { policy = "write" }
         };
 
         MEMORY_AUTH_METHODS.insert(name.to_string(), method.clone());
-        self.persist_acl("auth_method", name, &method);
+        if let Some(ref raft) = self.raft_node {
+            let method_json = serde_json::to_string(&method).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLAuthMethodSet {
+                    name: name.to_string(),
+                    method_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLAuthMethodSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLAuthMethodSet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("auth_method", name, &method);
+        }
         method
     }
 
@@ -930,7 +1076,7 @@ query_prefix "" { policy = "write" }
 
     /// Update an auth method
     #[allow(clippy::too_many_arguments)]
-    pub fn update_auth_method(
+    pub async fn update_auth_method(
         &self,
         name: &str,
         method_type: Option<&str>,
@@ -968,15 +1114,51 @@ query_prefix "" { policy = "write" }
 
         let updated = method.clone();
         drop(method);
-        self.persist_acl("auth_method", name, &updated);
+        if let Some(ref raft) = self.raft_node {
+            let method_json = serde_json::to_string(&updated).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLAuthMethodSet {
+                    name: name.to_string(),
+                    method_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLAuthMethodSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLAuthMethodSet failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_acl("auth_method", name, &updated);
+        }
         Some(updated)
     }
 
     /// Delete an auth method
-    pub fn delete_auth_method(&self, name: &str) -> bool {
+    pub async fn delete_auth_method(&self, name: &str) -> bool {
         let removed = MEMORY_AUTH_METHODS.remove(name).is_some();
         if removed {
-            self.delete_acl("auth_method", name);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::ACLAuthMethodDelete {
+                        name: name.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft ACLAuthMethodDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft ACLAuthMethodDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_acl("auth_method", name);
+            }
         }
         removed
     }
@@ -1366,13 +1548,15 @@ pub async fn create_token(
         _ => None,
     });
 
-    let token = acl_service.create_token(
-        body.description.as_deref().unwrap_or(""),
-        policies,
-        roles,
-        local,
-        expiration_ttl_str.as_deref(),
-    );
+    let token = acl_service
+        .create_token(
+            body.description.as_deref().unwrap_or(""),
+            policies,
+            roles,
+            local,
+            expiration_ttl_str.as_deref(),
+        )
+        .await;
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(token)
@@ -1387,7 +1571,7 @@ pub async fn delete_token(
     let accessor_id = path.into_inner();
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if acl_service.delete_token(&accessor_id) {
+    if acl_service.delete_token(&accessor_id).await {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
@@ -1442,8 +1626,9 @@ pub async fn clone_token(
                 .clone()
                 .unwrap_or_else(|| format!("Clone of {}", source.description));
             let roles: Vec<String> = source.roles.iter().map(|r| r.name.clone()).collect();
-            let new_token =
-                acl_service.create_token(&description, policies, roles, source.local, None);
+            let new_token = acl_service
+                .create_token(&description, policies, roles, source.local, None)
+                .await;
             consul_ok(&meta).json(new_token)
         }
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
@@ -1570,7 +1755,7 @@ pub async fn acl_logout(
 
     // Find and delete the token
     if let Some(token) = acl_service.get_token(&secret_id)
-        && acl_service.delete_token(&token.accessor_id)
+        && acl_service.delete_token(&token.accessor_id).await
     {
         return consul_ok(&meta).json(true);
     }
@@ -1664,7 +1849,7 @@ pub async fn delete_policy(
     let id = path.into_inner();
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if acl_service.delete_policy(&id) {
+    if acl_service.delete_policy(&id).await {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Policy not found"))
@@ -1688,12 +1873,15 @@ pub async fn create_policy(
     body: web::Json<CreatePolicyRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    match acl_service.create_policy(
-        &body.name,
-        body.description.as_deref().unwrap_or(""),
-        &body.rules,
-        body.datacenters.clone(),
-    ) {
+    match acl_service
+        .create_policy(
+            &body.name,
+            body.description.as_deref().unwrap_or(""),
+            &body.rules,
+            body.datacenters.clone(),
+        )
+        .await
+    {
         Ok(policy) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
             consul_ok(&meta).json(policy)
@@ -1751,11 +1939,13 @@ pub async fn create_role(
         })
         .unwrap_or_default();
 
-    let role = acl_service.create_role(
-        &body.name,
-        body.description.as_deref().unwrap_or(""),
-        policies,
-    );
+    let role = acl_service
+        .create_role(
+            &body.name,
+            body.description.as_deref().unwrap_or(""),
+            policies,
+        )
+        .await;
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(role)
@@ -1793,7 +1983,10 @@ pub async fn update_role(
         .map(|p| p.iter().map(|pl| pl.name.clone()).collect());
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    match acl_service.update_role(&id, Some(&body.name), body.description.as_deref(), policies) {
+    match acl_service
+        .update_role(&id, Some(&body.name), body.description.as_deref(), policies)
+        .await
+    {
         Some(role) => consul_ok(&meta).json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
@@ -1809,7 +2002,7 @@ pub async fn delete_role(
     let id = path.into_inner();
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if acl_service.delete_role(&id) {
+    if acl_service.delete_role(&id).await {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Role not found"))
@@ -1852,15 +2045,17 @@ pub async fn create_auth_method(
     body: web::Json<AuthMethodRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let method = acl_service.create_auth_method(
-        &body.name,
-        &body.method_type,
-        body.display_name.as_deref(),
-        body.description.as_deref(),
-        body.max_token_ttl.as_deref(),
-        body.token_locality.as_deref(),
-        body.config.clone(),
-    );
+    let method = acl_service
+        .create_auth_method(
+            &body.name,
+            &body.method_type,
+            body.display_name.as_deref(),
+            body.description.as_deref(),
+            body.max_token_ttl.as_deref(),
+            body.token_locality.as_deref(),
+            body.config.clone(),
+        )
+        .await;
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(method)
@@ -1892,15 +2087,18 @@ pub async fn update_auth_method(
 ) -> HttpResponse {
     let name = path.into_inner();
 
-    match acl_service.update_auth_method(
-        &name,
-        Some(&body.method_type),
-        body.display_name.as_deref(),
-        body.description.as_deref(),
-        body.max_token_ttl.as_deref(),
-        body.token_locality.as_deref(),
-        body.config.clone(),
-    ) {
+    match acl_service
+        .update_auth_method(
+            &name,
+            Some(&body.method_type),
+            body.display_name.as_deref(),
+            body.description.as_deref(),
+            body.max_token_ttl.as_deref(),
+            body.token_locality.as_deref(),
+            body.config.clone(),
+        )
+        .await
+    {
         Some(method) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
             consul_ok(&meta).json(method)
@@ -1919,7 +2117,7 @@ pub async fn delete_auth_method(
     let name = path.into_inner();
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if acl_service.delete_auth_method(&name) {
+    if acl_service.delete_auth_method(&name).await {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Auth method not found"))
@@ -2557,16 +2755,18 @@ mod tests {
         assert!(result.allowed);
     }
 
-    #[test]
-    fn test_create_token() {
+    #[tokio::test]
+    async fn test_create_token() {
         let service = AclService::new();
-        let token = service.create_token(
-            "Test token",
-            vec!["global-management".to_string()],
-            vec![],
-            false,
-            None,
-        );
+        let token = service
+            .create_token(
+                "Test token",
+                vec!["global-management".to_string()],
+                vec![],
+                false,
+                None,
+            )
+            .await;
 
         assert!(!token.accessor_id.is_empty());
         assert!(token.secret_id.is_some());
@@ -2579,15 +2779,18 @@ mod tests {
         assert!(!token.modify_time.is_empty());
     }
 
-    #[test]
-    fn test_create_policy() {
+    #[tokio::test]
+    async fn test_create_policy() {
         let service = AclService::new();
-        let policy = service.create_policy(
-            "test-policy",
-            "A test policy",
-            r#"service_prefix "test-" { policy = "write" }"#,
-            None,
-        ).unwrap();
+        let policy = service
+            .create_policy(
+                "test-policy",
+                "A test policy",
+                r#"service_prefix "test-" { policy = "write" }"#,
+                None,
+            )
+            .await
+            .unwrap();
 
         assert!(!policy.id.is_empty());
         assert_eq!(policy.name, "test-policy");
@@ -2616,19 +2819,21 @@ mod tests {
         assert_eq!(denied.reason, "No permission");
     }
 
-    #[test]
-    fn test_delete_token() {
+    #[tokio::test]
+    async fn test_delete_token() {
         let service = AclService::new();
-        let token = service.create_token(
-            "to-delete",
-            vec!["global-management".to_string()],
-            vec![],
-            false,
-            None,
-        );
-        assert!(service.delete_token(&token.accessor_id));
+        let token = service
+            .create_token(
+                "to-delete",
+                vec!["global-management".to_string()],
+                vec![],
+                false,
+                None,
+            )
+            .await;
+        assert!(service.delete_token(&token.accessor_id).await);
         // Deleting again should return false
-        assert!(!service.delete_token(&token.accessor_id));
+        assert!(!service.delete_token(&token.accessor_id).await);
         // Verify token is no longer retrievable by looking up in list
         let tokens = service.list_tokens();
         assert!(
@@ -2652,45 +2857,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_create_and_delete_policy() {
+    #[tokio::test]
+    async fn test_create_and_delete_policy() {
         let service = AclService::new();
-        let policy = service.create_policy(
-            "acl-test-del-policy",
-            "For deletion test",
-            r#"key_prefix "" { policy = "read" }"#,
-            None,
-        ).unwrap();
+        let policy = service
+            .create_policy(
+                "acl-test-del-policy",
+                "For deletion test",
+                r#"key_prefix "" { policy = "read" }"#,
+                None,
+            )
+            .await
+            .unwrap();
 
         let fetched = service.get_policy(&policy.id);
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().description, "For deletion test");
-        assert!(service.delete_policy(&policy.id));
+        assert!(service.delete_policy(&policy.id).await);
         assert!(service.get_policy(&policy.id).is_none());
         // Also verify get by name returns None after deletion
         assert!(service.get_policy("acl-test-del-policy").is_none());
     }
 
-    #[test]
-    fn test_delete_nonexistent_policy() {
+    #[tokio::test]
+    async fn test_delete_nonexistent_policy() {
         let service = AclService::new();
-        assert!(!service.delete_policy("nonexistent-policy-id"));
+        assert!(!service.delete_policy("nonexistent-policy-id").await);
     }
 
-    #[test]
-    fn test_role_crud() {
+    #[tokio::test]
+    async fn test_role_crud() {
         let service = AclService::new();
 
         // Create policy first (roles link to policies)
-        let policy = service.create_policy(
-            "acl-role-test-policy",
-            "Test",
-            r#"service_prefix "" { policy = "read" }"#,
-            None,
-        ).unwrap();
+        let policy = service
+            .create_policy(
+                "acl-role-test-policy",
+                "Test",
+                r#"service_prefix "" { policy = "read" }"#,
+                None,
+            )
+            .await
+            .unwrap();
 
         // Create role
-        let role = service.create_role("acl-test-role", "Test role", vec![policy.name.clone()]);
+        let role = service
+            .create_role("acl-test-role", "Test role", vec![policy.name.clone()])
+            .await;
         assert_eq!(role.name, "acl-test-role");
         assert_eq!(role.description, "Test role");
         assert!(!role.id.is_empty());
@@ -2709,39 +2922,43 @@ mod tests {
         assert!(by_name.is_some());
 
         // Update
-        let updated = service.update_role(
-            &role.id,
-            Some("acl-renamed-role"),
-            Some("Updated desc"),
-            None,
-        );
+        let updated = service
+            .update_role(
+                &role.id,
+                Some("acl-renamed-role"),
+                Some("Updated desc"),
+                None,
+            )
+            .await;
         assert!(updated.is_some());
         assert_eq!(updated.unwrap().name, "acl-renamed-role");
 
         // Delete
-        assert!(service.delete_role(&role.id));
+        assert!(service.delete_role(&role.id).await);
         assert!(service.get_role(&role.id).is_none());
     }
 
-    #[test]
-    fn test_delete_nonexistent_role() {
+    #[tokio::test]
+    async fn test_delete_nonexistent_role() {
         let service = AclService::new();
-        assert!(!service.delete_role("nonexistent-role-id"));
+        assert!(!service.delete_role("nonexistent-role-id").await);
     }
 
-    #[test]
-    fn test_auth_method_crud() {
+    #[tokio::test]
+    async fn test_auth_method_crud() {
         let service = AclService::new();
 
-        let method = service.create_auth_method(
-            "acl-test-kubernetes",
-            "kubernetes",
-            Some("K8s Auth"),
-            Some("Kubernetes auth method"),
-            Some("5m"),
-            Some("local"),
-            None,
-        );
+        let method = service
+            .create_auth_method(
+                "acl-test-kubernetes",
+                "kubernetes",
+                Some("K8s Auth"),
+                Some("Kubernetes auth method"),
+                Some("5m"),
+                Some("local"),
+                None,
+            )
+            .await;
         assert_eq!(method.name, "acl-test-kubernetes");
         assert_eq!(method.method_type, "kubernetes");
         assert_eq!(method.display_name.as_deref(), Some("K8s Auth"));
@@ -2761,26 +2978,31 @@ mod tests {
         assert!(service.get_auth_method("nonexistent-method").is_none());
     }
 
-    #[test]
-    fn test_authorize_with_custom_policy() {
+    #[tokio::test]
+    async fn test_authorize_with_custom_policy() {
         let service = AclService::new();
 
         // Create a read-only policy for services
-        let policy = service.create_policy(
-            "acl-test-readonly-svc",
-            "Read only",
-            r#"service_prefix "" { policy = "read" }"#,
-            None,
-        ).unwrap();
+        let policy = service
+            .create_policy(
+                "acl-test-readonly-svc",
+                "Read only",
+                r#"service_prefix "" { policy = "read" }"#,
+                None,
+            )
+            .await
+            .unwrap();
 
         // Create token with this policy
-        let token = service.create_token(
-            "readonly-token",
-            vec![policy.name.clone()],
-            vec![],
-            false,
-            None,
-        );
+        let token = service
+            .create_token(
+                "readonly-token",
+                vec![policy.name.clone()],
+                vec![],
+                false,
+                None,
+            )
+            .await;
 
         // Read should be allowed
         let result = service.authorize(&token, ResourceType::Service, "web", false);
@@ -2791,19 +3013,23 @@ mod tests {
         assert!(!result.allowed);
     }
 
-    #[test]
-    fn test_authorize_deny_policy() {
+    #[tokio::test]
+    async fn test_authorize_deny_policy() {
         let service = AclService::new();
 
-        let policy = service.create_policy(
-            "acl-test-deny-policy",
-            "Deny",
-            r#"key_prefix "secret/" { policy = "deny" }"#,
-            None,
-        ).unwrap();
+        let policy = service
+            .create_policy(
+                "acl-test-deny-policy",
+                "Deny",
+                r#"key_prefix "secret/" { policy = "deny" }"#,
+                None,
+            )
+            .await
+            .unwrap();
 
-        let token =
-            service.create_token("deny-token", vec![policy.name.clone()], vec![], false, None);
+        let token = service
+            .create_token("deny-token", vec![policy.name.clone()], vec![], false, None)
+            .await;
 
         // Should be denied for both read and write on secret/
         let result = service.authorize(&token, ResourceType::Key, "secret/data", false);

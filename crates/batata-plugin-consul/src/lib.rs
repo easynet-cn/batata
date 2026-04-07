@@ -66,7 +66,7 @@ pub use acl::AclService;
 pub use agent::ConsulAgentService;
 pub use catalog::ConsulCatalogService;
 pub use config_entry::ConsulConfigEntryService;
-pub use event::{ConsulEventService, ConsulEventServicePersistent};
+pub use event::{ConsulEventService, EventBroadcaster};
 pub use health::ConsulHealthService;
 pub use kv::ConsulKVService;
 pub use lock::{ConsulLockService, ConsulSemaphoreService};

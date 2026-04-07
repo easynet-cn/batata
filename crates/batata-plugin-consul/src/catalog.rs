@@ -424,7 +424,10 @@ pub struct ConsulCatalogService {
     node_name: String,
     datacenter: String,
     index_provider: ConsulIndexProvider,
-    /// Optional Raft writer for cluster-mode replication
+    /// Optional Raft writer for cluster-mode replication.
+    /// Catalog writes are handled by agent.rs HTTP handlers; this field
+    /// is stored for future use in catalog-level batch operations.
+    #[allow(dead_code)]
     raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 

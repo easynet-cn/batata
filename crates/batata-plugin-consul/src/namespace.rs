@@ -13,7 +13,8 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
-use crate::raft::ConsulRaftWriter;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
+use tracing::error;
 
 /// Default namespace name (always exists, cannot be deleted)
 pub const DEFAULT_NAMESPACE: &str = "default";
@@ -132,7 +133,7 @@ impl ConsulNamespaceService {
     }
 
     /// Create or update a namespace
-    pub fn upsert(&self, ns: Namespace) -> Namespace {
+    pub async fn upsert(&self, ns: Namespace) -> Namespace {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let existing = self.namespaces.get(&ns.name);
         let create_index = existing.as_ref().map(|e| e.create_index).unwrap_or(index);
@@ -144,17 +145,51 @@ impl ConsulNamespaceService {
             ..ns
         };
         self.namespaces.insert(stored.name.clone(), stored.clone());
+        if let Some(ref raft) = self.raft_node {
+            let namespace_json = serde_json::to_string(&stored).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::NamespaceUpsert {
+                    name: stored.name.clone(),
+                    namespace_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft NamespaceUpsert rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft NamespaceUpsert failed: {}", e);
+                }
+                _ => {}
+            }
+        }
         self.index_provider.increment(ConsulTable::Catalog);
         stored
     }
 
     /// Delete a namespace. Returns true if deleted, false if not found.
     /// The "default" namespace cannot be deleted.
-    pub fn delete(&self, name: &str) -> Result<(), String> {
+    pub async fn delete(&self, name: &str) -> Result<(), String> {
         if name == DEFAULT_NAMESPACE {
             return Err("Cannot delete the default namespace".to_string());
         }
         if self.namespaces.remove(name).is_some() {
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::NamespaceDelete {
+                        name: name.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft NamespaceDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft NamespaceDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            }
             self.index_provider.increment(ConsulTable::Catalog);
             Ok(())
         } else {
@@ -227,7 +262,7 @@ pub async fn create_namespace(
         ));
     }
 
-    let created = ns_service.upsert(ns);
+    let created = ns_service.upsert(ns).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
     consul_ok(&meta).json(created)
 }
@@ -250,7 +285,7 @@ pub async fn update_namespace(
     let mut ns = body.into_inner();
     ns.name = name;
 
-    let updated = ns_service.upsert(ns);
+    let updated = ns_service.upsert(ns).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
     consul_ok(&meta).json(updated)
 }
@@ -269,7 +304,7 @@ pub async fn delete_namespace(
     }
 
     let name = path.into_inner();
-    match ns_service.delete(&name) {
+    match ns_service.delete(&name).await {
         Ok(()) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
             consul_ok(&meta).finish()
@@ -295,31 +330,33 @@ mod tests {
         assert_eq!(ns.description, "Builtin Default Namespace");
     }
 
-    #[test]
-    fn test_create_namespace() {
+    #[tokio::test]
+    async fn test_create_namespace() {
         let svc = create_test_service();
         let ns = Namespace {
             name: "test-ns".to_string(),
             description: "Test namespace".to_string(),
             ..Default::default()
         };
-        let created = svc.upsert(ns);
+        let created = svc.upsert(ns).await;
         assert_eq!(created.name, "test-ns");
         assert!(created.create_index > 0);
         assert!(svc.exists("test-ns"));
     }
 
-    #[test]
-    fn test_list_namespaces() {
+    #[tokio::test]
+    async fn test_list_namespaces() {
         let svc = create_test_service();
         svc.upsert(Namespace {
             name: "alpha".to_string(),
             ..Default::default()
-        });
+        })
+        .await;
         svc.upsert(Namespace {
             name: "beta".to_string(),
             ..Default::default()
-        });
+        })
+        .await;
 
         let list = svc.list();
         assert_eq!(list.len(), 3); // default + alpha + beta
@@ -328,40 +365,44 @@ mod tests {
         assert_eq!(list[2].name, "default");
     }
 
-    #[test]
-    fn test_delete_namespace() {
+    #[tokio::test]
+    async fn test_delete_namespace() {
         let svc = create_test_service();
         svc.upsert(Namespace {
             name: "deleteme".to_string(),
             ..Default::default()
-        });
+        })
+        .await;
         assert!(svc.exists("deleteme"));
 
-        assert!(svc.delete("deleteme").is_ok());
+        assert!(svc.delete("deleteme").await.is_ok());
         assert!(!svc.exists("deleteme"));
     }
 
-    #[test]
-    fn test_cannot_delete_default() {
+    #[tokio::test]
+    async fn test_cannot_delete_default() {
         let svc = create_test_service();
-        assert!(svc.delete("default").is_err());
+        assert!(svc.delete("default").await.is_err());
         assert!(svc.exists("default"));
     }
 
-    #[test]
-    fn test_update_namespace() {
+    #[tokio::test]
+    async fn test_update_namespace() {
         let svc = create_test_service();
         svc.upsert(Namespace {
             name: "update-me".to_string(),
             description: "Original".to_string(),
             ..Default::default()
-        });
+        })
+        .await;
 
-        let updated = svc.upsert(Namespace {
-            name: "update-me".to_string(),
-            description: "Updated".to_string(),
-            ..Default::default()
-        });
+        let updated = svc
+            .upsert(Namespace {
+                name: "update-me".to_string(),
+                description: "Updated".to_string(),
+                ..Default::default()
+            })
+            .await;
         assert_eq!(updated.description, "Updated");
         // create_index should be preserved
         assert!(updated.modify_index >= updated.create_index);
@@ -375,10 +416,10 @@ mod tests {
         assert_eq!(svc.resolve(Some("custom")), "custom");
     }
 
-    #[test]
-    fn test_delete_nonexistent() {
+    #[tokio::test]
+    async fn test_delete_nonexistent() {
         let svc = create_test_service();
-        assert!(svc.delete("nonexistent").is_err());
+        assert!(svc.delete("nonexistent").await.is_err());
     }
 }
 

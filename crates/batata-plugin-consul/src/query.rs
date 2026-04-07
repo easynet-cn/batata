@@ -16,6 +16,7 @@ use rocksdb::DB;
 use tracing::{error, info, warn};
 
 use crate::constants::CF_CONSUL_QUERIES;
+use crate::raft::ConsulRaftRequest;
 
 use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
@@ -132,7 +133,7 @@ impl ConsulQueryService {
     }
 
     /// Create a new prepared query
-    pub fn create_query(&self, request: PreparedQueryCreateRequest) -> PreparedQuery {
+    pub async fn create_query(&self, request: PreparedQueryCreateRequest) -> PreparedQuery {
         let id = uuid::Uuid::new_v4().to_string();
         let index = QUERY_INDEX.fetch_add(1, Ordering::SeqCst);
 
@@ -148,8 +149,29 @@ impl ConsulQueryService {
             modify_index: Some(index),
         };
 
-        QUERIES.insert(id, query.clone());
-        self.persist_query(&query);
+        QUERIES.insert(id.clone(), query.clone());
+
+        if let Some(ref raft) = self.raft_node {
+            let query_json = serde_json::to_string(&query).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::QueryCreate {
+                    id,
+                    query_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft QueryCreate rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft QueryCreate failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_query(&query);
+        }
+
         query
     }
 
@@ -168,7 +190,7 @@ impl ConsulQueryService {
     }
 
     /// Update a prepared query
-    pub fn update_query(
+    pub async fn update_query(
         &self,
         id: &str,
         request: PreparedQueryCreateRequest,
@@ -192,15 +214,53 @@ impl ConsulQueryService {
 
         let updated = query.clone();
         drop(query);
-        self.persist_query(&updated);
+
+        if let Some(ref raft) = self.raft_node {
+            let query_json = serde_json::to_string(&updated).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::QueryUpdate {
+                    id: id.to_string(),
+                    query_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft QueryUpdate rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft QueryUpdate failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.persist_query(&updated);
+        }
+
         Some(updated)
     }
 
     /// Delete a prepared query
-    pub fn delete_query(&self, id: &str) -> bool {
+    pub async fn delete_query(&self, id: &str) -> bool {
         let removed = QUERIES.remove(id).is_some();
         if removed {
-            self.delete_query_rocks(id);
+            if let Some(ref raft) = self.raft_node {
+                match raft
+                    .write(ConsulRaftRequest::QueryDelete {
+                        id: id.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) if !r.success => {
+                        error!("Raft QueryDelete rejected: {:?}", r.message);
+                    }
+                    Err(e) => {
+                        error!("Raft QueryDelete failed: {}", e);
+                    }
+                    _ => {}
+                }
+            } else {
+                self.delete_query_rocks(id);
+            }
         }
         removed
     }
@@ -226,7 +286,7 @@ pub async fn create_query(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let query = query_service.create_query(body.into_inner());
+    let query = query_service.create_query(body.into_inner()).await;
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
     consul_ok(&meta).json(PreparedQueryCreateResponse { id: query.id })
@@ -296,7 +356,7 @@ pub async fn update_query(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match query_service.update_query(&id, body.into_inner()) {
+    match query_service.update_query(&id, body.into_inner()).await {
         Some(_) => {
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
             consul_ok(&meta).finish()
@@ -322,7 +382,7 @@ pub async fn delete_query(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    if query_service.delete_query(&id) {
+    if query_service.delete_query(&id).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
         consul_ok(&meta).finish()
     } else {
@@ -502,8 +562,8 @@ mod tests {
     use super::*;
     use crate::model::PreparedQueryService;
 
-    #[test]
-    fn test_create_query() {
+    #[tokio::test]
+    async fn test_create_query() {
         let service = ConsulQueryService::new();
 
         let request = PreparedQueryCreateRequest {
@@ -523,14 +583,14 @@ mod tests {
             template: None,
         };
 
-        let query = service.create_query(request);
+        let query = service.create_query(request).await;
         assert_eq!(query.name, "my-query");
         assert_eq!(query.service.service, "web");
         assert!(query.service.only_passing);
     }
 
-    #[test]
-    fn test_get_query() {
+    #[tokio::test]
+    async fn test_get_query() {
         let service = ConsulQueryService::new();
 
         let request = PreparedQueryCreateRequest {
@@ -550,7 +610,7 @@ mod tests {
             template: None,
         };
 
-        let created = service.create_query(request);
+        let created = service.create_query(request).await;
         let fetched = service.get_query(&created.id);
 
         assert!(fetched.is_some());
@@ -562,8 +622,8 @@ mod tests {
         assert!(fetched.service.tags.is_none());
     }
 
-    #[test]
-    fn test_delete_query() {
+    #[tokio::test]
+    async fn test_delete_query() {
         let service = ConsulQueryService::new();
 
         let request = PreparedQueryCreateRequest {
@@ -583,19 +643,19 @@ mod tests {
             template: None,
         };
 
-        let created = service.create_query(request);
-        assert!(service.delete_query(&created.id));
+        let created = service.create_query(request).await;
+        assert!(service.delete_query(&created.id).await);
         assert!(service.get_query(&created.id).is_none());
     }
 
-    #[test]
-    fn test_delete_nonexistent_query() {
+    #[tokio::test]
+    async fn test_delete_nonexistent_query() {
         let service = ConsulQueryService::new();
-        assert!(!service.delete_query("nonexistent-id"));
+        assert!(!service.delete_query("nonexistent-id").await);
     }
 
-    #[test]
-    fn test_list_queries() {
+    #[tokio::test]
+    async fn test_list_queries() {
         let service = ConsulQueryService::new();
 
         // Create queries with unique names
@@ -617,7 +677,7 @@ mod tests {
                 },
                 dns: None,
                 template: None,
-            });
+            }).await;
             created_ids.push(q.id);
         }
 
@@ -635,8 +695,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_update_query() {
+    #[tokio::test]
+    async fn test_update_query() {
         let service = ConsulQueryService::new();
 
         let created = service.create_query(PreparedQueryCreateRequest {
@@ -654,7 +714,7 @@ mod tests {
             },
             dns: None,
             template: None,
-        });
+        }).await;
 
         let updated = service.update_query(
             &created.id,
@@ -674,7 +734,7 @@ mod tests {
                 dns: None,
                 template: None,
             },
-        );
+        ).await;
 
         assert!(updated.is_some());
         let q = updated.unwrap();
@@ -684,8 +744,8 @@ mod tests {
         assert_eq!(q.id, created.id); // ID preserved
     }
 
-    #[test]
-    fn test_update_nonexistent_query() {
+    #[tokio::test]
+    async fn test_update_nonexistent_query() {
         let service = ConsulQueryService::new();
 
         let result = service.update_query(
@@ -706,36 +766,35 @@ mod tests {
                 dns: None,
                 template: None,
             },
-        );
+        ).await;
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_query_unique_ids() {
+    #[tokio::test]
+    async fn test_query_unique_ids() {
         let service = ConsulQueryService::new();
 
-        let ids: Vec<String> = (0..5)
-            .map(|i| {
-                service
-                    .create_query(PreparedQueryCreateRequest {
-                        name: Some(format!("q-{}", i)),
-                        session: None,
-                        token: None,
-                        service: PreparedQueryService {
-                            service: "s".to_string(),
-                            failover: None,
-                            only_passing: false,
-                            near: None,
-                            tags: None,
-                            node_meta: None,
-                            service_meta: None,
-                        },
-                        dns: None,
-                        template: None,
-                    })
-                    .id
-            })
-            .collect();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let q = service
+                .create_query(PreparedQueryCreateRequest {
+                    name: Some(format!("q-{}", i)),
+                    session: None,
+                    token: None,
+                    service: PreparedQueryService {
+                        service: "s".to_string(),
+                        failover: None,
+                        only_passing: false,
+                        near: None,
+                        tags: None,
+                        node_meta: None,
+                        service_meta: None,
+                    },
+                    dns: None,
+                    template: None,
+                }).await;
+            ids.push(q.id);
+        }
 
         let mut deduped = ids.clone();
         deduped.sort();
