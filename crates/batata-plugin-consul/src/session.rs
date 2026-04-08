@@ -943,14 +943,20 @@ mod tests {
             name: Some("checked-session".to_string()),
             ttl: Some("60s".to_string()),
             node_checks: Some(vec!["serfHealth".to_string()]),
-            service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:web".to_string(), namespace: None }]),
+            service_checks: Some(vec![crate::model::SessionServiceCheck {
+                id: "service:web".to_string(),
+                namespace: None,
+            }]),
             ..Default::default()
         };
         let session = service.create_session(req).await;
         assert_eq!(session.node_checks, Some(vec!["serfHealth".to_string()]));
         assert_eq!(
             session.service_checks,
-            Some(vec![crate::model::SessionServiceCheck { id: "service:web".to_string(), namespace: None }])
+            Some(vec![crate::model::SessionServiceCheck {
+                id: "service:web".to_string(),
+                namespace: None
+            }])
         );
     }
 
@@ -1033,7 +1039,10 @@ mod tests {
                 name: Some("web-session".to_string()),
                 ttl: Some("60s".to_string()),
                 node_checks: Some(vec![]),
-                service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:web-1".to_string(), namespace: None }]),
+                service_checks: Some(vec![crate::model::SessionServiceCheck {
+                    id: "service:web-1".to_string(),
+                    namespace: None,
+                }]),
                 ..Default::default()
             })
             .await;
@@ -1042,7 +1051,10 @@ mod tests {
                 name: Some("db-session".to_string()),
                 ttl: Some("60s".to_string()),
                 node_checks: Some(vec![]),
-                service_checks: Some(vec![crate::model::SessionServiceCheck { id: "service:db-1".to_string(), namespace: None }]),
+                service_checks: Some(vec![crate::model::SessionServiceCheck {
+                    id: "service:db-1".to_string(),
+                    namespace: None,
+                }]),
                 ..Default::default()
             })
             .await;

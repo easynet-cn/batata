@@ -57,6 +57,9 @@ pub struct AppState {
     pub encryption_service: Option<Arc<dyn batata_common::ConfigEncryptionProvider>>,
     /// Plugin state providers for dynamic plugin state collection
     pub plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
+    /// Dynamic log level setter (set by batata-server logging init)
+    /// Accepts a tracing filter directive string like "info" or "batata_naming=debug"
+    pub log_level_setter: Option<Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -77,10 +80,7 @@ impl std::fmt::Debug for AppState {
             .field("server_status", &self.server_status)
             .field("control_plugin", &self.control_plugin.is_some())
             .field("encryption_service", &self.encryption_service.is_some())
-            .field(
-                "plugin_state_providers",
-                &self.plugin_state_providers.len(),
-            )
+            .field("plugin_state_providers", &self.plugin_state_providers.len())
             .finish()
     }
 }
@@ -101,6 +101,7 @@ impl Clone for AppState {
             control_plugin: self.control_plugin.clone(),
             encryption_service: self.encryption_service.clone(),
             plugin_state_providers: self.plugin_state_providers.clone(),
+            log_level_setter: self.log_level_setter.clone(),
         }
     }
 }

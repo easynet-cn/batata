@@ -50,10 +50,7 @@ impl CoreResultHandler {
         if let Some(distro) = distro {
             let service_key = format!("{}@@{}@@{}", namespace, group, service);
             tokio::spawn(async move {
-                debug!(
-                    "Triggering distro sync for health change: {}",
-                    service_key
-                );
+                debug!("Triggering distro sync for health change: {}", service_key);
                 distro
                     .sync_data(DistroDataType::NamingInstance, &service_key)
                     .await;

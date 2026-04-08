@@ -368,7 +368,7 @@ pub static METRICS: std::sync::LazyLock<Arc<Metrics>> =
 #[get("")]
 async fn metrics(data: web::Data<AppState>) -> impl Responder {
     let cluster_size = data.cluster_manager().member_count();
-    let is_healthy = true; // Simplified - in production would check actual health
+    let is_healthy = data.cluster_manager().is_cluster_healthy();
 
     let body = METRICS.to_prometheus_format(cluster_size, is_healthy);
 

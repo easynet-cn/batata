@@ -128,6 +128,9 @@ pub struct InstanceCheckConfig {
     pub initial_status: CheckStatus,
     /// Notes / maintenance reason
     pub notes: String,
+    /// Service tags (carried from service registration for health check responses)
+    #[cfg_attr(test, allow(dead_code))]
+    pub service_tags: Vec<String>,
 }
 
 /// Check runtime status (updated frequently)
@@ -660,6 +663,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status,
             notes: String::new(),
+            service_tags: vec![],
         }
     }
 
@@ -888,6 +892,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status: CheckStatus::Passing,
             notes: String::new(),
+            service_tags: vec![],
         }
     }
 

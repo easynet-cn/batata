@@ -619,56 +619,43 @@ pub struct SwitchUpdateParam {
     pub debug: Option<bool>,
 }
 
-/// Response data for system switches
+/// Response data for system switches (matches Nacos SwitchDomain)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchesResponse {
-    /// Naming module name
+    /// Fixed constant: UtilsAndCommons.SWITCH_DOMAIN_NAME
     pub name: String,
-    /// Master node address
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub masters: Option<String>,
-    /// Address server domain
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub addr_server_domain: Option<String>,
-    /// Address server port
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub addr_server_port: Option<String>,
-    /// Default push cache time in milliseconds
+    pub masters: Option<Vec<String>>,
     pub default_push_cache_millis: i64,
-    /// Client beat interval in milliseconds
     pub client_beat_interval: i64,
-    /// Default cache time in milliseconds
     pub default_cache_millis: i64,
-    /// Distro threshold
     pub distro_threshold: f32,
-    /// Whether health check is enabled
     pub health_check_enabled: bool,
-    /// Whether distro is enabled
+    pub auto_change_health_check_enabled: bool,
     pub distro_enabled: bool,
-    /// Whether push is enabled
+    pub enable_standalone: bool,
     pub push_enabled: bool,
-    /// Check times for health check
     pub check_times: i32,
-    /// HTTP health params
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub http_health_params: Option<std::collections::HashMap<String, String>>,
-    /// TCP health params
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tcp_health_params: Option<std::collections::HashMap<String, String>>,
-    /// MySQL health params
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mysql_health_params: Option<std::collections::HashMap<String, String>>,
-    /// Incremental list flag
-    pub incremental_list: bool,
-    /// Servers
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub servers: Option<Vec<String>>,
-    /// Overridden server status
+    pub http_health_params: SwitchHealthParams,
+    pub tcp_health_params: SwitchHealthParams,
+    pub mysql_health_params: SwitchHealthParams,
+    pub incremental_list: Vec<String>,
+    pub default_instance_ephemeral: bool,
+    pub light_beat_enabled: bool,
+    pub disable_add_ip: bool,
+    pub send_beat_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overridden_server_status: Option<String>,
-    /// Default instance ephemeral flag
-    pub default_instance_ephemeral: bool,
+}
+
+/// Health check timing params (matches Nacos SwitchDomain.HealthParams)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchHealthParams {
+    pub max: i32,
+    pub min: i32,
+    pub factor: f32,
 }
 
 /// Response data for naming service metrics

@@ -192,6 +192,20 @@ impl ConsulResponseMeta {
         }
     }
 
+    /// Create response metadata with the given index and consistency from the request.
+    /// Parses `?stale`/`?consistent`/`?cached` from query string.
+    pub fn from_request(index: u64, req: &HttpRequest) -> Self {
+        let opts = ConsulQueryOptions::from_request(req);
+        Self {
+            index: index.max(1),
+            known_leader: true,
+            last_contact: 0,
+            consistency: opts.consistency,
+            query_backend: "blocking-query",
+            filtered_by_acls: false,
+        }
+    }
+
     /// Set consistency from parsed query options.
     pub fn with_consistency(mut self, mode: ConsistencyMode) -> Self {
         self.consistency = mode;

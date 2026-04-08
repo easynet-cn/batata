@@ -41,9 +41,15 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 # gRPC
 tonic = { workspace = true }
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+http = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
+
+# HTTP client (for health checks)
+reqwest = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }

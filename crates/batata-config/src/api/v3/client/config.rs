@@ -1,4 +1,9 @@
 //! V3 Client config SDK API endpoint
+//!
+//! Matches Nacos's ConfigOpenApiController which goes through ConfigQueryChainService
+//! to resolve gray/beta configs by client IP before returning the formal config.
+
+use std::collections::HashMap;
 
 use actix_web::{HttpRequest, Responder, get, web};
 use tracing::warn;
@@ -9,8 +14,12 @@ use batata_server_common::{
 };
 
 use crate::api::v2::model::{ConfigGetParam, ConfigResponse};
+use crate::handler::config_handler::find_matching_gray_config;
 
 /// GET /v3/client/cs/config
+///
+/// SDK clients call this to fetch config. Like Nacos, this checks gray/beta configs
+/// by client IP before falling back to the formal config.
 #[get("")]
 async fn get_config(
     req: HttpRequest,
@@ -50,16 +59,75 @@ async fn get_config(
     );
 
     let persistence = data.persistence();
+
+    // Build client labels for gray rule matching (like Nacos's ConfigQueryChainService)
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let mut labels = HashMap::new();
+    labels.insert(
+        crate::model::gray_rule::labels::CLIENT_IP.to_string(),
+        client_ip,
+    );
+
+    // Check for matching gray/beta config first
+    if let Some((content, md5, encrypted_data_key, _last_modified, gray_name)) =
+        find_matching_gray_config(
+            persistence,
+            &params.data_id,
+            &params.group,
+            namespace_id,
+            &labels,
+        )
+        .await
+    {
+        // Decrypt if needed
+        let enc_svc = crate::service::encryption::get_encryption_provider(&data);
+        let decrypted = enc_svc
+            .decrypt_if_needed(&params.data_id, &content, &encrypted_data_key)
+            .await;
+
+        let response = ConfigResponse {
+            id: String::new(),
+            data_id: params.data_id.clone(),
+            group: params.group.clone(),
+            content: decrypted,
+            md5,
+            encrypted_data_key: if encrypted_data_key.is_empty() {
+                None
+            } else {
+                Some(encrypted_data_key)
+            },
+            tenant: namespace_id.to_string(),
+            app_name: None,
+            r#type: if gray_name == "beta" {
+                Some("beta".to_string())
+            } else {
+                Some(gray_name)
+            },
+        };
+        return Result::<ConfigResponse>::http_success(response);
+    }
+
+    // Fall through to formal config query
     match persistence
         .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
     {
         Ok(Some(config)) => {
+            // Decrypt if needed
+            let enc_svc = crate::service::encryption::get_encryption_provider(&data);
+            let decrypted = enc_svc
+                .decrypt_if_needed(&params.data_id, &config.content, &config.encrypted_data_key)
+                .await;
+
             let response = ConfigResponse {
                 id: String::new(),
                 data_id: config.data_id.clone(),
                 group: config.group.clone(),
-                content: config.content.clone(),
+                content: decrypted,
                 md5: config.md5.clone(),
                 encrypted_data_key: if config.encrypted_data_key.is_empty() {
                     None

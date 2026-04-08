@@ -39,7 +39,9 @@ async fn prometheus_query(
             .build()
     );
 
-    let full_metrics = METRICS.to_prometheus_format(1, true);
+    let cluster_size = data.cluster_manager().member_count();
+    let is_healthy = data.cluster_manager().is_cluster_healthy();
+    let full_metrics = METRICS.to_prometheus_format(cluster_size, is_healthy);
 
     // Filter metrics by requested criteria
     let filtered: Vec<&str> = full_metrics

@@ -116,7 +116,7 @@ fn build_client_labels(connection: &Connection) -> HashMap<String, String> {
 
 /// Find a matching gray config for the given connection and config key.
 /// Returns (content, md5, encrypted_data_key, last_modified, gray_name) if a gray config matches.
-async fn find_matching_gray_config(
+pub async fn find_matching_gray_config(
     persistence: &dyn PersistenceService,
     data_id: &str,
     group: &str,

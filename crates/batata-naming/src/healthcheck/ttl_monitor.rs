@@ -125,6 +125,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status: CheckStatus::Passing,
             notes: String::new(),
+            service_tags: vec![],
         }
     }
 

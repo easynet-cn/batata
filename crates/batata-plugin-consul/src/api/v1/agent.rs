@@ -398,13 +398,21 @@ async fn agent_health_service_by_name(
 #[get("/self")]
 async fn get_agent_self_real(
     req: HttpRequest,
+    agent: web::Data<crate::agent::ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_agent_self_real(req, acl_service, dc_config, member_manager, index_provider)
-        .await
+    crate::agent::get_agent_self_real(
+        req,
+        agent,
+        acl_service,
+        dc_config,
+        member_manager,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/members")]

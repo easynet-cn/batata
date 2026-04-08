@@ -36,6 +36,41 @@ use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 use super::telemetry::OtelConfig;
 
 // ---------------------------------------------------------------------------
+// Global log level reload handle
+// ---------------------------------------------------------------------------
+
+/// Global handle for dynamically changing the log level at runtime.
+/// Set during `init_logging()` and used by the `/ops/log` API endpoint.
+static LOG_RELOAD_HANDLE: std::sync::OnceLock<
+    tracing_subscriber::reload::Handle<EnvFilter, Registry>,
+> = std::sync::OnceLock::new();
+
+/// Change the global log level at runtime.
+/// Returns Ok(()) on success, Err with description on failure.
+///
+/// Accepts tracing-style filter directives like "info", "debug",
+/// "batata_naming=trace", or "warn,batata_config=debug".
+pub fn set_log_level(filter_str: &str) -> Result<(), String> {
+    let handle = LOG_RELOAD_HANDLE
+        .get()
+        .ok_or_else(|| "Log reload handle not initialized".to_string())?;
+    let new_filter = EnvFilter::try_new(filter_str)
+        .map_err(|e| format!("Invalid log filter '{}': {}", filter_str, e))?;
+    handle
+        .reload(new_filter)
+        .map_err(|e| format!("Failed to reload log filter: {}", e))?;
+    tracing::info!("Log level changed to: {}", filter_str);
+    Ok(())
+}
+
+/// Get the current log level filter directive (if reload handle is available).
+pub fn current_log_level() -> Option<String> {
+    LOG_RELOAD_HANDLE
+        .get()
+        .map(|h| h.with_current(|f| f.to_string()).unwrap_or_default())
+}
+
+// ---------------------------------------------------------------------------
 // Component log file definitions (inspired by Nacos nacos-logback.xml)
 // ---------------------------------------------------------------------------
 
@@ -297,16 +332,21 @@ pub fn init_logging(
     let mut guards: Vec<WorkerGuard> = Vec::new();
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
 
-    // --- Console layer (human-readable with ANSI colors, per-layer EnvFilter) ---
+    // --- Console layer (human-readable with ANSI colors, reloadable EnvFilter) ---
     if config.console_output {
         let filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new(config.console_level.to_string()));
+
+        // Wrap the filter in a reload layer so it can be changed at runtime via set_log_level()
+        let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(filter);
+        let _ = LOG_RELOAD_HANDLE.set(reload_handle);
+
         let console_layer = fmt::layer()
             .with_target(true)
             .with_thread_names(true)
             .with_file(true)
             .with_line_number(true)
-            .with_filter(filter);
+            .with_filter(filter_layer);
         layers.push(Box::new(console_layer));
     }
 

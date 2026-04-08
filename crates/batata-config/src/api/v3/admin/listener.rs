@@ -17,7 +17,6 @@ use crate::api::config_model::ConfigListenerInfo;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ListenerQuery {
     #[serde(default, alias = "dataId")]
     data_id: Option<String>,
@@ -38,11 +37,14 @@ struct ListenerByIpQuery {
 }
 
 /// GET /v3/admin/cs/listener
+///
+/// Query which clients are listening to a specific config (dataId/group/namespace).
+/// Returns a map of clientIp -> md5 for each subscriber.
 #[get("")]
 async fn get_listener_state(
     req: HttpRequest,
     data: web::Data<AppState>,
-    _params: web::Query<ListenerQuery>,
+    params: web::Query<ListenerQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -52,9 +54,24 @@ async fn get_listener_state(
             .build()
     );
 
+    let data_id = params.data_id.as_deref().unwrap_or("");
+    let group = params.group_name.as_deref().unwrap_or("DEFAULT_GROUP");
+    let namespace = params.namespace_id.as_deref().unwrap_or("");
+
+    // Query real subscription data from ConfigSubscriptionService
+    let mut listeners_status = HashMap::new();
+
+    if !data_id.is_empty() {
+        let key = batata_common::ConfigSubscriptionKey::new(data_id, group, namespace);
+        let subscribers = data.config_subscriber_manager.get_subscribers(&key);
+        for sub in subscribers {
+            listeners_status.insert(sub.client_ip.clone(), sub.md5.clone());
+        }
+    }
+
     model::common::Result::<Option<ConfigListenerInfo>>::http_success(ConfigListenerInfo {
         query_type: ConfigListenerInfo::QUERY_TYPE_CONFIG.to_string(),
-        listeners_status: HashMap::new(),
+        listeners_status,
     })
 }
 

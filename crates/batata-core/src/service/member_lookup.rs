@@ -211,6 +211,79 @@ impl FileMemberLookup {
 
         info!("Loaded {} cluster members", self.members.len());
     }
+
+    /// Start a background task that periodically checks cluster.conf for changes.
+    /// Reloads members when the file's modification time changes.
+    fn start_file_watch_task(&self) {
+        let members = self.members.clone();
+        let running = self.running.clone();
+        let conf_path = self.cluster_conf_path.clone();
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
+            let check_interval = tokio::time::Duration::from_secs(10);
+            let mut last_modified = std::fs::metadata(&conf_path)
+                .and_then(|m| m.modified())
+                .ok();
+
+            loop {
+                tokio::time::sleep(check_interval).await;
+
+                if !running.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let current_modified = std::fs::metadata(&conf_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+
+                if current_modified != last_modified {
+                    info!(
+                        "Detected change in {}, reloading cluster members",
+                        conf_path
+                    );
+                    last_modified = current_modified;
+
+                    // Re-read the file and update members
+                    let path = Path::new(&conf_path);
+                    if let Ok(file) = File::open(path) {
+                        let reader = BufReader::new(file);
+                        let default_port = config.server_main_port();
+                        let mut new_addresses = HashSet::new();
+
+                        for line in reader.lines().map_while(Result::ok) {
+                            let line = line.trim().to_string();
+                            if line.is_empty() || line.starts_with('#') {
+                                continue;
+                            }
+                            if let Some(member) =
+                                FileMemberLookup::parse_member(&line, default_port)
+                            {
+                                new_addresses.insert(member.address.clone());
+                                if !members.contains_key(&member.address) {
+                                    info!("New cluster member discovered: {}", member.address);
+                                    members.insert(member.address.clone(), member);
+                                }
+                            }
+                        }
+
+                        // Remove members no longer in file
+                        let to_remove: Vec<String> = members
+                            .iter()
+                            .filter(|e| !new_addresses.contains(e.key()))
+                            .map(|e| e.key().clone())
+                            .collect();
+                        for addr in to_remove {
+                            info!("Removing cluster member: {}", addr);
+                            members.remove(&addr);
+                        }
+
+                        info!("Reloaded {} cluster members", members.len());
+                    }
+                }
+            }
+        });
+    }
 }
 
 #[tonic::async_trait]
@@ -223,6 +296,9 @@ impl MemberLookup for FileMemberLookup {
         info!("Starting file-based member lookup");
         self.load_members();
         self.running.store(true, Ordering::Relaxed);
+
+        // Start background file watcher for hot-reload
+        self.start_file_watch_task();
 
         Ok(())
     }

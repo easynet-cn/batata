@@ -48,75 +48,48 @@ impl ConsulSnapshotService {
     }
 
     /// Save current state as a snapshot.
-    /// When RocksDB is available, includes KV, session, and ACL data.
+    /// When RocksDB is available, dumps ALL column families for complete state export.
     pub async fn save_snapshot(&self) -> Vec<u8> {
         let mut data = HashMap::new();
 
         if let Some(ref db) = self.rocks_db {
-            // Include KV data from RocksDB
-            if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_KV) {
-                let mut kv_data = HashMap::new();
-                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                for item in iter.flatten() {
-                    let (key_bytes, value_bytes) = item;
-                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                        // Store raw value as base64-encoded string
-                        let value_b64 = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &value_bytes,
-                        );
-                        kv_data.insert(key, serde_json::Value::String(value_b64));
-                    }
-                }
-                if !kv_data.is_empty() {
-                    data.insert(
-                        "kv".to_string(),
-                        serde_json::to_value(kv_data).unwrap_or_default(),
-                    );
-                }
-            }
+            // Dump all Consul column families for complete snapshot
+            let cf_names = [
+                ("kv", crate::constants::CF_CONSUL_KV),
+                ("sessions", crate::constants::CF_CONSUL_SESSIONS),
+                ("acl", crate::constants::CF_CONSUL_ACL),
+                ("queries", crate::constants::CF_CONSUL_QUERIES),
+                ("config_entries", crate::constants::CF_CONSUL_CONFIG_ENTRIES),
+                ("ca_roots", crate::constants::CF_CONSUL_CA_ROOTS),
+                ("intentions", crate::constants::CF_CONSUL_INTENTIONS),
+                ("coordinates", crate::constants::CF_CONSUL_COORDINATES),
+                ("peering", crate::constants::CF_CONSUL_PEERING),
+                ("operator", crate::constants::CF_CONSUL_OPERATOR),
+                ("events", crate::constants::CF_CONSUL_EVENTS),
+                ("namespaces", crate::constants::CF_CONSUL_NAMESPACES),
+                ("catalog", crate::constants::CF_CONSUL_CATALOG),
+            ];
 
-            // Include session data from RocksDB
-            if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_SESSIONS) {
-                let mut session_data = HashMap::new();
-                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                for item in iter.flatten() {
-                    let (key_bytes, value_bytes) = item;
-                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                        let value_b64 = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &value_bytes,
-                        );
-                        session_data.insert(key, serde_json::Value::String(value_b64));
+            for (name, cf_name) in &cf_names {
+                if let Some(cf) = db.cf_handle(cf_name) {
+                    let mut cf_data = HashMap::new();
+                    let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                    for item in iter.flatten() {
+                        let (key_bytes, value_bytes) = item;
+                        if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                            let value_b64 = base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &value_bytes,
+                            );
+                            cf_data.insert(key, serde_json::Value::String(value_b64));
+                        }
                     }
-                }
-                if !session_data.is_empty() {
-                    data.insert(
-                        "sessions".to_string(),
-                        serde_json::to_value(session_data).unwrap_or_default(),
-                    );
-                }
-            }
-
-            // Include ACL data from RocksDB
-            if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_ACL) {
-                let mut acl_data = HashMap::new();
-                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                for item in iter.flatten() {
-                    let (key_bytes, value_bytes) = item;
-                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                        let value_b64 = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &value_bytes,
+                    if !cf_data.is_empty() {
+                        data.insert(
+                            name.to_string(),
+                            serde_json::to_value(cf_data).unwrap_or_default(),
                         );
-                        acl_data.insert(key, serde_json::Value::String(value_b64));
                     }
-                }
-                if !acl_data.is_empty() {
-                    data.insert(
-                        "acl".to_string(),
-                        serde_json::to_value(acl_data).unwrap_or_default(),
-                    );
                 }
             }
         }
@@ -130,15 +103,71 @@ impl ConsulSnapshotService {
         serde_json::to_vec(&snapshot).unwrap_or_default()
     }
 
-    /// Restore state from a snapshot
+    /// Restore state from a snapshot.
+    /// When RocksDB is available, writes data back to all column families.
     pub async fn restore_snapshot(&self, data: &[u8]) -> Result<(), String> {
-        // Validate the snapshot data
-        let _snapshot: SnapshotData =
+        let snapshot: SnapshotData =
             serde_json::from_slice(data).map_err(|e| format!("Invalid snapshot data: {}", e))?;
-        // Store the snapshot
+
+        if let Some(ref db) = self.rocks_db {
+            let cf_names = [
+                ("kv", crate::constants::CF_CONSUL_KV),
+                ("sessions", crate::constants::CF_CONSUL_SESSIONS),
+                ("acl", crate::constants::CF_CONSUL_ACL),
+                ("queries", crate::constants::CF_CONSUL_QUERIES),
+                ("config_entries", crate::constants::CF_CONSUL_CONFIG_ENTRIES),
+                ("ca_roots", crate::constants::CF_CONSUL_CA_ROOTS),
+                ("intentions", crate::constants::CF_CONSUL_INTENTIONS),
+                ("coordinates", crate::constants::CF_CONSUL_COORDINATES),
+                ("peering", crate::constants::CF_CONSUL_PEERING),
+                ("operator", crate::constants::CF_CONSUL_OPERATOR),
+                ("events", crate::constants::CF_CONSUL_EVENTS),
+                ("namespaces", crate::constants::CF_CONSUL_NAMESPACES),
+                ("catalog", crate::constants::CF_CONSUL_CATALOG),
+            ];
+
+            for (name, cf_name) in &cf_names {
+                if let Some(cf_data) = snapshot.data.get(*name) {
+                    let Some(cf) = db.cf_handle(cf_name) else {
+                        tracing::warn!("Column family '{}' not found, skipping restore", cf_name);
+                        continue;
+                    };
+
+                    // Clear existing data in this CF
+                    let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                    for item in iter.flatten() {
+                        let (key_bytes, _) = item;
+                        let _ = db.delete_cf(cf, &key_bytes);
+                    }
+
+                    // Restore data from snapshot
+                    if let Some(entries) = cf_data.as_object() {
+                        for (key, value) in entries {
+                            if let Some(value_b64) = value.as_str() {
+                                if let Ok(decoded) = base64::Engine::decode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    value_b64,
+                                ) {
+                                    let _ = db.put_cf(cf, key.as_bytes(), &decoded);
+                                }
+                            }
+                        }
+                    }
+
+                    tracing::info!("Restored column family '{}' from snapshot", name);
+                }
+            }
+        }
+
+        // Store the snapshot blob and bump index
         let mut stored = self.snapshot_data.write().await;
         *stored = Some(data.to_vec());
         self.index.fetch_add(1, Ordering::SeqCst);
+        tracing::info!(
+            "Snapshot restore completed (version: {}, index: {})",
+            snapshot.version,
+            snapshot.index
+        );
         Ok(())
     }
 }

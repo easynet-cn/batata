@@ -412,7 +412,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             consul_index_provider.clone(),
         ));
         let consul_registry = Arc::new(InstanceCheckRegistry::new(
-            consul_result_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>,
+            consul_result_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>
         ));
 
         let inner = if is_cluster {
@@ -692,14 +692,8 @@ mod tests {
     fn test_consul_plugin_state_provider() {
         let plugin = create_test_plugin();
         let state = plugin.plugin_state();
-        assert_eq!(
-            state.get("consul_enabled"),
-            Some(&Some("true".to_string()))
-        );
-        assert_eq!(
-            state.get("consul_port"),
-            Some(&Some("8500".to_string()))
-        );
+        assert_eq!(state.get("consul_enabled"), Some(&Some("true".to_string())));
+        assert_eq!(state.get("consul_port"), Some(&Some("8500".to_string())));
         assert!(state.contains_key("consul_version"));
         assert_eq!(
             state.get("consul_acl_enabled"),

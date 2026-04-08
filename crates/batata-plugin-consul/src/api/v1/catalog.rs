@@ -186,6 +186,7 @@ async fn get_gateway_services(
     catalog: web::Data<ConsulCatalogService>,
     config_entry_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
+    query: web::Query<crate::catalog::CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::catalog::get_gateway_services(
@@ -194,6 +195,7 @@ async fn get_gateway_services(
         catalog,
         config_entry_service,
         path,
+        query,
         index_provider,
     )
     .await

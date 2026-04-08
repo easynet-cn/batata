@@ -89,6 +89,7 @@ impl CatalogService {
     pub fn from_registration(
         reg: &crate::model::AgentServiceRegistration,
         node_name: &str,
+        node_id: &str,
         datacenter: &str,
         index: u64,
     ) -> Self {
@@ -109,7 +110,7 @@ impl CatalogService {
         let weight = reg.weight().max(1.0) as i32;
 
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: node_id.to_string(),
             node: instance_node,
             address: ip.clone(),
             datacenter: datacenter.to_string(),
@@ -422,6 +423,8 @@ pub struct CatalogQueryParams {
 pub struct ConsulCatalogService {
     naming_store: Arc<crate::naming_store::ConsulNamingStore>,
     node_name: String,
+    node_id: String,
+    local_ip: String,
     datacenter: String,
     index_provider: ConsulIndexProvider,
     /// Optional Raft writer for cluster-mode replication.
@@ -433,25 +436,20 @@ pub struct ConsulCatalogService {
 
 impl ConsulCatalogService {
     pub fn new(naming_store: Arc<crate::naming_store::ConsulNamingStore>) -> Self {
-        Self::with_datacenter(naming_store, "dc1".to_string())
-    }
-
-    pub fn with_datacenter(
-        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
-        datacenter: String,
-    ) -> Self {
         Self {
             naming_store,
             node_name: hostname::get()
                 .map(|h| h.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "batata-node".to_string()),
-            datacenter,
+            node_id: uuid::Uuid::new_v4().to_string(),
+            local_ip: batata_common::local_ip(),
+            datacenter: "dc1".to_string(),
             index_provider: ConsulIndexProvider::default(),
             raft_node: None,
         }
     }
 
-    /// Create from ConsulDatacenterConfig (preferred -- uses pre-computed node_name)
+    /// Create from ConsulDatacenterConfig (preferred -- uses stable node_id/node_name)
     pub fn with_dc_config(
         naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         dc_config: &ConsulDatacenterConfig,
@@ -459,6 +457,8 @@ impl ConsulCatalogService {
         Self {
             naming_store,
             node_name: dc_config.node_name.clone(),
+            node_id: dc_config.node_id.clone(),
+            local_ip: batata_common::local_ip(),
             datacenter: dc_config.datacenter.clone(),
             index_provider: ConsulIndexProvider::default(),
             raft_node: None,
@@ -474,6 +474,8 @@ impl ConsulCatalogService {
         Self {
             naming_store,
             node_name: dc_config.node_name.clone(),
+            node_id: dc_config.node_id.clone(),
+            local_ip: batata_common::local_ip(),
             datacenter: dc_config.datacenter.clone(),
             index_provider: ConsulIndexProvider::default(),
             raft_node: Some(raft_node),
@@ -516,7 +518,13 @@ impl ConsulCatalogService {
                 }
             })
             .map(|reg| {
-                CatalogService::from_registration(&reg, &self.node_name, &self.datacenter, index)
+                CatalogService::from_registration(
+                    &reg,
+                    &self.node_name,
+                    &self.node_id,
+                    &self.datacenter,
+                    index,
+                )
             })
             .collect()
     }
@@ -533,15 +541,12 @@ impl ConsulCatalogService {
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
         // Always include the local node (Consul registers itself via Serf)
-        let local_addr = hostname::get()
-            .map(|_| "127.0.0.1".to_string())
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
         nodes.insert(
             self.node_name.clone(),
             CatalogNode {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: self.node_id.clone(),
                 node: self.node_name.clone(),
-                address: local_addr,
+                address: self.local_ip.clone(),
                 datacenter: self.datacenter.clone(),
                 tagged_addresses: None,
                 meta: None,
@@ -575,7 +580,23 @@ impl ConsulCatalogService {
                         nodes.entry(node_name.clone())
                     {
                         e.insert(CatalogNode {
-                            id: uuid::Uuid::new_v4().to_string(),
+                            // Use self node_id for local node, derive stable ID from name for others
+                            id: if node_name == self.node_name {
+                                self.node_id.clone()
+                            } else {
+                                use std::hash::{Hash, Hasher};
+                                let mut hasher = std::hash::DefaultHasher::new();
+                                node_name.hash(&mut hasher);
+                                let h = hasher.finish();
+                                format!(
+                                    "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+                                    (h >> 32) as u32,
+                                    (h >> 16) as u16 & 0xffff,
+                                    h as u16 & 0xffff,
+                                    0x4000u16 | ((h >> 48) as u16 & 0x0fff),
+                                    h & 0xffffffffffff
+                                )
+                            },
                             node: node_name,
                             address: ip,
                             datacenter: self.datacenter.clone(),
@@ -620,10 +641,10 @@ impl ConsulCatalogService {
                     if is_local_node || instance_node == node_name || ip == node_name {
                         if node.is_none() {
                             node = Some(CatalogNode {
-                                id: uuid::Uuid::new_v4().to_string(),
+                                id: self.node_id.clone(),
                                 node: node_name.to_string(),
                                 address: if is_local_node {
-                                    "127.0.0.1".to_string()
+                                    self.local_ip.clone()
                                 } else {
                                     ip
                                 },
@@ -645,9 +666,9 @@ impl ConsulCatalogService {
         // If local node name matches but no services found, still return the node
         if node.is_none() && is_local_node {
             node = Some(CatalogNode {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: self.node_id.clone(),
                 node: node_name.to_string(),
-                address: "127.0.0.1".to_string(),
+                address: self.local_ip.clone(),
                 datacenter: self.datacenter.clone(),
                 tagged_addresses: None,
                 meta: None,
@@ -892,6 +913,7 @@ impl ConsulCatalogService {
                     results.push(CatalogService::from_registration(
                         &reg,
                         &self.node_name,
+                        &self.node_id,
                         &self.datacenter,
                         index,
                     ));
@@ -1215,6 +1237,10 @@ pub async fn list_nodes(
 
     let dc = dc_config.resolve_dc(&query.dc);
     let namespace = dc_config.resolve_ns(&query.ns);
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     let mut nodes = catalog.get_nodes(&namespace);
 
     // Override datacenter with resolved DC from query params
@@ -1246,11 +1272,14 @@ pub async fn get_node(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    // Consul returns 200 with null body when node not found (not 404)
     match catalog.get_node(&namespace, &node_name) {
         Some(node_services) => consul_ok(&meta).json(node_services),
-        None => HttpResponse::NotFound()
-            .json(ConsulError::new(format!("Node not found: {}", node_name))),
+        None => consul_ok(&meta).json(serde_json::Value::Null),
     }
 }
 
@@ -1398,6 +1427,9 @@ pub async fn get_connect_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     let mut services = catalog.get_connect_service_instances(&namespace, &service_name);
 
     // Override datacenter with resolved DC from query params
@@ -1429,6 +1461,9 @@ pub async fn get_node_services(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     match catalog.get_node(&namespace, &node_name) {
         Some(node_services) => {
             let mut node = node_services.node;
@@ -1441,8 +1476,11 @@ pub async fn get_node_services(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
             consul_ok(&meta).json(list)
         }
-        None => HttpResponse::NotFound()
-            .json(ConsulError::new(format!("Node not found: {}", node_name))),
+        // Consul returns 200 with null body when node not found (not 404)
+        None => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+            consul_ok(&meta).json(serde_json::Value::Null)
+        }
     }
 }
 
@@ -1454,6 +1492,7 @@ pub async fn get_gateway_services(
     catalog: web::Data<ConsulCatalogService>,
     config_entry_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
+    query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let gateway_name = path.into_inner();
@@ -1462,6 +1501,9 @@ pub async fn get_gateway_services(
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     let gateway_services =
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
@@ -1535,7 +1577,8 @@ mod tests {
             namespace: None,
         };
 
-        let catalog_service = CatalogService::from_registration(&reg, "node1", "dc1", 1);
+        let catalog_service =
+            CatalogService::from_registration(&reg, "node1", "test-node-id", "dc1", 1);
 
         assert_eq!(catalog_service.service_name, "web");
         assert_eq!(catalog_service.service_port, 8080);

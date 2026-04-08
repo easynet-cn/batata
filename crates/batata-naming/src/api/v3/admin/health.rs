@@ -140,15 +140,23 @@ async fn get_checkers(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
     let checkers = vec![
         CheckerInfo {
             name: "TCP".to_string(),
-            description: "TCP health check".to_string(),
+            description: "TCP connection health check".to_string(),
         },
         CheckerInfo {
             name: "HTTP".to_string(),
-            description: "HTTP health check".to_string(),
+            description: "HTTP endpoint health check".to_string(),
+        },
+        CheckerInfo {
+            name: "MYSQL".to_string(),
+            description: "MySQL/database health check via SELECT 1".to_string(),
+        },
+        CheckerInfo {
+            name: "GRPC".to_string(),
+            description: "gRPC health check via grpc.health.v1.Health/Check".to_string(),
         },
         CheckerInfo {
             name: "NONE".to_string(),
-            description: "No health check".to_string(),
+            description: "No active health check (client heartbeat only)".to_string(),
         },
     ];
 

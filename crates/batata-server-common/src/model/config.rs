@@ -211,8 +211,6 @@ impl Configuration {
         self.config.get_string("nacos.version").unwrap_or_default()
     }
 
-
-
     pub fn batata_version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }

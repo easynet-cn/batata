@@ -87,10 +87,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut plugin_manager = batata_plugin::spi::PluginManager::new();
     let mut consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>> = None;
 
-    let consul_config = batata_plugin_consul::ConsulPluginConfig::from_config(&configuration.config);
-    let consul_plugin = Arc::new(
-        batata_plugin_consul::ConsulPlugin::from_plugin_config(consul_config),
-    );
+    let consul_config =
+        batata_plugin_consul::ConsulPluginConfig::from_config(&configuration.config);
+    let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(
+        consul_config,
+    ));
     if consul_plugin.is_enabled() {
         plugin_manager.register_protocol_adapter(consul_plugin.clone());
         consul_plugin_ref = Some(consul_plugin.clone());
@@ -210,6 +211,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             encryption_service.clone() as Arc<dyn batata_common::ConfigEncryptionProvider>
         ),
         plugin_state_providers,
+        log_level_setter: Some(Arc::new(|filter: &str| {
+            crate::startup::logging::set_log_level(filter)
+        })),
     });
 
     if !app_state.configuration.data_warmup() {

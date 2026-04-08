@@ -32,6 +32,7 @@ pub use configurer::{
 };
 pub use factory::HealthCheckerFactory;
 pub use heartbeat::{ExpiredInstanceChecker, UnhealthyInstanceChecker};
+pub use interceptor::HealthCheckInterceptorChain;
 pub use processor::{
     HealthCheckProcessor, HealthCheckType, HttpHealthCheckProcessor, MysqlHealthCheckProcessor,
     NoneHealthCheckProcessor, TcpHealthCheckProcessor,
@@ -40,7 +41,6 @@ pub use reactor::HealthCheckReactor;
 pub use registry::{
     CheckStatus, CheckType, InstanceCheckConfig, InstanceCheckRegistry, InstanceCheckStatus,
 };
-pub use interceptor::HealthCheckInterceptorChain;
 pub use task::HealthCheckTask;
 
 /// Health check manager that coordinates all health check components
@@ -94,7 +94,7 @@ impl HealthCheckManager {
         let reactor = HealthCheckReactor::new(naming_service.clone(), config);
         let core_handler = Arc::new(result_handler::CoreResultHandler::new(naming_service));
         let registry = Arc::new(InstanceCheckRegistry::new(
-            core_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>,
+            core_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>
         ));
 
         Self {
@@ -145,10 +145,8 @@ impl HealthCheckManager {
             distro_mapper,
             local_address,
         ));
-        self.unhealthy_checker
-            .set_interceptor_chain(chain.clone());
-        self.expired_checker
-            .set_interceptor_chain(chain.clone());
+        self.unhealthy_checker.set_interceptor_chain(chain.clone());
+        self.expired_checker.set_interceptor_chain(chain.clone());
         self.reactor.set_interceptor_chain(chain);
 
         // Enable Distro sync for health state change propagation

@@ -19,6 +19,7 @@ pub mod history;
 pub mod instance;
 pub mod metrics;
 pub mod namespace;
+pub mod plugin;
 pub mod prometheus;
 pub mod route;
 pub mod server_state;

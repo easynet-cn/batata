@@ -7,7 +7,7 @@ pub mod cluster;
 mod dns;
 mod grpc;
 mod http;
-mod logging;
+pub mod logging;
 pub mod persistence;
 mod shutdown;
 mod telemetry;

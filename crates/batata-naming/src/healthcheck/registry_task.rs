@@ -113,75 +113,40 @@ async fn execute_tcp_check(addr: &str, timeout_duration: Duration) -> (bool, Str
 
 /// Execute an HTTP health check
 async fn execute_http_check(url: &str, timeout_duration: Duration) -> (bool, String) {
-    // Parse URL to extract host, port, and path for raw HTTP
-    let stripped = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-
-    let (host_port, path) = match stripped.find('/') {
-        Some(idx) => (&stripped[..idx], &stripped[idx..]),
-        None => (stripped, "/"),
+    // Use reqwest for proper HTTP/HTTPS support, redirects, and connection handling.
+    // Consul interprets status codes: 2xx = passing, 429 = warning, else = critical.
+    // For the check result we map: 2xx/3xx = healthy, else = unhealthy.
+    let client = match reqwest::Client::builder()
+        .timeout(timeout_duration)
+        .connect_timeout(timeout_duration)
+        .danger_accept_invalid_certs(true) // Match Consul's TLSSkipVerify default
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return (false, format!("HTTP client build failed: {} - {}", url, e)),
     };
 
-    let (host, port) = match host_port.rfind(':') {
-        Some(idx) => {
-            let port_str = &host_port[idx + 1..];
-            let port: u16 = port_str.parse().unwrap_or(80);
-            (&host_port[..idx], port)
-        }
-        None => (host_port, 80u16),
-    };
-
-    let addr = format!("{}:{}", host, port);
-
-    // Connect with timeout
-    let stream =
-        match tokio::time::timeout(timeout_duration, tokio::net::TcpStream::connect(&addr)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(e)) => return (false, format!("HTTP connection failed: {} - {}", url, e)),
-            Err(_) => return (false, format!("HTTP connection timeout: {}", url)),
-        };
-
-    // Send HTTP GET request
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-        path, host, port
-    );
-
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let (mut reader, mut writer) = stream.into_split();
-
-    if let Err(e) = writer.write_all(request.as_bytes()).await {
-        return (false, format!("HTTP send failed: {} - {}", url, e));
-    }
-
-    // Read response
-    let mut response = vec![0u8; 1024];
-    let remaining = timeout_duration.saturating_sub(std::time::Duration::from_millis(100));
-
-    match tokio::time::timeout(remaining, reader.read(&mut response)).await {
-        Ok(Ok(n)) if n > 0 => {
-            let response_str = String::from_utf8_lossy(&response[..n]);
-            if let Some(status_line) = response_str.lines().next()
-                && let Some(status_code) = status_line.split_whitespace().nth(1)
-                && let Ok(code) = status_code.parse::<u16>()
-            {
-                if (200..400).contains(&code) {
-                    (true, format!("HTTP check passed: {} ({})", url, code))
-                } else {
-                    (
-                        false,
-                        format!("HTTP check failed: {} returned {}", url, code),
-                    )
-                }
+    match client.get(url).send().await {
+        Ok(response) => {
+            let code = response.status().as_u16();
+            if (200..400).contains(&code) {
+                (true, format!("HTTP check passed: {} ({})", url, code))
             } else {
-                (false, format!("HTTP invalid response: {}", url))
+                (
+                    false,
+                    format!("HTTP check failed: {} returned {}", url, code),
+                )
             }
         }
-        Ok(Ok(_)) => (false, format!("HTTP empty response: {}", url)),
-        Ok(Err(e)) => (false, format!("HTTP read failed: {} - {}", url, e)),
-        Err(_) => (false, format!("HTTP response timeout: {}", url)),
+        Err(e) => {
+            if e.is_timeout() {
+                (false, format!("HTTP check timeout: {}", url))
+            } else if e.is_connect() {
+                (false, format!("HTTP connection failed: {} - {}", url, e))
+            } else {
+                (false, format!("HTTP check failed: {} - {}", url, e))
+            }
+        }
     }
 }
 
@@ -193,37 +158,85 @@ async fn execute_http_check(url: &str, timeout_duration: Duration) -> (bool, Str
 /// Uses a TCP connection + HTTP/2 connection preface to validate the gRPC server
 /// is alive and accepting connections.
 async fn execute_grpc_check(addr: &str, timeout_duration: Duration) -> (bool, String) {
-    // Parse address: strip optional "/service" suffix
-    let endpoint = match addr.find('/') {
-        Some(idx) => &addr[..idx],
-        None => addr,
+    // Parse address: strip optional "/service" suffix (Consul format: "host:port/service")
+    let (endpoint, service_name) = match addr.find('/') {
+        Some(idx) => (&addr[..idx], &addr[idx + 1..]),
+        None => (addr, ""),
     };
 
-    // Connect via tonic Channel (handles HTTP/2 negotiation)
     let endpoint_url = format!("http://{}", endpoint);
     match tokio::time::timeout(timeout_duration, async {
-        tonic::transport::Endpoint::from_shared(endpoint_url)
+        let channel = tonic::transport::Endpoint::from_shared(endpoint_url)
             .map_err(|e| format!("Invalid endpoint: {}", e))?
             .connect_timeout(timeout_duration)
             .connect()
             .await
-            .map_err(|e| format!("Connection failed: {}", e))
+            .map_err(|e| format!("Connection failed: {}", e))?;
+
+        // Call grpc.health.v1.Health/Check using tonic raw codec
+        let mut client = tonic::client::Grpc::new(channel);
+        client
+            .ready()
+            .await
+            .map_err(|e| format!("Service not ready: {}", e))?;
+
+        let path = http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check");
+        let codec =
+            tonic_prost::ProstCodec::<GrpcHealthCheckRequest, GrpcHealthCheckResponse>::default();
+
+        let request = tonic::Request::new(GrpcHealthCheckRequest {
+            service: service_name.to_string(),
+        });
+
+        let response = client
+            .unary(request, path, codec)
+            .await
+            .map_err(|e| format!("Health check RPC failed: {}", e))?;
+
+        let status = response.into_inner().status;
+        // ServingStatus: UNKNOWN=0, SERVING=1, NOT_SERVING=2, SERVICE_UNKNOWN=3
+        if status == 1 {
+            Ok(())
+        } else {
+            let status_name = match status {
+                0 => "UNKNOWN",
+                2 => "NOT_SERVING",
+                3 => "SERVICE_UNKNOWN",
+                _ => "INVALID",
+            };
+            Err(format!("gRPC {} serving status: {}", addr, status_name))
+        }
     })
     .await
     {
-        Ok(Ok(_channel)) => {
-            debug!("gRPC check passed: {}", addr);
-            (true, format!("gRPC check passed: {}", addr))
+        Ok(Ok(())) => {
+            debug!("gRPC health check passed: {}", addr);
+            (true, format!("gRPC health check passed: {}", addr))
         }
         Ok(Err(e)) => {
-            debug!("gRPC check failed: {} - {}", addr, e);
-            (false, format!("gRPC check failed: {} - {}", addr, e))
+            debug!("gRPC health check failed: {} - {}", addr, e);
+            (false, format!("gRPC health check failed: {} - {}", addr, e))
         }
         Err(_) => {
-            debug!("gRPC check timeout: {}", addr);
-            (false, format!("gRPC check timeout: {}", addr))
+            debug!("gRPC health check timeout: {}", addr);
+            (false, format!("gRPC health check timeout: {}", addr))
         }
     }
+}
+
+/// gRPC Health Check Request (grpc.health.v1.HealthCheckRequest)
+#[derive(Clone, PartialEq, prost::Message)]
+struct GrpcHealthCheckRequest {
+    #[prost(string, tag = "1")]
+    service: String,
+}
+
+/// gRPC Health Check Response (grpc.health.v1.HealthCheckResponse)
+#[derive(Clone, PartialEq, prost::Message)]
+struct GrpcHealthCheckResponse {
+    /// ServingStatus: UNKNOWN=0, SERVING=1, NOT_SERVING=2, SERVICE_UNKNOWN=3
+    #[prost(int32, tag = "1")]
+    status: i32,
 }
 
 /// Execute a database health check via sea-orm.
@@ -324,6 +337,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status: CheckStatus::Passing,
             notes: String::new(),
+            service_tags: vec![],
         }
     }
 

@@ -16,6 +16,7 @@ pub mod model;
 pub mod persistence;
 pub mod selector;
 pub mod service;
+pub mod switch_domain;
 
 // Re-export commonly used types
 pub use healthcheck::{

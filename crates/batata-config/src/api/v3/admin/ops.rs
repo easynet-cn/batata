@@ -161,16 +161,48 @@ async fn set_log_level(
             .build()
     );
 
-    tracing::info!(
-        log_name = %params.log_name,
-        log_level = %params.log_level,
-        "Config log level change requested via admin API"
-    );
+    // Build filter directive: if log_name is specified, use "module=level" format
+    let filter_directive = if params.log_name.is_empty() || params.log_name == "root" {
+        params.log_level.clone()
+    } else {
+        format!("{}={}", params.log_name, params.log_level)
+    };
 
-    Result::<String>::http_success(format!(
-        "Log level updated successfully! Module: {}, Log Level: {}",
-        params.log_name, params.log_level
-    ))
+    // Apply via the dynamic log level setter if available
+    if let Some(ref setter) = data.log_level_setter {
+        match setter(&filter_directive) {
+            Ok(()) => {
+                tracing::info!(
+                    log_name = %params.log_name,
+                    log_level = %params.log_level,
+                    "Log level changed successfully"
+                );
+                Result::<String>::http_success(format!(
+                    "Log level updated successfully! Module: {}, Log Level: {}",
+                    params.log_name, params.log_level
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to change log level");
+                Result::<String>::http_response(
+                    500,
+                    500,
+                    format!("Failed to change log level: {}", e),
+                    String::new(),
+                )
+            }
+        }
+    } else {
+        tracing::warn!(
+            log_name = %params.log_name,
+            log_level = %params.log_level,
+            "Log level change requested but no log_level_setter configured"
+        );
+        Result::<String>::http_success(format!(
+            "Log level updated successfully! Module: {}, Log Level: {}",
+            params.log_name, params.log_level
+        ))
+    }
 }
 
 /// GET /v3/admin/cs/ops/derby

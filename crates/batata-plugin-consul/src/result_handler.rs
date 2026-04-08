@@ -291,11 +291,15 @@ mod tests {
             "",
             "web",
             "0.0.0.0", // wrong IP — doesn't matter because primary path uses check_id
-            0,          // wrong port
+            0,         // wrong port
             "",
         );
 
-        assert_eq!(store.len(), 0, "Service should be deregistered via check_id chain");
+        assert_eq!(
+            store.len(),
+            0,
+            "Service should be deregistered via check_id chain"
+        );
     }
 
     #[test]
@@ -317,7 +321,11 @@ mod tests {
 
         handler.on_deregister("unknown-check", "", "", "web", "10.0.0.1", 8080, "");
 
-        assert_eq!(store.len(), 0, "Service should be deregistered via IP:Port fallback");
+        assert_eq!(
+            store.len(),
+            0,
+            "Service should be deregistered via IP:Port fallback"
+        );
     }
 
     #[tokio::test]

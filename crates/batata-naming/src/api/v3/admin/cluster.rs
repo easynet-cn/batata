@@ -42,6 +42,10 @@ struct HealthCheckerForm {
     path: Option<String>,
     #[serde(default)]
     headers: Option<String>,
+    #[serde(default, alias = "checkPort")]
+    check_port: Option<i32>,
+    #[serde(default, alias = "useInstancePort")]
+    use_instance_port: Option<bool>,
 }
 
 fn default_check_type() -> String {
@@ -167,8 +171,8 @@ async fn update_cluster(
             &form.service_name,
             &form.cluster_name,
             &checker.r#type,
-            80,
-            true,
+            checker.check_port.unwrap_or(80),
+            checker.use_instance_port.unwrap_or(true),
         );
     }
 

@@ -171,11 +171,7 @@ mod tests {
         // Find which node is responsible for "test-key"
         let responsible = mapper.responsible_node("test-key").unwrap();
 
-        let chain = HealthCheckInterceptorChain::cluster(
-            config,
-            mapper,
-            responsible.clone(),
-        );
+        let chain = HealthCheckInterceptorChain::cluster(config, mapper, responsible.clone());
 
         assert!(
             chain.should_execute("test-key"),
@@ -202,11 +198,8 @@ mod tests {
             "10.0.0.1:8848"
         };
 
-        let chain = HealthCheckInterceptorChain::cluster(
-            config,
-            mapper,
-            non_responsible.to_string(),
-        );
+        let chain =
+            HealthCheckInterceptorChain::cluster(config, mapper, non_responsible.to_string());
 
         assert!(
             !chain.should_execute("test-key"),
@@ -220,11 +213,8 @@ mod tests {
         let mapper = Arc::new(DistroMapper::new());
         // No members — standalone mode
 
-        let chain = HealthCheckInterceptorChain::cluster(
-            config,
-            mapper,
-            "10.0.0.1:8848".to_string(),
-        );
+        let chain =
+            HealthCheckInterceptorChain::cluster(config, mapper, "10.0.0.1:8848".to_string());
 
         assert!(
             chain.should_execute("any-key"),
@@ -256,11 +246,8 @@ mod tests {
         let config = Arc::new(cfg);
         let mapper = Arc::new(DistroMapper::new());
 
-        let chain = HealthCheckInterceptorChain::cluster(
-            config,
-            mapper,
-            "10.0.0.1:8848".to_string(),
-        );
+        let chain =
+            HealthCheckInterceptorChain::cluster(config, mapper, "10.0.0.1:8848".to_string());
 
         // Should be blocked by enable interceptor first
         assert!(!chain.should_execute("any-key"));

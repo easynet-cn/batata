@@ -188,6 +188,7 @@ impl ConsulHealthService {
             deregister_critical_after,
             initial_status,
             notes: registration.notes.clone().unwrap_or_default(),
+            service_tags: vec![],
         };
 
         // Register in check index for service_id → instance lookup
@@ -407,7 +408,7 @@ impl ConsulHealthService {
             output: status.output.clone(),
             service_id: service_id.to_string(),
             service_name: config.service_name.clone(),
-            service_tags: vec![],
+            service_tags: config.service_tags.clone(),
             check_type: config.check_type.as_str().to_string(),
             interval: interval_str,
             timeout: timeout_str,
@@ -667,6 +668,9 @@ pub async fn get_service_checks(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     // Get service entries from ConsulNamingStore
     let entries = naming_store.get_service_entries(namespace, &service_name);
 
@@ -727,6 +731,9 @@ pub async fn get_checks_by_state(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     // Validate state
     let valid_states = ["passing", "warning", "critical", "any"];
     if !valid_states.contains(&state.as_str()) {
@@ -766,6 +773,9 @@ pub async fn get_node_checks(
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     // Filter checks by node
     let mut checks: Vec<HealthCheck> = health_service
@@ -998,6 +1008,9 @@ pub async fn get_connect_health(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     // Scan all services to find Connect-enabled instances for this target service
     let all_service_names = naming_store.service_names(&namespace);
 
@@ -1030,7 +1043,8 @@ pub async fn get_connect_health(
                 check.service_name = svc_name.clone();
             }
 
-            if passing_only && checks.iter().any(|c| c.status == "critical") {
+            // Consul uses HealthFilterIncludeOnlyPassing: exclude anything not "passing"
+            if passing_only && checks.iter().any(|c| c.status != "passing") {
                 continue;
             }
 
@@ -1041,8 +1055,8 @@ pub async fn get_connect_health(
 
             results.push(ServiceHealth {
                 node: Node {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    node: health_service.node_name.clone(),
+                    id: dc_config.node_id.clone(),
+                    node: dc_config.node_name.clone(),
                     address: ip,
                     datacenter: dc_config.resolve_dc(&query.dc),
                     tagged_addresses: Some(node_tagged_addresses),
@@ -1061,7 +1075,9 @@ pub async fn get_connect_health(
 }
 
 /// GET /v1/health/ingress/:service
-/// Returns health for ingress gateway instances that expose the given service
+/// Returns health for ingress gateway instances that expose the given service.
+/// Consul's CheckIngressServiceNodes uses serviceGatewayNodes to find which ingress
+/// gateways are associated with the target service via config entries.
 #[allow(clippy::too_many_arguments)]
 pub async fn get_ingress_health(
     req: HttpRequest,
@@ -1069,6 +1085,7 @@ pub async fn get_ingress_health(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -1082,7 +1099,15 @@ pub async fn get_ingress_health(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Scan all services to find ingress gateway instances
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
+    // Build a set of ingress gateway names that expose the target service
+    // by scanning ingress-gateway config entries for Listeners[].Services[].Name
+    let ingress_gateways_for_service =
+        find_ingress_gateways_for_service(&config_entry_service, &service_name);
+
+    // Scan all services to find matching ingress gateway instances
     let all_service_names = naming_store.service_names(&namespace);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
@@ -1097,8 +1122,13 @@ pub async fn get_ingress_health(
             };
 
             // Only include ingress-gateway instances
-            let is_ingress = reg.kind.as_deref() == Some("ingress-gateway");
-            if !is_ingress {
+            if reg.kind.as_deref() != Some("ingress-gateway") {
+                continue;
+            }
+
+            // Verify this gateway actually exposes the requested service
+            let gw_name = reg.name.as_str();
+            if !ingress_gateways_for_service.contains(gw_name) {
                 continue;
             }
 
@@ -1112,7 +1142,8 @@ pub async fn get_ingress_health(
                 checks.push(health_service.create_default_check(&reg, healthy));
             }
 
-            if passing_only && checks.iter().any(|c| c.status == "critical") {
+            // Consul uses HealthFilterIncludeOnlyPassing: exclude anything not "passing"
+            if passing_only && checks.iter().any(|c| c.status != "passing") {
                 continue;
             }
 
@@ -1123,8 +1154,8 @@ pub async fn get_ingress_health(
 
             results.push(ServiceHealth {
                 node: Node {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    node: health_service.node_name.clone(),
+                    id: dc_config.node_id.clone(),
+                    node: dc_config.node_name.clone(),
                     address: ip,
                     datacenter: dc_config.resolve_dc(&query.dc),
                     tagged_addresses: Some(node_tagged_addresses),
@@ -1140,6 +1171,37 @@ pub async fn get_ingress_health(
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).json(results)
+}
+
+/// Find which ingress gateways expose the given service by scanning config entries.
+/// Returns a set of gateway names that have the service in their Listeners[].Services[].
+fn find_ingress_gateways_for_service(
+    config_entry_service: &crate::config_entry::ConsulConfigEntryService,
+    target_service: &str,
+) -> std::collections::HashSet<String> {
+    let mut gateways = std::collections::HashSet::new();
+
+    // List all ingress-gateway config entries
+    let entries = config_entry_service.list_entries("ingress-gateway");
+    for entry in entries {
+        let gw_name = &entry.name;
+        // Check Listeners[].Services[].Name for a match
+        if let Some(listeners) = entry.extra.get("Listeners").and_then(|v| v.as_array()) {
+            for listener in listeners {
+                if let Some(services) = listener.get("Services").and_then(|v| v.as_array()) {
+                    for svc in services {
+                        let svc_name = svc.get("Name").and_then(|v| v.as_str()).unwrap_or("");
+                        // Consul supports wildcard "*" meaning all services
+                        if svc_name == target_service || svc_name == "*" {
+                            gateways.insert(gw_name.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    gateways
 }
 
 /// Check if an AgentServiceRegistration is a Connect-enabled instance for the given target service.
@@ -1909,6 +1971,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status: CheckStatus::Critical,
             notes: String::new(),
+            service_tags: vec![],
         };
         registry.register_check(config);
 
@@ -1956,6 +2019,7 @@ mod tests {
             deregister_critical_after: None,
             initial_status: CheckStatus::Passing,
             notes: String::new(),
+            service_tags: vec![],
         };
         registry.register_check(config);
 

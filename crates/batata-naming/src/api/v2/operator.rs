@@ -37,26 +37,41 @@ fn default_true() -> bool {
 
 /// Get system switches (internal implementation)
 fn build_switches_response(config: &batata_server_common::Configuration) -> SwitchesResponse {
+    use super::model::SwitchHealthParams;
     SwitchesResponse {
         name: "00-00---000-NACOS_SWITCH_DOMAIN-000---00-00".to_string(),
         masters: None,
-        addr_server_domain: None,
-        addr_server_port: None,
         default_push_cache_millis: 10000,
         client_beat_interval: 5000,
         default_cache_millis: 3000,
         distro_threshold: 0.7,
         health_check_enabled: config.is_health_check(),
+        auto_change_health_check_enabled: true,
         distro_enabled: !config.is_standalone(),
+        enable_standalone: true,
         push_enabled: true,
         check_times: config.max_health_check_fail_count(),
-        http_health_params: None,
-        tcp_health_params: None,
-        mysql_health_params: None,
-        incremental_list: true,
-        servers: None,
-        overridden_server_status: None,
+        http_health_params: SwitchHealthParams {
+            max: 5000,
+            min: 500,
+            factor: 0.85,
+        },
+        tcp_health_params: SwitchHealthParams {
+            max: 5000,
+            min: 1000,
+            factor: 0.75,
+        },
+        mysql_health_params: SwitchHealthParams {
+            max: 3000,
+            min: 2000,
+            factor: 0.65,
+        },
+        incremental_list: vec![],
         default_instance_ephemeral: true,
+        light_beat_enabled: true,
+        disable_add_ip: false,
+        send_beat_only: false,
+        overridden_server_status: None,
     }
 }
 
@@ -94,12 +109,26 @@ async fn do_update_switches(
             .build()
     );
 
-    tracing::info!(
-        entry = %form.entry,
-        value = %form.value,
-        debug = ?form.debug,
-        "Switch update requested (not persisted - configuration is read-only)"
-    );
+    // Apply via SwitchDomain if available
+    if let Some(switch_domain) =
+        req.app_data::<web::Data<std::sync::Arc<crate::switch_domain::SwitchDomain>>>()
+    {
+        if switch_domain.update(&form.entry, &form.value) {
+            tracing::info!(
+                entry = %form.entry,
+                value = %form.value,
+                "Switch updated successfully"
+            );
+        } else {
+            tracing::warn!(entry = %form.entry, "Unknown switch entry");
+        }
+    } else {
+        tracing::warn!(
+            entry = %form.entry,
+            value = %form.value,
+            "Switch update: SwitchDomain not registered"
+        );
+    }
 
     Result::<String>::http_success(format!("ok, entry: {}, value: {}", form.entry, form.value))
 }

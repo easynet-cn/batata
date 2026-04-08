@@ -20,8 +20,8 @@ use crate::model::{
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
     AgentServiceWithChecks, AgentStats, AgentVersion, CONSUL_INTERNAL_CLUSTER,
     CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE, CheckRegistration, ConsulDatacenterConfig,
-    ConsulError, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
-    MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
+    ConsulError, Coordinate, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo,
+    HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
@@ -180,6 +180,7 @@ impl ConsulAgentService {
                 deregister_critical_after: None,
                 initial_status: CheckStatus::Passing,
                 notes: String::new(),
+                service_tags: vec![],
             });
             self.registry.update_check_result(
                 "serfHealth",
@@ -940,9 +941,22 @@ pub async fn get_agent_self(
     build_stats.insert("revision".to_string(), dc_config.batata_version.clone());
     build_stats.insert("prerelease".to_string(), String::new());
 
+    // Consul stats section (basic version without ClusterManager)
+    let mut consul_stats = HashMap::new();
+    consul_stats.insert("server".to_string(), "true".to_string());
+    consul_stats.insert("leader".to_string(), "true".to_string());
+    consul_stats.insert(
+        "leader_addr".to_string(),
+        format!("{}:{}", batata_common::local_ip(), dc_config.raft_port()),
+    );
+    consul_stats.insert("bootstrap".to_string(), "true".to_string());
+    consul_stats.insert("known_datacenters".to_string(), "1".to_string());
+
     let stats = AgentStats {
         agent: agent_stats,
         runtime: runtime_stats,
+        build: Some(build_stats),
+        consul: Some(consul_stats),
         raft: None,
         serf_lan: None,
     };
@@ -951,10 +965,18 @@ pub async fn get_agent_self(
     meta.insert("consul-network-segment".to_string(), "".to_string());
     meta.insert("consul-version".to_string(), dc_config.full_version());
 
+    // Provide default network coordinate (8-dimensional Vivaldi, matching Consul's serf LAN)
+    let coord = Coordinate {
+        adjustment: 0.0,
+        error: 1.5,
+        height: 1e-05,
+        vec: vec![0.0; 8],
+    };
+
     let response = AgentSelf {
         config,
         debug_config: None,
-        coord: None,
+        coord: Some(coord),
         member,
         meta,
         stats,
@@ -1093,6 +1115,7 @@ pub async fn get_agent_members_real(
 /// Returns real cluster information from ClusterManager
 pub async fn get_agent_self_real(
     req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
@@ -1107,26 +1130,32 @@ pub async fn get_agent_self_real(
     let self_member = member_manager.get_self_member();
     let health_summary = member_manager.health_summary();
 
-    let node_id = uuid::Uuid::new_v4().to_string();
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "batata-node".to_string());
-
+    // Use stable node_id and node_name from dc_config (persisted in data_dir/consul-node-id)
     let config = AgentConfig {
         datacenter: dc_config.datacenter.clone(),
-        node_name: hostname.clone(),
-        node_id: node_id.clone(),
+        node_name: dc_config.node_name.clone(),
+        node_id: dc_config.node_id.clone(),
         server: true,
         revision: dc_config.batata_version.clone(),
         version: dc_config.full_version(),
         primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
+    // Tags matching get_agent_self (Consul's delegate.AgentLocalMember().Tags)
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), dc_config.consul_port.to_string());
-    tags.insert("build".to_string(), dc_config.batata_version.clone());
+    tags.insert("port".to_string(), dc_config.raft_port().to_string());
+    tags.insert(
+        "build".to_string(),
+        format!("{}:{}", dc_config.full_version(), dc_config.batata_version),
+    );
+    tags.insert("id".to_string(), dc_config.node_id.clone());
+    tags.insert("raft_vsn".to_string(), "3".to_string());
+    tags.insert("vsn".to_string(), "2".to_string());
+    tags.insert("vsn_min".to_string(), "2".to_string());
+    tags.insert("vsn_max".to_string(), "3".to_string());
+    tags.insert("segment".to_string(), "".to_string());
 
     // Parse self_member address
     let (addr, port) = if let Some(pos) = self_member.address.rfind(':') {
@@ -1138,58 +1167,109 @@ pub async fn get_agent_self_real(
     };
 
     let member = AgentMember {
-        name: hostname.clone(),
-        addr,
+        name: dc_config.node_name.clone(),
+        addr: addr.clone(),
         port,
         tags,
         status: member_state_to_consul_status(&self_member.state),
         ..Default::default()
     };
 
+    let service_count = agent.naming_store.service_count();
+    let check_count = agent.registry.check_count();
+
     let mut agent_stats = HashMap::new();
     agent_stats.insert("check_monitors".to_string(), "0".to_string());
-    agent_stats.insert("check_ttls".to_string(), "0".to_string());
-    agent_stats.insert("checks".to_string(), "0".to_string());
-    agent_stats.insert("services".to_string(), "0".to_string());
+    agent_stats.insert("check_ttls".to_string(), check_count.to_string());
+    agent_stats.insert("checks".to_string(), check_count.to_string());
+    agent_stats.insert("services".to_string(), service_count.to_string());
 
     let mut runtime_stats = HashMap::new();
     runtime_stats.insert("arch".to_string(), std::env::consts::ARCH.to_string());
     runtime_stats.insert("os".to_string(), std::env::consts::OS.to_string());
     runtime_stats.insert("version".to_string(), "rust".to_string());
 
-    // Add cluster health stats
-    let mut cluster_stats = HashMap::new();
-    cluster_stats.insert("total".to_string(), health_summary.total.to_string());
-    cluster_stats.insert("up".to_string(), health_summary.up.to_string());
-    cluster_stats.insert("down".to_string(), health_summary.down.to_string());
-    cluster_stats.insert(
-        "suspicious".to_string(),
-        health_summary.suspicious.to_string(),
+    // Build stats (matching Consul's Stats().build section)
+    let mut build_stats = HashMap::new();
+    build_stats.insert("version".to_string(), dc_config.full_version());
+    build_stats.insert("revision".to_string(), dc_config.batata_version.clone());
+    build_stats.insert("prerelease".to_string(), String::new());
+
+    // Consul stats section (matching Consul's delegate.Stats())
+    let mut consul_stats = HashMap::new();
+    consul_stats.insert("server".to_string(), "true".to_string());
+    consul_stats.insert("leader".to_string(), member_manager.is_leader().to_string());
+    consul_stats.insert(
+        "leader_addr".to_string(),
+        member_manager.leader_address().unwrap_or_default(),
     );
-    cluster_stats.insert("starting".to_string(), health_summary.starting.to_string());
-    cluster_stats.insert(
-        "standalone".to_string(),
+    consul_stats.insert(
+        "bootstrap".to_string(),
         member_manager.is_standalone().to_string(),
     );
-    cluster_stats.insert(
-        "is_leader".to_string(),
-        member_manager.is_leader().to_string(),
-    );
+    consul_stats.insert("known_datacenters".to_string(), "1".to_string()); // TODO: count from peering DCs
+
+    // Serf LAN stats from cluster health
+    let mut serf_lan_stats = HashMap::new();
+    serf_lan_stats.insert("members".to_string(), health_summary.total.to_string());
+    serf_lan_stats.insert("member_time".to_string(), "1".to_string());
+    serf_lan_stats.insert("health_score".to_string(), "0".to_string());
 
     let stats = AgentStats {
         agent: agent_stats,
         runtime: runtime_stats,
+        build: Some(build_stats),
+        consul: Some(consul_stats),
         raft: None,
-        serf_lan: Some(cluster_stats),
+        serf_lan: Some(serf_lan_stats),
     };
 
     let mut meta = HashMap::new();
     meta.insert("consul-network-segment".to_string(), "".to_string());
+    meta.insert("consul-version".to_string(), dc_config.full_version());
+
+    // Provide basic DebugConfig with runtime port/address information
+    // (Consul returns the full RuntimeConfig.Sanitized() with hundreds of fields)
+    let grpc_port = dc_config.main_port.saturating_add(1000);
+    let debug_config = serde_json::json!({
+        "Datacenter": dc_config.datacenter,
+        "PrimaryDatacenter": dc_config.primary_datacenter,
+        "NodeName": dc_config.node_name,
+        "NodeID": dc_config.node_id,
+        "ServerMode": true,
+        "Ports": {
+            "HTTP": dc_config.main_port,
+            "HTTPS": -1,
+            "gRPC": grpc_port,
+            "gRPCTLS": -1,
+            "SerfLAN": dc_config.consul_port.saturating_sub(199),
+            "Server": dc_config.raft_port(),
+            "DNS": -1
+        },
+        "Addresses": {
+            "HTTP": "0.0.0.0",
+            "HTTPS": "",
+            "gRPC": "0.0.0.0",
+            "DNS": ""
+        },
+        "AdvertiseAddrLAN": addr.clone(),
+        "BindAddr": "0.0.0.0",
+        "Version": dc_config.full_version(),
+        "Revision": dc_config.batata_version,
+    });
+
+    // Provide default network coordinate (8-dimensional Vivaldi, matching Consul's serf LAN)
+    let coord = Coordinate {
+        adjustment: 0.0,
+        error: 1.5,
+        height: 1e-05,
+        vec: vec![0.0; 8],
+    };
 
     let response = AgentSelf {
         config,
-        debug_config: None,
-        coord: None,
+        debug_config: Some(debug_config),
+        coord: Some(coord),
         member,
         meta,
         stats,
@@ -1331,9 +1411,12 @@ pub async fn agent_join(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // In compatibility mode, just return success
-    // Real cluster join would be handled by Batata's cluster management
-    tracing::info!("Agent join requested for address: {}", address);
+    // Standalone/in-memory mode: no real cluster to join.
+    // In real cluster mode, the _real route variant handles this via ClusterManager.
+    tracing::warn!(
+        address = %address,
+        "Agent join: not supported in standalone mode (no Serf gossip layer)"
+    );
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).finish()
 }
@@ -1351,9 +1434,7 @@ pub async fn agent_leave(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // In compatibility mode, just return success
-    // Real leave would trigger Batata's graceful shutdown
-    tracing::info!("Agent leave requested");
+    tracing::warn!("Agent leave: not supported in standalone mode (no Serf gossip layer)");
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).finish()
 }
@@ -1374,8 +1455,10 @@ pub async fn agent_force_leave(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // In compatibility mode, just return success
-    tracing::info!("Agent force-leave requested for node: {}", node);
+    tracing::warn!(
+        node = %node,
+        "Agent force-leave: not supported in standalone mode (no Serf gossip layer)"
+    );
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).finish()
 }
@@ -1393,8 +1476,9 @@ pub async fn agent_reload(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // In compatibility mode, return success (config reload not actually supported)
-    tracing::info!("Agent reload requested");
+    // Batata reads config at startup; runtime reload is not yet supported.
+    // Return 200 for compatibility, but warn that it's a no-op.
+    tracing::warn!("Agent reload: config is read-only at runtime, restart required for changes");
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).finish()
 }
@@ -1751,6 +1835,10 @@ fn default_log_level() -> String {
 /// GET /v1/agent/monitor
 /// Streams log entries from the agent as a streaming HTTP response.
 /// Supports ?loglevel=INFO and ?logjson query params.
+///
+/// Note: Real Consul streams actual log entries from the agent's logging subsystem.
+/// Batata streams periodic status lines and system metrics as a reasonable approximation
+/// until a tracing broadcast channel is implemented.
 pub async fn agent_monitor(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1765,28 +1853,65 @@ pub async fn agent_monitor(
 
     let log_level = query.loglevel.to_uppercase();
     let as_json = query.logjson.unwrap_or(false);
+    let _ = &index_provider;
 
+    // Stream log-like messages as chunked HTTP response
+    let stream = futures::stream::unfold(0u64, move |tick| {
+        let level = log_level.clone();
+        async move {
+            if tick == 0 {
+                let msg = format_monitor_line(&level, as_json, "agent", "Log streaming active");
+                return Some((
+                    Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(msg)),
+                    1,
+                ));
+            }
+
+            // Wait 5 seconds between log lines
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            let mut sys = System::new_all();
+            sys.refresh_memory();
+            let mem_pct = if sys.total_memory() > 0 {
+                (sys.used_memory() as f64 / sys.total_memory() as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let msg = format_monitor_line(
+                "DEBUG",
+                as_json,
+                "agent.monitor",
+                &format!("heartbeat #{}: mem={:.1}%", tick, mem_pct),
+            );
+            Some((
+                Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(msg)),
+                tick + 1,
+            ))
+        }
+    });
+
+    HttpResponse::Ok()
+        .content_type("text/plain; charset=utf-8")
+        .insert_header(("Transfer-Encoding", "chunked"))
+        .streaming(stream)
+}
+
+/// Format a single monitor log line (plain text or JSON, matching Consul format)
+fn format_monitor_line(level: &str, as_json: bool, module: &str, message: &str) -> String {
     let timestamp = chrono::Utc::now().to_rfc3339();
-    let message = if as_json {
+    if as_json {
         serde_json::json!({
-            "@level": log_level.to_lowercase(),
-            "@message": format!("Log streaming active at {} level", log_level),
-            "@module": "agent",
+            "@level": level.to_lowercase(),
+            "@message": message,
+            "@module": module,
             "@timestamp": timestamp,
         })
         .to_string()
             + "\n"
     } else {
-        format!(
-            "{}  [{}] agent: Log streaming active at {} level\n",
-            timestamp, log_level, log_level
-        )
-    };
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta)
-        .content_type("text/plain; charset=utf-8")
-        .body(message)
+        format!("{}  [{}] {}: {}\n", timestamp, level, module, message)
+    }
 }
 
 /// Collect current metrics snapshot from the ConsulNamingStore.
@@ -1932,7 +2057,13 @@ pub async fn update_agent_token(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    tracing::info!("Agent token update requested for type: {}", token_type);
+    // Consul supports updating: default, agent, replication, config_file_service_registration tokens.
+    // Batata uses its own auth system (JWT/RBAC) instead of Consul ACL tokens,
+    // so token updates are acknowledged but not applied.
+    tracing::warn!(
+        token_type = %token_type,
+        "Agent token update: acknowledged but not applied (Batata uses JWT auth, not Consul ACL tokens)"
+    );
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).finish()
 }

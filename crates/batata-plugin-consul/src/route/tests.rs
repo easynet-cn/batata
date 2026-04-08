@@ -872,8 +872,10 @@ async fn test_http_catalog_get_node_nonexistent() {
         .uri("/v1/catalog/node/no-such-node-xyz")
         .to_request();
     let resp = test::call_service(&app, req).await;
-    // Non-existent node returns 404
-    assert_eq!(resp.status(), 404);
+    // Consul returns 200 with null body for non-existent node (not 404)
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(body.is_null(), "Expected null body for non-existent node");
 }
 
 #[actix_web::test]

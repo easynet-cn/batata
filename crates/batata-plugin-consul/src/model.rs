@@ -199,7 +199,7 @@ impl ConsulPluginConfig {
     ///
     /// Reads from keys under `batata.plugin.consul.*` with sensible defaults.
     /// Also reads `batata.version`, `nacos.server.main.port`, and
-    /// `batata.embedded.data_dir` for `ConsulDatacenterConfig`.
+    /// `batata.persistence.embedded.data_dir` for `ConsulDatacenterConfig`.
     pub fn from_config(config: &config::Config) -> Self {
         let enabled = config
             .get_bool("batata.plugin.consul.enabled")
@@ -246,9 +246,7 @@ impl ConsulPluginConfig {
         let consul_version = config
             .get_string("batata.plugin.consul.version")
             .unwrap_or_default();
-        let consul_port = config
-            .get_int("batata.plugin.consul.port")
-            .unwrap_or(8500) as u16;
+        let consul_port = config.get_int("batata.plugin.consul.port").unwrap_or(8500) as u16;
         let node_name_override = config
             .get_string("batata.plugin.consul.node_name")
             .ok()
@@ -258,11 +256,9 @@ impl ConsulPluginConfig {
         let batata_version = config
             .get_string("batata.version")
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
-        let main_port = config
-            .get_int("nacos.server.main.port")
-            .unwrap_or(8848) as u16;
+        let main_port = config.get_int("nacos.server.main.port").unwrap_or(8848) as u16;
         let data_dir = config
-            .get_string("batata.embedded.data_dir")
+            .get_string("batata.persistence.embedded.data_dir")
             .unwrap_or_else(|_| "data".to_string());
 
         let mut dc_config = ConsulDatacenterConfig::new(datacenter)
@@ -1222,12 +1218,145 @@ pub struct HealthCheckDefinition {
     pub tcp_use_tls: Option<bool>,
     #[serde(rename = "GRPCUseTLS", skip_serializing_if = "Option::is_none")]
     pub grpc_use_tls: Option<bool>,
-    #[serde(rename = "IntervalDuration")]
+    /// Interval as human-readable string (e.g. "10s") matching Consul's wire format.
+    /// Consul's server-side MarshalJSON converts time.Duration to string.
+    #[serde(
+        rename = "Interval",
+        serialize_with = "nanos_to_duration_string",
+        deserialize_with = "duration_string_or_nanos"
+    )]
     pub interval_duration: u64,
-    #[serde(rename = "TimeoutDuration")]
+    #[serde(
+        rename = "Timeout",
+        serialize_with = "nanos_to_duration_string",
+        deserialize_with = "duration_string_or_nanos"
+    )]
     pub timeout_duration: u64,
-    #[serde(rename = "DeregisterCriticalServiceAfterDuration")]
+    #[serde(
+        rename = "DeregisterCriticalServiceAfter",
+        serialize_with = "nanos_to_duration_string",
+        deserialize_with = "duration_string_or_nanos"
+    )]
     pub deregister_critical_service_after_duration: u64,
+}
+
+/// Serialize nanoseconds as a human-readable duration string (e.g. "10s", "5m0s").
+/// Matches Go's time.Duration.String() output format used by Consul.
+fn nanos_to_duration_string<S: serde::Serializer>(nanos: &u64, s: S) -> Result<S::Ok, S::Error> {
+    let total_secs = *nanos / 1_000_000_000;
+    let remaining_nanos = *nanos % 1_000_000_000;
+
+    if *nanos == 0 {
+        return s.serialize_str("0s");
+    }
+
+    let mut result = String::new();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+
+    if hours > 0 {
+        result.push_str(&format!("{}h", hours));
+    }
+    if minutes > 0 {
+        result.push_str(&format!("{}m", minutes));
+    }
+    if secs > 0 || remaining_nanos > 0 {
+        if remaining_nanos > 0 {
+            let ms = remaining_nanos / 1_000_000;
+            if ms * 1_000_000 == remaining_nanos {
+                result.push_str(&format!("{}.{:03}s", secs, ms));
+            } else {
+                result.push_str(&format!("{}.{:09}s", secs, remaining_nanos));
+            }
+        } else {
+            result.push_str(&format!("{}s", secs));
+        }
+    } else if result.is_empty() {
+        result.push_str("0s");
+    }
+
+    s.serialize_str(&result)
+}
+
+/// Deserialize duration from either a human-readable string ("10s") or nanosecond number.
+/// This handles both Consul server format (string) and raw numeric values.
+fn duration_string_or_nanos<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    use serde::de;
+
+    struct DurationVisitor;
+
+    impl<'de> de::Visitor<'de> for DurationVisitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a duration string like \"10s\" or a nanosecond integer")
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u64, E> {
+            Ok(v)
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u64, E> {
+            Ok(v as u64)
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<u64, E> {
+            Ok(v as u64)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
+            parse_go_duration(v).map_err(de::Error::custom)
+        }
+    }
+
+    d.deserialize_any(DurationVisitor)
+}
+
+/// Parse a Go-style duration string (e.g. "10s", "5m", "1h30m", "500ms") to nanoseconds.
+fn parse_go_duration(s: &str) -> Result<u64, String> {
+    if s.is_empty() || s == "0" || s == "0s" {
+        return Ok(0);
+    }
+
+    let mut total_nanos: u64 = 0;
+    let mut remaining = s;
+
+    while !remaining.is_empty() {
+        // Parse number (possibly with decimal)
+        let num_end = remaining
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(remaining.len());
+        if num_end == 0 {
+            return Err(format!("invalid duration: {}", s));
+        }
+        let num_str = &remaining[..num_end];
+        let num: f64 = num_str
+            .parse()
+            .map_err(|_| format!("invalid number in duration: {}", s))?;
+        remaining = &remaining[num_end..];
+
+        // Parse unit
+        let unit_end = remaining
+            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .unwrap_or(remaining.len());
+        let unit = &remaining[..unit_end];
+        remaining = &remaining[unit_end..];
+
+        let multiplier: f64 = match unit {
+            "ns" => 1.0,
+            "us" | "\u{00b5}s" => 1_000.0,
+            "ms" => 1_000_000.0,
+            "s" => 1_000_000_000.0,
+            "m" => 60_000_000_000.0,
+            "h" => 3_600_000_000_000.0,
+            _ => return Err(format!("unknown unit '{}' in duration: {}", unit, s)),
+        };
+
+        total_nanos += (num * multiplier) as u64;
+    }
+
+    Ok(total_nanos)
 }
 
 /// Health check information in responses
@@ -1453,6 +1582,10 @@ pub struct Coordinate {
 pub struct AgentStats {
     pub agent: HashMap<String, String>,
     pub runtime: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consul: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raft: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

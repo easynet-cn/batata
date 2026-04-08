@@ -331,9 +331,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                 // reducing the SQL UPDATE SET clause to only changed fields.
                 // If nothing changed, skip the UPDATE entirely.
                 let mut active: config_info::ActiveModel = entity.into();
-                active
-                    .content
-                    .set_if_not_equals(Some(content.to_string()));
+                active.content.set_if_not_equals(Some(content.to_string()));
                 active.md5.set_if_not_equals(Some(md5_hash));
                 active
                     .src_user
@@ -346,9 +344,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                 active.c_use.set_if_not_equals(Some(r#use.to_string()));
                 active.effect.set_if_not_equals(Some(effect.to_string()));
                 active.r#type.set_if_not_equals(Some(r#type.to_string()));
-                active
-                    .c_schema
-                    .set_if_not_equals(Some(schema.to_string()));
+                active.c_schema.set_if_not_equals(Some(schema.to_string()));
                 active
                     .encrypted_data_key
                     .set_if_not_equals(Some(encrypted_data_key.to_string()));
@@ -603,18 +599,12 @@ impl ConfigPersistence for ExternalDbPersistService {
                 let mut active: config_info_gray::ActiveModel = entity.into();
                 active.content.set_if_not_equals(content.to_string());
                 active.md5.set_if_not_equals(Some(md5_hash));
-                active
-                    .gray_name
-                    .set_if_not_equals(gray_name.to_string());
-                active
-                    .gray_rule
-                    .set_if_not_equals(gray_rule.to_string());
+                active.gray_name.set_if_not_equals(gray_name.to_string());
+                active.gray_rule.set_if_not_equals(gray_rule.to_string());
                 active
                     .src_user
                     .set_if_not_equals(Some(src_user.to_string()));
-                active
-                    .src_ip
-                    .set_if_not_equals(Some(src_ip.to_string()));
+                active.src_ip.set_if_not_equals(Some(src_ip.to_string()));
                 active
                     .app_name
                     .set_if_not_equals(Some(app_name.to_string()));
