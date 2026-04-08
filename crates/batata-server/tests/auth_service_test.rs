@@ -150,6 +150,7 @@ fn test_long_expiration() {
     let token = encode_jwt_token(username, &secret, one_year).unwrap();
     let decoded = decode_jwt_token(&token, &secret);
     assert!(decoded.is_ok());
+    assert_eq!(decoded.unwrap().claims.sub, username);
 }
 
 #[test]

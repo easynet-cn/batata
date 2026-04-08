@@ -36,7 +36,9 @@ fn test_circuit_breaker_lifecycle() {
 fn test_success_resets_failure_count() {
     let config = CircuitBreakerConfig {
         failure_threshold: 3,
-        ..Default::default()
+        reset_timeout: Duration::from_secs(30),
+        success_threshold: 3,
+        failure_window: Duration::from_secs(60),
     };
     let cb = CircuitBreaker::with_config(config);
 
@@ -115,7 +117,9 @@ fn test_half_open_failure_reopens() {
 fn test_manual_reset() {
     let config = CircuitBreakerConfig {
         failure_threshold: 2,
-        ..Default::default()
+        reset_timeout: Duration::from_secs(30),
+        success_threshold: 3,
+        failure_window: Duration::from_secs(60),
     };
     let cb = CircuitBreaker::with_config(config);
 
@@ -147,7 +151,9 @@ async fn test_with_circuit_breaker_success() {
 async fn test_with_circuit_breaker_failure() {
     let config = CircuitBreakerConfig {
         failure_threshold: 2,
-        ..Default::default()
+        reset_timeout: Duration::from_secs(30),
+        success_threshold: 3,
+        failure_window: Duration::from_secs(60),
     };
     let cb = CircuitBreaker::with_config(config);
 
@@ -173,7 +179,8 @@ async fn test_with_circuit_breaker_rejects_when_open() {
     let config = CircuitBreakerConfig {
         failure_threshold: 1,
         reset_timeout: Duration::from_secs(60),
-        ..Default::default()
+        success_threshold: 3,
+        failure_window: Duration::from_secs(60),
     };
     let cb = CircuitBreaker::with_config(config);
 
@@ -195,7 +202,9 @@ fn test_concurrent_access() {
 
     let cb = Arc::new(CircuitBreaker::with_config(CircuitBreakerConfig {
         failure_threshold: 100,
-        ..Default::default()
+        reset_timeout: Duration::from_secs(30),
+        success_threshold: 3,
+        failure_window: Duration::from_secs(60),
     }));
 
     let mut handles = vec![];

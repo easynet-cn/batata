@@ -42,6 +42,14 @@ path = "tests/plugin_model_test.rs"
 name = "traits_test"
 path = "tests/traits_test.rs"
 
+[[test]]
+name = "core_extended_test"
+path = "tests/core_extended_test.rs"
+
+[[test]]
+name = "naming_extended_test"
+path = "tests/naming_extended_test.rs"
+
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }
 batata-maintainer-client = { path = "../../crates/batata-maintainer-client" }

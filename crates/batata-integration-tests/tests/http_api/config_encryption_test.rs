@@ -345,21 +345,48 @@ async fn test_encryption_algorithms() {
     // Test with different algorithms (if supported)
     let algorithms: &[&str] = &["AES-128", "AES-256", "RSA"];
 
+    let mut published_count = 0;
     for algorithm in algorithms {
         let data_id = unique_data_id(&format!("algo_{}", algorithm.replace('-', "")));
+        let content = format!("{}.value=1", algorithm);
 
-        let _: serde_json::Value = client
+        let result: Result<serde_json::Value, _> = client
             .post_form(
                 "/nacos/v2/cs/config",
                 &[
                     ("dataId", data_id.as_str()),
                     ("group", DEFAULT_GROUP),
-                    ("content", format!("{}.value=1", algorithm).as_str()),
+                    ("content", content.as_str()),
                     ("ciphertextDataKey", format!("{}-key", algorithm).as_str()),
                     ("ciphertextDataEncryptAlgorithm", algorithm),
                 ],
             )
-            .await
-            .unwrap_or(serde_json::json!(true)); // May fail if not supported
+            .await;
+
+        if result.is_ok() {
+            published_count += 1;
+
+            // Verify the config was actually stored
+            let retrieved: serde_json::Value = client
+                .get_with_query(
+                    "/nacos/v2/cs/config",
+                    &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+                )
+                .await
+                .expect("Should be able to retrieve published config");
+            assert_eq!(
+                retrieved.get("data").and_then(|d| d.as_str()).unwrap_or(""),
+                content,
+                "Retrieved config content should match published content for algorithm {}",
+                algorithm
+            );
+        }
+        // Algorithm may not be supported — that's acceptable
     }
+
+    // At least one algorithm should be supported
+    assert!(
+        published_count > 0,
+        "At least one encryption algorithm should be supported"
+    );
 }

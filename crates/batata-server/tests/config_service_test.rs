@@ -336,4 +336,15 @@ fn test_manager_concurrent_read_write() {
     for handle in handles {
         handle.join().unwrap();
     }
+
+    // Verify concurrent operations left the manager in a consistent state
+    assert!(
+        manager.watcher_count() >= 5,
+        "Pre-registered watchers plus writers should exist"
+    );
+    let watchers = manager.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
+    assert!(
+        !watchers.is_empty(),
+        "Should have watchers matching public>>DEFAULT_GROUP>>app-config"
+    );
 }

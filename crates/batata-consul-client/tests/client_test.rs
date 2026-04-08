@@ -259,6 +259,7 @@ async fn test_agent_service_register() {
     Mock::given(method("PUT"))
         .and(path("/v1/agent/service/register"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -273,6 +274,7 @@ async fn test_agent_service_register() {
         .agent_service_register(&reg, &WriteOptions::default())
         .await
         .unwrap();
+    // Mock's expect(1) verifies the request was sent exactly once
 }
 
 #[tokio::test]
@@ -283,6 +285,7 @@ async fn test_agent_service_deregister() {
     Mock::given(method("PUT"))
         .and(path("/v1/agent/service/deregister/my-service"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -290,6 +293,7 @@ async fn test_agent_service_deregister() {
         .agent_service_deregister("my-service", &WriteOptions::default())
         .await
         .unwrap();
+    // Mock's expect(1) verifies the deregister request was sent exactly once
 }
 
 #[tokio::test]
@@ -380,6 +384,7 @@ async fn test_agent_join() {
     Mock::given(method("PUT"))
         .and(path("/v1/agent/join/10.0.0.2"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -397,6 +402,7 @@ async fn test_agent_leave() {
     Mock::given(method("PUT"))
         .and(path("/v1/agent/leave"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -411,6 +417,7 @@ async fn test_agent_force_leave() {
     Mock::given(method("PUT"))
         .and(path("/v1/agent/force-leave/bad-node"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -430,6 +437,7 @@ async fn test_agent_maintenance() {
         .and(query_param("enable", "true"))
         .and(query_param("reason", "upgrade"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -575,6 +583,11 @@ async fn test_health_checks() {
         .await
         .unwrap();
     assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].check_id, "service:web");
+    assert_eq!(checks[0].name, "Web check");
+    assert_eq!(checks[0].status, "passing");
+    assert_eq!(checks[0].service_name, "web");
+    assert_eq!(checks[0].node, "node1");
 }
 
 // ==================== Catalog Tests ====================
@@ -711,6 +724,7 @@ async fn test_catalog_register() {
     Mock::given(method("PUT"))
         .and(path("/v1/catalog/register"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -734,6 +748,7 @@ async fn test_catalog_deregister() {
     Mock::given(method("PUT"))
         .and(path("/v1/catalog/deregister"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -784,6 +799,7 @@ async fn test_session_destroy() {
     Mock::given(method("PUT"))
         .and(path("/v1/session/destroy/session-abc-123"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -858,6 +874,8 @@ async fn test_session_renew() {
         .await
         .unwrap();
     assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id.as_deref(), Some("session-abc-123"));
+    assert_eq!(sessions[0].name.as_deref(), Some("my-session"));
 }
 
 #[tokio::test]
@@ -914,6 +932,8 @@ async fn test_status_peers() {
 
     let (peers, _) = client.status_peers(&QueryOptions::default()).await.unwrap();
     assert_eq!(peers.len(), 2);
+    assert_eq!(peers[0], "10.0.0.1:8300");
+    assert_eq!(peers[1], "10.0.0.2:8300");
 }
 
 // ==================== Event Tests ====================
@@ -961,6 +981,9 @@ async fn test_event_list() {
         .await
         .unwrap();
     assert_eq!(events.len(), 2);
+    assert_eq!(events[0].id.as_deref(), Some("event-1"));
+    assert_eq!(events[0].name, "deploy");
+    assert_eq!(events[1].id.as_deref(), Some("event-2"));
 }
 
 #[tokio::test]
@@ -1022,13 +1045,15 @@ async fn test_query_with_datacenter() {
         .and(path("/v1/catalog/services"))
         .and(query_param("dc", "dc2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
         .mount(&server)
         .await;
 
-    client
+    let (services, _) = client
         .catalog_services(&QueryOptions::default())
         .await
         .unwrap();
+    assert!(services.is_empty(), "expected empty services for dc2 query");
 }
 
 // ==================== Error Tests ====================
@@ -1226,6 +1251,8 @@ async fn test_acl_token_create() {
         .await
         .unwrap();
     assert_eq!(created.accessor_id, "accessor-123");
+    assert_eq!(created.secret_id.as_deref(), Some("secret-456"));
+    assert_eq!(created.description, "test token");
 }
 
 #[tokio::test]
@@ -1287,6 +1314,8 @@ async fn test_acl_token_update() {
         .await
         .unwrap();
     assert_eq!(updated.accessor_id, "accessor-123");
+    assert_eq!(updated.description, "test token");
+    assert!(!updated.local);
 }
 
 #[tokio::test]
@@ -1527,6 +1556,10 @@ async fn test_acl_policy_list() {
         .await
         .unwrap();
     assert_eq!(policies.len(), 2);
+    assert_eq!(policies[0].id, "p1");
+    assert_eq!(policies[0].name, "global-management");
+    assert_eq!(policies[1].id, "p2");
+    assert_eq!(policies[1].name, "node-read");
 }
 
 // ==================== ACL Role Tests ====================
@@ -1563,6 +1596,8 @@ async fn test_acl_role_create() {
         .await
         .unwrap();
     assert_eq!(created.id, "role-abc");
+    assert_eq!(created.name, "admin-role");
+    assert_eq!(created.description, "Admin access");
 }
 
 #[tokio::test]
@@ -1623,6 +1658,7 @@ async fn test_acl_role_update() {
         .await
         .unwrap();
     assert_eq!(updated.id, "role-abc");
+    assert_eq!(updated.name, "admin-role");
 }
 
 #[tokio::test]
@@ -1743,6 +1779,8 @@ async fn test_acl_auth_method_update() {
         .await
         .unwrap();
     assert_eq!(updated.name, "kubernetes");
+    assert_eq!(updated.method_type, "kubernetes");
+    assert_eq!(updated.display_name.as_deref(), Some("K8s Auth"));
 }
 
 #[tokio::test]
@@ -1867,6 +1905,9 @@ async fn test_acl_binding_rule_update() {
         .await
         .unwrap();
     assert_eq!(updated.id, "rule-abc");
+    assert_eq!(updated.auth_method, "kubernetes");
+    assert_eq!(updated.bind_type, "service");
+    assert_eq!(updated.bind_name, "${serviceaccount.name}");
 }
 
 #[tokio::test]
@@ -1907,6 +1948,9 @@ async fn test_acl_binding_rule_list() {
         .await
         .unwrap();
     assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].id, "rule-abc");
+    assert_eq!(rules[0].auth_method, "kubernetes");
+    assert_eq!(rules[0].bind_type, "service");
 }
 
 // ==================== ACL Login/Logout Tests ====================
@@ -1943,6 +1987,7 @@ async fn test_acl_logout() {
     Mock::given(method("PUT"))
         .and(path("/v1/acl/logout"))
         .respond_with(ResponseTemplate::new(200))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -2100,4 +2145,78 @@ fn test_acl_login_params_json() {
     assert_eq!(json["AuthMethod"], "kubernetes");
     assert_eq!(json["BearerToken"], "my-jwt");
     assert_eq!(json["Meta"]["pod"], "web-pod-1");
+}
+
+// ==================== Low-level HTTP Helper Tests ====================
+
+#[tokio::test]
+async fn test_get_raw() {
+    let server = MockServer::start().await;
+    let client = make_client(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1/custom/endpoint"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("raw-response-body")
+                .append_header("X-Consul-Index", "55"),
+        )
+        .mount(&server)
+        .await;
+
+    let (body, meta) = client
+        .get_raw("/v1/custom/endpoint", &QueryOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(body, "raw-response-body");
+    assert_eq!(meta.last_index, 55);
+}
+
+#[tokio::test]
+async fn test_put_bytes() {
+    let server = MockServer::start().await;
+    let client = make_client(&server).await;
+
+    Mock::given(method("PUT"))
+        .and(path("/v1/kv/binary-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let binary_data = vec![0x00, 0x01, 0x02, 0xFF];
+    let (ok, meta) = client
+        .put_bytes(
+            "/v1/kv/binary-key",
+            binary_data,
+            &WriteOptions::default(),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(ok, "put_bytes should return true on success");
+    assert!(meta.request_time.as_nanos() > 0, "Request time should be positive");
+}
+
+#[tokio::test]
+async fn test_put_no_response() {
+    let server = MockServer::start().await;
+    let client = make_client(&server).await;
+
+    Mock::given(method("PUT"))
+        .and(path("/v1/agent/maintenance"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let meta = client
+        .put_no_response(
+            "/v1/agent/maintenance",
+            &WriteOptions::default(),
+            &[("enable", "true".to_string())],
+        )
+        .await
+        .unwrap();
+    assert!(meta.request_time.as_nanos() > 0, "Request time should be positive");
 }

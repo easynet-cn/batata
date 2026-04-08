@@ -67,6 +67,10 @@ path = "tests/parameter_validation_test.rs"
 name = "weight_test"
 path = "tests/weight_test.rs"
 
+[[test]]
+name = "config_filter_test"
+path = "tests/config_filter_test.rs"
+
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }
 batata-api = { path = "../../crates/batata-api" }
@@ -78,3 +82,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 md-5 = "0.10"
 const-hex = "1"
+async-trait = "0.1"

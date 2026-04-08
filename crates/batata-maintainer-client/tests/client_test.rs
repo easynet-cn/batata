@@ -151,6 +151,7 @@ async fn test_update_core_log_level() {
     Mock::given(method("PUT"))
         .and(path("/v3/admin/core/ops/log"))
         .respond_with(api_ok_raw(serde_json::json!(null)))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -2135,4 +2136,137 @@ fn test_config_clone_info() {
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"configId\":1"));
     assert!(json.contains("\"targetGroupName\":\"TARGET_GROUP\""));
+}
+
+// ============================================================================
+// Plugin APIs
+// ============================================================================
+
+#[tokio::test]
+async fn test_plugin_list() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/core/plugin/list"))
+        .respond_with(api_ok_raw(serde_json::json!([
+            {
+                "pluginId": "auth:nacos-auth",
+                "pluginType": "auth",
+                "pluginName": "nacos-auth",
+                "enabled": true,
+                "critical": true,
+                "configurable": false,
+                "exclusive": true
+            }
+        ])))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let plugins = client.plugin_list(None).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].plugin_id, "auth:nacos-auth");
+    assert_eq!(plugins[0].plugin_type, "auth");
+    assert!(plugins[0].enabled);
+    assert!(plugins[0].critical);
+}
+
+#[tokio::test]
+async fn test_plugin_list_filtered() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/core/plugin/list"))
+        .respond_with(api_ok_raw(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let plugins = client.plugin_list(Some("config-encryption")).await.unwrap();
+    assert!(plugins.is_empty());
+}
+
+#[tokio::test]
+async fn test_plugin_detail() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/core/plugin/detail"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "pluginId": "auth:nacos-auth",
+            "pluginType": "auth",
+            "pluginName": "nacos-auth",
+            "enabled": true,
+            "critical": true,
+            "configurable": false
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client.plugin_detail("auth", "nacos-auth").await.unwrap();
+    assert_eq!(detail.plugin_name, "nacos-auth");
+    assert_eq!(detail.plugin_type, "auth");
+    assert!(detail.enabled);
+    assert!(!detail.configurable);
+}
+
+#[tokio::test]
+async fn test_plugin_update_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/core/plugin/status"))
+        .respond_with(api_ok(&true))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let ok = client
+        .plugin_update_status("auth", "nacos-auth", true, false)
+        .await
+        .unwrap();
+    assert!(ok);
+}
+
+#[tokio::test]
+async fn test_plugin_update_config() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/core/plugin/config"))
+        .respond_with(api_ok(&true))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let mut config = HashMap::new();
+    config.insert("keySize".to_string(), "256".to_string());
+    let ok = client
+        .plugin_update_config("config-encryption", "aes", &config, false)
+        .await
+        .unwrap();
+    assert!(ok);
+}
+
+#[tokio::test]
+async fn test_plugin_availability() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/core/plugin/availability"))
+        .respond_with(api_ok_raw(serde_json::json!({
+            "pluginId": "auth:nacos-auth",
+            "available": true,
+            "availableCount": 1,
+            "totalCount": 1
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let avail = client
+        .plugin_availability("auth", "nacos-auth")
+        .await
+        .unwrap();
+    assert_eq!(avail.plugin_id, "auth:nacos-auth");
+    assert!(avail.available);
+    assert_eq!(avail.available_count, Some(1));
+    assert_eq!(avail.total_count, Some(1));
 }

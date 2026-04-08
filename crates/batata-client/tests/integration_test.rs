@@ -46,10 +46,10 @@ fn create_grpc_config(module: &str) -> GrpcClientConfig {
 #[ignore]
 async fn test_http_client_basic_request() -> anyhow::Result<()> {
     // BatataHttpClient automatically authenticates on construction
+    // If authentication fails, new() returns Err, so reaching this point proves success
     let config = create_http_config();
     let _client = BatataHttpClient::new(config).await?;
 
-    println!("✓ HTTP client created and authenticated successfully");
     Ok(())
 }
 
@@ -289,8 +289,9 @@ async fn test_naming_service_register_and_deregister() -> anyhow::Result<()> {
     let instances = naming_service
         .get_all_instances(TEST_NAMESPACE, TEST_GROUP, &service_name)
         .await?;
-    assert!(!instances.is_empty());
-    println!("✓ Found {} instance(s)", instances.len());
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].ip, "127.0.0.1");
+    assert_eq!(instances[0].port, 8080);
 
     // Deregister instance
     naming_service
@@ -399,7 +400,11 @@ async fn test_naming_service_multiple_instances() -> anyhow::Result<()> {
         .get_all_instances(TEST_NAMESPACE, TEST_GROUP, &service_name)
         .await?;
     assert_eq!(all_instances.len(), 3);
-    println!("✓ Retrieved all {} instances", all_instances.len());
+    // Verify all registered ports are present
+    let ports: Vec<i32> = all_instances.iter().map(|i| i.port).collect();
+    assert!(ports.contains(&8080));
+    assert!(ports.contains(&8081));
+    assert!(ports.contains(&8082));
 
     // Deregister all instances
     for instance in instances {

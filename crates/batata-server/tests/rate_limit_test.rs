@@ -18,7 +18,8 @@ fn test_rate_limit_config_default() {
 
     assert_eq!(config.max_requests, 100);
     assert_eq!(config.window_duration, Duration::from_secs(60));
-    assert!(config.enabled);
+    assert!(!config.enabled, "Rate limiting is disabled by default");
+    assert_eq!(config.max_tracked_ips, 100_000);
 }
 
 #[test]

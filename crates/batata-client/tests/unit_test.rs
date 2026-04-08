@@ -51,6 +51,9 @@ fn test_http_config_multiple_servers() {
     let config = HttpClientConfig::with_servers(servers);
 
     assert_eq!(config.server_addrs.len(), 3);
+    assert_eq!(config.server_addrs[0], "http://server1:8848");
+    assert_eq!(config.server_addrs[1], "http://server2:8848");
+    assert_eq!(config.server_addrs[2], "http://server3:8848");
 }
 
 // ============== gRPC Client Configuration Tests ==============
@@ -222,7 +225,11 @@ fn test_page_serialization() {
 
     let deserialized: Page<ConfigBasicInfo> = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.total_count, 100);
+    assert_eq!(deserialized.page_number, 1);
+    assert_eq!(deserialized.pages_available, 10);
     assert_eq!(deserialized.page_items.len(), 2);
+    assert_eq!(deserialized.page_items[0].data_id, "config1.yaml");
+    assert_eq!(deserialized.page_items[1].data_id, "config2.yaml");
 }
 
 #[test]
