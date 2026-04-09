@@ -243,7 +243,26 @@ impl AclStore {
         }
     }
 
+    /// Check if a token with the given accessor_id exists (O(1) via index).
+    pub fn has_token_by_accessor(&self, accessor_id: &str) -> bool {
+        match self {
+            Self::Memory { tokens, .. } => {
+                tokens.iter().any(|e| e.value().accessor_id == accessor_id)
+            }
+            Self::Persistent { .. } => self
+                .rocks_get_raw(&format!("token_accessor::{}", accessor_id))
+                .is_some(),
+        }
+    }
+
+    /// Find token by accessor_id and return it (O(1) via index).
+    pub fn get_token_by_accessor(&self, accessor_id: &str) -> Option<AclToken> {
+        self.find_token_by_accessor(accessor_id)
+            .map(|(_, token)| token)
+    }
+
     /// Check if any token matches a predicate.
+    /// NOTE: For accessor_id checks, prefer `has_token_by_accessor()` (O(1) vs O(N)).
     pub fn any_token<F: Fn(&AclToken) -> bool>(&self, f: F) -> bool {
         match self {
             Self::Memory { tokens, .. } => tokens.iter().any(|e| f(e.value())),
@@ -252,6 +271,7 @@ impl AclStore {
     }
 
     /// Find first token matching a predicate.
+    /// NOTE: For accessor_id lookups, prefer `get_token_by_accessor()` (O(1) vs O(N)).
     pub fn find_token<F: Fn(&AclToken) -> bool>(&self, f: F) -> Option<AclToken> {
         match self {
             Self::Memory { tokens, .. } => tokens.iter().find_map(|e| {

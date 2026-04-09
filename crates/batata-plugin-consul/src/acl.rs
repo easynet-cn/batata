@@ -34,6 +34,23 @@ static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
         .build()
 });
 
+// Cache for parsed policy rules (avoids re-parsing rule strings on every authorize() call)
+// Key: policy_id, Value: parsed rules. Invalidated by TTL when policy is updated.
+static PARSED_RULES_CACHE: LazyLock<Cache<String, ParsedRules>> = LazyLock::new(|| {
+    Cache::builder()
+        .time_to_live(Duration::from_secs(60))
+        .max_capacity(1_000)
+        .build()
+});
+
+// Cache for policy lookups (avoids double/triple RocksDB reads on name-based lookups)
+static POLICY_CACHE: LazyLock<Cache<String, AclPolicy>> = LazyLock::new(|| {
+    Cache::builder()
+        .time_to_live(Duration::from_secs(30))
+        .max_capacity(1_000)
+        .build()
+});
+
 /// Expanded ACL token with resolved policies and roles
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -303,7 +320,7 @@ impl AclService {
         let store = AclStore::persistent(db);
 
         // Check if bootstrap token already exists in RocksDB
-        let loaded_bootstrap = store.any_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID);
+        let loaded_bootstrap = store.has_token_by_accessor(BOOTSTRAP_ACCESSOR_ID);
 
         let mut svc = Self {
             enabled: true,
@@ -392,16 +409,14 @@ query_prefix "" { policy = "write" }
         self.store.put_token(&bootstrap_secret, &bootstrap_token);
     }
 
-    /// Find the bootstrap token by its well-known accessor ID.
+    /// Find the bootstrap token by its well-known accessor ID (O(1) via index).
     pub fn find_bootstrap_token(&self) -> Option<AclToken> {
-        self.store
-            .find_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID)
+        self.store.get_token_by_accessor(BOOTSTRAP_ACCESSOR_ID)
     }
 
-    /// Check if the bootstrap token has already been created.
+    /// Check if the bootstrap token has already been created (O(1) via index).
     pub fn is_bootstrapped(&self) -> bool {
-        self.store
-            .any_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID)
+        self.store.has_token_by_accessor(BOOTSTRAP_ACCESSOR_ID)
     }
 
     /// Check if ACL is enabled
@@ -638,7 +653,12 @@ query_prefix "" { policy = "write" }
 
     /// Delete a policy by ID
     pub async fn delete_policy(&self, id: &str) -> bool {
-        if self.store.remove_policy(id).is_some() {
+        if let Some(policy) = self.store.remove_policy(id) {
+            // Invalidate caches
+            POLICY_CACHE.invalidate(id);
+            POLICY_CACHE.invalidate(&policy.name);
+            PARSED_RULES_CACHE.invalidate(id);
+
             if let Some(ref raft) = self.raft_node {
                 match raft
                     .write(ConsulRaftRequest::ACLPolicyDelete { id: id.to_string() })
@@ -659,9 +679,21 @@ query_prefix "" { policy = "write" }
         }
     }
 
-    /// Get a policy by ID or name
+    /// Get a policy by ID or name (cached for hot-path authorization)
     pub fn get_policy(&self, id_or_name: &str) -> Option<AclPolicy> {
-        self.store.get_policy(id_or_name)
+        if let Some(cached) = POLICY_CACHE.get(id_or_name) {
+            return Some(cached);
+        }
+        let policy = self.store.get_policy(id_or_name)?;
+        POLICY_CACHE.insert(id_or_name.to_string(), policy.clone());
+        // Also cache by the other key (if looked up by name, cache by id too)
+        if id_or_name != policy.id {
+            POLICY_CACHE.insert(policy.id.clone(), policy.clone());
+        }
+        if id_or_name != policy.name {
+            POLICY_CACHE.insert(policy.name.clone(), policy.clone());
+        }
+        Some(policy)
     }
 
     /// List all policies
@@ -1036,11 +1068,17 @@ query_prefix "" { policy = "write" }
             return AuthzResult::allowed();
         }
 
-        // Get all rules from token's policies
+        // Get all rules from token's policies (cached to avoid re-parsing on every request)
         let mut all_rules = ParsedRules::default();
         for policy_link in &token.policies {
             if let Some(policy) = self.get_policy(&policy_link.id) {
-                let parsed = self.parse_rules(&policy.rules);
+                let parsed = if let Some(cached) = PARSED_RULES_CACHE.get(&policy.id) {
+                    cached
+                } else {
+                    let fresh = self.parse_rules(&policy.rules);
+                    PARSED_RULES_CACHE.insert(policy.id.clone(), fresh.clone());
+                    fresh
+                };
                 all_rules.agent_rules.extend(parsed.agent_rules);
                 all_rules.key_rules.extend(parsed.key_rules);
                 all_rules.node_rules.extend(parsed.node_rules);
@@ -2051,8 +2089,13 @@ impl AclService {
         // Update name mapping if name changed
         if old_name != policy.name {
             self.store.remove_policy_name_index(&old_name);
+            POLICY_CACHE.invalidate(&old_name);
         }
         self.store.put_policy(&policy);
+        // Invalidate caches for this policy
+        POLICY_CACHE.invalidate(&policy.id);
+        POLICY_CACHE.invalidate(&policy.name);
+        PARSED_RULES_CACHE.invalidate(&policy.id);
         Some(policy)
     }
 
