@@ -19,8 +19,8 @@ use tracing::{debug, error, info, warn};
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use crate::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
-    CF_CONSUL_COORDINATES, CF_CONSUL_EVENTS, CF_CONSUL_INTENTIONS, CF_CONSUL_KV,
-    CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
+    CF_CONSUL_COORDINATES, CF_CONSUL_EVENTS, CF_CONSUL_HEALTH_CHECKS, CF_CONSUL_INTENTIONS,
+    CF_CONSUL_KV, CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
     CF_CONSUL_SESSIONS,
 };
 use crate::index_provider::{ConsulTable, ConsulTableIndex};
@@ -69,6 +69,7 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             CF_CONSUL_EVENTS.to_string(),
             CF_CONSUL_NAMESPACES.to_string(),
             CF_CONSUL_CATALOG.to_string(),
+            CF_CONSUL_HEALTH_CHECKS.to_string(),
         ]
     }
 
@@ -207,7 +208,9 @@ fn apply_consul_request(
             | ConsulRaftRequest::ACLRoleDelete { .. }
             | ConsulRaftRequest::ACLAuthMethodSet { .. }
             | ConsulRaftRequest::ACLAuthMethodDelete { .. }
-            | ConsulRaftRequest::ACLBootstrap { .. } => ConsulTable::ACL,
+            | ConsulRaftRequest::ACLBootstrap { .. }
+            | ConsulRaftRequest::ACLBindingRuleSet { .. }
+            | ConsulRaftRequest::ACLBindingRuleDelete { .. } => ConsulTable::ACL,
             // Query
             ConsulRaftRequest::QueryCreate { .. }
             | ConsulRaftRequest::QueryUpdate { .. }
@@ -236,6 +239,9 @@ fn apply_consul_request(
             // Catalog
             ConsulRaftRequest::CatalogRegister { .. }
             | ConsulRaftRequest::CatalogDeregister { .. } => ConsulTable::Catalog,
+            // HealthCheck
+            ConsulRaftRequest::HealthCheckRegister { .. }
+            | ConsulRaftRequest::HealthCheckDeregister { .. } => ConsulTable::Catalog,
             // Internal
             ConsulRaftRequest::Noop => ConsulTable::KVS,
         };
@@ -367,6 +373,19 @@ fn apply_consul_request(
             &format!("auth_method::{}", name),
             log_index,
         ),
+        ConsulRaftRequest::ACLBindingRuleSet { id, rule_json } => apply_generic_put(
+            db,
+            CF_CONSUL_ACL,
+            &format!("binding_rule::{}", id),
+            &rule_json,
+            log_index,
+        ),
+        ConsulRaftRequest::ACLBindingRuleDelete { id } => apply_generic_delete(
+            db,
+            CF_CONSUL_ACL,
+            &format!("binding_rule::{}", id),
+            log_index,
+        ),
 
         // === Query: write to CF_CONSUL_QUERIES ===
         ConsulRaftRequest::QueryCreate { id, query_json }
@@ -455,6 +474,21 @@ fn apply_consul_request(
         } => apply_generic_put(db, CF_CONSUL_CATALOG, &key, &registration_json, log_index),
         ConsulRaftRequest::CatalogDeregister { key } => {
             apply_generic_delete(db, CF_CONSUL_CATALOG, &key, log_index)
+        }
+
+        // === HealthCheck: write to CF_CONSUL_HEALTH_CHECKS ===
+        ConsulRaftRequest::HealthCheckRegister {
+            check_id,
+            config_json,
+        } => apply_generic_put(
+            db,
+            CF_CONSUL_HEALTH_CHECKS,
+            &check_id,
+            &config_json,
+            log_index,
+        ),
+        ConsulRaftRequest::HealthCheckDeregister { check_id } => {
+            apply_generic_delete(db, CF_CONSUL_HEALTH_CHECKS, &check_id, log_index)
         }
 
         ConsulRaftRequest::Noop => ConsulRaftResponse::success(),

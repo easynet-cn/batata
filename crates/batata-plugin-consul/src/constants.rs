@@ -37,3 +37,6 @@ pub const CF_CONSUL_NAMESPACES: &str = "consul_namespaces";
 
 // Catalog (service registrations)
 pub const CF_CONSUL_CATALOG: &str = "consul_catalog";
+
+// Health check configurations (persisted for restart recovery)
+pub const CF_CONSUL_HEALTH_CHECKS: &str = "consul_health_checks";

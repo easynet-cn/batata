@@ -1175,6 +1175,12 @@ struct GrayPublishForm {
     pub beta_ips: String,
     #[serde(default)]
     pub tag: String,
+    /// Percentage for percentage-based gray release (0-100)
+    #[serde(default)]
+    pub percentage: Option<u8>,
+    /// CIDR ranges for IP-range gray release (comma-separated, e.g. "10.0.0.0/8,172.16.0.0/12")
+    #[serde(default, alias = "ipRange")]
+    pub ip_range: String,
     #[serde(default, alias = "appName")]
     pub app_name: String,
     #[serde(default, alias = "srcUser")]
@@ -1238,7 +1244,7 @@ async fn publish_gray_config(
         .unwrap_or_default()
         .to_owned();
 
-    // Determine gray type from parameters
+    // Determine gray type from parameters (priority: beta > tag > percentage > ipRange)
     let (gray_name, gray_rule_json) = if !form.beta_ips.is_empty() {
         let rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
             &form.beta_ips,
@@ -1271,12 +1277,52 @@ async fn publish_gray_config(
                 );
             }
         }
+    } else if let Some(pct) = form.percentage {
+        if pct > 100 {
+            return model::common::Result::<String>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::PARAMETER_MISSING.code,
+                error::PARAMETER_MISSING.message.to_string(),
+                "Parameter 'percentage' must be between 0 and 100",
+            );
+        }
+        let rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_percentage(
+            pct,
+            crate::model::gray_rule::PercentageGrayRule::PRIORITY,
+        );
+        match rule_info.to_json() {
+            Ok(json) => (format!("percentage_{}", pct), json),
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        }
+    } else if !form.ip_range.is_empty() {
+        let rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_ip_range(
+            &form.ip_range,
+            crate::model::gray_rule::IpRangeGrayRule::PRIORITY,
+        );
+        match rule_info.to_json() {
+            Ok(json) => ("ip_range".to_string(), json),
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        }
     } else {
         return model::common::Result::<String>::http_response(
             StatusCode::BAD_REQUEST.as_u16(),
             error::PARAMETER_MISSING.code,
             error::PARAMETER_MISSING.message.to_string(),
-            "Either 'betaIps' or 'tag' must be provided",
+            "One of 'betaIps', 'tag', 'percentage', or 'ipRange' must be provided",
         );
     };
 

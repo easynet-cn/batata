@@ -55,8 +55,10 @@ pub struct HealthCheckReactor {
     /// Task handles for cancellation
     task_handles: Arc<DashMap<String, JoinHandle<()>>>,
 
-    /// Optional registry for unified health checks
-    registry: Option<Arc<InstanceCheckRegistry>>,
+    /// Optional registry for unified health checks.
+    /// Wrapped in Arc<RwLock<>> so the event loop always sees the latest registry
+    /// even when `set_registry()` is called after the event loop has started.
+    registry: Arc<std::sync::RwLock<Option<Arc<InstanceCheckRegistry>>>>,
 
     /// Interceptor chain for cluster-aware health check execution.
     /// Wrapped in Arc<RwLock<>> so the event loop always sees the latest chain
@@ -76,7 +78,7 @@ impl HealthCheckReactor {
             tasks: Arc::new(DashMap::new()),
             sender,
             task_handles: Arc::new(DashMap::new()),
-            registry: None,
+            registry: Arc::new(std::sync::RwLock::new(None)),
             interceptor_chain: Arc::new(std::sync::RwLock::new(standalone_chain)),
         };
 
@@ -86,9 +88,10 @@ impl HealthCheckReactor {
         reactor
     }
 
-    /// Set the registry for unified health checks
-    pub fn set_registry(&mut self, registry: Arc<InstanceCheckRegistry>) {
-        self.registry = Some(registry);
+    /// Set the registry for unified health checks.
+    /// Can be called after the event loop has started — the loop reads through the RwLock.
+    pub fn set_registry(&self, registry: Arc<InstanceCheckRegistry>) {
+        *self.registry.write().unwrap_or_else(|e| e.into_inner()) = Some(registry);
     }
 
     /// Replace the interceptor chain (e.g., upgrading from standalone to cluster mode).
@@ -106,7 +109,7 @@ impl HealthCheckReactor {
         let config = self.config.clone();
         let tasks = self.tasks.clone();
         let task_handles = self.task_handles.clone();
-        let registry = self.registry.clone();
+        let registry_lock = self.registry.clone();
         let interceptor_chain_lock = self.interceptor_chain.clone();
 
         tokio::spawn(async move {
@@ -152,6 +155,10 @@ impl HealthCheckReactor {
                         debug!("Cancelled health check task: {}", task_id);
                     }
                     ReactorMessage::ScheduleRegistryCheck { check_key } => {
+                        let registry = registry_lock
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
                         if let Some(ref reg) = registry {
                             let reg_clone = reg.clone();
                             let check_key_clone = check_key.clone();
@@ -447,6 +454,167 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // No crash = success
+    }
+
+    #[tokio::test]
+    async fn test_reactor_schedule_registry_check_executes() {
+        use crate::healthcheck::registry::*;
+
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+
+        // Create registry and set it AFTER reactor creation (reproducing real startup order)
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
+
+        // Register a TCP check pointing to an unreachable port
+        let check_config = InstanceCheckConfig {
+            check_id: "reactor-exec-test".to_string(),
+            name: "Reactor execution test".to_string(),
+            check_type: CheckType::Tcp,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "test-svc".to_string(),
+            ip: "127.0.0.1".to_string(),
+            port: 19,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: Some("127.0.0.1:19".to_string()), // Port 19 — typically not listening
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_millis(100), // Fast interval for test
+            timeout: Duration::from_millis(200),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            initial_status: CheckStatus::Passing,
+            notes: String::new(),
+            service_tags: vec![],
+        };
+        registry.register_check(check_config);
+
+        // Set registry on reactor (this is the fix — previously the event loop would never see it)
+        reactor.set_registry(registry.clone());
+
+        // Schedule the check
+        reactor.schedule_registry_check("reactor-exec-test");
+
+        // Wait for at least one execution cycle
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        // Verify the check status changed from Passing to Critical
+        let (_, status) = registry
+            .get_check("reactor-exec-test")
+            .expect("Check should still exist");
+        assert_eq!(
+            status.status,
+            CheckStatus::Critical,
+            "TCP check to unreachable port should transition to Critical after reactor execution"
+        );
+        assert!(
+            !status.output.is_empty(),
+            "Check output should contain failure details"
+        );
+    }
+
+    /// End-to-end test: register service + TCP check → reactor executes →
+    /// status becomes Critical → deregister monitor reaps → service removed.
+    #[tokio::test]
+    async fn test_end_to_end_check_execute_and_deregister() {
+        use crate::healthcheck::deregister_monitor::DeregisterMonitor;
+        use crate::healthcheck::registry::*;
+        use crate::model::Instance;
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            naming_service.clone(),
+        ));
+
+        // Step 1: Register an instance in the naming service
+        let instance = Instance {
+            ip: "127.0.0.1".to_string(),
+            port: 19, // unreachable port
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "e2e-svc".to_string(),
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            ..Default::default()
+        };
+        naming_service.register_instance("public", "DEFAULT_GROUP", "e2e-svc", instance);
+
+        // Verify instance exists
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "e2e-svc", "", false);
+        assert_eq!(instances.len(), 1, "Instance should be registered");
+
+        // Step 2: Register a TCP check with deregister_critical_after
+        let check_config = InstanceCheckConfig {
+            check_id: "e2e-tcp-check".to_string(),
+            name: "E2E TCP check".to_string(),
+            check_type: CheckType::Tcp,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "e2e-svc".to_string(),
+            ip: "127.0.0.1".to_string(),
+            port: 19,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: Some("127.0.0.1:19".to_string()),
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_millis(50),
+            timeout: Duration::from_millis(100),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: Some(Duration::from_millis(1)),
+            initial_status: CheckStatus::Passing,
+            notes: String::new(),
+            service_tags: vec![],
+        };
+        registry.register_check(check_config);
+
+        // Step 3: Wire reactor and schedule the check
+        reactor.set_registry(registry.clone());
+        reactor.schedule_registry_check("e2e-tcp-check");
+
+        // Step 4: Wait for the check to execute and fail
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        // Verify check went Critical
+        let (_, status) = registry
+            .get_check("e2e-tcp-check")
+            .expect("Check should still exist");
+        assert_eq!(
+            status.status,
+            CheckStatus::Critical,
+            "TCP check should be Critical after failing"
+        );
+
+        // Step 5: Run deregister monitor reap
+        let monitor = DeregisterMonitor::new(registry.clone(), 30);
+        // The check has been Critical for ~400ms, threshold is 1ms → should reap
+        monitor.reap_critical_instances();
+
+        // Step 6: Verify instance was deregistered
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "e2e-svc", "", false);
+        assert_eq!(
+            instances.len(),
+            0,
+            "Instance should be deregistered after critical threshold exceeded"
+        );
+
+        // Verify check was also removed
+        assert!(
+            registry.get_check("e2e-tcp-check").is_none(),
+            "Check should be removed after deregistration"
+        );
     }
 
     #[tokio::test]

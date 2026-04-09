@@ -2195,7 +2195,10 @@ async fn test_put_bytes() {
         .await
         .unwrap();
     assert!(ok, "put_bytes should return true on success");
-    assert!(meta.request_time.as_nanos() > 0, "Request time should be positive");
+    assert!(
+        meta.request_time.as_nanos() > 0,
+        "Request time should be positive"
+    );
 }
 
 #[tokio::test]
@@ -2218,5 +2221,8 @@ async fn test_put_no_response() {
         )
         .await
         .unwrap();
-    assert!(meta.request_time.as_nanos() > 0, "Request time should be positive");
+    assert!(
+        meta.request_time.as_nanos() > 0,
+        "Request time should be positive"
+    );
 }

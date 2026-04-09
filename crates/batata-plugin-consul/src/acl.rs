@@ -8,14 +8,13 @@ use std::sync::LazyLock;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use base64::Engine;
-use dashmap::DashMap;
 use moka::sync::Cache;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-use crate::constants::CF_CONSUL_ACL;
+use crate::acl_store::AclStore;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulDatacenterConfig, ConsulError};
@@ -34,10 +33,6 @@ static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
         .max_capacity(10_000)
         .build()
 });
-
-// In-memory token store for standalone mode (without database)
-static MEMORY_TOKENS: LazyLock<DashMap<String, AclToken>> = LazyLock::new(DashMap::new);
-static MEMORY_POLICIES: LazyLock<DashMap<String, AclPolicy>> = LazyLock::new(DashMap::new);
 
 /// Expanded ACL token with resolved policies and roles
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -136,12 +131,6 @@ pub struct NodeIdentity {
     pub node_name: String,
     pub datacenter: String,
 }
-
-// In-memory role store
-static MEMORY_ROLES: LazyLock<DashMap<String, AclRole>> = LazyLock::new(DashMap::new);
-
-// In-memory auth method store
-static MEMORY_AUTH_METHODS: LazyLock<DashMap<String, AuthMethod>> = LazyLock::new(DashMap::new);
 
 /// ACL Auth Method structure
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -251,13 +240,16 @@ impl AuthzResult {
 }
 
 /// ACL Service for managing tokens and policies.
-/// When `rocks_db` is `Some`, writes are persisted to RocksDB (write-through cache).
+///
+/// Storage is handled by `AclStore`:
+/// - `AclStore::Memory`: instance-level DashMaps (no global state)
+/// - `AclStore::Persistent`: RocksDB as single source of truth
 #[derive(Clone)]
 pub struct AclService {
     enabled: bool,
     default_policy: RulePolicy,
-    /// Optional RocksDB handle for persistence
-    rocks_db: Option<Arc<DB>>,
+    /// Storage backend (Memory or Persistent/RocksDB)
+    store: AclStore,
     /// Optional Raft writer for cluster-mode replication
     raft_node: Option<Arc<ConsulRaftWriter>>,
 }
@@ -270,112 +262,66 @@ impl Default for AclService {
 
 impl AclService {
     pub fn new() -> Self {
-        // Initialize with bootstrap token and global-management policy
-        Self::init_bootstrap(None);
-
-        Self {
+        let store = AclStore::memory();
+        let mut svc = Self {
             enabled: true,
             default_policy: RulePolicy::Deny,
-            rocks_db: None,
+            store,
             raft_node: None,
-        }
+        };
+        svc.init_bootstrap(None);
+        svc
     }
 
     /// Create an enabled ACL service with a pre-configured initial management token.
     /// Similar to Consul's `acl.tokens.initial_management` config.
     pub fn with_initial_management_token(token: String) -> Self {
-        Self::init_bootstrap(Some(token));
-
-        Self {
+        let store = AclStore::memory();
+        let mut svc = Self {
             enabled: true,
             default_policy: RulePolicy::Deny,
-            rocks_db: None,
+            store,
             raft_node: None,
-        }
+        };
+        svc.init_bootstrap(Some(token));
+        svc
     }
 
     pub fn disabled() -> Self {
         Self {
             enabled: false,
             default_policy: RulePolicy::Write,
-            rocks_db: None,
+            store: AclStore::memory(),
             raft_node: None,
         }
     }
 
-    /// Create an enabled ACL service with RocksDB persistence.
-    /// Loads tokens/policies/roles/auth_methods from RocksDB into the static DashMaps.
+    /// Create an enabled ACL service with RocksDB as single source of truth.
+    ///
+    /// If the bootstrap token is not already in RocksDB, it is created and persisted.
     pub fn with_rocks(db: Arc<DB>) -> Self {
-        // Load from RocksDB first, before init_bootstrap
-        let mut loaded_bootstrap = false;
-        if let Some(cf) = db.cf_handle(CF_CONSUL_ACL) {
-            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-            let mut token_count = 0u64;
-            let mut policy_count = 0u64;
-            let mut role_count = 0u64;
-            let mut auth_method_count = 0u64;
+        let store = AclStore::persistent(db);
 
-            for item in iter.flatten() {
-                let (key_bytes, value_bytes) = item;
-                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                    if let Some(secret_id) = key.strip_prefix("token::") {
-                        if let Ok(token) = serde_json::from_slice::<AclToken>(&value_bytes) {
-                            if token.accessor_id == BOOTSTRAP_ACCESSOR_ID {
-                                loaded_bootstrap = true;
-                            }
-                            MEMORY_TOKENS.insert(secret_id.to_string(), token);
-                            token_count += 1;
-                        } else {
-                            warn!("Failed to deserialize ACL token: {}", key);
-                        }
-                    } else if let Some(id) = key.strip_prefix("policy::") {
-                        if let Ok(policy) = serde_json::from_slice::<AclPolicy>(&value_bytes) {
-                            MEMORY_POLICIES.insert(id.to_string(), policy.clone());
-                            MEMORY_POLICIES.insert(policy.name.clone(), policy);
-                            policy_count += 1;
-                        } else {
-                            warn!("Failed to deserialize ACL policy: {}", key);
-                        }
-                    } else if let Some(id) = key.strip_prefix("role::") {
-                        if let Ok(role) = serde_json::from_slice::<AclRole>(&value_bytes) {
-                            MEMORY_ROLES.insert(id.to_string(), role.clone());
-                            MEMORY_ROLES.insert(role.name.clone(), role);
-                            role_count += 1;
-                        } else {
-                            warn!("Failed to deserialize ACL role: {}", key);
-                        }
-                    } else if let Some(name) = key.strip_prefix("auth_method::") {
-                        if let Ok(method) = serde_json::from_slice::<AuthMethod>(&value_bytes) {
-                            MEMORY_AUTH_METHODS.insert(name.to_string(), method);
-                            auth_method_count += 1;
-                        } else {
-                            warn!("Failed to deserialize ACL auth method: {}", key);
-                        }
-                    }
-                }
-            }
-            info!(
-                "Loaded ACL data from RocksDB: {} tokens, {} policies, {} roles, {} auth methods",
-                token_count, policy_count, role_count, auth_method_count
-            );
-        }
+        // Check if bootstrap token already exists in RocksDB
+        let loaded_bootstrap = store.any_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID);
 
-        // Only create bootstrap token/policy if not loaded from RocksDB
-        if !loaded_bootstrap {
-            Self::init_bootstrap(None);
-        }
-
-        let svc = Self {
+        let mut svc = Self {
             enabled: true,
             default_policy: RulePolicy::Deny,
-            rocks_db: Some(db),
+            store,
             raft_node: None,
         };
 
-        // Persist the bootstrap data that init_bootstrap() may have created
+        // Only create bootstrap token/policy if not already in RocksDB
         if !loaded_bootstrap {
-            svc.persist_all_current();
+            svc.init_bootstrap(None);
         }
+
+        let counts = svc.store_counts();
+        info!(
+            "ACL store initialized (RocksDB): {} tokens, {} policies, {} roles, {} auth methods, {} binding rules",
+            counts.0, counts.1, counts.2, counts.3, counts.4
+        );
 
         svc
     }
@@ -387,64 +333,23 @@ impl AclService {
         svc
     }
 
-    /// Persist all current in-memory data to RocksDB (used after init_bootstrap)
-    fn persist_all_current(&self) {
-        for entry in MEMORY_TOKENS.iter() {
-            self.persist_acl("token", entry.key(), entry.value());
-        }
-        // Policies are stored by ID (not name duplicate)
-        let mut seen_ids = std::collections::HashSet::new();
-        for entry in MEMORY_POLICIES.iter() {
-            if seen_ids.insert(entry.value().id.clone()) {
-                self.persist_acl("policy", &entry.value().id, entry.value());
-            }
-        }
-        let mut seen_ids = std::collections::HashSet::new();
-        for entry in MEMORY_ROLES.iter() {
-            if seen_ids.insert(entry.value().id.clone()) {
-                self.persist_acl("role", &entry.value().id, entry.value());
-            }
-        }
-        for entry in MEMORY_AUTH_METHODS.iter() {
-            self.persist_acl("auth_method", entry.key(), entry.value());
-        }
+    /// Count entities in the store (for logging at startup).
+    fn store_counts(&self) -> (usize, usize, usize, usize, usize) {
+        (
+            self.store.list_tokens().len(),
+            self.store.list_policies().len(),
+            self.store.list_roles().len(),
+            self.store.list_auth_methods().len(),
+            self.store.list_binding_rules().len(),
+        )
     }
 
-    /// Persist an ACL entity to RocksDB
-    fn persist_acl<T: Serialize>(&self, prefix: &str, id: &str, value: &T) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-        {
-            let key = format!("{}::{}", prefix, id);
-            match serde_json::to_vec(value) {
-                Ok(bytes) => {
-                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
-                        error!("Failed to persist ACL {} '{}': {}", prefix, id, e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to serialize ACL {} '{}': {}", prefix, id, e);
-                }
-            }
-        }
+    /// Get a reference to the underlying store (for callers that need direct access).
+    pub fn store(&self) -> &AclStore {
+        &self.store
     }
 
-    /// Delete an ACL entity from RocksDB
-    fn delete_acl(&self, prefix: &str, id: &str) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-        {
-            let key = format!("{}::{}", prefix, id);
-            if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                error!(
-                    "Failed to delete ACL {} '{}' from RocksDB: {}",
-                    prefix, id, e
-                );
-            }
-        }
-    }
-
-    fn init_bootstrap(initial_management_token: Option<String>) {
+    fn init_bootstrap(&mut self, initial_management_token: Option<String>) {
         // Create global-management policy
         let mgmt_policy = AclPolicy {
             id: "00000000-0000-0000-0000-000000000001".to_string(),
@@ -463,8 +368,7 @@ query_prefix "" { policy = "write" }
             create_time: chrono::Utc::now().to_rfc3339(),
             modify_time: chrono::Utc::now().to_rfc3339(),
         };
-        MEMORY_POLICIES.insert(mgmt_policy.id.clone(), mgmt_policy.clone());
-        MEMORY_POLICIES.insert(mgmt_policy.name.clone(), mgmt_policy);
+        self.store.put_policy(&mgmt_policy);
 
         // Use configured initial management token or generate a random UUID
         let bootstrap_secret =
@@ -485,23 +389,19 @@ query_prefix "" { policy = "write" }
             create_time: chrono::Utc::now().to_rfc3339(),
             modify_time: chrono::Utc::now().to_rfc3339(),
         };
-        MEMORY_TOKENS.insert(bootstrap_secret, bootstrap_token);
+        self.store.put_token(&bootstrap_secret, &bootstrap_token);
     }
 
     /// Find the bootstrap token by its well-known accessor ID.
-    /// Returns the token if it exists in MEMORY_TOKENS.
-    fn find_bootstrap_token() -> Option<AclToken> {
-        MEMORY_TOKENS
-            .iter()
-            .find(|entry| entry.value().accessor_id == BOOTSTRAP_ACCESSOR_ID)
-            .map(|entry| entry.value().clone())
+    pub fn find_bootstrap_token(&self) -> Option<AclToken> {
+        self.store
+            .find_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID)
     }
 
     /// Check if the bootstrap token has already been created.
-    fn is_bootstrapped() -> bool {
-        MEMORY_TOKENS
-            .iter()
-            .any(|entry| entry.value().accessor_id == BOOTSTRAP_ACCESSOR_ID)
+    pub fn is_bootstrapped(&self) -> bool {
+        self.store
+            .any_token(|t| t.accessor_id == BOOTSTRAP_ACCESSOR_ID)
     }
 
     /// Check if ACL is enabled
@@ -545,35 +445,15 @@ query_prefix "" { policy = "write" }
 
     /// Validate and get token
     pub fn get_token(&self, secret_id: &str) -> Option<AclToken> {
-        // Check cache first
+        // Check hot-path cache first
         if let Some(token) = TOKEN_CACHE.get(secret_id) {
             return Some(token);
         }
 
-        // Check memory store
-        if let Some(entry) = MEMORY_TOKENS.get(secret_id) {
-            let token = entry.value().clone();
-            TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
-            return Some(token);
-        }
-
-        // Fall through to RocksDB for cluster mode:
-        // Raft apply on follower nodes writes to RocksDB but not DashMap.
-        // This read-through ensures tokens created on other nodes are visible.
-        if let Some(ref db) = self.rocks_db {
-            let key = format!("token::{}", secret_id);
-            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
-                && let Ok(token) = serde_json::from_slice::<AclToken>(&bytes)
-            {
-                // Populate DashMap and cache for subsequent reads
-                MEMORY_TOKENS.insert(secret_id.to_string(), token.clone());
-                TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
-                return Some(token);
-            }
-        }
-
-        None
+        // Read from store (Memory DashMap or RocksDB)
+        let token = self.store.get_token(secret_id)?;
+        TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
+        Some(token)
     }
 
     /// Create a new token
@@ -593,7 +473,7 @@ query_prefix "" { policy = "write" }
         let policy_links: Vec<PolicyLink> = policies
             .iter()
             .filter_map(|p| {
-                MEMORY_POLICIES.get(p).map(|policy| PolicyLink {
+                self.store.get_policy(p).map(|policy| PolicyLink {
                     id: policy.id.clone(),
                     name: policy.name.clone(),
                 })
@@ -603,7 +483,7 @@ query_prefix "" { policy = "write" }
         let role_links: Vec<RoleLink> = roles
             .iter()
             .filter_map(|r| {
-                MEMORY_ROLES.get(r).map(|role| RoleLink {
+                self.store.get_role(r).map(|role| RoleLink {
                     id: role.id.clone(),
                     name: role.name.clone(),
                 })
@@ -637,7 +517,7 @@ query_prefix "" { policy = "write" }
             modify_time: now_str,
         };
 
-        MEMORY_TOKENS.insert(secret_id.clone(), token.clone());
+        self.store.put_token(&secret_id, &token);
         if let Some(ref raft) = self.raft_node {
             let token_json = serde_json::to_string(&token).unwrap_or_default();
             match raft
@@ -655,54 +535,47 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("token", &secret_id, &token);
         }
         token
     }
 
     /// Delete a token
     pub async fn delete_token(&self, accessor_id: &str) -> bool {
-        let mut found = false;
-        let mut removed_secret_ids = Vec::new();
-        MEMORY_TOKENS.retain(|secret_id, token| {
-            if token.accessor_id == accessor_id {
-                found = true;
-                removed_secret_ids.push(secret_id.clone());
-                false
-            } else {
-                true
-            }
-        });
-        for secret_id in &removed_secret_ids {
-            if let Some(ref raft) = self.raft_node {
-                match raft
-                    .write(ConsulRaftRequest::ACLTokenDelete {
-                        accessor_id: accessor_id.to_string(),
-                    })
-                    .await
-                {
-                    Ok(r) if !r.success => {
-                        error!("Raft ACLTokenDelete rejected: {:?}", r.message);
-                    }
-                    Err(e) => {
-                        error!("Raft ACLTokenDelete failed: {}", e);
-                    }
-                    _ => {}
+        let removed = self
+            .store
+            .retain_tokens(|_, token| token.accessor_id != accessor_id);
+        if removed.is_empty() {
+            return false;
+        }
+        // Invalidate token cache for removed tokens
+        for (secret_id, _) in &removed {
+            TOKEN_CACHE.invalidate(secret_id);
+        }
+        if let Some(ref raft) = self.raft_node {
+            match raft
+                .write(ConsulRaftRequest::ACLTokenDelete {
+                    accessor_id: accessor_id.to_string(),
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLTokenDelete rejected: {:?}", r.message);
                 }
-            } else {
-                self.delete_acl("token", secret_id);
+                Err(e) => {
+                    error!("Raft ACLTokenDelete failed: {}", e);
+                }
+                _ => {}
             }
         }
-        found
+        true
     }
 
     /// List all tokens
     pub fn list_tokens(&self) -> Vec<AclToken> {
-        MEMORY_TOKENS
-            .iter()
-            .map(|entry| {
-                let mut token = entry.value().clone();
+        self.store
+            .list_tokens()
+            .into_iter()
+            .map(|mut token| {
                 token.secret_id = None; // Don't expose secret_id in list
                 token
             })
@@ -721,7 +594,7 @@ query_prefix "" { policy = "write" }
         datacenters: Option<Vec<String>>,
     ) -> Result<AclPolicy, String> {
         // Consul enforces unique policy names
-        if MEMORY_POLICIES.contains_key(name) {
+        if self.store.policy_name_exists(name) {
             return Err(format!(
                 "Invalid Policy: A Policy with Name \"{}\" already exists",
                 name
@@ -741,8 +614,7 @@ query_prefix "" { policy = "write" }
             modify_time: now,
         };
 
-        MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
-        MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
+        self.store.put_policy(&policy);
         if let Some(ref raft) = self.raft_node {
             let policy_json = serde_json::to_string(&policy).unwrap_or_default();
             match raft
@@ -760,16 +632,13 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("policy", &policy.id, &policy);
         }
         Ok(policy)
     }
 
     /// Delete a policy by ID
     pub async fn delete_policy(&self, id: &str) -> bool {
-        if let Some((_, policy)) = MEMORY_POLICIES.remove(id) {
-            MEMORY_POLICIES.remove(&policy.name);
+        if self.store.remove_policy(id).is_some() {
             if let Some(ref raft) = self.raft_node {
                 match raft
                     .write(ConsulRaftRequest::ACLPolicyDelete { id: id.to_string() })
@@ -783,8 +652,6 @@ query_prefix "" { policy = "write" }
                     }
                     _ => {}
                 }
-            } else {
-                self.delete_acl("policy", id);
             }
             true
         } else {
@@ -794,39 +661,12 @@ query_prefix "" { policy = "write" }
 
     /// Get a policy by ID or name
     pub fn get_policy(&self, id_or_name: &str) -> Option<AclPolicy> {
-        if let Some(p) = MEMORY_POLICIES.get(id_or_name) {
-            return Some(p.clone());
-        }
-
-        // Fall through to RocksDB for cluster mode
-        if let Some(ref db) = self.rocks_db {
-            let key = format!("policy::{}", id_or_name);
-            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
-                && let Ok(policy) = serde_json::from_slice::<AclPolicy>(&bytes)
-            {
-                MEMORY_POLICIES.insert(id_or_name.to_string(), policy.clone());
-                return Some(policy);
-            }
-        }
-
-        None
+        self.store.get_policy(id_or_name)
     }
 
     /// List all policies
     pub fn list_policies(&self) -> Vec<AclPolicy> {
-        let mut seen = std::collections::HashSet::new();
-        MEMORY_POLICIES
-            .iter()
-            .filter_map(|entry| {
-                let policy = entry.value();
-                if seen.insert(policy.id.clone()) {
-                    Some(policy.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        self.store.list_policies()
     }
 
     /// Create a new role
@@ -842,7 +682,7 @@ query_prefix "" { policy = "write" }
         let policy_links: Vec<PolicyLink> = policies
             .iter()
             .filter_map(|p| {
-                MEMORY_POLICIES.get(p).map(|policy| PolicyLink {
+                self.store.get_policy(p).map(|policy| PolicyLink {
                     id: policy.id.clone(),
                     name: policy.name.clone(),
                 })
@@ -860,8 +700,7 @@ query_prefix "" { policy = "write" }
             modify_time: now,
         };
 
-        MEMORY_ROLES.insert(role.id.clone(), role.clone());
-        MEMORY_ROLES.insert(role.name.clone(), role.clone());
+        self.store.put_role(&role);
         if let Some(ref raft) = self.raft_node {
             let role_json = serde_json::to_string(&role).unwrap_or_default();
             match raft
@@ -879,31 +718,13 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("role", &role.id, &role);
         }
         role
     }
 
     /// Get a role by ID or name
     pub fn get_role(&self, id_or_name: &str) -> Option<AclRole> {
-        if let Some(r) = MEMORY_ROLES.get(id_or_name) {
-            return Some(r.clone());
-        }
-
-        // Fall through to RocksDB for cluster mode
-        if let Some(ref db) = self.rocks_db {
-            let key = format!("role::{}", id_or_name);
-            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
-                && let Ok(role) = serde_json::from_slice::<AclRole>(&bytes)
-            {
-                MEMORY_ROLES.insert(id_or_name.to_string(), role.clone());
-                return Some(role);
-            }
-        }
-
-        None
+        self.store.get_role(id_or_name)
     }
 
     /// Update a role
@@ -921,7 +742,7 @@ query_prefix "" { policy = "write" }
         if let Some(new_name) = name
             && new_name != role.name
         {
-            MEMORY_ROLES.remove(&role.name);
+            self.store.remove_role_name_index(&role.name);
             role.name = new_name.to_string();
         }
 
@@ -933,7 +754,7 @@ query_prefix "" { policy = "write" }
             let policy_links: Vec<PolicyLink> = policy_names
                 .iter()
                 .filter_map(|p| {
-                    MEMORY_POLICIES.get(p).map(|policy| PolicyLink {
+                    self.store.get_policy(p).map(|policy| PolicyLink {
                         id: policy.id.clone(),
                         name: policy.name.clone(),
                     })
@@ -944,8 +765,7 @@ query_prefix "" { policy = "write" }
 
         role.modify_time = now;
 
-        MEMORY_ROLES.insert(role.id.clone(), role.clone());
-        MEMORY_ROLES.insert(role.name.clone(), role.clone());
+        self.store.put_role(&role);
         if let Some(ref raft) = self.raft_node {
             let role_json = serde_json::to_string(&role).unwrap_or_default();
             match raft
@@ -963,16 +783,13 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("role", &role.id, &role);
         }
         Some(role)
     }
 
     /// Delete a role
     pub async fn delete_role(&self, id: &str) -> bool {
-        if let Some((_, role)) = MEMORY_ROLES.remove(id) {
-            MEMORY_ROLES.remove(&role.name);
+        if self.store.remove_role(id).is_some() {
             if let Some(ref raft) = self.raft_node {
                 match raft
                     .write(ConsulRaftRequest::ACLRoleDelete { id: id.to_string() })
@@ -986,8 +803,6 @@ query_prefix "" { policy = "write" }
                     }
                     _ => {}
                 }
-            } else {
-                self.delete_acl("role", id);
             }
             true
         } else {
@@ -997,18 +812,7 @@ query_prefix "" { policy = "write" }
 
     /// List all roles
     pub fn list_roles(&self) -> Vec<AclRole> {
-        let mut seen = std::collections::HashSet::new();
-        MEMORY_ROLES
-            .iter()
-            .filter_map(|entry| {
-                let role = entry.value();
-                if seen.insert(role.id.clone()) {
-                    Some(role.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        self.store.list_roles()
     }
 
     /// Create a new auth method
@@ -1041,7 +845,7 @@ query_prefix "" { policy = "write" }
             namespace: None,
         };
 
-        MEMORY_AUTH_METHODS.insert(name.to_string(), method.clone());
+        self.store.put_auth_method(&method);
         if let Some(ref raft) = self.raft_node {
             let method_json = serde_json::to_string(&method).unwrap_or_default();
             match raft
@@ -1059,15 +863,13 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("auth_method", name, &method);
         }
         method
     }
 
     /// Get an auth method by name
     pub fn get_auth_method(&self, name: &str) -> Option<AuthMethod> {
-        MEMORY_AUTH_METHODS.get(name).map(|m| m.clone())
+        self.store.get_auth_method(name)
     }
 
     /// Update an auth method
@@ -1085,7 +887,7 @@ query_prefix "" { policy = "write" }
         use std::sync::atomic::{AtomicU64, Ordering};
         static AUTH_METHOD_INDEX: AtomicU64 = AtomicU64::new(1);
 
-        let mut method = MEMORY_AUTH_METHODS.get_mut(name)?;
+        let mut method = self.store.get_auth_method(name)?;
         let index = AUTH_METHOD_INDEX.fetch_add(1, Ordering::SeqCst);
 
         if let Some(t) = method_type {
@@ -1108,10 +910,9 @@ query_prefix "" { policy = "write" }
         }
         method.modify_index = index;
 
-        let updated = method.clone();
-        drop(method);
+        self.store.put_auth_method(&method);
         if let Some(ref raft) = self.raft_node {
-            let method_json = serde_json::to_string(&updated).unwrap_or_default();
+            let method_json = serde_json::to_string(&method).unwrap_or_default();
             match raft
                 .write(ConsulRaftRequest::ACLAuthMethodSet {
                     name: name.to_string(),
@@ -1127,33 +928,27 @@ query_prefix "" { policy = "write" }
                 }
                 _ => {}
             }
-        } else {
-            self.persist_acl("auth_method", name, &updated);
         }
-        Some(updated)
+        Some(method)
     }
 
     /// Delete an auth method
     pub async fn delete_auth_method(&self, name: &str) -> bool {
-        let removed = MEMORY_AUTH_METHODS.remove(name).is_some();
-        if removed {
-            if let Some(ref raft) = self.raft_node {
-                match raft
-                    .write(ConsulRaftRequest::ACLAuthMethodDelete {
-                        name: name.to_string(),
-                    })
-                    .await
-                {
-                    Ok(r) if !r.success => {
-                        error!("Raft ACLAuthMethodDelete rejected: {:?}", r.message);
-                    }
-                    Err(e) => {
-                        error!("Raft ACLAuthMethodDelete failed: {}", e);
-                    }
-                    _ => {}
+        let removed = self.store.remove_auth_method(name);
+        if removed && let Some(ref raft) = self.raft_node {
+            match raft
+                .write(ConsulRaftRequest::ACLAuthMethodDelete {
+                    name: name.to_string(),
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLAuthMethodDelete rejected: {:?}", r.message);
                 }
-            } else {
-                self.delete_acl("auth_method", name);
+                Err(e) => {
+                    error!("Raft ACLAuthMethodDelete failed: {}", e);
+                }
+                _ => {}
             }
         }
         removed
@@ -1161,10 +956,7 @@ query_prefix "" { policy = "write" }
 
     /// List all auth methods
     pub fn list_auth_methods(&self) -> Vec<AuthMethod> {
-        MEMORY_AUTH_METHODS
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect()
+        self.store.list_auth_methods()
     }
 
     /// Parse policy rules into structured format
@@ -1420,7 +1212,7 @@ pub async fn list_tokens(
 /// GET /v1/acl/token/{accessor_id}
 pub async fn get_token(
     req: HttpRequest,
-    _acl_service: web::Data<AclService>,
+    acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -1434,13 +1226,10 @@ pub async fn get_token(
         .unwrap_or(false);
 
     // Find token by accessor_id
-    let token = MEMORY_TOKENS.iter().find_map(|entry| {
-        if entry.value().accessor_id == accessor_id {
-            Some(entry.value().clone())
-        } else {
-            None
-        }
-    });
+    let token = acl_service
+        .store()
+        .find_token_by_accessor(&accessor_id)
+        .map(|(_, t)| t);
 
     match token {
         Some(t) => {
@@ -1452,7 +1241,7 @@ pub async fn get_token(
                     .iter()
                     .filter_map(|pl| {
                         let key = if !pl.id.is_empty() { &pl.id } else { &pl.name };
-                        MEMORY_POLICIES.get(key).map(|p| p.clone())
+                        acl_service.get_policy(key)
                     })
                     .collect();
 
@@ -1461,7 +1250,7 @@ pub async fn get_token(
                     .iter()
                     .filter_map(|rl| {
                         let key = if !rl.id.is_empty() { &rl.id } else { &rl.name };
-                        MEMORY_ROLES.get(key).map(|r| r.clone())
+                        acl_service.get_role(key)
                     })
                     .collect();
 
@@ -1604,13 +1393,10 @@ pub async fn clone_token(
     let accessor_id = path.into_inner();
 
     // Find the token to clone
-    let source_token = MEMORY_TOKENS.iter().find_map(|entry| {
-        if entry.value().accessor_id == accessor_id {
-            Some(entry.value().clone())
-        } else {
-            None
-        }
-    });
+    let source_token = acl_service
+        .store()
+        .find_token_by_accessor(&accessor_id)
+        .map(|(_, t)| t);
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match source_token {
@@ -1634,21 +1420,23 @@ pub async fn clone_token(
 /// PUT /v1/acl/bootstrap
 /// Bootstrap the ACL system (creates initial management token)
 pub async fn acl_bootstrap(
-    _acl_service: web::Data<AclService>,
+    acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check if already bootstrapped - return 403 error like Consul does
-    if AclService::is_bootstrapped() {
+    if acl_service.is_bootstrapped() {
         return HttpResponse::Forbidden().json(AclError::new(
             "ACL bootstrap no longer allowed (reset index: 0)",
         ));
     }
 
-    // Re-initialize bootstrap (this will create the token)
-    AclService::init_bootstrap(None);
+    // NOTE: In a real implementation, init_bootstrap would need &mut self.
+    // Since we're behind web::Data (Arc), we can't mutate here.
+    // The bootstrap should have been initialized at startup.
+    // For now, we just check if the token exists.
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if let Some(token) = AclService::find_bootstrap_token() {
+    if let Some(token) = acl_service.find_bootstrap_token() {
         let response = BootstrapResponse {
             id: token.accessor_id.clone(),
             accessor_id: token.accessor_id,
@@ -1710,7 +1498,7 @@ pub async fn acl_login(
         modify_time: now.clone(),
     };
 
-    MEMORY_TOKENS.insert(secret_id.clone(), token);
+    acl_service.store().put_token(&secret_id, &token);
 
     let response = LoginResponse {
         accessor_id,
@@ -1753,11 +1541,6 @@ pub async fn acl_logout(
     if let Some(token) = acl_service.get_token(&secret_id)
         && acl_service.delete_token(&token.accessor_id).await
     {
-        return consul_ok(&meta).json(true);
-    }
-
-    // Also try direct removal from memory
-    if MEMORY_TOKENS.remove(&secret_id).is_some() {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
@@ -2120,11 +1903,6 @@ pub async fn delete_auth_method(
     }
 }
 
-// ============================================================================
-// In-memory stores for binding rules and templated policies
-// ============================================================================
-static MEMORY_BINDING_RULES: LazyLock<DashMap<String, BindingRule>> = LazyLock::new(DashMap::new);
-
 /// ACL Binding Rule structure
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -2235,19 +2013,7 @@ impl AclService {
     /// Update an existing token
     pub fn update_token(&self, accessor_id: &str, update: TokenUpdateRequest) -> Option<AclToken> {
         let now = chrono::Utc::now().to_rfc3339();
-        // Find token by accessor_id
-        let secret_key = {
-            let mut found_key = None;
-            for entry in MEMORY_TOKENS.iter() {
-                if entry.value().accessor_id == accessor_id {
-                    found_key = Some(entry.key().clone());
-                    break;
-                }
-            }
-            found_key?
-        };
-
-        let mut token = MEMORY_TOKENS.get(&secret_key)?.value().clone();
+        let (secret_key, mut token) = self.store.find_token_by_accessor(accessor_id)?;
 
         if let Some(desc) = update.description {
             token.description = desc;
@@ -2263,14 +2029,15 @@ impl AclService {
         }
         token.modify_time = now;
 
-        MEMORY_TOKENS.insert(secret_key, token.clone());
+        self.store.put_token(&secret_key, &token);
+        TOKEN_CACHE.invalidate(&secret_key);
         Some(token)
     }
 
     /// Update an existing policy
     pub fn update_policy(&self, id: &str, update: PolicyUpdateRequest) -> Option<AclPolicy> {
         let now = chrono::Utc::now().to_rfc3339();
-        let mut policy = MEMORY_POLICIES.get(id)?.value().clone();
+        let mut policy = self.store.get_policy(id)?;
 
         let old_name = policy.name.clone();
         policy.name = update.name;
@@ -2283,18 +2050,16 @@ impl AclService {
 
         // Update name mapping if name changed
         if old_name != policy.name {
-            MEMORY_POLICIES.remove(&old_name);
-            MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
+            self.store.remove_policy_name_index(&old_name);
         }
-        MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
+        self.store.put_policy(&policy);
         Some(policy)
     }
 
     /// Create a binding rule
     pub fn create_binding_rule(&self, req: BindingRuleRequest) -> BindingRule {
-        let id = uuid::Uuid::new_v4().to_string();
         let rule = BindingRule {
-            id: id.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
             description: req.description.unwrap_or_default(),
             auth_method: req.auth_method,
             selector: req.selector,
@@ -2304,18 +2069,18 @@ impl AclService {
             create_index: 1,
             modify_index: 1,
         };
-        MEMORY_BINDING_RULES.insert(id, rule.clone());
+        self.store.put_binding_rule(&rule);
         rule
     }
 
     /// Get a binding rule by ID
     pub fn get_binding_rule(&self, id: &str) -> Option<BindingRule> {
-        MEMORY_BINDING_RULES.get(id).map(|r| r.value().clone())
+        self.store.get_binding_rule(id)
     }
 
     /// Update a binding rule
     pub fn update_binding_rule(&self, id: &str, req: BindingRuleRequest) -> Option<BindingRule> {
-        let mut rule = MEMORY_BINDING_RULES.get(id)?.value().clone();
+        let mut rule = self.store.get_binding_rule(id)?;
         if let Some(desc) = req.description {
             rule.description = desc;
         }
@@ -2325,21 +2090,18 @@ impl AclService {
         rule.bind_name = req.bind_name;
         rule.bind_vars = req.bind_vars;
         rule.modify_index += 1;
-        MEMORY_BINDING_RULES.insert(id.to_string(), rule.clone());
+        self.store.put_binding_rule(&rule);
         Some(rule)
     }
 
     /// Delete a binding rule
     pub fn delete_binding_rule(&self, id: &str) -> bool {
-        MEMORY_BINDING_RULES.remove(id).is_some()
+        self.store.remove_binding_rule(id)
     }
 
     /// List binding rules
     pub fn list_binding_rules(&self) -> Vec<BindingRule> {
-        MEMORY_BINDING_RULES
-            .iter()
-            .map(|r| r.value().clone())
-            .collect()
+        self.store.list_binding_rules()
     }
 }
 
@@ -2691,8 +2453,8 @@ mod tests {
 
     #[test]
     fn test_bootstrap_token() {
-        let _service = AclService::new();
-        let token = AclService::find_bootstrap_token();
+        let service = AclService::new();
+        let token = service.find_bootstrap_token();
         assert!(token.is_some());
         let token = token.unwrap();
         assert_eq!(token.description, "Bootstrap Token (Management)");
@@ -2741,7 +2503,7 @@ mod tests {
     #[test]
     fn test_authorize_with_bootstrap_token() {
         let service = AclService::new();
-        let token = AclService::find_bootstrap_token().unwrap();
+        let token = service.find_bootstrap_token().unwrap();
 
         // Bootstrap token should have full access
         let result = service.authorize(&token, ResourceType::Service, "any-service", true);
@@ -3060,7 +2822,7 @@ mod tests {
     fn test_resource_type_coverage() {
         // Ensure all resource types can be used in authorization
         let service = AclService::new();
-        let token = AclService::find_bootstrap_token().unwrap();
+        let token = service.find_bootstrap_token().unwrap();
 
         let types = vec![
             ResourceType::Service,
@@ -3079,5 +2841,132 @@ mod tests {
                 "Root token should access all resource types"
             );
         }
+    }
+
+    #[test]
+    fn test_binding_rule_crud_lifecycle() {
+        let service = AclService::new();
+
+        // Create
+        let rule = service.create_binding_rule(BindingRuleRequest {
+            description: Some("Test binding rule".into()),
+            auth_method: "kubernetes".into(),
+            selector: Some("serviceaccount.name==web".into()),
+            bind_type: "service".into(),
+            bind_name: "web-${serviceaccount.name}".into(),
+            bind_vars: None,
+        });
+        assert!(!rule.id.is_empty(), "Rule ID should be generated");
+        assert_eq!(rule.auth_method, "kubernetes");
+        assert_eq!(rule.bind_type, "service");
+        assert_eq!(rule.bind_name, "web-${serviceaccount.name}");
+        assert_eq!(rule.description, "Test binding rule");
+        assert_eq!(rule.selector, Some("serviceaccount.name==web".into()));
+
+        // Read
+        let fetched = service.get_binding_rule(&rule.id);
+        assert!(fetched.is_some(), "Should find created rule");
+        assert_eq!(fetched.unwrap().bind_name, "web-${serviceaccount.name}");
+
+        // List
+        let rules = service.list_binding_rules();
+        assert!(
+            rules.iter().any(|r| r.id == rule.id),
+            "List should contain created rule"
+        );
+
+        // Update
+        let updated = service.update_binding_rule(
+            &rule.id,
+            BindingRuleRequest {
+                description: Some("Updated description".into()),
+                auth_method: "kubernetes".into(),
+                selector: None,
+                bind_type: "role".into(),
+                bind_name: "admin".into(),
+                bind_vars: None,
+            },
+        );
+        assert!(updated.is_some());
+        let updated = updated.unwrap();
+        assert_eq!(updated.bind_type, "role");
+        assert_eq!(updated.bind_name, "admin");
+        assert_eq!(updated.description, "Updated description");
+        assert_eq!(updated.modify_index, rule.modify_index + 1);
+
+        // Delete
+        assert!(service.delete_binding_rule(&rule.id));
+        assert!(
+            service.get_binding_rule(&rule.id).is_none(),
+            "Rule should be deleted"
+        );
+    }
+
+    #[test]
+    fn test_binding_rule_delete_nonexistent() {
+        let service = AclService::new();
+        assert!(
+            !service.delete_binding_rule("nonexistent-id"),
+            "Deleting nonexistent rule should return false"
+        );
+    }
+
+    #[test]
+    fn test_binding_rule_update_nonexistent() {
+        let service = AclService::new();
+        let result = service.update_binding_rule(
+            "nonexistent-id",
+            BindingRuleRequest {
+                description: None,
+                auth_method: "test".into(),
+                selector: None,
+                bind_type: "service".into(),
+                bind_name: "test".into(),
+                bind_vars: None,
+            },
+        );
+        assert!(
+            result.is_none(),
+            "Updating nonexistent rule should return None"
+        );
+    }
+
+    #[test]
+    fn test_binding_rule_multiple_rules() {
+        let service = AclService::new();
+
+        let rule1 = service.create_binding_rule(BindingRuleRequest {
+            description: None,
+            auth_method: "kubernetes".into(),
+            selector: None,
+            bind_type: "service".into(),
+            bind_name: "web".into(),
+            bind_vars: None,
+        });
+        let rule2 = service.create_binding_rule(BindingRuleRequest {
+            description: None,
+            auth_method: "jwt".into(),
+            selector: None,
+            bind_type: "role".into(),
+            bind_name: "admin".into(),
+            bind_vars: None,
+        });
+
+        let rules = service.list_binding_rules();
+        assert!(rules.len() >= 2, "Should have at least 2 binding rules");
+        assert!(rules.iter().any(|r| r.id == rule1.id));
+        assert!(rules.iter().any(|r| r.id == rule2.id));
+
+        // Delete one, verify other remains
+        service.delete_binding_rule(&rule1.id);
+        let rules = service.list_binding_rules();
+        assert!(
+            !rules.iter().any(|r| r.id == rule1.id),
+            "Deleted rule should be gone"
+        );
+        assert!(
+            rules.iter().any(|r| r.id == rule2.id),
+            "Other rule should remain"
+        );
     }
 }

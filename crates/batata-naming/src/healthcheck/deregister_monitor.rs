@@ -43,7 +43,7 @@ impl DeregisterMonitor {
     }
 
     /// Scan for instances that should be auto-deregistered
-    fn reap_critical_instances(&self) {
+    pub(crate) fn reap_critical_instances(&self) {
         let critical_checks = self.registry.get_checks_by_status(&CheckStatus::Critical);
         let now = current_timestamp_ms();
 

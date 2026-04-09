@@ -185,12 +185,37 @@ impl ConsulPlugin {
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
+        // Restore persisted health check configs from RocksDB
+        if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_HEALTH_CHECKS) {
+            let mut restored = 0u64;
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            for item in iter.flatten() {
+                let (_key_bytes, value_bytes) = item;
+                match serde_json::from_slice::<
+                    batata_naming::healthcheck::registry::InstanceCheckConfig,
+                >(&value_bytes)
+                {
+                    Ok(config) => {
+                        registry.register_check(config);
+                        restored += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to restore health check config: {}", e);
+                    }
+                }
+            }
+            if restored > 0 {
+                tracing::info!("Restored {} health check configs from RocksDB", restored);
+            }
+        }
+
         ConsulPluginInner {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(
+            agent: ConsulAgentService::with_raft(
                 naming_store.clone(),
                 registry.clone(),
                 check_index.clone(),
+                consul_raft.clone(),
             ),
             health: ConsulHealthService::new(registry.clone(), check_index)
                 .with_node_name(self.dc_config.node_name.clone()),
@@ -507,7 +532,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         {
             let naming_service = Arc::new(batata_naming::NamingService::new());
             let config = Arc::new(batata_naming::healthcheck::HealthCheckConfig::default());
-            let mut reactor =
+            let reactor =
                 batata_naming::healthcheck::HealthCheckReactor::new(naming_service, config);
             reactor.set_registry(inner.registry.clone());
 

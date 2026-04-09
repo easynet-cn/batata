@@ -2069,4 +2069,78 @@ mod tests {
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
     }
+
+    #[tokio::test]
+    async fn test_scheduler_invoked_for_active_checks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let health_service = create_test_service();
+
+        // Track scheduler invocations
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let scheduled_ids = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+        let count_clone = call_count.clone();
+        let ids_clone = scheduled_ids.clone();
+        health_service.set_check_scheduler(Arc::new(move |check_key| {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            ids_clone.lock().unwrap().push(check_key.to_string());
+        }));
+
+        // Register a TCP check (active) — should invoke scheduler
+        let tcp_reg = CheckRegistration {
+            name: "tcp-active".to_string(),
+            check_id: Some("tcp-active-1".to_string()),
+            service_id: Some("web-1".to_string()),
+            service_name: Some("web".to_string()),
+            tcp: Some("127.0.0.1:8080".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        health_service.register_check(tcp_reg).await.unwrap();
+
+        // Register an HTTP check (active) — should invoke scheduler
+        let http_reg = CheckRegistration {
+            name: "http-active".to_string(),
+            check_id: Some("http-active-1".to_string()),
+            service_id: Some("api-1".to_string()),
+            service_name: Some("api".to_string()),
+            http: Some("http://127.0.0.1:8080/health".to_string()),
+            interval: Some("5s".to_string()),
+            ..Default::default()
+        };
+        health_service.register_check(http_reg).await.unwrap();
+
+        // Register a TTL check (passive) — should NOT invoke scheduler
+        let ttl_reg = CheckRegistration {
+            name: "ttl-passive".to_string(),
+            check_id: Some("ttl-passive-1".to_string()),
+            service_id: Some("db-1".to_string()),
+            service_name: Some("db".to_string()),
+            ttl: Some("30s".to_string()),
+            ..Default::default()
+        };
+        health_service.register_check(ttl_reg).await.unwrap();
+
+        // Verify scheduler was called exactly 2 times (TCP + HTTP, not TTL)
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "Scheduler should be invoked for active checks (TCP, HTTP) but not TTL"
+        );
+
+        let ids = scheduled_ids.lock().unwrap();
+        assert!(
+            ids.contains(&"tcp-active-1".to_string()),
+            "TCP check should be scheduled"
+        );
+        assert!(
+            ids.contains(&"http-active-1".to_string()),
+            "HTTP check should be scheduled"
+        );
+        assert!(
+            !ids.contains(&"ttl-passive-1".to_string()),
+            "TTL check should NOT be scheduled"
+        );
+    }
 }

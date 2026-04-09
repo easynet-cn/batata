@@ -7,13 +7,13 @@
 // GET /v1/query/{uuid}/execute - Execute a prepared query
 // GET /v1/query/{uuid}/explain - Explain a prepared query
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
 use rocksdb::DB;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::constants::CF_CONSUL_QUERIES;
 use crate::raft::ConsulRaftRequest;
@@ -29,18 +29,130 @@ use crate::model::{
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::ConsulRaftWriter;
 
-/// Global prepared query storage
-static QUERIES: LazyLock<DashMap<String, PreparedQuery>> = LazyLock::new(DashMap::new);
-
 /// Index counter for prepared queries
 static QUERY_INDEX: AtomicU64 = AtomicU64::new(1);
 
-/// Prepared query service
-/// When `rocks_db` is `Some`, writes are persisted to RocksDB (write-through cache).
+/// Storage backend for prepared queries.
+///
+/// - `Memory`: instance-level DashMap (for tests and standalone mode)
+/// - `Persistent`: RocksDB as single source of truth
+#[derive(Clone)]
+enum QueryStore {
+    Memory {
+        queries: Arc<DashMap<String, PreparedQuery>>,
+    },
+    Persistent {
+        db: Arc<DB>,
+    },
+}
+
+impl QueryStore {
+    fn memory() -> Self {
+        Self::Memory {
+            queries: Arc::new(DashMap::new()),
+        }
+    }
+
+    fn persistent(db: Arc<DB>) -> Self {
+        Self::Persistent { db }
+    }
+
+    fn get(&self, id: &str) -> Option<PreparedQuery> {
+        match self {
+            Self::Memory { queries } => queries.get(id).map(|e| e.value().clone()),
+            Self::Persistent { db } => {
+                let cf = db.cf_handle(CF_CONSUL_QUERIES)?;
+                let bytes = db.get_cf(cf, id.as_bytes()).ok()??;
+                serde_json::from_slice(&bytes).ok()
+            }
+        }
+    }
+
+    fn get_by_name(&self, name: &str) -> Option<PreparedQuery> {
+        match self {
+            Self::Memory { queries } => queries
+                .iter()
+                .find(|e| e.value().name == name)
+                .map(|e| e.value().clone()),
+            Self::Persistent { .. } => {
+                // Scan all queries for name match
+                self.list().into_iter().find(|q| q.name == name)
+            }
+        }
+    }
+
+    fn put(&self, query: &PreparedQuery) {
+        match self {
+            Self::Memory { queries } => {
+                queries.insert(query.id.clone(), query.clone());
+            }
+            Self::Persistent { db } => {
+                if let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES) {
+                    match serde_json::to_vec(query) {
+                        Ok(bytes) => {
+                            if let Err(e) = db.put_cf(cf, query.id.as_bytes(), &bytes) {
+                                error!("Failed to persist query '{}': {}", query.id, e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to serialize query '{}': {}", query.id, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn remove(&self, id: &str) -> bool {
+        match self {
+            Self::Memory { queries } => queries.remove(id).is_some(),
+            Self::Persistent { db } => {
+                if let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES) {
+                    let existed = db.get_cf(cf, id.as_bytes()).ok().flatten().is_some();
+                    if existed {
+                        if let Err(e) = db.delete_cf(cf, id.as_bytes()) {
+                            error!("Failed to delete query '{}': {}", id, e);
+                        }
+                    }
+                    existed
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn list(&self) -> Vec<PreparedQuery> {
+        match self {
+            Self::Memory { queries } => queries.iter().map(|e| e.value().clone()).collect(),
+            Self::Persistent { db } => {
+                let cf = match db.cf_handle(CF_CONSUL_QUERIES) {
+                    Some(cf) => cf,
+                    None => return vec![],
+                };
+                let mut results = Vec::new();
+                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter.flatten() {
+                    let (_, value_bytes) = item;
+                    if let Ok(query) = serde_json::from_slice::<PreparedQuery>(&value_bytes) {
+                        results.push(query);
+                    }
+                }
+                results
+            }
+        }
+    }
+}
+
+/// Prepared query service.
+///
+/// Storage is handled by `QueryStore`:
+/// - `QueryStore::Memory`: instance-level DashMap (no global state)
+/// - `QueryStore::Persistent`: RocksDB as single source of truth
 #[derive(Clone)]
 pub struct ConsulQueryService {
-    /// Optional RocksDB handle for persistence
-    rocks_db: Option<Arc<DB>>,
+    /// Storage backend
+    store: QueryStore,
     /// Optional Raft writer for cluster-mode replication
     raft_node: Option<Arc<ConsulRaftWriter>>,
 }
@@ -54,45 +166,41 @@ impl Default for ConsulQueryService {
 impl ConsulQueryService {
     pub fn new() -> Self {
         Self {
-            rocks_db: None,
+            store: QueryStore::memory(),
             raft_node: None,
         }
     }
 
-    /// Create a new query service with RocksDB persistence.
-    /// Loads existing queries from RocksDB into the static QUERIES DashMap.
+    /// Create a new query service with RocksDB as single source of truth.
     pub fn with_rocks(db: Arc<DB>) -> Self {
-        if let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES) {
-            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-            let mut loaded = 0u64;
-            let mut max_index = 0u64;
+        let store = QueryStore::persistent(db);
 
-            for item in iter.flatten() {
-                let (_key_bytes, value_bytes) = item;
-                if let Ok(query) = serde_json::from_slice::<PreparedQuery>(&value_bytes) {
-                    if let Some(idx) = query.modify_index
-                        && idx > max_index
-                    {
-                        max_index = idx;
-                    }
-                    QUERIES.insert(query.id.clone(), query);
-                    loaded += 1;
-                } else if let Ok(key) = String::from_utf8(_key_bytes.to_vec()) {
-                    warn!("Failed to deserialize query entry: {}", key);
+        // Sync QUERY_INDEX from stored data
+        let mut max_index = 0u64;
+        for query in store.list() {
+            if let Some(idx) = query.modify_index {
+                if idx > max_index {
+                    max_index = idx;
                 }
             }
-
-            if max_index > 0 {
-                let current = QUERY_INDEX.load(Ordering::SeqCst);
-                if max_index + 1 > current {
-                    QUERY_INDEX.store(max_index + 1, Ordering::SeqCst);
-                }
+        }
+        if max_index > 0 {
+            let current = QUERY_INDEX.load(Ordering::SeqCst);
+            if max_index + 1 > current {
+                QUERY_INDEX.store(max_index + 1, Ordering::SeqCst);
             }
-            info!("Loaded {} prepared queries from RocksDB", loaded);
+        }
+
+        let count = store.list().len();
+        if count > 0 {
+            info!(
+                "Query store initialized (RocksDB): {} prepared queries",
+                count
+            );
         }
 
         Self {
-            rocks_db: Some(db),
+            store,
             raft_node: None,
         }
     }
@@ -102,34 +210,6 @@ impl ConsulQueryService {
         let mut svc = Self::with_rocks(db);
         svc.raft_node = Some(raft_node);
         svc
-    }
-
-    /// Persist a query to RocksDB
-    fn persist_query(&self, query: &PreparedQuery) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES)
-        {
-            match serde_json::to_vec(query) {
-                Ok(bytes) => {
-                    if let Err(e) = db.put_cf(cf, query.id.as_bytes(), &bytes) {
-                        error!("Failed to persist query '{}': {}", query.id, e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to serialize query '{}': {}", query.id, e);
-                }
-            }
-        }
-    }
-
-    /// Delete a query from RocksDB
-    fn delete_query_rocks(&self, id: &str) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES)
-            && let Err(e) = db.delete_cf(cf, id.as_bytes())
-        {
-            error!("Failed to delete query '{}' from RocksDB: {}", id, e);
-        }
     }
 
     /// Create a new prepared query
@@ -149,7 +229,7 @@ impl ConsulQueryService {
             modify_index: Some(index),
         };
 
-        QUERIES.insert(id.clone(), query.clone());
+        self.store.put(&query);
 
         if let Some(ref raft) = self.raft_node {
             let query_json = serde_json::to_string(&query).unwrap_or_default();
@@ -165,8 +245,6 @@ impl ConsulQueryService {
                 }
                 _ => {}
             }
-        } else {
-            self.persist_query(&query);
         }
 
         query
@@ -175,15 +253,11 @@ impl ConsulQueryService {
     /// Get a prepared query by ID or name
     pub fn get_query(&self, id_or_name: &str) -> Option<PreparedQuery> {
         // Try by ID first
-        if let Some(query) = QUERIES.get(id_or_name) {
-            return Some(query.clone());
+        if let Some(query) = self.store.get(id_or_name) {
+            return Some(query);
         }
-
         // Try by name
-        QUERIES
-            .iter()
-            .find(|entry| entry.value().name == id_or_name)
-            .map(|entry| entry.value().clone())
+        self.store.get_by_name(id_or_name)
     }
 
     /// Update a prepared query
@@ -192,7 +266,7 @@ impl ConsulQueryService {
         id: &str,
         request: PreparedQueryCreateRequest,
     ) -> Option<PreparedQuery> {
-        let mut query = QUERIES.get_mut(id)?;
+        let mut query = self.store.get(id)?;
         let index = QUERY_INDEX.fetch_add(1, Ordering::SeqCst);
 
         if let Some(name) = request.name {
@@ -209,11 +283,10 @@ impl ConsulQueryService {
         }
         query.modify_index = Some(index);
 
-        let updated = query.clone();
-        drop(query);
+        self.store.put(&query);
 
         if let Some(ref raft) = self.raft_node {
-            let query_json = serde_json::to_string(&updated).unwrap_or_default();
+            let query_json = serde_json::to_string(&query).unwrap_or_default();
             match raft
                 .write(ConsulRaftRequest::QueryUpdate {
                     id: id.to_string(),
@@ -229,16 +302,14 @@ impl ConsulQueryService {
                 }
                 _ => {}
             }
-        } else {
-            self.persist_query(&updated);
         }
 
-        Some(updated)
+        Some(query)
     }
 
     /// Delete a prepared query
     pub async fn delete_query(&self, id: &str) -> bool {
-        let removed = QUERIES.remove(id).is_some();
+        let removed = self.store.remove(id);
         if removed {
             if let Some(ref raft) = self.raft_node {
                 match raft
@@ -253,8 +324,6 @@ impl ConsulQueryService {
                     }
                     _ => {}
                 }
-            } else {
-                self.delete_query_rocks(id);
             }
         }
         removed
@@ -262,7 +331,7 @@ impl ConsulQueryService {
 
     /// List all prepared queries
     pub fn list_queries(&self) -> Vec<PreparedQuery> {
-        QUERIES.iter().map(|entry| entry.value().clone()).collect()
+        self.store.list()
     }
 }
 

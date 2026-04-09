@@ -30,6 +30,7 @@ pub mod plugin;
 pub mod raft;
 
 pub mod acl;
+pub mod acl_store;
 pub mod agent;
 pub mod catalog;
 pub mod check_index;

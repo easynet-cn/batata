@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 use batata_plugin::HealthCheckResultHandler;
 
 /// Tri-state health check status
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckStatus {
     /// Healthy
     Passing,
@@ -44,7 +44,7 @@ impl CheckStatus {
 }
 
 /// Health check type
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckType {
     /// No active health check
     None,
@@ -92,7 +92,7 @@ impl CheckType {
 }
 
 /// Check configuration (static after registration)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct InstanceCheckConfig {
     /// Unique check ID
     pub check_id: String,
@@ -134,7 +134,7 @@ pub struct InstanceCheckConfig {
 }
 
 /// Check runtime status (updated frequently)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct InstanceCheckStatus {
     /// Current check status
     pub status: CheckStatus,
@@ -619,6 +619,30 @@ impl InstanceCheckRegistry {
 
         true
     }
+
+    // ============================================================================
+    // Snapshot / Restore for persistence
+    // ============================================================================
+
+    /// Snapshot all check configs for persistence. Returns serializable data.
+    ///
+    /// Only configs are snapshotted — runtime status is transient and will be
+    /// re-established by active check execution after restore.
+    pub fn snapshot_configs(&self) -> Vec<InstanceCheckConfig> {
+        self.configs.iter().map(|e| e.value().clone()).collect()
+    }
+
+    /// Restore check configs from persisted data.
+    ///
+    /// Registers each config into the registry with its initial status.
+    /// Active checks should be scheduled after restore by the caller.
+    pub fn restore_configs(&self, configs: Vec<InstanceCheckConfig>) {
+        let count = configs.len();
+        for config in configs {
+            self.register_check(config);
+        }
+        info!("Restored {} health check configs from snapshot", count);
+    }
 }
 
 fn current_timestamp_ms() -> i64 {
@@ -1090,6 +1114,91 @@ mod tests {
         assert!(
             result.is_ok(),
             "Deadlock detected: concurrent register + deregister + queries timed out"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_configs_returns_all_checks() {
+        let ns = test_naming_service();
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
+
+        registry.register_check(make_config(
+            "snap-1",
+            CheckType::Http,
+            CheckStatus::Critical,
+        ));
+        registry.register_check(make_config("snap-2", CheckType::Tcp, CheckStatus::Passing));
+        registry.register_check(make_config("snap-3", CheckType::Ttl, CheckStatus::Warning));
+
+        let snapshot = registry.snapshot_configs();
+        assert_eq!(snapshot.len(), 3, "Should snapshot all 3 check configs");
+
+        let ids: Vec<&str> = snapshot.iter().map(|c| c.check_id.as_str()).collect();
+        assert!(ids.contains(&"snap-1"));
+        assert!(ids.contains(&"snap-2"));
+        assert!(ids.contains(&"snap-3"));
+    }
+
+    #[test]
+    fn test_restore_configs_repopulates_registry() {
+        let ns = test_naming_service();
+        let registry = InstanceCheckRegistry::with_naming_service(ns.clone());
+
+        // Register and snapshot
+        registry.register_check(make_config(
+            "restore-1",
+            CheckType::Http,
+            CheckStatus::Critical,
+        ));
+        registry.register_check(make_config(
+            "restore-2",
+            CheckType::Tcp,
+            CheckStatus::Passing,
+        ));
+        let snapshot = registry.snapshot_configs();
+
+        // Create a fresh registry and restore
+        let registry2 = InstanceCheckRegistry::with_naming_service(ns);
+        assert_eq!(registry2.check_count(), 0);
+
+        registry2.restore_configs(snapshot);
+        assert_eq!(registry2.check_count(), 2, "Should have restored 2 checks");
+
+        // Verify individual checks
+        let c1 = registry2.get_check_config("restore-1");
+        assert!(c1.is_some(), "restore-1 should exist after restore");
+        assert_eq!(c1.unwrap().check_type, CheckType::Http);
+
+        let c2 = registry2.get_check_config("restore-2");
+        assert!(c2.is_some(), "restore-2 should exist after restore");
+        assert_eq!(c2.unwrap().check_type, CheckType::Tcp);
+    }
+
+    #[test]
+    fn test_snapshot_configs_serializable() {
+        let ns = test_naming_service();
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
+
+        let mut config = make_config("serial-1", CheckType::Http, CheckStatus::Critical);
+        config.http_url = Some("http://localhost:8080/health".into());
+        config.deregister_critical_after = Some(Duration::from_secs(90));
+        registry.register_check(config);
+
+        let snapshot = registry.snapshot_configs();
+
+        // Verify JSON serialization roundtrip
+        let json = serde_json::to_string(&snapshot).expect("Should serialize");
+        let deserialized: Vec<InstanceCheckConfig> =
+            serde_json::from_str(&json).expect("Should deserialize");
+        assert_eq!(deserialized.len(), 1);
+        assert_eq!(deserialized[0].check_id, "serial-1");
+        assert_eq!(
+            deserialized[0].http_url,
+            Some("http://localhost:8080/health".into())
+        );
+        assert_eq!(
+            deserialized[0].deregister_critical_after,
+            Some(Duration::from_secs(90))
         );
     }
 }

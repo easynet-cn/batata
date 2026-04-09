@@ -139,6 +139,16 @@ pub enum ConsulRaftRequest {
         token_json: String,
     },
 
+    /// Create or update an ACL binding rule
+    ACLBindingRuleSet {
+        id: String,
+        /// JSON-serialized BindingRule
+        rule_json: String,
+    },
+
+    /// Delete an ACL binding rule
+    ACLBindingRuleDelete { id: String },
+
     // ==================== Prepared Query Operations ====================
     /// Create a prepared query
     QueryCreate {
@@ -260,6 +270,17 @@ pub enum ConsulRaftRequest {
         key: String,
     },
 
+    // ==================== Health Check Operations ====================
+    /// Persist a health check configuration (for restart recovery)
+    HealthCheckRegister {
+        check_id: String,
+        /// JSON-serialized InstanceCheckConfig
+        config_json: String,
+    },
+
+    /// Remove a persisted health check configuration
+    HealthCheckDeregister { check_id: String },
+
     // ==================== Internal ====================
     /// No-operation command
     Noop,
@@ -292,6 +313,8 @@ impl ConsulRaftRequest {
             Self::ACLAuthMethodSet { .. } => "ACLAuthMethodSet",
             Self::ACLAuthMethodDelete { .. } => "ACLAuthMethodDelete",
             Self::ACLBootstrap { .. } => "ACLBootstrap",
+            Self::ACLBindingRuleSet { .. } => "ACLBindingRuleSet",
+            Self::ACLBindingRuleDelete { .. } => "ACLBindingRuleDelete",
             // Query
             Self::QueryCreate { .. } => "QueryCreate",
             Self::QueryUpdate { .. } => "QueryUpdate",
@@ -319,6 +342,9 @@ impl ConsulRaftRequest {
             // Catalog
             Self::CatalogRegister { .. } => "CatalogRegister",
             Self::CatalogDeregister { .. } => "CatalogDeregister",
+            // HealthCheck
+            Self::HealthCheckRegister { .. } => "HealthCheckRegister",
+            Self::HealthCheckDeregister { .. } => "HealthCheckDeregister",
             // Internal
             Self::Noop => "Noop",
         }
@@ -348,5 +374,31 @@ impl ConsulRaftResponse {
             data: None,
             message: Some(msg),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_binding_rule_raft_request_roundtrip() {
+        let req = ConsulRaftRequest::ACLBindingRuleSet {
+            id: "rule-123".into(),
+            rule_json: r#"{"ID":"rule-123","AuthMethod":"kubernetes"}"#.into(),
+        };
+        let serialized = serde_json::to_vec(&req).unwrap();
+        let deserialized: ConsulRaftRequest = serde_json::from_slice(&serialized).unwrap();
+        assert_eq!(deserialized.op_type(), "ACLBindingRuleSet");
+    }
+
+    #[test]
+    fn test_binding_rule_delete_raft_request_roundtrip() {
+        let req = ConsulRaftRequest::ACLBindingRuleDelete {
+            id: "rule-456".into(),
+        };
+        let serialized = serde_json::to_vec(&req).unwrap();
+        let deserialized: ConsulRaftRequest = serde_json::from_slice(&serialized).unwrap();
+        assert_eq!(deserialized.op_type(), "ACLBindingRuleDelete");
     }
 }

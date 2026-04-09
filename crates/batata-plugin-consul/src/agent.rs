@@ -390,7 +390,7 @@ pub async fn register_service(
         .check_index
         .register(&service_id, &service_key, &instance_key);
 
-    // Register validated checks with health service
+    // Register validated checks with health service and persist via Raft
     for check_reg in embedded_checks {
         let check_id = check_reg
             .check_id
@@ -403,6 +403,18 @@ pub async fn register_service(
                 service_id,
                 e
             );
+        } else if let Some(ref raft) = agent.raft_node {
+            // Persist check config for restart recovery
+            if let Some(config) = agent.registry.get_check_config(&check_id) {
+                if let Ok(config_json) = serde_json::to_string(&config) {
+                    let _ = raft
+                        .write(ConsulRaftRequest::HealthCheckRegister {
+                            check_id: check_id.clone(),
+                            config_json,
+                        })
+                        .await;
+                }
+            }
         }
     }
 
@@ -477,7 +489,19 @@ pub async fn deregister_service(
     if deregistered {
         // Clean up registry entries via O(1) lookup
         if let Some((_, instance_key)) = agent.check_index.lookup(&service_id) {
+            // Collect check IDs before deregistering (for Raft persistence)
+            let check_ids: Vec<String> = agent.registry.get_check_keys_for_instance(&instance_key);
+
             agent.registry.deregister_all_instance_checks(&instance_key);
+
+            // Persist check deregistration via Raft
+            if let Some(ref raft) = agent.raft_node {
+                for cid in check_ids {
+                    let _ = raft
+                        .write(ConsulRaftRequest::HealthCheckDeregister { check_id: cid })
+                        .await;
+                }
+            }
         }
         agent.check_index.remove(&service_id);
 
