@@ -195,8 +195,8 @@ impl UnhealthyInstanceChecker {
                         entry.ip, entry.port, elapsed, entry.heartbeat_timeout
                     );
 
-                    // Update instance health status (no heartbeat_map lock held)
-                    let instances = naming_service.get_instances(
+                    // Zero-copy snapshot — we only read fields, no ownership needed.
+                    let snapshot = naming_service.get_instances_snapshot(
                         &entry.namespace,
                         &entry.group_name,
                         &entry.service_name,
@@ -204,7 +204,7 @@ impl UnhealthyInstanceChecker {
                         false,
                     );
 
-                    for instance in instances {
+                    for instance in snapshot.iter() {
                         if instance.ip == entry.ip && instance.port == entry.port {
                             if naming_service.heartbeat(
                                 &entry.namespace,

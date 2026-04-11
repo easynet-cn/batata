@@ -23,6 +23,35 @@ fn create_test_instance(ip: &str, port: i32) -> Instance {
     }
 }
 
+/// Instance with realistic metadata (~10 entries), matching typical Nacos
+/// deployments where services publish version, region, app, env, etc.
+/// This is the shape that makes `Instance::clone()` expensive.
+fn create_test_instance_with_metadata(ip: &str, port: i32) -> Instance {
+    let mut metadata = HashMap::new();
+    metadata.insert("version".to_string(), "1.2.3".to_string());
+    metadata.insert("region".to_string(), "cn-shanghai".to_string());
+    metadata.insert("zone".to_string(), "cn-shanghai-a".to_string());
+    metadata.insert("env".to_string(), "production".to_string());
+    metadata.insert("app".to_string(), "payment-service".to_string());
+    metadata.insert("protocol".to_string(), "grpc".to_string());
+    metadata.insert("weight".to_string(), "100".to_string());
+    metadata.insert("tenant".to_string(), "default".to_string());
+    metadata.insert("owner".to_string(), "platform-team".to_string());
+    metadata.insert("revision".to_string(), "abc123def456".to_string());
+    Instance {
+        instance_id: format!("{}#{}#DEFAULT#bench-service", ip, port),
+        ip: ip.to_string(),
+        port,
+        weight: 1.0,
+        healthy: true,
+        enabled: true,
+        ephemeral: true,
+        cluster_name: "DEFAULT".to_string(),
+        service_name: "bench-service".to_string(),
+        metadata,
+    }
+}
+
 fn bench_register_instance(c: &mut Criterion) {
     let naming = NamingService::new();
 
@@ -238,6 +267,50 @@ fn bench_instance_count_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_get_instances_with_metadata(c: &mut Criterion) {
+    let naming = NamingService::new();
+
+    // Pre-populate with 1000 instances carrying realistic metadata.
+    for i in 0..1000 {
+        let instance = create_test_instance_with_metadata("192.168.1.1", 8000 + i);
+        naming.register_instance("public", "DEFAULT_GROUP", "bench-service-md", instance);
+    }
+
+    c.bench_function("get_instances_1000_with_metadata", |b| {
+        b.iter(|| {
+            naming.get_instances(
+                black_box("public"),
+                black_box("DEFAULT_GROUP"),
+                black_box("bench-service-md"),
+                black_box(""),
+                black_box(false),
+            )
+        })
+    });
+}
+
+fn bench_get_instances_snapshot_with_metadata(c: &mut Criterion) {
+    let naming = NamingService::new();
+
+    // Same pre-population as the above bench so the two are directly comparable.
+    for i in 0..1000 {
+        let instance = create_test_instance_with_metadata("192.168.1.1", 8000 + i);
+        naming.register_instance("public", "DEFAULT_GROUP", "bench-service-md2", instance);
+    }
+
+    c.bench_function("get_instances_snapshot_1000_with_metadata", |b| {
+        b.iter(|| {
+            naming.get_instances_snapshot(
+                black_box("public"),
+                black_box("DEFAULT_GROUP"),
+                black_box("bench-service-md2"),
+                black_box(""),
+                black_box(false),
+            )
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_register_instance,
@@ -249,6 +322,8 @@ criterion_group!(
     bench_list_services,
     bench_deregister_instance,
     bench_instance_count_scaling,
+    bench_get_instances_with_metadata,
+    bench_get_instances_snapshot_with_metadata,
 );
 
 criterion_main!(benches);

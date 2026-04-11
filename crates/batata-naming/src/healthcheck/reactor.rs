@@ -320,14 +320,16 @@ impl HealthCheckReactor {
             return;
         }
 
-        // Get all instances for this service
-        let instances =
+        // Snapshot instances for this service (zero-copy Arc clones).
+        // We early-skip disabled/persistent instances without paying any
+        // value-clone cost; only survivors get deep-cloned into HealthCheckTask.
+        let snapshot =
             self.naming_service
-                .get_instances(namespace, group_name, service_name, "", false);
+                .get_instances_snapshot(namespace, group_name, service_name, "", false);
 
-        for instance in instances {
+        for arc in snapshot {
             // Skip disabled instances
-            if !instance.enabled {
+            if !arc.enabled {
                 continue;
             }
 
@@ -336,16 +338,16 @@ impl HealthCheckReactor {
             // a local active health probe, which would bypass consensus and
             // create split views across the cluster. Ephemeral instances
             // continue through active checking + heartbeat expiration.
-            if !instance.ephemeral {
+            if !arc.ephemeral {
                 continue;
             }
 
             // Get cluster configuration
             let cluster_config = self
                 .naming_service
-                .get_cluster_config(namespace, group_name, service_name, &instance.cluster_name)
+                .get_cluster_config(namespace, group_name, service_name, &arc.cluster_name)
                 .unwrap_or_else(|| ClusterConfig {
-                    name: instance.cluster_name.clone(),
+                    name: arc.cluster_name.clone(),
                     ..Default::default()
                 });
 
@@ -354,7 +356,8 @@ impl HealthCheckReactor {
                 continue;
             }
 
-            // Create task
+            // Create task (clone the Instance once, for survivors only).
+            let instance = (*arc).clone();
             let task = HealthCheckTask::new(
                 instance,
                 namespace.to_string(),

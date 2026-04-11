@@ -83,8 +83,9 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         // Parse the service key
         let (namespace, group_name, service_name) = Self::parse_service_key(key)?;
 
-        // Get instances from naming service
-        let instances = self.naming_service.get_instances(
+        // Snapshot instances (zero-copy Arc clones). We filter ephemerals
+        // before any deep-clone, so persistent instances cost nothing here.
+        let snapshot = self.naming_service.get_instances_snapshot(
             &namespace,
             &group_name,
             &service_name,
@@ -92,20 +93,20 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             false, // include unhealthy
         );
 
-        // Only sync ephemeral instances
-        let ephemeral_instances: Vec<DistroInstance> = instances
-            .into_iter()
+        // Only sync ephemeral instances. Clone only the survivors.
+        let ephemeral_instances: Vec<DistroInstance> = snapshot
+            .iter()
             .filter(|inst| inst.ephemeral)
             .map(|inst| DistroInstance {
-                instance_id: inst.instance_id,
-                ip: inst.ip,
+                instance_id: inst.instance_id.clone(),
+                ip: inst.ip.clone(),
                 port: inst.port,
                 weight: inst.weight,
                 healthy: inst.healthy,
                 enabled: inst.enabled,
                 ephemeral: inst.ephemeral,
-                cluster_name: inst.cluster_name,
-                metadata: inst.metadata,
+                cluster_name: inst.cluster_name.clone(),
+                metadata: inst.metadata.clone(),
             })
             .collect();
 

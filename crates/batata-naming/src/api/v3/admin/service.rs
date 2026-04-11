@@ -183,13 +183,13 @@ async fn list_services(
         raw_names
     };
 
-    // Filter out empty services if ignoreEmptyService=true
+    // Filter out empty services if ignoreEmptyService=true (zero-copy snapshot).
     let filtered_names: Vec<String> = if params.ignore_empty_service {
         name_filtered
             .into_iter()
             .filter(|name| {
                 !naming_service
-                    .get_instances(namespace_id, group_name, name, "", false)
+                    .get_instances_snapshot(namespace_id, group_name, name, "", false)
                     .is_empty()
             })
             .collect()
@@ -221,7 +221,8 @@ async fn list_services(
             .iter()
             .map(|name| {
                 let metadata = naming_service.get_service_metadata(namespace_id, group_name, name);
-                let instances = naming_service.get_instances(
+                // Zero-copy snapshot — we only need cluster names.
+                let instances = naming_service.get_instances_snapshot(
                     namespace_id,
                     group_name,
                     name,
@@ -308,8 +309,9 @@ async fn list_services(
         let service_list: Vec<ServiceInfoResponse> = service_names
             .iter()
             .map(|name| {
+                // Zero-copy snapshot — we only need counts and cluster names.
                 let instances =
-                    naming_service.get_instances(namespace_id, group_name, name, "", false);
+                    naming_service.get_instances_snapshot(namespace_id, group_name, name, "", false);
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
                 let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
@@ -367,8 +369,9 @@ async fn get_service(
         );
     }
 
+    // Zero-copy snapshot — we only need cluster names.
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
     let mut clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
     let metadata_opt =
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
@@ -639,8 +642,9 @@ async fn delete_service(
         );
     }
 
+    // Zero-copy snapshot — empty-check only.
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
     if !instances.is_empty() {
         return Result::<bool>::http_response(
             400,

@@ -54,3 +54,7 @@ criterion = { workspace = true }
 [[bench]]
 name = "raft_serialization_bench"
 harness = false
+
+[[bench]]
+name = "async_trait_overhead_bench"
+harness = false

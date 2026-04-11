@@ -546,7 +546,8 @@ impl ConsoleDataSource for LocalDataSource {
         let service_list: Vec<serde_json::Value> = service_names
             .iter()
             .map(|name| {
-                let instances = naming.get_instances(namespace_id, group_name, name, "", false);
+                // Zero-copy snapshot — we only need counts and cluster names.
+                let instances = naming.get_instances_snapshot(namespace_id, group_name, name, "", false);
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
                 let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
@@ -638,8 +639,8 @@ impl ConsoleDataSource for LocalDataSource {
             .map(|c| (c.name.as_str(), c))
             .collect();
 
-        // Collect cluster names from service storage (clusters that have instances)
-        let instances = naming.get_instances(namespace_id, group_name, service_name, "", false);
+        // Collect cluster names from service storage (zero-copy snapshot).
+        let instances = naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
         let mut all_cluster_names: HashSet<String> =
             instances.iter().map(|i| i.cluster_name.clone()).collect();
         for cfg in &cluster_configs {
@@ -792,7 +793,8 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("service {} not found", service_name));
         }
 
-        let instances = naming.get_instances(namespace_id, group_name, service_name, "", false);
+        // Zero-copy snapshot — empty-check only.
+        let instances = naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
         if !instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "service {} has {} instances, cannot delete",

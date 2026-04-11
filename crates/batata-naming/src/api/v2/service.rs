@@ -191,9 +191,9 @@ pub async fn delete_service(
         );
     }
 
-    // Check if service has Batata-registered instances
+    // Check if service has Batata-registered instances (zero-copy snapshot).
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
 
     if !instances.is_empty() {
         return Result::<String>::http_response(
@@ -386,9 +386,9 @@ pub async fn get_service(
     let metadata_opt =
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
-    // Get instances to calculate counts
+    // Zero-copy snapshot — we only need cluster names and counts.
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
 
     // Collect cluster names from instances
     let mut clusters: std::collections::HashSet<_> =

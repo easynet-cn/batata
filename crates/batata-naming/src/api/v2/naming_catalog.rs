@@ -99,7 +99,8 @@ pub async fn list_catalog_instances(
             .build()
     );
 
-    let instances = naming_service.get_instances(
+    // Zero-copy snapshot — only paginated slice gets deep-cloned for response.
+    let instances = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &params.service_name,

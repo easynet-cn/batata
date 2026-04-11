@@ -73,7 +73,8 @@ async fn update_health(
             .build()
     );
 
-    let instances = naming_service.get_instances(
+    // Zero-copy snapshot — existence check only.
+    let instances = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &params.service_name,

@@ -63,8 +63,8 @@ async fn do_update_instance_health(
             .build()
     );
 
-    // Check if the instance exists (only Batata-registered instances)
-    let instances = naming_service.get_instances(
+    // Zero-copy snapshot — we only need an existence check.
+    let instances = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &form.service_name,

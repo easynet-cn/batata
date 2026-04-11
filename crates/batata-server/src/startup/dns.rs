@@ -175,8 +175,8 @@ impl DnsServer {
         // Parse service name from query
         if let Some((namespace, group, service)) = Self::parse_service_name(&qname, &config.suffix)
         {
-            // Query naming service for instances
-            let instances = naming_service.get_instances(&namespace, &group, &service, "", true);
+            // Zero-copy snapshot; build_response reads fields via Arc deref.
+            let instances = naming_service.get_instances_snapshot(&namespace, &group, &service, "", true);
 
             if !instances.is_empty() {
                 // Build response with A records
@@ -275,7 +275,7 @@ impl DnsServer {
         query: &[u8],
         question_end: usize,
         qtype: u16,
-        instances: &[batata_naming::Instance],
+        instances: &[std::sync::Arc<batata_naming::Instance>],
         ttl: u32,
     ) -> Vec<u8> {
         let mut response = Vec::with_capacity(512);

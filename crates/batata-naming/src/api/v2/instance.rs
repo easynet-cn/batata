@@ -460,8 +460,9 @@ pub async fn get_instance(
             .build()
     );
 
-    // Get all Batata-registered instances and find the specific one
-    let instances = naming_service.get_instances(
+    // Snapshot and find one. 999/1000 instances are zero-cost; only the
+    // target instance gets deep-cloned for the response.
+    let snapshot = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &params.service_name,
@@ -472,7 +473,11 @@ pub async fn get_instance(
     let instance_key =
         crate::service::build_instance_key_parts(&params.ip, params.port, cluster_name);
 
-    if let Some(instance) = instances.into_iter().find(|i| i.key() == instance_key) {
+    if let Some(instance) = snapshot
+        .into_iter()
+        .find(|i| i.key() == instance_key)
+        .map(|arc| (*arc).clone())
+    {
         let response = InstanceResponse {
             instance_id: instance.instance_id,
             ip: instance.ip,
@@ -695,33 +700,32 @@ pub async fn batch_update_metadata(
         );
     }
 
-    // Get existing Batata-registered instances and update metadata
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &form.service_name, "", false);
+    // Snapshot existing instances — only matching ones get cloned.
+    let snapshot =
+        naming_service.get_instances_snapshot(namespace_id, group_name, &form.service_name, "", false);
 
     let mut updated_count = 0;
-    for instance in instances {
-        let matches = instance_keys.contains(&(instance.ip.as_str(), instance.port));
+    for arc in snapshot {
+        if !instance_keys.contains(&(arc.ip.as_str(), arc.port)) {
+            continue;
+        }
+        // Merge metadata and re-register (clone only the survivors)
+        let mut updated_instance = (*arc).clone();
+        for (k, v) in &metadata {
+            updated_instance.metadata.insert(k.clone(), v.clone());
+        }
 
-        if matches {
-            // Merge metadata and re-register
-            let mut updated_instance = instance.clone();
-            for (k, v) in &metadata {
-                updated_instance.metadata.insert(k.clone(), v.clone());
-            }
-
-            if crate::service::register_instance_dispatch(
-                &naming_service,
-                data.raft_node.as_ref(),
-                namespace_id,
-                group_name,
-                &form.service_name,
-                updated_instance,
-            )
-            .await
-            {
-                updated_count += 1;
-            }
+        if crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
+            namespace_id,
+            group_name,
+            &form.service_name,
+            updated_instance,
+        )
+        .await
+        {
+            updated_count += 1;
         }
     }
 
@@ -827,32 +831,31 @@ pub async fn batch_delete_metadata(
         );
     }
 
-    // Get existing Batata-registered instances and delete metadata keys
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+    // Snapshot existing instances — only matching ones get cloned.
+    let snapshot =
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
 
     let mut updated_count = 0;
-    for instance in instances {
-        let matches = instance_keys.contains(&(instance.ip.as_str(), instance.port));
+    for arc in snapshot {
+        if !instance_keys.contains(&(arc.ip.as_str(), arc.port)) {
+            continue;
+        }
+        let mut updated_instance = (*arc).clone();
+        for key in &keys_to_delete {
+            updated_instance.metadata.remove(key);
+        }
 
-        if matches {
-            let mut updated_instance = instance.clone();
-            for key in &keys_to_delete {
-                updated_instance.metadata.remove(key);
-            }
-
-            if crate::service::register_instance_dispatch(
-                &naming_service,
-                data.raft_node.as_ref(),
-                namespace_id,
-                group_name,
-                &params.service_name,
-                updated_instance,
-            )
-            .await
-            {
-                updated_count += 1;
-            }
+        if crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
+            namespace_id,
+            group_name,
+            &params.service_name,
+            updated_instance,
+        )
+        .await
+        {
+            updated_count += 1;
         }
     }
 
@@ -899,8 +902,8 @@ pub async fn patch_instance(
             .build()
     );
 
-    // Get existing Batata-registered instance to merge
-    let instances = naming_service.get_instances(
+    // Snapshot and find one. Only the target instance gets deep-cloned.
+    let snapshot = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &form.service_name,
@@ -910,7 +913,11 @@ pub async fn patch_instance(
 
     let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, cluster_name);
 
-    if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
+    if let Some(mut existing) = snapshot
+        .into_iter()
+        .find(|i| i.key() == instance_key)
+        .map(|arc| (*arc).clone())
+    {
         // Patch only provided fields
         if let Some(weight) = form.weight {
             existing.weight = weight;
@@ -1134,10 +1141,11 @@ pub async fn get_instance_statuses(
             .build()
     );
 
-    let instances = naming_service.get_instances(namespace_id, group_name, service_name, "", false);
+    // Zero-copy snapshot — we only read two fields, no ownership needed.
+    let snapshot = naming_service.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
 
-    let statuses: HashMap<String, bool> = instances
-        .into_iter()
+    let statuses: HashMap<String, bool> = snapshot
+        .iter()
         .map(|i| (format!("{}#{}", i.ip, i.port), i.healthy))
         .collect();
 

@@ -91,7 +91,16 @@ impl NamingService {
         true
     }
 
-    /// Get all instances for a service
+    /// Get all instances for a service.
+    ///
+    /// Returns owned `Instance` values. Each instance is deep-cloned from the
+    /// shared `Arc<Instance>` storage, including a full copy of the
+    /// `metadata: HashMap<String, String>` — typically the dominant cost for
+    /// services with 100+ instances.
+    ///
+    /// **Prefer `get_instances_snapshot`** for hot read paths where callers
+    /// only need to read instance fields (not take ownership). The snapshot
+    /// variant returns `Vec<Arc<Instance>>`, avoiding N deep clones.
     pub fn get_instances(
         &self,
         namespace: &str,
@@ -100,18 +109,37 @@ impl NamingService {
         cluster: &str,
         healthy_only: bool,
     ) -> Vec<Instance> {
+        self.get_instances_snapshot(namespace, group_name, service_name, cluster, healthy_only)
+            .into_iter()
+            .map(|arc| (*arc).clone())
+            .collect()
+    }
+
+    /// Zero-copy snapshot of instances for a service: returns `Vec<Arc<Instance>>`.
+    ///
+    /// Each element is a cheap pointer clone — no `Instance::clone()`, no
+    /// `HashMap::clone()` on metadata. Callers that only read fields should
+    /// use this method.
+    ///
+    /// Shard lock is held only while cloning the `Arc` pointers (not while
+    /// filtering), matching the existing `get_instances` pattern.
+    pub fn get_instances_snapshot(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> Vec<Arc<Instance>> {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        // Snapshot Arc pointers first to minimize outer DashMap shard lock hold time.
-        // Arc::clone is a pointer copy, so the shard read lock is held very briefly.
         let snapshot: Vec<Arc<Instance>> = match self.services.get(&service_key) {
             Some(instances) => instances.iter().map(|e| Arc::clone(e.value())).collect(),
             None => return Vec::new(),
         };
 
-        // Filter on the snapshot (no locks held), then clone only matching instances
         snapshot
-            .iter()
+            .into_iter()
             .filter(|inst| {
                 let cluster_match = cluster.is_empty()
                     || cluster == "*"
@@ -119,7 +147,6 @@ impl NamingService {
                 let health_match = !healthy_only || inst.healthy;
                 cluster_match && health_match
             })
-            .map(|inst| (**inst).clone())
             .collect()
     }
 

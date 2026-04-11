@@ -489,7 +489,8 @@ async fn get_instance(
             .build()
     );
 
-    let instances = naming_service.get_instances(
+    // Zero-copy snapshot — only the target instance gets deep-cloned.
+    let instances = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &params.service_name,
@@ -500,7 +501,11 @@ async fn get_instance(
     let instance_key =
         crate::service::build_instance_key_parts(&params.ip, params.port, cluster_name);
 
-    if let Some(instance) = instances.into_iter().find(|i| i.key() == instance_key) {
+    if let Some(instance) = instances
+        .into_iter()
+        .find(|i| i.key() == instance_key)
+        .map(|arc| (*arc).clone())
+    {
         let response = InstanceResponse {
             instance_id: instance.instance_id,
             ip: instance.ip,
@@ -628,31 +633,33 @@ async fn update_metadata(
 
     let instance_keys = parse_instance_keys(&form.instances);
 
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &form.service_name, "", false);
+    // Zero-copy snapshot — only matching instances get deep-cloned.
+    let snapshot =
+        naming_service.get_instances_snapshot(namespace_id, group_name, &form.service_name, "", false);
 
     let mut updated_ips = Vec::new();
-    for instance in instances {
+    for arc in snapshot {
         let matches = instance_keys
             .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
+            .any(|(ip, port)| arc.ip == *ip && arc.port == *port);
 
-        if matches {
-            updated_ips.push(format!("{}:{}", instance.ip, instance.port));
-            let mut updated_instance = instance.clone();
-            for (k, v) in &metadata {
-                updated_instance.metadata.insert(k.clone(), v.clone());
-            }
-            crate::service::register_instance_dispatch(
-                &naming_service,
-                data.raft_node.as_ref(),
-                namespace_id,
-                group_name,
-                &form.service_name,
-                updated_instance,
-            )
-            .await;
+        if !matches {
+            continue;
         }
+        updated_ips.push(format!("{}:{}", arc.ip, arc.port));
+        let mut updated_instance = (*arc).clone();
+        for (k, v) in &metadata {
+            updated_instance.metadata.insert(k.clone(), v.clone());
+        }
+        crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
+            namespace_id,
+            group_name,
+            &form.service_name,
+            updated_instance,
+        )
+        .await;
     }
 
     // Return InstanceMetadataBatchResult format: {"updated": ["ip:port", ...]}
@@ -695,7 +702,8 @@ async fn partial_update_instance(
             .build()
     );
 
-    let instances = naming_service.get_instances(
+    // Zero-copy snapshot — only target instance gets deep-cloned.
+    let instances = naming_service.get_instances_snapshot(
         namespace_id,
         group_name,
         &form.service_name,
@@ -705,7 +713,11 @@ async fn partial_update_instance(
 
     let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, cluster_name);
 
-    if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
+    if let Some(mut existing) = instances
+        .into_iter()
+        .find(|i| i.key() == instance_key)
+        .map(|arc| (*arc).clone())
+    {
         if let Some(weight) = form.weight {
             existing.weight = weight;
         }
@@ -860,31 +872,33 @@ async fn delete_metadata_batch(
         );
     }
 
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+    // Zero-copy snapshot — only matching instances get deep-cloned.
+    let snapshot =
+        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
 
     let mut updated_ips = Vec::new();
-    for instance in instances {
+    for arc in snapshot {
         let matches = instance_keys
             .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
+            .any(|(ip, port)| arc.ip == *ip && arc.port == *port);
 
-        if matches {
-            updated_ips.push(format!("{}:{}", instance.ip, instance.port));
-            let mut updated_instance = instance.clone();
-            for key in &keys_to_delete {
-                updated_instance.metadata.remove(key);
-            }
-            crate::service::register_instance_dispatch(
-                &naming_service,
-                data.raft_node.as_ref(),
-                namespace_id,
-                group_name,
-                &params.service_name,
-                updated_instance,
-            )
-            .await;
+        if !matches {
+            continue;
         }
+        updated_ips.push(format!("{}:{}", arc.ip, arc.port));
+        let mut updated_instance = (*arc).clone();
+        for key in &keys_to_delete {
+            updated_instance.metadata.remove(key);
+        }
+        crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
+            namespace_id,
+            group_name,
+            &params.service_name,
+            updated_instance,
+        )
+        .await;
     }
 
     let batch_result = serde_json::json!({ "updated": updated_ips });

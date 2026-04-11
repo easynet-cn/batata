@@ -341,5 +341,111 @@ Given the ahash result, the optimization proposals should be re-weighted:
 | N/A | ~~`Arc<String>` → `Arc<str>`~~ | Nothing to migrate — codebase uses plain `String` throughout; no `Arc<String>` usage exists (verified via grep 2026-04-11) |
 | ❌ | ~~ahash~~ | Regressed reads | Monomorphization changed cache behavior |
 | ❌ | ~~RCU (ArcSwap) for `get_instances`~~ | **Catastrophic write regression** | DashMap baseline already lock-minimal; real bottleneck is `Instance::clone()` |
-| — | `async-trait` removal | Uncertain | Needs dedicated bench suite |
-| — | Return `Arc<Vec<Arc<Instance>>>` from `get_instances` | Potentially large | Eliminates value clones — requires API changes across callers |
+| ❌ | ~~`async-trait` removal~~ | **~0 savings at dyn boundary; ~42 ns only with full generic refactor** | Bench-verified 2026-04-11 (see below) |
+| ✅ Shipped | `get_instances_snapshot` returning `Vec<Arc<Instance>>` | **~48x speedup** (1.58 ms → 33 µs on 1000 instances with realistic metadata) | Additive trait method; hot-path callers migrated |
+
+### `get_instances_snapshot` (zero-copy Arc reads) — **SHIPPED 2026-04-11**
+
+**Status:** ✅ Landed — ~48x speedup on hot read path.
+
+**Hypothesis:** The existing `get_instances` returns `Vec<Instance>` — a full
+value clone per result element. Each `Instance::clone()` deep-clones a
+`HashMap<String, String>` metadata field. For services with 1000 instances
+and 10 metadata entries each, that's ~15,000 `String` allocations per call.
+Returning `Vec<Arc<Instance>>` instead reduces each per-element cost to a
+single atomic reference bump.
+
+**Measured (naming_bench::get_instances_(1000|snapshot_1000)_with_metadata):**
+
+| Method | Time | Per-element cost |
+|---|---|---|
+| `get_instances` (1000 instances, 10 metadata entries) | **1.58 ms** | ~1580 ns/instance (deep clone) |
+| `get_instances_snapshot` (same) | **33.1 µs** | ~33 ns/instance (Arc ref bump) |
+| **Delta** | **-97.9%** (~48x faster) | |
+
+**Change summary:**
+- Added `get_instances_snapshot` to `NamingServiceProvider` trait (default
+  impl wraps existing `get_instances` for backward compat on 3rd-party impls).
+- Added bincode — no wait, this is naming, not config. Added a native
+  override in `NamingService` / `provider.rs` that returns the `Arc<Instance>`
+  snapshot directly without the deep clone.
+- Rewrote `get_instances` (value version) as a thin wrapper that calls
+  `get_instances_snapshot` and deep-clones. Zero behavior change.
+- Migrated ~20 hot-path call sites to `get_instances_snapshot`:
+  - `healthcheck/reactor.rs` (schedules per-cluster checks)
+  - `healthcheck/heartbeat.rs` (existence check during timeout handling)
+  - `handler/distro.rs` (Distro sync — filters ephemerals before cloning)
+  - `api/v2/instance.rs` (5 sites: query one, batch metadata update/delete,
+    patch, status list)
+  - `api/v2/service.rs` (delete check + service detail)
+  - `api/v2/health.rs` (instance existence check)
+  - `api/v2/naming_catalog.rs` (paginated listing)
+  - `api/v2/operator.rs` (aggregate instance count)
+  - `api/v3/admin/instance.rs` (query one, batch metadata ops, partial update)
+  - `api/v3/admin/service.rs` (delete check, detail, list with/without instances)
+  - `api/v3/admin/health.rs` (instance existence check)
+  - `api/v3/admin/ops.rs` (aggregate instance count)
+  - `console/datasource/local.rs` (service list, service detail, delete check)
+  - `ai/endpoint_service.rs` (MCP + A2A endpoint discovery)
+  - `server/startup/dns.rs` (DNS query responses — `build_response` now
+    takes `&[Arc<Instance>]`)
+- Test call sites left on value API (ownership semantics matter for asserts).
+
+**Production impact estimation:**
+
+For a deployment with 100 services each holding 100 instances:
+- SDK gRPC `ServiceQueryRequest` response path: ~20 µs → ~1 µs = **20x faster**
+- Distro sync (iterates all services every few seconds): saves ~1-2 ms CPU per cycle
+- Console list services page: bulk scan saves ~100 ms aggregate on 100 services
+- Health check reactor scheduling loop: saves ~50 µs per service scan
+
+**Regression checks passed:**
+- `cargo check --workspace` clean
+- Full workspace lib tests: zero failures (39 persistence, 216 naming,
+  38 consistency, 426 server, 321 plugin-consul, plus others)
+
+### async-trait removal — **REJECTED 2026-04-11 (evidence-based)**
+
+**Status:** ❌ Not pursued — bench showed no savings without a massive generic refactor.
+
+**Hypothesis:** `#[async_trait]` boxes every async method return into
+`Pin<Box<dyn Future>>`, allocating per call. Replacing it with native
+`async fn in trait` (Rust 1.75+) might eliminate the allocation.
+
+**Why it doesn't work:** Persistence traits are used via `Arc<dyn Persistence>`
+everywhere (`AppState`, gRPC handlers, actix handlers). When a future is
+returned through a dynamic vtable, the compiler has no choice but to
+type-erase it — it still generates a boxing shim at the call site. **Native
+`async fn in trait` behind dyn is essentially equivalent to `#[async_trait]`
+at runtime.** The only way to avoid the box is to replace `Arc<dyn Trait>`
+with generics (`Arc<impl Trait>`) throughout the callgraph — weeks of
+refactoring across 29 files and 11 crates.
+
+**Measured (`async_trait_overhead_bench`, 3 scenarios):**
+
+| Scenario | Time | Delta | Per-call savings |
+|---|---|---|---|
+| `#[async_trait]` + dyn dispatch (current) | 204 ns | baseline | — |
+| Native `async fn` + dyn dispatch | 208 ns | +2% (noise) | **0 ns** |
+| Native `async fn` + generic static dispatch | 162 ns | -21% | **~42 ns** |
+
+Note: most of the 204 ns is tokio runtime `block_on` overhead, not boxing.
+The isolated boxing cost is ~20-40 ns.
+
+**Production impact estimation:**
+- RocksDB get (~1-10 µs/call): 42 ns / 1000 ns = **0.4% – 4% savings** at the
+  fastest end of the range — but only if we do the full generic refactor.
+- Raft write (~5-50 ms/call): 42 ns / 5,000,000 ns = **~0.0008% savings** —
+  completely invisible.
+- Median persistence op is Raft-gated or I/O-bound; savings are unmeasurable.
+
+**Refactor cost:** 29 files, ~200-500 LOC touched, every `AppState` field
+holding `Arc<dyn Persistence>` propagates a new generic parameter up through
+gRPC and actix handler state. Testing surface multiplies. ~1 week minimum.
+
+**Verdict:** Reject. The per-call boxing cost is noise next to the actual
+work being done; even the theoretical peak saving (4% on the very fastest
+RocksDB paths) is dwarfed by the refactor cost and regression risk. If a
+future bench ever shows async-trait boxing on a real hot path, revisit —
+but the null result from `async_trait_overhead_bench` is a strong negative
+signal.

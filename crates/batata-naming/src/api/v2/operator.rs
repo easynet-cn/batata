@@ -160,13 +160,13 @@ async fn do_get_metrics(
     let service_keys = naming_service.get_all_service_keys();
     let service_count = service_keys.len() as i32;
 
-    // Count total instances across all services
+    // Count total instances across all services (zero-copy snapshot, len only).
     let mut instance_count = 0;
     for key in &service_keys {
         let parts: Vec<&str> = key.split("@@").collect();
         if parts.len() == 3 {
             instance_count += naming_service
-                .get_instances(parts[0], parts[1], parts[2], "", false)
+                .get_instances_snapshot(parts[0], parts[1], parts[2], "", false)
                 .len() as i32;
         }
     }

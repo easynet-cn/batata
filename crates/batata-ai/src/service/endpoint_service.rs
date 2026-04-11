@@ -73,7 +73,8 @@ impl AiEndpointService {
     ) -> Vec<EndpointInfo> {
         let service_name = mcp_service_name(name, version);
 
-        let instances = self.naming_service.get_instances(
+        // Zero-copy snapshot — metadata is cloned once per entry into response.
+        let instances = self.naming_service.get_instances_snapshot(
             namespace,
             MCP_ENDPOINT_GROUP,
             &service_name,
@@ -82,12 +83,12 @@ impl AiEndpointService {
         );
 
         instances
-            .into_iter()
+            .iter()
             .map(|inst| EndpointInfo {
-                address: inst.ip,
+                address: inst.ip.clone(),
                 port: inst.port as u16,
                 healthy: inst.healthy,
-                metadata: inst.metadata,
+                metadata: inst.metadata.clone(),
             })
             .collect()
     }
@@ -178,7 +179,8 @@ impl AiEndpointService {
     ) -> Vec<EndpointInfo> {
         let service_name = a2a_service_name(name, version);
 
-        let instances = self.naming_service.get_instances(
+        // Zero-copy snapshot.
+        let instances = self.naming_service.get_instances_snapshot(
             namespace,
             AGENT_ENDPOINT_GROUP,
             &service_name,
@@ -187,12 +189,12 @@ impl AiEndpointService {
         );
 
         instances
-            .into_iter()
+            .iter()
             .map(|inst| EndpointInfo {
-                address: inst.ip,
+                address: inst.ip.clone(),
                 port: inst.port as u16,
                 healthy: inst.healthy,
-                metadata: inst.metadata,
+                metadata: inst.metadata.clone(),
             })
             .collect()
     }

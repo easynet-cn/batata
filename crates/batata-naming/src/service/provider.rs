@@ -4,6 +4,7 @@
 //! adapting signatures where necessary.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use batata_api::naming::{
     ClusterConfig, ClusterStatistics, Instance, NamingServiceProvider, ProtectionInfo, Service,
@@ -44,6 +45,17 @@ impl NamingServiceProvider for NamingService {
         healthy_only: bool,
     ) -> Vec<Instance> {
         self.get_instances(namespace, group_name, service_name, cluster, healthy_only)
+    }
+
+    fn get_instances_snapshot(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> Vec<Arc<Instance>> {
+        self.get_instances_snapshot(namespace, group_name, service_name, cluster, healthy_only)
     }
 
     fn get_service(
