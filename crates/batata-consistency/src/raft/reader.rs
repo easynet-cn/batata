@@ -8,7 +8,7 @@ use rocksdb::DB;
 use super::state_machine::{
     CF_CONFIG, CF_CONFIG_GRAY, CF_CONFIG_HISTORY, CF_INSTANCES, CF_NAMESPACE, CF_PERMISSIONS,
     CF_ROLES, CF_USERS, RocksStateMachine, StoredConfig, StoredConfigGray, StoredConfigHistory,
-    StoredInstance,
+    StoredInstance, StoredNamespace, StoredPermission, StoredRole, StoredUser,
 };
 
 /// Read-only interface for querying data stored in RocksDB
@@ -465,12 +465,12 @@ impl RocksDbReader {
     /// Get a namespace by ID
     pub fn get_namespace(&self, namespace_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
         let key = RocksStateMachine::namespace_key(namespace_id);
-        self.get_json(CF_NAMESPACE, &key)
+        self.get_bincode::<StoredNamespace>(CF_NAMESPACE, &key)
     }
 
     /// List all namespaces
     pub fn list_namespaces(&self) -> anyhow::Result<Vec<serde_json::Value>> {
-        self.iterate_cf_values(CF_NAMESPACE)
+        self.iterate_cf_bincode::<StoredNamespace>(CF_NAMESPACE)
     }
 
     // ==================== User Operations ====================
@@ -478,12 +478,12 @@ impl RocksDbReader {
     /// Get a user by username
     pub fn get_user(&self, username: &str) -> anyhow::Result<Option<serde_json::Value>> {
         let key = RocksStateMachine::user_key(username);
-        self.get_json(CF_USERS, &key)
+        self.get_bincode::<StoredUser>(CF_USERS, &key)
     }
 
     /// List all users
     pub fn list_users(&self) -> anyhow::Result<Vec<serde_json::Value>> {
-        self.iterate_cf_values(CF_USERS)
+        self.iterate_cf_bincode::<StoredUser>(CF_USERS)
     }
 
     /// Search users with optional username filter and pagination
@@ -533,9 +533,10 @@ impl RocksDbReader {
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            if json["username"].as_str() == Some(username) {
-                roles.push(json);
+            let stored: StoredRole = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredRole decode error: {}", e))?;
+            if stored.username == username {
+                roles.push(serde_json::to_value(&stored)?);
             }
         }
 
@@ -551,7 +552,7 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let all_roles = self.iterate_cf_values(CF_ROLES)?;
+        let all_roles = self.iterate_cf_bincode::<StoredRole>(CF_ROLES)?;
 
         let filtered: Vec<serde_json::Value> = all_roles
             .into_iter()
@@ -597,8 +598,9 @@ impl RocksDbReader {
 
         for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            if json["role"].as_str() == Some("ROLE_ADMIN") {
+            let stored: StoredRole = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredRole decode error: {}", e))?;
+            if stored.role == "ROLE_ADMIN" {
                 return Ok(true);
             }
         }
@@ -627,7 +629,7 @@ impl RocksDbReader {
         action: &str,
     ) -> anyhow::Result<Option<serde_json::Value>> {
         let key = RocksStateMachine::permission_key(role, resource, action);
-        self.get_json(CF_PERMISSIONS, &key)
+        self.get_bincode::<StoredPermission>(CF_PERMISSIONS, &key)
     }
 
     /// Get permissions by role
@@ -640,12 +642,12 @@ impl RocksDbReader {
         for item in iter {
             let (key, value) =
                 item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if !key_str.starts_with(&prefix) {
+            if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            permissions.push(json);
+            let stored: StoredPermission = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredPermission decode error: {}", e))?;
+            permissions.push(serde_json::to_value(&stored)?);
         }
 
         Ok(permissions)
@@ -671,7 +673,7 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let all_perms = self.iterate_cf_values(CF_PERMISSIONS)?;
+        let all_perms = self.iterate_cf_bincode::<StoredPermission>(CF_PERMISSIONS)?;
 
         let filtered: Vec<serde_json::Value> = if role_pattern.is_empty() {
             all_perms
@@ -759,7 +761,53 @@ impl RocksDbReader {
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", cf_name))
     }
 
+    /// Get a bincode-decoded typed value from a CF by key, emitted as `serde_json::Value`.
+    ///
+    /// Used by cold-path CF readers (namespace/user/role/permission) where the
+    /// reader API contract is still `serde_json::Value` for backward compat with
+    /// persistence callers, but on-disk format is bincode.
+    fn get_bincode<T>(
+        &self,
+        cf_name: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize,
+    {
+        let cf = self.cf_handle(cf_name)?;
+        match self
+            .db
+            .get_cf(cf, key.as_bytes())
+            .map_err(|e| anyhow::anyhow!("RocksDB get error: {}", e))?
+        {
+            Some(bytes) => {
+                let stored: T = bincode::deserialize(&bytes)
+                    .map_err(|e| anyhow::anyhow!("bincode decode error: {}", e))?;
+                Ok(Some(serde_json::to_value(&stored)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Iterate all bincode-decoded values in a CF, emitted as `serde_json::Value`.
+    fn iterate_cf_bincode<T>(&self, cf_name: &str) -> anyhow::Result<Vec<serde_json::Value>>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize,
+    {
+        let cf = self.cf_handle(cf_name)?;
+        let mut values = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_, v) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let stored: T = bincode::deserialize(&v)
+                .map_err(|e| anyhow::anyhow!("bincode decode error: {}", e))?;
+            values.push(serde_json::to_value(&stored)?);
+        }
+        Ok(values)
+    }
+
     /// Get a JSON value from a column family by key
+    #[allow(dead_code)]
     fn get_json(&self, cf_name: &str, key: &str) -> anyhow::Result<Option<serde_json::Value>> {
         let cf = self.cf_handle(cf_name)?;
         match self.db.get_cf(cf, key.as_bytes()) {
@@ -773,6 +821,7 @@ impl RocksDbReader {
     }
 
     /// Iterate all values in a column family
+    #[allow(dead_code)]
     fn iterate_cf_values(&self, cf_name: &str) -> anyhow::Result<Vec<serde_json::Value>> {
         let cf = self.cf_handle(cf_name)?;
         let mut values = Vec::new();
@@ -878,15 +927,16 @@ mod tests {
     async fn test_reader_namespace_crud() {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
-        // Write a namespace
+        // Write a namespace (bincode StoredNamespace)
         let key = RocksStateMachine::namespace_key("test-ns");
-        let value = serde_json::json!({
-            "namespace_id": "test-ns",
-            "namespace_name": "Test Namespace",
-            "namespace_desc": "A test namespace",
-        });
+        let stored = StoredNamespace {
+            namespace_id: "test-ns".to_string(),
+            namespace_name: "Test Namespace".to_string(),
+            namespace_desc: Some("A test namespace".to_string()),
+            ..Default::default()
+        };
         let cf = db.cf_handle("batata_namespace").unwrap();
-        db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
+        db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
             .unwrap();
 
         let reader = RocksDbReader::new(db);
@@ -909,12 +959,13 @@ mod tests {
         let cf = db.cf_handle("batata_users").unwrap();
         for name in &["alice", "bob", "alice_admin"] {
             let key = RocksStateMachine::user_key(name);
-            let value = serde_json::json!({
-                "username": name,
-                "password_hash": "hash",
-                "enabled": true,
-            });
-            db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
+            let stored = StoredUser {
+                username: name.to_string(),
+                password_hash: "hash".to_string(),
+                enabled: true,
+                ..Default::default()
+            };
+            db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
                 .unwrap();
         }
 
@@ -940,24 +991,36 @@ mod tests {
     async fn test_reader_roles_and_permissions() {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
-        // Write roles
+        // Write roles (bincode StoredRole)
         let role_cf = db.cf_handle("batata_roles").unwrap();
         let key1 = RocksStateMachine::role_key("ROLE_ADMIN", "admin");
-        let val1 = serde_json::json!({"role": "ROLE_ADMIN", "username": "admin"});
-        db.put_cf(role_cf, key1.as_bytes(), val1.to_string().as_bytes())
+        let role1 = StoredRole {
+            role: "ROLE_ADMIN".to_string(),
+            username: "admin".to_string(),
+            ..Default::default()
+        };
+        db.put_cf(role_cf, key1.as_bytes(), &bincode::serialize(&role1).unwrap())
             .unwrap();
 
         let key2 = RocksStateMachine::role_key("ROLE_USER", "alice");
-        let val2 = serde_json::json!({"role": "ROLE_USER", "username": "alice"});
-        db.put_cf(role_cf, key2.as_bytes(), val2.to_string().as_bytes())
+        let role2 = StoredRole {
+            role: "ROLE_USER".to_string(),
+            username: "alice".to_string(),
+            ..Default::default()
+        };
+        db.put_cf(role_cf, key2.as_bytes(), &bincode::serialize(&role2).unwrap())
             .unwrap();
 
-        // Write permissions
+        // Write permissions (bincode StoredPermission)
         let perm_cf = db.cf_handle("batata_permissions").unwrap();
         let pkey = RocksStateMachine::permission_key("ROLE_ADMIN", "public::*", "rw");
-        let pval =
-            serde_json::json!({"role": "ROLE_ADMIN", "resource": "public::*", "action": "rw"});
-        db.put_cf(perm_cf, pkey.as_bytes(), pval.to_string().as_bytes())
+        let perm = StoredPermission {
+            role: "ROLE_ADMIN".to_string(),
+            resource: "public::*".to_string(),
+            action: "rw".to_string(),
+            ..Default::default()
+        };
+        db.put_cf(perm_cf, pkey.as_bytes(), &bincode::serialize(&perm).unwrap())
             .unwrap();
 
         let reader = RocksDbReader::new(db);

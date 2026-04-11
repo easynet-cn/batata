@@ -336,9 +336,9 @@ Given the ahash result, the optimization proposals should be re-weighted:
 |---|---|---|---|
 | ✅ Shipped | bincode for CF_INSTANCES | 10x roundtrip | Real hot path |
 | ✅ Shipped | bincode for CF_CONFIG / CF_CONFIG_GRAY / CF_CONFIG_HISTORY | 7.6x roundtrip | Real hot path |
-| Mid | Box large enum variants | Small (stack size only) | Safe, easy |
-| Low | `Arc<String>` → `Arc<str>` | Marginal | Allocation savings only |
-| Low | bincode for CF_NAMESPACE / CF_USERS / CF_ROLES / CF_PERMISSIONS | Small | Cold path; completeness only |
+| ✅ Shipped | bincode for CF_NAMESPACE / CF_USERS / CF_ROLES / CF_PERMISSIONS | Cold path completeness | All CFs now use typed bincode; no JSON left in state machine |
+| ✅ Shipped | Box large RaftRequest variants | ~3.3x enum size reduction (480 → 144 bytes) | ConfigPublish (17 fields), ConfigGrayPublish, ConfigHistoryInsert, PersistentInstanceRegister, PersistentInstanceUpdate, ConfigRemove history — all moved to Box<Payload>. Size guard test added. |
+| N/A | ~~`Arc<String>` → `Arc<str>`~~ | Nothing to migrate — codebase uses plain `String` throughout; no `Arc<String>` usage exists (verified via grep 2026-04-11) |
 | ❌ | ~~ahash~~ | Regressed reads | Monomorphization changed cache behavior |
 | ❌ | ~~RCU (ArcSwap) for `get_instances`~~ | **Catastrophic write regression** | DashMap baseline already lock-minimal; real bottleneck is `Instance::clone()` |
 | — | `async-trait` removal | Uncertain | Needs dedicated bench suite |

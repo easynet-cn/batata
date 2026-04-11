@@ -23,53 +23,127 @@ pub struct ConfigHistoryInfo {
     pub ext_info: Option<String>,
 }
 
+/// Payload for `RaftRequest::ConfigPublish`. Boxed on the enum so the
+/// `RaftRequest` discriminated union stays compact (largest variant was
+/// ~400 bytes because of this 17-field struct).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigPublishPayload {
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub md5: String,
+    pub config_type: Option<String>,
+    pub app_name: Option<String>,
+    pub tag: Option<String>,
+    pub desc: Option<String>,
+    pub src_user: Option<String>,
+    #[serde(default)]
+    pub src_ip: Option<String>,
+    #[serde(default)]
+    pub r#use: Option<String>,
+    #[serde(default)]
+    pub effect: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
+    pub encrypted_data_key: Option<String>,
+    #[serde(default)]
+    pub cas_md5: Option<String>,
+    #[serde(default)]
+    pub history: Option<ConfigHistoryInfo>,
+}
+
+/// Payload for `RaftRequest::ConfigGrayPublish`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigGrayPublishPayload {
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub gray_name: String,
+    pub gray_rule: String,
+    pub app_name: Option<String>,
+    pub encrypted_data_key: Option<String>,
+    pub src_user: Option<String>,
+    pub src_ip: Option<String>,
+    pub cas_md5: Option<String>,
+}
+
+/// Payload for `RaftRequest::ConfigHistoryInsert`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigHistoryInsertPayload {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub md5: String,
+    #[serde(default)]
+    pub app_name: Option<String>,
+    pub src_user: Option<String>,
+    pub src_ip: Option<String>,
+    pub op_type: String,
+    #[serde(default)]
+    pub publish_type: Option<String>,
+    #[serde(default)]
+    pub gray_name: Option<String>,
+    #[serde(default)]
+    pub ext_info: Option<String>,
+    #[serde(default)]
+    pub encrypted_data_key: Option<String>,
+    pub created_time: i64,
+    pub last_modified_time: i64,
+}
+
+/// Payload for `RaftRequest::PersistentInstanceRegister`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PersistentInstanceRegisterPayload {
+    pub namespace_id: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub instance_id: String,
+    pub ip: String,
+    pub port: u16,
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    pub metadata: String,
+    pub cluster_name: String,
+}
+
+/// Payload for `RaftRequest::PersistentInstanceUpdate`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PersistentInstanceUpdatePayload {
+    pub namespace_id: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub instance_id: String,
+    pub ip: Option<String>,
+    pub port: Option<u16>,
+    pub weight: Option<f64>,
+    pub healthy: Option<bool>,
+    pub enabled: Option<bool>,
+    pub metadata: Option<String>,
+}
+
 /// All operations that go through Raft consensus
 /// Each variant represents a state machine command
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RaftRequest {
     // ==================== Config Operations ====================
-    /// Publish or update a configuration
-    ConfigPublish {
-        data_id: String,
-        group: String,
-        tenant: String,
-        content: String,
-        /// Pre-computed MD5 of content (avoids recomputation in state machine apply)
-        md5: String,
-        config_type: Option<String>,
-        app_name: Option<String>,
-        tag: Option<String>,
-        desc: Option<String>,
-        src_user: Option<String>,
-        #[serde(default)]
-        src_ip: Option<String>,
-        #[serde(default)]
-        r#use: Option<String>,
-        #[serde(default)]
-        effect: Option<String>,
-        #[serde(default)]
-        schema: Option<String>,
-        #[serde(default)]
-        encrypted_data_key: Option<String>,
-        /// CAS (Compare-And-Swap) MD5: if set, only publish when current config MD5 matches.
-        /// Returns conflict error if MD5 mismatch. Prevents concurrent write data loss.
-        /// Nacos SDK sends this via `casMd5` header.
-        #[serde(default)]
-        cas_md5: Option<String>,
-        /// Optional: insert config history in the same Raft entry (avoids second Raft write).
-        /// When present, both config publish and history insert are applied atomically.
-        #[serde(default)]
-        history: Option<ConfigHistoryInfo>,
-    },
+    /// Publish or update a configuration (boxed to keep enum compact).
+    ConfigPublish(Box<ConfigPublishPayload>),
 
     /// Remove a configuration
     ConfigRemove {
         data_id: String,
         group: String,
         tenant: String,
-        /// Optional: insert delete history in the same Raft entry
+        /// Optional: insert delete history in the same Raft entry.
+        /// Boxed so the ConfigRemove variant stays compact (history info is ~170B).
         #[serde(default)]
-        history: Option<ConfigDeleteHistoryInfo>,
+        history: Option<Box<ConfigDeleteHistoryInfo>>,
     },
 
     // ==================== Namespace Operations ====================
@@ -131,20 +205,8 @@ pub enum RaftRequest {
     },
 
     // ==================== Config Gray (Beta) Operations ====================
-    /// Publish or update a gray (beta) config
-    ConfigGrayPublish {
-        data_id: String,
-        group: String,
-        tenant: String,
-        content: String,
-        gray_name: String,
-        gray_rule: String,
-        app_name: Option<String>,
-        encrypted_data_key: Option<String>,
-        src_user: Option<String>,
-        src_ip: Option<String>,
-        cas_md5: Option<String>,
-    },
+    /// Publish or update a gray (beta) config (boxed).
+    ConfigGrayPublish(Box<ConfigGrayPublishPayload>),
 
     /// Remove gray (beta) configs for a data_id/group/tenant (optionally by gray_name)
     ConfigGrayRemove {
@@ -157,30 +219,8 @@ pub enum RaftRequest {
     },
 
     // ==================== Config History Operations ====================
-    /// Record config change history
-    ConfigHistoryInsert {
-        id: i64,
-        data_id: String,
-        group: String,
-        tenant: String,
-        content: String,
-        md5: String,
-        #[serde(default)]
-        app_name: Option<String>,
-        src_user: Option<String>,
-        src_ip: Option<String>,
-        op_type: String,
-        #[serde(default)]
-        publish_type: Option<String>,
-        #[serde(default)]
-        gray_name: Option<String>,
-        #[serde(default)]
-        ext_info: Option<String>,
-        #[serde(default)]
-        encrypted_data_key: Option<String>,
-        created_time: i64,
-        last_modified_time: i64,
-    },
+    /// Record config change history (boxed).
+    ConfigHistoryInsert(Box<ConfigHistoryInsertPayload>),
 
     // ==================== Config Tags Operations ====================
     /// Create or update config tags
@@ -202,20 +242,8 @@ pub enum RaftRequest {
     },
 
     // ==================== Service/Instance Operations (for persistent instances) ====================
-    /// Register a persistent service instance
-    PersistentInstanceRegister {
-        namespace_id: String,
-        group_name: String,
-        service_name: String,
-        instance_id: String,
-        ip: String,
-        port: u16,
-        weight: f64,
-        healthy: bool,
-        enabled: bool,
-        metadata: String, // JSON serialized metadata
-        cluster_name: String,
-    },
+    /// Register a persistent service instance (boxed).
+    PersistentInstanceRegister(Box<PersistentInstanceRegisterPayload>),
 
     /// Deregister a persistent service instance
     PersistentInstanceDeregister {
@@ -225,19 +253,8 @@ pub enum RaftRequest {
         instance_id: String,
     },
 
-    /// Update a persistent service instance
-    PersistentInstanceUpdate {
-        namespace_id: String,
-        group_name: String,
-        service_name: String,
-        instance_id: String,
-        ip: Option<String>,
-        port: Option<u16>,
-        weight: Option<f64>,
-        healthy: Option<bool>,
-        enabled: Option<bool>,
-        metadata: Option<String>,
-    },
+    /// Update a persistent service instance (boxed).
+    PersistentInstanceUpdate(Box<PersistentInstanceUpdatePayload>),
 
     // ==================== Distributed Lock Operations (ADV-005) ====================
     /// Acquire a distributed lock
@@ -385,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_raft_request_serialization() {
-        let req = RaftRequest::ConfigPublish {
+        let req = RaftRequest::ConfigPublish(Box::new(ConfigPublishPayload {
             data_id: "test-config".to_string(),
             group: "DEFAULT_GROUP".to_string(),
             tenant: "".to_string(),
@@ -403,12 +420,29 @@ mod tests {
             encrypted_data_key: None,
             cas_md5: None,
             history: None,
-        };
+        }));
 
         let serialized = serde_json::to_string(&req).unwrap();
         let deserialized: RaftRequest = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(req.op_type(), deserialized.op_type());
+    }
+
+    #[test]
+    fn test_raft_request_enum_size_is_compact() {
+        // After boxing the large variants (ConfigPublish, ConfigGrayPublish,
+        // ConfigHistoryInsert, PersistentInstanceRegister, PersistentInstanceUpdate,
+        // and ConfigRemove's history), the enum should be ~144 bytes
+        // (discriminant + largest remaining variant, currently ConfigTagsUpdate
+        // at ~144B). Before boxing, ConfigPublish alone made it ~480 bytes.
+        // This test fails loudly if someone adds a new large variant without
+        // boxing it, or un-boxes an already-boxed one.
+        let size = std::mem::size_of::<RaftRequest>();
+        assert!(
+            size <= 160,
+            "RaftRequest enum grew to {} bytes — did a large variant get un-boxed?",
+            size
+        );
     }
 
     #[test]

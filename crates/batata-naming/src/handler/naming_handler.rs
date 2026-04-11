@@ -903,23 +903,27 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
             if req_type == REGISTER_INSTANCE {
                 let metadata_json = serde_json::to_string(&instance.metadata)
                     .unwrap_or_else(|_| "{}".to_string());
-                let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister {
-                    namespace_id: namespace.clone(),
-                    group_name: group_name.clone(),
-                    service_name: service_name.clone(),
-                    instance_id,
-                    ip: instance.ip.clone(),
-                    port: instance.port as u16,
-                    weight: instance.weight,
-                    healthy: instance.healthy,
-                    enabled: instance.enabled,
-                    metadata: metadata_json,
-                    cluster_name: if instance.cluster_name.is_empty() {
-                        "DEFAULT".to_string()
-                    } else {
-                        instance.cluster_name.clone()
-                    },
-                };
+                let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister(
+                    Box::new(
+                        batata_consistency::raft::request::PersistentInstanceRegisterPayload {
+                            namespace_id: namespace.clone(),
+                            group_name: group_name.clone(),
+                            service_name: service_name.clone(),
+                            instance_id,
+                            ip: instance.ip.clone(),
+                            port: instance.port as u16,
+                            weight: instance.weight,
+                            healthy: instance.healthy,
+                            enabled: instance.enabled,
+                            metadata: metadata_json,
+                            cluster_name: if instance.cluster_name.is_empty() {
+                                "DEFAULT".to_string()
+                            } else {
+                                instance.cluster_name.clone()
+                            },
+                        },
+                    ),
+                );
                 match raft.write(req).await {
                     Ok(resp) => resp.success,
                     Err(e) => {

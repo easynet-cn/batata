@@ -223,33 +223,35 @@ impl ConfigPersistence for DistributedPersistService {
         // Single Raft write: config publish + history insert atomically.
         // op_type (Insert/Update) is determined by the state machine during apply,
         // which already reads existing value for CAS — no pre-write read needed here.
-        let request = RaftRequest::ConfigPublish {
-            data_id: data_id.to_string(),
-            group: group_id.to_string(),
-            tenant: tenant_id.to_string(),
-            content: content.to_string(),
-            md5: md5_val,
-            config_type: Some(r#type.to_string()),
-            app_name: Some(app_name.to_string()),
-            tag: if config_tags.is_empty() {
-                None
-            } else {
-                Some(config_tags.to_string())
+        let request = RaftRequest::ConfigPublish(Box::new(
+            batata_consistency::raft::request::ConfigPublishPayload {
+                data_id: data_id.to_string(),
+                group: group_id.to_string(),
+                tenant: tenant_id.to_string(),
+                content: content.to_string(),
+                md5: md5_val,
+                config_type: Some(r#type.to_string()),
+                app_name: Some(app_name.to_string()),
+                tag: if config_tags.is_empty() {
+                    None
+                } else {
+                    Some(config_tags.to_string())
+                },
+                desc: Some(desc.to_string()),
+                src_user: Some(src_user.to_string()),
+                src_ip: Some(src_ip.to_string()),
+                r#use: Some(r#use.to_string()),
+                effect: Some(effect.to_string()),
+                schema: Some(schema.to_string()),
+                encrypted_data_key: Some(encrypted_data_key.to_string()),
+                cas_md5: cas_md5.map(|s| s.to_string()),
+                history: Some(batata_consistency::raft::request::ConfigHistoryInfo {
+                    op_type: String::new(), // Determined by state machine from existing value
+                    publish_type: Some("formal".to_string()),
+                    ext_info: Some(ext_info),
+                }),
             },
-            desc: Some(desc.to_string()),
-            src_user: Some(src_user.to_string()),
-            src_ip: Some(src_ip.to_string()),
-            r#use: Some(r#use.to_string()),
-            effect: Some(effect.to_string()),
-            schema: Some(schema.to_string()),
-            encrypted_data_key: Some(encrypted_data_key.to_string()),
-            cas_md5: cas_md5.map(|s| s.to_string()),
-            history: Some(batata_consistency::raft::request::ConfigHistoryInfo {
-                op_type: String::new(), // Determined by state machine from existing value
-                publish_type: Some("formal".to_string()),
-                ext_info: Some(ext_info),
-            }),
-        };
+        ));
 
         self.raft_write(request).await?;
         self.invalidate_config_cache(data_id, group_id, tenant_id);
@@ -281,7 +283,7 @@ impl ConfigPersistence for DistributedPersistService {
             })
             .to_string();
 
-            batata_consistency::raft::request::ConfigDeleteHistoryInfo {
+            Box::new(batata_consistency::raft::request::ConfigDeleteHistoryInfo {
                 content: ex["content"].as_str().unwrap_or("").to_string(),
                 md5: ex["md5"].as_str().unwrap_or("").to_string(),
                 app_name: ex["app_name"].as_str().unwrap_or("").to_string(),
@@ -289,7 +291,7 @@ impl ConfigPersistence for DistributedPersistService {
                 src_ip: client_ip.to_string(),
                 ext_info,
                 encrypted_data_key: ex["encrypted_data_key"].as_str().unwrap_or("").to_string(),
-            }
+            })
         });
 
         // Single Raft write: config remove + history insert atomically
@@ -331,19 +333,21 @@ impl ConfigPersistence for DistributedPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let request = RaftRequest::ConfigGrayPublish {
-            data_id: data_id.to_string(),
-            group: group_id.to_string(),
-            tenant: tenant_id.to_string(),
-            content: content.to_string(),
-            gray_name: gray_name.to_string(),
-            gray_rule: gray_rule.to_string(),
-            app_name: Some(app_name.to_string()),
-            encrypted_data_key: Some(encrypted_data_key.to_string()),
-            src_user: Some(src_user.to_string()),
-            src_ip: Some(src_ip.to_string()),
-            cas_md5: cas_md5.map(|s| s.to_string()),
-        };
+        let request = RaftRequest::ConfigGrayPublish(Box::new(
+            batata_consistency::raft::request::ConfigGrayPublishPayload {
+                data_id: data_id.to_string(),
+                group: group_id.to_string(),
+                tenant: tenant_id.to_string(),
+                content: content.to_string(),
+                gray_name: gray_name.to_string(),
+                gray_rule: gray_rule.to_string(),
+                app_name: Some(app_name.to_string()),
+                encrypted_data_key: Some(encrypted_data_key.to_string()),
+                src_user: Some(src_user.to_string()),
+                src_ip: Some(src_ip.to_string()),
+                cas_md5: cas_md5.map(|s| s.to_string()),
+            },
+        ));
         self.raft_write(request).await?;
         Ok(true)
     }

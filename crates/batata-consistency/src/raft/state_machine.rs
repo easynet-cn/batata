@@ -196,6 +196,50 @@ pub struct StoredConfigGray {
     pub modified_time: i64,
 }
 
+/// Typed value for CF_NAMESPACE entries (bincode-encoded).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredNamespace {
+    pub namespace_id: String,
+    pub namespace_name: String,
+    #[serde(default)]
+    pub namespace_desc: Option<String>,
+    #[serde(default)]
+    pub created_time: i64,
+    #[serde(default)]
+    pub modified_time: i64,
+}
+
+/// Typed value for CF_USERS entries (bincode-encoded).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredUser {
+    pub username: String,
+    pub password_hash: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_time: i64,
+    #[serde(default)]
+    pub modified_time: i64,
+}
+
+/// Typed value for CF_ROLES entries (bincode-encoded).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredRole {
+    pub role: String,
+    pub username: String,
+    #[serde(default)]
+    pub created_time: i64,
+}
+
+/// Typed value for CF_PERMISSIONS entries (bincode-encoded).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredPermission {
+    pub role: String,
+    pub resource: String,
+    pub action: String,
+    #[serde(default)]
+    pub created_time: i64,
+}
+
 impl RocksStateMachine {
     /// Get a reference to the underlying RocksDB instance
     pub fn db(&self) -> Arc<DB> {
@@ -514,43 +558,46 @@ impl RocksStateMachine {
     /// Apply a single request to the state machine
     async fn apply_request(&self, request: RaftRequest, log_index: u64) -> RaftResponse {
         match request {
-            RaftRequest::ConfigPublish {
-                data_id,
-                group,
-                tenant,
-                content,
-                md5,
-                config_type,
-                app_name,
-                tag,
-                desc,
-                src_user,
-                src_ip,
-                r#use,
-                effect,
-                schema,
-                encrypted_data_key,
-                cas_md5,
-                history,
-            } => self.apply_config_publish_batched(
-                &data_id,
-                &group,
-                &tenant,
-                &content,
-                &md5,
-                config_type,
-                app_name,
-                tag,
-                desc,
-                src_user,
-                src_ip,
-                r#use,
-                effect,
-                schema,
-                encrypted_data_key,
-                cas_md5.as_deref(),
-                history,
-            ),
+            RaftRequest::ConfigPublish(payload) => {
+                let crate::raft::request::ConfigPublishPayload {
+                    data_id,
+                    group,
+                    tenant,
+                    content,
+                    md5,
+                    config_type,
+                    app_name,
+                    tag,
+                    desc,
+                    src_user,
+                    src_ip,
+                    r#use,
+                    effect,
+                    schema,
+                    encrypted_data_key,
+                    cas_md5,
+                    history,
+                } = *payload;
+                self.apply_config_publish_batched(
+                    &data_id,
+                    &group,
+                    &tenant,
+                    &content,
+                    &md5,
+                    config_type,
+                    app_name,
+                    tag,
+                    desc,
+                    src_user,
+                    src_ip,
+                    r#use,
+                    effect,
+                    schema,
+                    encrypted_data_key,
+                    cas_md5.as_deref(),
+                    history,
+                )
+            }
 
             RaftRequest::ConfigRemove {
                 data_id,
@@ -559,31 +606,34 @@ impl RocksStateMachine {
                 history,
             } => self.apply_config_remove_batched(&data_id, &group, &tenant, history),
 
-            RaftRequest::ConfigGrayPublish {
-                data_id,
-                group,
-                tenant,
-                content,
-                gray_name,
-                gray_rule,
-                app_name,
-                encrypted_data_key,
-                src_user,
-                src_ip,
-                cas_md5,
-            } => self.apply_config_gray_publish(
-                &data_id,
-                &group,
-                &tenant,
-                &content,
-                &gray_name,
-                &gray_rule,
-                app_name,
-                encrypted_data_key,
-                src_user,
-                src_ip,
-                cas_md5,
-            ),
+            RaftRequest::ConfigGrayPublish(payload) => {
+                let crate::raft::request::ConfigGrayPublishPayload {
+                    data_id,
+                    group,
+                    tenant,
+                    content,
+                    gray_name,
+                    gray_rule,
+                    app_name,
+                    encrypted_data_key,
+                    src_user,
+                    src_ip,
+                    cas_md5,
+                } = *payload;
+                self.apply_config_gray_publish(
+                    &data_id,
+                    &group,
+                    &tenant,
+                    &content,
+                    &gray_name,
+                    &gray_rule,
+                    app_name,
+                    encrypted_data_key,
+                    src_user,
+                    src_ip,
+                    cas_md5,
+                )
+            }
 
             RaftRequest::ConfigGrayRemove {
                 data_id,
@@ -638,41 +688,44 @@ impl RocksStateMachine {
                 action,
             } => self.apply_permission_revoke(&role, &resource, &action),
 
-            RaftRequest::ConfigHistoryInsert {
-                id,
-                data_id,
-                group,
-                tenant,
-                content,
-                md5,
-                app_name,
-                src_user,
-                src_ip,
-                op_type,
-                publish_type,
-                gray_name,
-                ext_info,
-                encrypted_data_key,
-                created_time,
-                last_modified_time,
-            } => self.apply_config_history_insert(
-                id,
-                &data_id,
-                &group,
-                &tenant,
-                &content,
-                &md5,
-                app_name,
-                src_user,
-                src_ip,
-                &op_type,
-                publish_type,
-                gray_name,
-                ext_info,
-                encrypted_data_key,
-                created_time,
-                last_modified_time,
-            ),
+            RaftRequest::ConfigHistoryInsert(payload) => {
+                let crate::raft::request::ConfigHistoryInsertPayload {
+                    id,
+                    data_id,
+                    group,
+                    tenant,
+                    content,
+                    md5,
+                    app_name,
+                    src_user,
+                    src_ip,
+                    op_type,
+                    publish_type,
+                    gray_name,
+                    ext_info,
+                    encrypted_data_key,
+                    created_time,
+                    last_modified_time,
+                } = *payload;
+                self.apply_config_history_insert(
+                    id,
+                    &data_id,
+                    &group,
+                    &tenant,
+                    &content,
+                    &md5,
+                    app_name,
+                    src_user,
+                    src_ip,
+                    &op_type,
+                    publish_type,
+                    gray_name,
+                    ext_info,
+                    encrypted_data_key,
+                    created_time,
+                    last_modified_time,
+                )
+            }
 
             RaftRequest::ConfigTagsUpdate {
                 data_id,
@@ -689,19 +742,20 @@ impl RocksStateMachine {
                 tag,
             } => self.apply_config_tags_delete(&data_id, &group, &tenant, &tag),
 
-            RaftRequest::PersistentInstanceRegister {
-                namespace_id,
-                group_name,
-                service_name,
-                instance_id,
-                ip,
-                port,
-                weight,
-                healthy,
-                enabled,
-                metadata,
-                cluster_name,
-            } => {
+            RaftRequest::PersistentInstanceRegister(payload) => {
+                let crate::raft::request::PersistentInstanceRegisterPayload {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    instance_id,
+                    ip,
+                    port,
+                    weight,
+                    healthy,
+                    enabled,
+                    metadata,
+                    cluster_name,
+                } = *payload;
                 let resp = self.apply_instance_register(
                     &namespace_id,
                     &group_name,
@@ -760,18 +814,19 @@ impl RocksStateMachine {
                 resp
             }
 
-            RaftRequest::PersistentInstanceUpdate {
-                namespace_id,
-                group_name,
-                service_name,
-                instance_id,
-                ip,
-                port,
-                weight,
-                healthy,
-                enabled,
-                metadata,
-            } => {
+            RaftRequest::PersistentInstanceUpdate(payload) => {
+                let crate::raft::request::PersistentInstanceUpdatePayload {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    instance_id,
+                    ip,
+                    port,
+                    weight,
+                    healthy,
+                    enabled,
+                    metadata,
+                } = *payload;
                 let ip_c = ip.clone();
                 let metadata_c = metadata.clone();
                 let resp = self.apply_instance_update(
@@ -1024,7 +1079,7 @@ impl RocksStateMachine {
         data_id: &str,
         group: &str,
         tenant: &str,
-        history: Option<super::request::ConfigDeleteHistoryInfo>,
+        history: Option<Box<super::request::ConfigDeleteHistoryInfo>>,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
         let now = chrono::Utc::now().timestamp_millis();
@@ -1032,7 +1087,7 @@ impl RocksStateMachine {
         let mut batch = rocksdb::WriteBatch::default();
         batch.delete_cf(self.cf_config(), key.as_bytes());
 
-        if let Some(hi) = history {
+        if let Some(hi) = history.map(|b| *b) {
             let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
             let history = StoredConfigHistory {
                 id: now,
@@ -1374,17 +1429,24 @@ impl RocksStateMachine {
         namespace_desc: Option<String>,
     ) -> RaftResponse {
         let key = Self::namespace_key(namespace_id);
-        let value = serde_json::json!({
-            "namespace_id": namespace_id,
-            "namespace_name": namespace_name,
-            "namespace_desc": namespace_desc,
-            "created_time": chrono::Utc::now().timestamp_millis(),
-        });
-
+        let now = chrono::Utc::now().timestamp_millis();
+        let stored = StoredNamespace {
+            namespace_id: namespace_id.to_string(),
+            namespace_name: namespace_name.to_string(),
+            namespace_desc,
+            created_time: now,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => {
+                return RaftResponse::failure(format!("Failed to encode namespace: {}", e));
+            }
+        };
         match self.db.put_cf_opt(
             self.cf_namespace(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1405,17 +1467,33 @@ impl RocksStateMachine {
         namespace_desc: Option<String>,
     ) -> RaftResponse {
         let key = Self::namespace_key(namespace_id);
-        let value = serde_json::json!({
-            "namespace_id": namespace_id,
-            "namespace_name": namespace_name,
-            "namespace_desc": namespace_desc,
-            "modified_time": chrono::Utc::now().timestamp_millis(),
-        });
+        let now = chrono::Utc::now().timestamp_millis();
 
+        // Preserve created_time from existing entry if present.
+        let created_time = match self.db.get_cf(self.cf_namespace(), key.as_bytes()) {
+            Ok(Some(bytes)) => bincode::deserialize::<StoredNamespace>(&bytes)
+                .map(|s| s.created_time)
+                .unwrap_or(now),
+            _ => now,
+        };
+
+        let stored = StoredNamespace {
+            namespace_id: namespace_id.to_string(),
+            namespace_name: namespace_name.to_string(),
+            namespace_desc,
+            created_time,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => {
+                return RaftResponse::failure(format!("Failed to encode namespace: {}", e));
+            }
+        };
         match self.db.put_cf_opt(
             self.cf_namespace(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1455,17 +1533,22 @@ impl RocksStateMachine {
         enabled: bool,
     ) -> RaftResponse {
         let key = Self::user_key(username);
-        let value = serde_json::json!({
-            "username": username,
-            "password_hash": password_hash,
-            "enabled": enabled,
-            "created_time": chrono::Utc::now().timestamp_millis(),
-        });
-
+        let now = chrono::Utc::now().timestamp_millis();
+        let stored = StoredUser {
+            username: username.to_string(),
+            password_hash: password_hash.to_string(),
+            enabled,
+            created_time: now,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("Failed to encode user: {}", e)),
+        };
         match self.db.put_cf_opt(
             self.cf_users(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1487,29 +1570,32 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::user_key(username);
 
-        // Read existing user
-        let existing = match self.db.get_cf(self.cf_users(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
+        let mut stored: StoredUser = match self.db.get_cf(self.cf_users(), key.as_bytes()) {
+            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    return RaftResponse::failure(format!("Failed to decode user: {}", e));
+                }
+            },
+            _ => return RaftResponse::failure("User not found"),
         };
 
-        let value = if let Some(mut existing) = existing {
-            if let Some(hash) = password_hash {
-                existing["password_hash"] = serde_json::json!(hash);
-            }
-            if let Some(en) = enabled {
-                existing["enabled"] = serde_json::json!(en);
-            }
-            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
-            existing
-        } else {
-            return RaftResponse::failure("User not found");
-        };
+        if let Some(hash) = password_hash {
+            stored.password_hash = hash;
+        }
+        if let Some(en) = enabled {
+            stored.enabled = en;
+        }
+        stored.modified_time = chrono::Utc::now().timestamp_millis();
 
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("Failed to encode user: {}", e)),
+        };
         match self.db.put_cf_opt(
             self.cf_users(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1544,16 +1630,19 @@ impl RocksStateMachine {
     // Role operations
     fn apply_role_create(&self, role: &str, username: &str) -> RaftResponse {
         let key = Self::role_key(role, username);
-        let value = serde_json::json!({
-            "role": role,
-            "username": username,
-            "created_time": chrono::Utc::now().timestamp_millis(),
-        });
-
+        let stored = StoredRole {
+            role: role.to_string(),
+            username: username.to_string(),
+            created_time: chrono::Utc::now().timestamp_millis(),
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("Failed to encode role: {}", e)),
+        };
         match self.db.put_cf_opt(
             self.cf_roles(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1588,17 +1677,20 @@ impl RocksStateMachine {
     // Permission operations
     fn apply_permission_grant(&self, role: &str, resource: &str, action: &str) -> RaftResponse {
         let key = Self::permission_key(role, resource, action);
-        let value = serde_json::json!({
-            "role": role,
-            "resource": resource,
-            "action": action,
-            "created_time": chrono::Utc::now().timestamp_millis(),
-        });
-
+        let stored = StoredPermission {
+            role: role.to_string(),
+            resource: resource.to_string(),
+            action: action.to_string(),
+            created_time: chrono::Utc::now().timestamp_millis(),
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("Failed to encode permission: {}", e)),
+        };
         match self.db.put_cf_opt(
             self.cf_permissions(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            &encoded,
             &self.write_opts,
         ) {
             Ok(_) => {

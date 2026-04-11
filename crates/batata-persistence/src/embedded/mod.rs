@@ -59,17 +59,6 @@ impl EmbeddedPersistService {
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", name))
     }
 
-    /// Write a JSON value to a column family.
-    /// Uses `serde_json::to_vec` to serialize directly to bytes, avoiding
-    /// intermediate String allocation from `.to_string().as_bytes()`.
-    fn put_json(&self, cf_name: &str, key: &str, value: &serde_json::Value) -> anyhow::Result<()> {
-        let cf = self.cf(cf_name)?;
-        let bytes = serde_json::to_vec(value)?;
-        self.db
-            .put_cf(cf, key.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
-    }
-
     /// Delete a key from a column family
     fn delete_key(&self, cf_name: &str, key: &str) -> anyhow::Result<()> {
         let cf = self.cf(cf_name)?;
@@ -279,25 +268,29 @@ impl ConfigPersistence for EmbeddedPersistService {
             now
         };
 
-        let value = serde_json::json!({
-            "data_id": data_id,
-            "group": group_id,
-            "tenant": tenant_id,
-            "content": content,
-            "md5": md5_val,
-            "app_name": app_name,
-            "config_type": r#type,
-            "desc": desc,
-            "use": r#use,
-            "effect": effect,
-            "schema": schema,
-            "config_tags": config_tags,
-            "encrypted_data_key": encrypted_data_key,
-            "src_user": src_user,
-            "src_ip": src_ip,
-            "created_time": created_time,
-            "modified_time": now,
-        });
+        let stored_config = batata_consistency::raft::state_machine::StoredConfig {
+            data_id: data_id.to_string(),
+            group: group_id.to_string(),
+            tenant: tenant_id.to_string(),
+            content: content.to_string(),
+            md5: md5_val.clone(),
+            config_type: if r#type.is_empty() {
+                None
+            } else {
+                Some(r#type.to_string())
+            },
+            app_name: Some(app_name.to_string()),
+            config_tags: Some(config_tags.to_string()),
+            desc: Some(desc.to_string()),
+            r#use: Some(r#use.to_string()),
+            effect: Some(effect.to_string()),
+            schema: Some(schema.to_string()),
+            encrypted_data_key: Some(encrypted_data_key.to_string()),
+            src_user: Some(src_user.to_string()),
+            src_ip: Some(src_ip.to_string()),
+            created_time,
+            modified_time: now,
+        };
 
         // Build ext_info JSON with config metadata (consistent with DB mode)
         let ext_info = serde_json::json!({
@@ -327,27 +320,26 @@ impl ConfigPersistence for EmbeddedPersistService {
         let op_type = if is_update { "U" } else { "I" };
         let history_key =
             RocksStateMachine::config_history_key(data_id, group_id, tenant_id, history_id);
-        let history_value = serde_json::json!({
-            "id": history_id,
-            "data_id": data_id,
-            "group": group_id,
-            "tenant": tenant_id,
-            "content": history_content,
-            "md5": history_md5,
-            "app_name": app_name,
-            "src_user": src_user,
-            "src_ip": src_ip,
-            "op_type": op_type,
-            "publish_type": "formal",
-            "gray_name": "",
-            "ext_info": ext_info,
-            "encrypted_data_key": encrypted_data_key,
-            "created_time": now,
-            "modified_time": now,
-        });
+        let stored_history = batata_consistency::raft::state_machine::StoredConfigHistory {
+            id: history_id as i64,
+            data_id: data_id.to_string(),
+            group: group_id.to_string(),
+            tenant: tenant_id.to_string(),
+            content: history_content,
+            md5: history_md5,
+            app_name: app_name.to_string(),
+            src_user: Some(src_user.to_string()),
+            src_ip: Some(src_ip.to_string()),
+            op_type: op_type.to_string(),
+            publish_type: "formal".to_string(),
+            gray_name: String::new(),
+            ext_info,
+            encrypted_data_key: encrypted_data_key.to_string(),
+            created_time: now,
+            modified_time: now,
+        };
 
-        // Atomic config + history write using WriteBatch.
-        // Use serde_json::to_vec for direct bytes serialization (no intermediate String).
+        // Atomic config + history write using WriteBatch (bincode-encoded).
         let cf_config = self
             .db
             .cf_handle(CF_CONFIG)
@@ -356,8 +348,8 @@ impl ConfigPersistence for EmbeddedPersistService {
             .db
             .cf_handle(CF_CONFIG_HISTORY)
             .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
-        let config_bytes = serde_json::to_vec(&value)?;
-        let history_bytes = serde_json::to_vec(&history_value)?;
+        let config_bytes = bincode::serialize(&stored_config)?;
+        let history_bytes = bincode::serialize(&stored_history)?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(&cf_config, key.as_bytes(), &config_bytes);
         batch.put_cf(&cf_history, history_key.as_bytes(), &history_bytes);
@@ -398,24 +390,27 @@ impl ConfigPersistence for EmbeddedPersistService {
         let now = chrono::Utc::now().timestamp_millis();
         let history_key =
             RocksStateMachine::config_history_key(data_id, group, namespace_id, history_id);
-        let history_value = serde_json::json!({
-            "id": history_id,
-            "data_id": data_id,
-            "group": group,
-            "tenant": namespace_id,
-            "content": existing["content"],
-            "md5": existing["md5"],
-            "app_name": existing["app_name"],
-            "src_user": src_user,
-            "src_ip": client_ip,
-            "op_type": "D",
-            "publish_type": "formal",
-            "gray_name": "",
-            "ext_info": ext_info,
-            "encrypted_data_key": existing["encrypted_data_key"],
-            "created_time": now,
-            "modified_time": now,
-        });
+        let stored_history = batata_consistency::raft::state_machine::StoredConfigHistory {
+            id: history_id as i64,
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: namespace_id.to_string(),
+            content: existing["content"].as_str().unwrap_or("").to_string(),
+            md5: existing["md5"].as_str().unwrap_or("").to_string(),
+            app_name: existing["app_name"].as_str().unwrap_or("").to_string(),
+            src_user: Some(src_user.to_string()),
+            src_ip: Some(client_ip.to_string()),
+            op_type: "D".to_string(),
+            publish_type: "formal".to_string(),
+            gray_name: String::new(),
+            ext_info,
+            encrypted_data_key: existing["encrypted_data_key"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+            created_time: now,
+            modified_time: now,
+        };
 
         let cf_config = self
             .db
@@ -425,7 +420,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             .db
             .cf_handle(CF_CONFIG_HISTORY)
             .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
-        let history_bytes = serde_json::to_vec(&history_value)?;
+        let history_bytes = bincode::serialize(&stored_history)?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.delete_cf(&cf_config, key.as_bytes());
         batch.put_cf(&cf_history, history_key.as_bytes(), &history_bytes);
@@ -479,23 +474,27 @@ impl ConfigPersistence for EmbeddedPersistService {
             }
         }
 
-        let value = serde_json::json!({
-            "data_id": data_id,
-            "group": group_id,
-            "tenant": tenant_id,
-            "content": content,
-            "md5": md5_val,
-            "app_name": app_name,
-            "gray_name": gray_name,
-            "gray_rule": gray_rule,
-            "encrypted_data_key": encrypted_data_key,
-            "src_user": src_user,
-            "src_ip": src_ip,
-            "created_time": now,
-            "modified_time": now,
-        });
+        let stored_gray = batata_consistency::raft::state_machine::StoredConfigGray {
+            data_id: data_id.to_string(),
+            group: group_id.to_string(),
+            tenant: tenant_id.to_string(),
+            content: content.to_string(),
+            md5: md5_val,
+            app_name: app_name.to_string(),
+            gray_name: gray_name.to_string(),
+            gray_rule: gray_rule.to_string(),
+            encrypted_data_key: encrypted_data_key.to_string(),
+            src_user: src_user.to_string(),
+            src_ip: src_ip.to_string(),
+            created_time: now,
+            modified_time: now,
+        };
 
-        self.put_json(CF_CONFIG_GRAY, &key, &value)?;
+        let cf = self.cf(CF_CONFIG_GRAY)?;
+        let bytes = bincode::serialize(&stored_gray)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
         Ok(true)
     }
 
@@ -634,11 +633,12 @@ impl ConfigPersistence for EmbeddedPersistService {
             if !key_str.starts_with(&prefix) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            let id = json["id"].as_u64().unwrap_or(0);
+            let stored: batata_consistency::raft::state_machine::StoredConfigHistory =
+                bincode::deserialize(&value)?;
+            let id = stored.id as u64;
             if id < current_nid && id > best_id {
                 best_id = id;
-                best = Some(json);
+                best = Some(serde_json::to_value(&stored)?);
             }
         }
 
@@ -661,7 +661,8 @@ impl ConfigPersistence for EmbeddedPersistService {
         let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
-        let mut all_items = Vec::new();
+        let mut all_items: Vec<batata_consistency::raft::state_machine::StoredConfigHistory> =
+            Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
             let (key, value) =
@@ -670,43 +671,37 @@ impl ConfigPersistence for EmbeddedPersistService {
             if !key_str.starts_with(&prefix) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            let stored: batata_consistency::raft::state_machine::StoredConfigHistory =
+                bincode::deserialize(&value)?;
 
-            // Apply filters
-            if let Some(op) = op_type {
-                let entry_op = json["op_type"].as_str().unwrap_or("");
-                if entry_op != op {
-                    continue;
-                }
+            // Apply filters on typed fields
+            if let Some(op) = op_type
+                && stored.op_type != op
+            {
+                continue;
             }
             if let Some(user) = src_user {
-                let entry_user = json["src_user"].as_str().unwrap_or("");
+                let entry_user = stored.src_user.as_deref().unwrap_or("");
                 if !entry_user.contains(user) {
                     continue;
                 }
             }
-            if let Some(start) = start_time {
-                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
-                if entry_time < start {
-                    continue;
-                }
+            if let Some(start) = start_time
+                && stored.modified_time < start
+            {
+                continue;
             }
-            if let Some(end) = end_time {
-                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
-                if entry_time > end {
-                    continue;
-                }
+            if let Some(end) = end_time
+                && stored.modified_time > end
+            {
+                continue;
             }
 
-            all_items.push(json);
+            all_items.push(stored);
         }
 
         // Sort by id descending (newest first)
-        all_items.sort_by(|a, b| {
-            let id_a = a["id"].as_u64().unwrap_or(0);
-            let id_b = b["id"].as_u64().unwrap_or(0);
-            id_b.cmp(&id_a)
-        });
+        all_items.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = all_items.len() as u64;
         let offset = (page_no.saturating_sub(1)) * page_size;
@@ -714,7 +709,9 @@ impl ConfigPersistence for EmbeddedPersistService {
             .iter()
             .skip(offset as usize)
             .take(page_size as usize)
-            .map(Self::json_to_history)
+            .map(|stored| {
+                Self::json_to_history(&serde_json::to_value(stored).unwrap_or_default())
+            })
             .collect();
 
         Ok(Page::new(total, page_no, page_size, page_items))
@@ -736,7 +733,9 @@ impl ConfigPersistence for EmbeddedPersistService {
             if !key_str.starts_with(&prefix) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            let stored: batata_consistency::raft::state_machine::StoredConfig =
+                bincode::deserialize(&value)?;
+            let json = serde_json::to_value(&stored)?;
             results.push(Self::json_to_config(&json));
         }
 
@@ -865,15 +864,22 @@ impl NamespacePersistence for EmbeddedPersistService {
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::namespace_key(namespace_id);
         let now = chrono::Utc::now().timestamp_millis();
-
-        let value = serde_json::json!({
-            "namespace_id": namespace_id,
-            "namespace_name": name,
-            "namespace_desc": desc,
-            "created_time": now,
-        });
-
-        self.put_json(CF_NAMESPACE, &key, &value)
+        let stored = batata_consistency::raft::state_machine::StoredNamespace {
+            namespace_id: namespace_id.to_string(),
+            namespace_name: name.to_string(),
+            namespace_desc: if desc.is_empty() {
+                None
+            } else {
+                Some(desc.to_string())
+            },
+            created_time: now,
+            modified_time: now,
+        };
+        let cf = self.cf(CF_NAMESPACE)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(())
     }
 
     async fn namespace_update(
@@ -884,20 +890,28 @@ impl NamespacePersistence for EmbeddedPersistService {
     ) -> anyhow::Result<bool> {
         let key = RocksStateMachine::namespace_key(namespace_id);
 
-        // Check existence
-        if self.reader.get_namespace(namespace_id)?.is_none() {
-            return Ok(false);
-        }
+        let existing_json = match self.reader.get_namespace(namespace_id)? {
+            Some(v) => v,
+            None => return Ok(false),
+        };
+        let created_time = existing_json["created_time"].as_i64().unwrap_or(0);
 
         let now = chrono::Utc::now().timestamp_millis();
-        let value = serde_json::json!({
-            "namespace_id": namespace_id,
-            "namespace_name": name,
-            "namespace_desc": desc,
-            "modified_time": now,
-        });
-
-        self.put_json(CF_NAMESPACE, &key, &value)?;
+        let stored = batata_consistency::raft::state_machine::StoredNamespace {
+            namespace_id: namespace_id.to_string(),
+            namespace_name: name.to_string(),
+            namespace_desc: if desc.is_empty() {
+                None
+            } else {
+                Some(desc.to_string())
+            },
+            created_time,
+            modified_time: now,
+        };
+        let cf = self.cf(CF_NAMESPACE)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
         Ok(true)
     }
 
@@ -946,15 +960,18 @@ impl AuthPersistence for EmbeddedPersistService {
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::user_key(username);
         let now = chrono::Utc::now().timestamp_millis();
-
-        let value = serde_json::json!({
-            "username": username,
-            "password_hash": password_hash,
-            "enabled": enabled,
-            "created_time": now,
-        });
-
-        self.put_json(CF_USERS, &key, &value)
+        let stored = batata_consistency::raft::state_machine::StoredUser {
+            username: username.to_string(),
+            password_hash: password_hash.to_string(),
+            enabled,
+            created_time: now,
+            modified_time: now,
+        };
+        let cf = self.cf(CF_USERS)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(())
     }
 
     async fn user_update_password(
@@ -965,16 +982,23 @@ impl AuthPersistence for EmbeddedPersistService {
         let key = RocksStateMachine::user_key(username);
         let now = chrono::Utc::now().timestamp_millis();
 
-        let existing = self
+        let existing_json = self
             .reader
             .get_user(username)?
             .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-        let mut existing = existing;
-        existing["password_hash"] = serde_json::json!(password_hash);
-        existing["modified_time"] = serde_json::json!(now);
-
-        self.put_json(CF_USERS, &key, &existing)
+        let stored = batata_consistency::raft::state_machine::StoredUser {
+            username: username.to_string(),
+            password_hash: password_hash.to_string(),
+            enabled: existing_json["enabled"].as_bool().unwrap_or(true),
+            created_time: existing_json["created_time"].as_i64().unwrap_or(now),
+            modified_time: now,
+        };
+        let cf = self.cf(CF_USERS)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(())
     }
 
     async fn user_delete(&self, username: &str) -> anyhow::Result<()> {
@@ -989,10 +1013,10 @@ impl AuthPersistence for EmbeddedPersistService {
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            let u = json["username"].as_str().unwrap_or("");
-            if username.is_empty() || u.contains(username) {
-                results.push(u.to_string());
+            let stored: batata_consistency::raft::state_machine::StoredUser =
+                bincode::deserialize(&value)?;
+            if username.is_empty() || stored.username.contains(username) {
+                results.push(stored.username);
             }
         }
 
@@ -1022,14 +1046,16 @@ impl AuthPersistence for EmbeddedPersistService {
     async fn role_create(&self, role: &str, username: &str) -> anyhow::Result<()> {
         let key = RocksStateMachine::role_key(role, username);
         let now = chrono::Utc::now().timestamp_millis();
-
-        let value = serde_json::json!({
-            "role": role,
-            "username": username,
-            "created_time": now,
-        });
-
-        self.put_json(CF_ROLES, &key, &value)
+        let stored = batata_consistency::raft::state_machine::StoredRole {
+            role: role.to_string(),
+            username: username.to_string(),
+            created_time: now,
+        };
+        let cf = self.cf(CF_ROLES)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(())
     }
 
     async fn role_delete(&self, role: &str, username: &str) -> anyhow::Result<()> {
@@ -1097,7 +1123,9 @@ impl AuthPersistence for EmbeddedPersistService {
 
         match self.db.get_cf(cf, key.as_bytes())? {
             Some(data) => {
-                let v: serde_json::Value = serde_json::from_slice(&data)?;
+                let stored: batata_consistency::raft::state_machine::StoredPermission =
+                    bincode::deserialize(&data)?;
+                let v = serde_json::to_value(&stored)?;
                 Ok(Some(Self::json_to_permission(&v)))
             }
             None => Ok(None),
@@ -1112,15 +1140,17 @@ impl AuthPersistence for EmbeddedPersistService {
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::permission_key(role, resource, action);
         let now = chrono::Utc::now().timestamp_millis();
-
-        let value = serde_json::json!({
-            "role": role,
-            "resource": resource,
-            "action": action,
-            "created_time": now,
-        });
-
-        self.put_json(CF_PERMISSIONS, &key, &value)
+        let stored = batata_consistency::raft::state_machine::StoredPermission {
+            role: role.to_string(),
+            resource: resource.to_string(),
+            action: action.to_string(),
+            created_time: now,
+        };
+        let cf = self.cf(CF_PERMISSIONS)?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &bincode::serialize(&stored)?)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(())
     }
 
     async fn permission_revoke(

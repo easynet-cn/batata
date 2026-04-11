@@ -8,12 +8,14 @@
 
 use std::hint::black_box;
 
-use batata_consistency::raft::request::RaftRequest;
+use batata_consistency::raft::request::{
+    ConfigPublishPayload, PersistentInstanceRegisterPayload, RaftRequest,
+};
 use batata_consistency::raft::state_machine::{StoredConfig, StoredInstance};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 fn config_publish_small() -> RaftRequest {
-    RaftRequest::ConfigPublish {
+    RaftRequest::ConfigPublish(Box::new(ConfigPublishPayload {
         data_id: "app.properties".to_string(),
         group: "DEFAULT_GROUP".to_string(),
         tenant: "public".to_string(),
@@ -31,7 +33,7 @@ fn config_publish_small() -> RaftRequest {
         encrypted_data_key: None,
         cas_md5: None,
         history: None,
-    }
+    }))
 }
 
 fn config_publish_large() -> RaftRequest {
@@ -39,7 +41,7 @@ fn config_publish_large() -> RaftRequest {
     let content: String = (0..256)
         .map(|i| format!("key{:03}=value-with-some-padding-{}\n", i, i))
         .collect();
-    RaftRequest::ConfigPublish {
+    RaftRequest::ConfigPublish(Box::new(ConfigPublishPayload {
         data_id: "large.yml".to_string(),
         group: "PROD".to_string(),
         tenant: "public".to_string(),
@@ -57,11 +59,11 @@ fn config_publish_large() -> RaftRequest {
         encrypted_data_key: None,
         cas_md5: None,
         history: None,
-    }
+    }))
 }
 
 fn persistent_instance_register() -> RaftRequest {
-    RaftRequest::PersistentInstanceRegister {
+    RaftRequest::PersistentInstanceRegister(Box::new(PersistentInstanceRegisterPayload {
         namespace_id: "public".to_string(),
         group_name: "DEFAULT_GROUP".to_string(),
         service_name: "bench-service".to_string(),
@@ -73,7 +75,7 @@ fn persistent_instance_register() -> RaftRequest {
         enabled: true,
         metadata: r#"{"version":"1.0","env":"prod"}"#.to_string(),
         cluster_name: "DEFAULT".to_string(),
-    }
+    }))
 }
 
 fn plugin_write_consul_kv() -> RaftRequest {

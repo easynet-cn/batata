@@ -166,23 +166,25 @@ impl ClientOperationService for PersistentClientOperationService {
         let instance_id = Self::build_instance_id(&instance);
         let metadata_json =
             serde_json::to_string(&instance.metadata).unwrap_or_else(|_| "{}".to_string());
-        let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister {
-            namespace_id: namespace.to_string(),
-            group_name: group_name.to_string(),
-            service_name: service_name.to_string(),
-            instance_id,
-            ip: instance.ip.clone(),
-            port: instance.port as u16,
-            weight: instance.weight,
-            healthy: instance.healthy,
-            enabled: instance.enabled,
-            metadata: metadata_json,
-            cluster_name: if instance.cluster_name.is_empty() {
-                "DEFAULT".to_string()
-            } else {
-                instance.cluster_name.clone()
+        let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister(Box::new(
+            batata_consistency::raft::request::PersistentInstanceRegisterPayload {
+                namespace_id: namespace.to_string(),
+                group_name: group_name.to_string(),
+                service_name: service_name.to_string(),
+                instance_id,
+                ip: instance.ip.clone(),
+                port: instance.port as u16,
+                weight: instance.weight,
+                healthy: instance.healthy,
+                enabled: instance.enabled,
+                metadata: metadata_json,
+                cluster_name: if instance.cluster_name.is_empty() {
+                    "DEFAULT".to_string()
+                } else {
+                    instance.cluster_name.clone()
+                },
             },
-        };
+        ));
         match raft.write(req).await {
             Ok(resp) => resp.success,
             Err(e) => {
@@ -252,19 +254,21 @@ pub async fn register_instance_dispatch(
     let instance_id = format!("{}#{}#{}", instance.ip, instance.port, cluster);
     let metadata_json =
         serde_json::to_string(&instance.metadata).unwrap_or_else(|_| "{}".to_string());
-    let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister {
-        namespace_id: namespace.to_string(),
-        group_name: group_name.to_string(),
-        service_name: service_name.to_string(),
-        instance_id,
-        ip: instance.ip.clone(),
-        port: instance.port as u16,
-        weight: instance.weight,
-        healthy: instance.healthy,
-        enabled: instance.enabled,
-        metadata: metadata_json,
-        cluster_name: cluster.to_string(),
-    };
+    let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister(Box::new(
+        batata_consistency::raft::request::PersistentInstanceRegisterPayload {
+            namespace_id: namespace.to_string(),
+            group_name: group_name.to_string(),
+            service_name: service_name.to_string(),
+            instance_id,
+            ip: instance.ip.clone(),
+            port: instance.port as u16,
+            weight: instance.weight,
+            healthy: instance.healthy,
+            enabled: instance.enabled,
+            metadata: metadata_json,
+            cluster_name: cluster.to_string(),
+        },
+    ));
     match raft.write(req).await {
         Ok(resp) => resp.success,
         Err(e) => {
