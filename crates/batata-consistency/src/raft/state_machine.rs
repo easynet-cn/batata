@@ -21,6 +21,7 @@ use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Optio
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use super::naming_hook::{SharedNamingHook, new_shared_naming_hook};
 use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
 use super::types::{NodeId, TypeConfig};
@@ -79,6 +80,10 @@ pub struct RocksStateMachine {
     /// Wrapped in Arc so the registry can be shared with RaftNode for
     /// post-initialization plugin registration (after state_machine is moved into Raft).
     plugin_registry: Arc<RwLock<PluginRegistry>>,
+    /// Apply-back hook for persistent naming instances. Registered after
+    /// construction (see `RaftNode::register_naming_hook`). Invoked after
+    /// `apply_instance_*` succeeds to keep `NamingService` DashMap in sync.
+    naming_hook: SharedNamingHook,
     /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
     write_opts: rocksdb::WriteOptions,
 }
@@ -102,6 +107,15 @@ impl RocksStateMachine {
     pub fn plugin_registry(&self) -> Arc<RwLock<PluginRegistry>> {
         self.plugin_registry.clone()
     }
+
+    /// Get a shared handle to the naming apply hook slot.
+    ///
+    /// Registration happens after both `RaftNode` and `NamingService` are
+    /// constructed at server startup. Mirrors `plugin_registry` pattern.
+    pub fn naming_hook(&self) -> SharedNamingHook {
+        self.naming_hook.clone()
+    }
+
 
     /// Register a plugin handler for processing PluginWrite operations.
     ///
@@ -238,6 +252,7 @@ impl RocksStateMachine {
             last_applied: RwLock::new(None),
             last_membership: RwLock::new(StoredMembership::default()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+            naming_hook: new_shared_naming_hook(),
             write_opts: custom_write_opts.unwrap_or_default(),
         };
 
@@ -584,31 +599,64 @@ impl RocksStateMachine {
                 enabled,
                 metadata,
                 cluster_name,
-            } => self.apply_instance_register(
-                &namespace_id,
-                &group_name,
-                &service_name,
-                &instance_id,
-                &ip,
-                port,
-                weight,
-                healthy,
-                enabled,
-                &metadata,
-                &cluster_name,
-            ),
+            } => {
+                let resp = self.apply_instance_register(
+                    &namespace_id,
+                    &group_name,
+                    &service_name,
+                    &instance_id,
+                    &ip,
+                    port,
+                    weight,
+                    healthy,
+                    enabled,
+                    &metadata,
+                    &cluster_name,
+                );
+                if resp.success {
+                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                        hook.on_register(
+                            &namespace_id,
+                            &group_name,
+                            &service_name,
+                            &instance_id,
+                            &ip,
+                            port,
+                            weight,
+                            healthy,
+                            enabled,
+                            &metadata,
+                            &cluster_name,
+                        );
+                    }
+                }
+                resp
+            }
 
             RaftRequest::PersistentInstanceDeregister {
                 namespace_id,
                 group_name,
                 service_name,
                 instance_id,
-            } => self.apply_instance_deregister(
-                &namespace_id,
-                &group_name,
-                &service_name,
-                &instance_id,
-            ),
+            } => {
+                let resp = self.apply_instance_deregister(
+                    &namespace_id,
+                    &group_name,
+                    &service_name,
+                    &instance_id,
+                );
+                if resp.success {
+                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                        hook.on_deregister(
+                            &namespace_id,
+                            &group_name,
+                            &service_name,
+                            &instance_id,
+                        );
+                    }
+                }
+                resp
+            }
 
             RaftRequest::PersistentInstanceUpdate {
                 namespace_id,
@@ -621,18 +669,39 @@ impl RocksStateMachine {
                 healthy,
                 enabled,
                 metadata,
-            } => self.apply_instance_update(
-                &namespace_id,
-                &group_name,
-                &service_name,
-                &instance_id,
-                ip,
-                port,
-                weight,
-                healthy,
-                enabled,
-                metadata,
-            ),
+            } => {
+                let ip_c = ip.clone();
+                let metadata_c = metadata.clone();
+                let resp = self.apply_instance_update(
+                    &namespace_id,
+                    &group_name,
+                    &service_name,
+                    &instance_id,
+                    ip,
+                    port,
+                    weight,
+                    healthy,
+                    enabled,
+                    metadata,
+                );
+                if resp.success {
+                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                        hook.on_update(
+                            &namespace_id,
+                            &group_name,
+                            &service_name,
+                            &instance_id,
+                            ip_c.as_deref(),
+                            port,
+                            weight,
+                            healthy,
+                            enabled,
+                            metadata_c.as_deref(),
+                        );
+                    }
+                }
+                resp
+            }
 
             RaftRequest::Noop => RaftResponse::success(),
 
@@ -2031,6 +2100,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+            naming_hook: self.naming_hook.clone(),
             write_opts: rocksdb::WriteOptions::default(),
         }
     }

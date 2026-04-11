@@ -2,6 +2,7 @@
 //!
 //! All endpoints under `/v3/console/copilot`
 //! SSE streaming for LLM interactions, JSON for config management.
+//! Matches Nacos ConsoleCopilotController + ConsoleCopilotConfigController.
 
 use std::sync::Arc;
 
@@ -25,12 +26,13 @@ use crate::service::{
 // ============================================================================
 
 /// POST /v3/console/copilot/skill/optimize — Optimize skill via LLM (SSE)
+/// Matches Nacos ConsoleCopilotController.optimizeSkillStream
 #[post("skill/optimize")]
 async fn optimize_skill_stream(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<SkillOptimizationService>>,
-    body: web::Json<SkillOptimizationRequest>,
+    body: Option<web::Json<SkillOptimizationRequest>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/copilot")
@@ -40,20 +42,26 @@ async fn optimize_skill_stream(
             .build()
     );
 
+    // Handle null body (matches Nacos @RequestBody(required = false))
+    let Some(body) = body else {
+        return build_sse_error_response("请求体不能为空");
+    };
+
     let request = body.into_inner();
     match service.optimize_stream(request).await {
         Ok(stream) => build_sse_response(stream),
-        Err(e) => build_sse_error_response(&e.to_string()),
+        Err(e) => build_sse_error_response(&format!("优化失败：{}", e)),
     }
 }
 
 /// POST /v3/console/copilot/skill/generate — Generate skill via LLM (SSE)
+/// Matches Nacos ConsoleCopilotController.generateSkillStream
 #[post("skill/generate")]
 async fn generate_skill_stream(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<SkillGenerationService>>,
-    body: web::Json<SkillGenerationRequest>,
+    body: Option<web::Json<SkillGenerationRequest>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/copilot")
@@ -63,20 +71,25 @@ async fn generate_skill_stream(
             .build()
     );
 
+    let Some(body) = body else {
+        return build_sse_error_response("请求体不能为空");
+    };
+
     let request = body.into_inner();
     match service.generate_stream(request).await {
         Ok(stream) => build_sse_response(stream),
-        Err(e) => build_sse_error_response(&e.to_string()),
+        Err(e) => build_sse_error_response(&format!("生成失败：{}", e)),
     }
 }
 
 /// POST /v3/console/copilot/prompt/optimize — Optimize prompt via LLM (SSE)
+/// Matches Nacos ConsoleCopilotController.optimizePromptStream
 #[post("prompt/optimize")]
 async fn optimize_prompt_stream(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<PromptOptimizationService>>,
-    body: web::Json<PromptOptimizationRequest>,
+    body: Option<web::Json<PromptOptimizationRequest>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/copilot")
@@ -86,20 +99,25 @@ async fn optimize_prompt_stream(
             .build()
     );
 
+    let Some(body) = body else {
+        return build_sse_error_response("请求体不能为空");
+    };
+
     let request = body.into_inner();
     match service.optimize_stream(request).await {
         Ok(stream) => build_sse_response(stream),
-        Err(e) => build_sse_error_response(&e.to_string()),
+        Err(e) => build_sse_error_response(&format!("优化失败：{}", e)),
     }
 }
 
 /// POST /v3/console/copilot/prompt/debug — Debug prompt via LLM (SSE)
+/// Matches Nacos ConsoleCopilotController.debugPromptStream
 #[post("prompt/debug")]
 async fn debug_prompt_stream(
     req: HttpRequest,
     data: web::Data<AppState>,
     service: web::Data<Arc<PromptDebugService>>,
-    body: web::Json<PromptDebugRequest>,
+    body: Option<web::Json<PromptDebugRequest>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/copilot")
@@ -108,6 +126,10 @@ async fn debug_prompt_stream(
             .api_type(ApiType::ConsoleApi)
             .build()
     );
+
+    let Some(body) = body else {
+        return build_sse_error_response("请求体不能为空");
+    };
 
     let request = body.into_inner();
     match service.debug_stream(request).await {
@@ -183,7 +205,7 @@ async fn save_config(
     req: HttpRequest,
     data: web::Data<AppState>,
     agent_manager: web::Data<Arc<CopilotAgentManager>>,
-    body: web::Json<CopilotConfigUpdateRequest>,
+    body: Option<web::Json<CopilotConfigUpdateRequest>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/copilot")
@@ -192,6 +214,13 @@ async fn save_config(
             .api_type(ApiType::ConsoleApi)
             .build()
     );
+
+    let Some(body) = body else {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            "Config cannot be null".to_string(),
+        );
+    };
 
     let update = body.into_inner();
     let config = CopilotConfig {
@@ -217,6 +246,7 @@ async fn save_config(
 // SSE Response Helpers
 // ============================================================================
 
+/// Build SSE streaming response with "event: message" names (matches Nacos SseEmitter format)
 fn build_sse_response(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>>,
 ) -> HttpResponse {
@@ -232,12 +262,13 @@ fn build_sse_response(
         .streaming(body_stream)
 }
 
+/// Build SSE error response with "event: error" name (matches Nacos error SSE events)
 fn build_sse_error_response(message: &str) -> HttpResponse {
     let error_chunk = StreamChunk::error(message);
     HttpResponse::Ok()
         .content_type("text/event-stream")
         .insert_header(("Cache-Control", "no-cache"))
-        .body(error_chunk.to_sse_event())
+        .body(error_chunk.to_sse_error_event())
 }
 
 // ============================================================================

@@ -648,14 +648,14 @@ cargo run --release -p batata-server
 
 3. 启动所有节点
 
-### Docker
+### Podman
 
 ```bash
 # 构建镜像
-docker build -t batata:latest .
+podman build -t batata:latest .
 
 # 运行容器
-docker run -d \
+podman run -d \
   -p 8848:8848 \
   -p 8081:8081 \
   -p 9848:9848 \
@@ -663,10 +663,23 @@ docker run -d \
   batata:latest
 ```
 
-### Docker Compose
+### Podman Compose
 
 ```bash
-docker-compose up -d
+# 嵌入式模式（无需数据库）
+podman-compose up batata
+
+# 使用 MySQL
+podman-compose --profile mysql up
+
+# 使用 PostgreSQL
+podman-compose --profile postgres up
+
+# 3 节点集群
+podman-compose --profile cluster up
+
+# Server + Console 分离模式
+podman-compose --profile split up
 ```
 
 ## 数据库迁移

@@ -19,7 +19,7 @@ pub struct SkillGenerationRequest {
     pub params: HashMap<String, serde_json::Value>,
 }
 
-/// Skill optimization request
+/// Skill optimization request — matches Nacos SkillOptimizationRequest
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillOptimizationRequest {
@@ -32,6 +32,9 @@ pub struct SkillOptimizationRequest {
     pub target_file_name: Option<String>,
     #[serde(default)]
     pub selected_mcp_tools: Vec<serde_json::Value>,
+    /// Additional parameters (e.g., selectedMcpTools from controller form)
+    #[serde(default)]
+    pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Prompt optimization request

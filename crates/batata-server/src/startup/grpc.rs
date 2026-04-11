@@ -227,6 +227,7 @@ fn register_naming_handlers(
     naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
     connection_manager: Arc<ConnectionManager>,
     distro_protocol: Option<Arc<DistroProtocol>>,
+    raft_node: Option<Arc<RaftNode>>,
 ) {
     let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> = naming_service;
     registry.register_handler(Arc::new(InstanceRequestHandler {
@@ -252,6 +253,7 @@ fn register_naming_handlers(
     registry.register_handler(Arc::new(PersistentInstanceRequestHandler {
         naming_service: naming_service.clone(),
         connection_manager: connection_manager.clone(),
+        raft_node,
     }));
     registry.register_handler(Arc::new(NotifySubscriberHandler {
         naming_service: naming_service.clone(),
@@ -630,6 +632,7 @@ pub fn start_grpc_servers(
         naming_fuzzy_watch_manager,
         connection_manager.clone(),
         distro_for_naming,
+        raft_node.clone(),
     );
 
     // Register distro handlers

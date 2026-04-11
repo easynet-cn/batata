@@ -104,4 +104,12 @@ impl CopilotAgentManager {
         let config = self.config.read().await;
         config.is_configured() || config.effective_api_key().is_some()
     }
+
+    /// Check if copilot is enabled and has an API key configured.
+    /// Matches Nacos CopilotAgentManager.isEnabled() — used by all services
+    /// before calling the LLM.
+    pub async fn is_enabled(&self) -> bool {
+        let config = self.config.read().await;
+        config.enabled && config.effective_api_key().is_some()
+    }
 }

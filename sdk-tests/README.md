@@ -76,7 +76,7 @@ sdk-tests/
 │   ├── discovery_test.go                    # Service discovery patterns (15 tests)
 │   ├── peering_test.go                      # Peering lifecycle & metadata (5 tests) NEW
 │   └── maintenance_test.go                  # Maintenance mode & lifecycle (14 tests)
-├── docker-compose.yml         # Test environment
+├── podman-compose.yml         # Test environment
 └── README.md                  # This file
 
 Total: 870 SDK compatibility tests
@@ -86,7 +86,7 @@ Total: 870 SDK compatibility tests
 
 - Java 21+ (for Nacos tests)
 - Go 1.21+ (for Consul tests)
-- Docker and Docker Compose
+- Podman and podman-compose
 - Maven 3.8+
 
 ## Running Tests
@@ -111,22 +111,22 @@ cd sdk-tests/consul-go-tests
 go test -v ./...
 ```
 
-### Option 2: Docker Compose
+### Option 2: Podman Compose
 
 ```bash
 # Start all services
 cd sdk-tests
-docker-compose up -d
+podman-compose up -d
 
 # Run all tests
-docker-compose --profile tests up
+podman-compose --profile tests up
 
 # Run specific test suite
-docker-compose --profile tests up nacos-tests
-docker-compose --profile tests up consul-tests
+podman-compose --profile tests up nacos-tests
+podman-compose --profile tests up consul-tests
 
 # Cleanup
-docker-compose down -v
+podman-compose down -v
 ```
 
 ## Environment Variables

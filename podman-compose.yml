@@ -1,0 +1,367 @@
+# Batata Development & Testing (Podman Compose)
+#
+# Usage:
+#   Embedded mode (no DB):  podman-compose up batata
+#   With MySQL:             podman-compose --profile mysql up
+#   With PostgreSQL:        podman-compose --profile postgres up
+#   Full stack:             podman-compose --profile mysql --profile monitoring up
+#   Consul mode:            podman-compose --profile consul up
+#   Cluster (3 nodes):      podman-compose --profile cluster up
+#   Server + Console split: podman-compose --profile split up
+
+services:
+  # ============================================================================
+  # Batata Server — embedded RocksDB, merged mode (no external DB)
+  # ============================================================================
+  batata:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata
+    ports:
+      - "8848:8848"   # Main HTTP API
+      - "8081:8081"   # Console HTTP API
+      - "9848:9848"   # SDK gRPC
+      - "9849:9849"   # Cluster gRPC
+      - "8500:8500"   # Consul compatibility
+      - "9080:9080"   # MCP Registry
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+    volumes:
+      - batata-data:/app/data
+      - ./conf:/app/conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/v3/console/health/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ============================================================================
+  # MySQL profile
+  # ============================================================================
+  batata-mysql:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-mysql
+    profiles: [mysql]
+    ports:
+      - "8848:8848"
+      - "8081:8081"
+      - "9848:9848"
+      - "8500:8500"
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+    command:
+      - "--db.url=mysql://batata:batata@mysql:3306/batata"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./conf:/app/conf:ro
+
+  mysql:
+    image: docker.io/library/mysql:latest
+    container_name: batata-mysql-db
+    profiles: [mysql]
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: batata
+      MYSQL_USER: batata
+      MYSQL_PASSWORD: batata
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============================================================================
+  # PostgreSQL profile
+  # ============================================================================
+  batata-postgres:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-postgres
+    profiles: [postgres]
+    ports:
+      - "8848:8848"
+      - "8081:8081"
+      - "9848:9848"
+      - "8500:8500"
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+    command:
+      - "--db.url=postgres://batata:batata@postgres:5432/batata"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./conf:/app/conf:ro
+
+  postgres:
+    image: docker.io/library/postgres:latest
+    container_name: batata-postgres-db
+    profiles: [postgres]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: batata
+      POSTGRES_USER: batata
+      POSTGRES_PASSWORD: batata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./conf/postgresql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./conf/consul-postgresql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U batata -d batata"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============================================================================
+  # Consul compatibility profile — embedded RocksDB + Consul API enabled
+  # ============================================================================
+  batata-consul:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-consul
+    profiles: [consul]
+    ports:
+      - "8848:8848"
+      - "8081:8081"
+      - "9848:9848"
+      - "8500:8500"
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+      - CONSUL_ENABLED=true
+    volumes:
+      - batata-consul-data:/app/data
+      - ./conf:/app/conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8500/v1/status/leader"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ============================================================================
+  # Cluster profile — 3-node Raft cluster with embedded RocksDB
+  # ============================================================================
+  batata-node1:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-node1
+    profiles: [cluster]
+    ports:
+      - "8848:8848"
+      - "8081:8081"
+      - "9848:9848"
+      - "9849:9849"
+      - "8500:8500"
+    environment:
+      - BATATA_SERVER_IP=batata-node1
+      - BATATA_LOG_LEVEL=info
+      - CONSUL_ENABLED=true
+    command:
+      - "--batata.sql.init.platform=embedded"
+      - "-m"
+      - "cluster"
+      - "-c"
+      - "batata-node1:8848,batata-node2:8858,batata-node3:8868"
+    volumes:
+      - cluster-node1-data:/app/data
+      - ./conf:/app/conf:ro
+    networks:
+      - batata-cluster
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8848/nacos/v3/admin/core/state/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
+
+  batata-node2:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-node2
+    profiles: [cluster]
+    ports:
+      - "8858:8858"
+      - "9858:9858"
+      - "9859:9859"
+      - "8510:8510"
+    environment:
+      - BATATA_SERVER_IP=batata-node2
+      - BATATA_LOG_LEVEL=info
+      - CONSUL_ENABLED=true
+    command:
+      - "--batata.sql.init.platform=embedded"
+      - "-m"
+      - "cluster"
+      - "-c"
+      - "batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--nacos.server.main.port=8858"
+      - "--nacos.console.port=8091"
+    volumes:
+      - cluster-node2-data:/app/data
+      - ./conf:/app/conf:ro
+    networks:
+      - batata-cluster
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8858/nacos/v3/admin/core/state/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
+
+  batata-node3:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-node3
+    profiles: [cluster]
+    ports:
+      - "8868:8868"
+      - "9868:9868"
+      - "9869:9869"
+      - "8520:8520"
+    environment:
+      - BATATA_SERVER_IP=batata-node3
+      - BATATA_LOG_LEVEL=info
+      - CONSUL_ENABLED=true
+    command:
+      - "--batata.sql.init.platform=embedded"
+      - "-m"
+      - "cluster"
+      - "-c"
+      - "batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--nacos.server.main.port=8868"
+      - "--nacos.console.port=8101"
+    volumes:
+      - cluster-node3-data:/app/data
+      - ./conf:/app/conf:ro
+    networks:
+      - batata-cluster
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8868/nacos/v3/admin/core/state/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
+
+  # ============================================================================
+  # Server + Console split profile
+  # ============================================================================
+  batata-server:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-server-only
+    profiles: [split]
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+      - "9849:9849"
+      - "8500:8500"
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+    command:
+      - "--batata.sql.init.platform=embedded"
+      - "-d"
+      - "server"
+    volumes:
+      - batata-server-data:/app/data
+      - ./conf:/app/conf:ro
+    networks:
+      - batata-split
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8848/nacos/v3/admin/core/state/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  batata-console:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: batata-console-only
+    profiles: [split]
+    ports:
+      - "8081:8081"
+    environment:
+      - BATATA_SERVER_IP=0.0.0.0
+      - BATATA_LOG_LEVEL=info
+      - NACOS_SERVERS=http://batata-server-only:8848
+    command:
+      - "-d"
+      - "console"
+      - "--nacos.servers=http://batata-server-only:8848"
+    depends_on:
+      batata-server:
+        condition: service_healthy
+    networks:
+      - batata-split
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/v3/console/health/liveness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ============================================================================
+  # Monitoring Stack (optional)
+  # ============================================================================
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: batata-prometheus
+    profiles: [monitoring]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - batata
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: batata-grafana
+    profiles: [monitoring]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
+
+volumes:
+  batata-data:
+  batata-consul-data:
+  batata-server-data:
+  mysql-data:
+  postgres-data:
+  cluster-node1-data:
+  cluster-node2-data:
+  cluster-node3-data:
+
+networks:
+  batata-cluster:
+    driver: bridge
+  batata-split:
+    driver: bridge

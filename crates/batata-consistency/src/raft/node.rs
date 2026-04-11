@@ -49,6 +49,11 @@ pub struct RaftNode {
     /// Shared plugin registry (same instance used by the state machine)
     plugin_registry: Arc<RwLock<PluginRegistry>>,
 
+    /// Shared naming apply hook slot (same instance used by the state machine).
+    /// Registered post-construction so `NamingService` DashMap stays in sync
+    /// with RocksDB `CF_INSTANCES` after every persistent instance apply.
+    naming_hook: super::naming_hook::SharedNamingHook,
+
     /// Cached gRPC channel for forwarding writes to the Raft leader.
     /// Avoids creating a new TCP/HTTP2 connection on every forwarded write.
     leader_channel: tokio::sync::Mutex<Option<LeaderChannel>>,
@@ -139,6 +144,7 @@ impl RaftNode {
         .await?;
         let db = state_machine.db();
         let plugin_registry = state_machine.plugin_registry();
+        let naming_hook = state_machine.naming_hook();
 
         // Create network factory with configured timeouts
         let network_config = super::network::RaftNetworkConfig::from_raft_config(&config);
@@ -167,6 +173,7 @@ impl RaftNode {
                 config,
                 db: db.clone(),
                 plugin_registry,
+                naming_hook,
                 leader_channel: tokio::sync::Mutex::new(None),
             },
             db,
@@ -199,6 +206,71 @@ impl RaftNode {
     /// this node and the state machine via `Arc`.
     pub async fn register_plugin(&self, handler: Arc<dyn RaftPluginHandler>) -> Result<(), String> {
         self.plugin_registry.write().await.register(handler)
+    }
+
+    /// Register the naming apply hook so `PersistentInstance*` applies flow
+    /// back into the in-memory `NamingService` DashMap.
+    ///
+    /// Safe to call after Raft startup — the hook slot is shared with the
+    /// state machine via `Arc<RwLock<_>>` and consulted on every apply.
+    pub async fn register_naming_hook(
+        &self,
+        hook: Arc<dyn super::naming_hook::NamingApplyHook>,
+    ) {
+        *self.naming_hook.write().await = Some(hook);
+    }
+
+    /// Replay all persistent instances from RocksDB `CF_INSTANCES` into the
+    /// registered naming hook. Call once at startup (after `register_naming_hook`)
+    /// so `NamingService` reflects the committed state without waiting for
+    /// new Raft applies.
+    pub async fn replay_persistent_instances(&self) -> Result<usize, String> {
+        let hook_guard = self.naming_hook.read().await;
+        let Some(hook) = hook_guard.as_ref() else {
+            return Ok(0);
+        };
+
+        let cf = self
+            .db
+            .cf_handle(super::state_machine::CF_INSTANCES)
+            .ok_or_else(|| "CF_INSTANCES not found".to_string())?;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let mut count = 0usize;
+        for item in iter {
+            let (_k, v) = match item {
+                Ok(kv) => kv,
+                Err(e) => {
+                    tracing::warn!("Failed to read instance during replay: {}", e);
+                    continue;
+                }
+            };
+            let value: serde_json::Value = match serde_json::from_slice(&v) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to parse instance during replay: {}", e);
+                    continue;
+                }
+            };
+            hook.on_register(
+                value["namespace_id"].as_str().unwrap_or(""),
+                value["group_name"].as_str().unwrap_or(""),
+                value["service_name"].as_str().unwrap_or(""),
+                value["instance_id"].as_str().unwrap_or(""),
+                value["ip"].as_str().unwrap_or(""),
+                value["port"].as_u64().unwrap_or(0) as u16,
+                value["weight"].as_f64().unwrap_or(1.0),
+                value["healthy"].as_bool().unwrap_or(true),
+                value["enabled"].as_bool().unwrap_or(true),
+                value["metadata"].as_str().unwrap_or("{}"),
+                value["cluster_name"].as_str().unwrap_or("DEFAULT"),
+            );
+            count += 1;
+        }
+        tracing::info!(
+            "Replayed {} persistent instances from CF_INSTANCES to NamingService",
+            count
+        );
+        Ok(count)
     }
 
     /// Get current metrics

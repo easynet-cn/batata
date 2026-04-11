@@ -228,6 +228,19 @@ pub trait DistroDataHandler: Send + Sync {
 
     /// Get snapshot of all data for initial sync
     async fn get_snapshot(&self) -> Vec<DistroData>;
+
+    /// Remove a key from local storage.
+    ///
+    /// Called by `DistroProtocol::cleanup_non_responsible_keys` when the
+    /// local node is no longer responsible for the key (cluster membership
+    /// changed, hash partitioning reassigned ownership to a different peer).
+    /// Must be idempotent — calling remove on a non-existent key is fine.
+    ///
+    /// Default implementation does nothing, to avoid breaking existing
+    /// handlers that don't distinguish owned vs. non-owned data.
+    async fn remove_data(&self, _key: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Snapshot of distro protocol health metrics for monitoring
@@ -435,6 +448,45 @@ impl DistroProtocol {
         self.mapper.update_members(healthy);
     }
 
+    /// Drop all locally-stored keys that the local node is no longer
+    /// responsible for after the most recent mapper refresh.
+    ///
+    /// Called after `refresh_mapper` (cluster membership changed). Without
+    /// this, nodes keep stale data for keys now owned by other nodes —
+    /// causing duplicate writes and inconsistent query results. Nacos 3.x
+    /// achieves the same outcome via `DistroVerifyTimedTask` filtering on
+    /// the current responsible set.
+    ///
+    /// Returns the total number of keys removed across all registered
+    /// handlers.
+    pub async fn cleanup_non_responsible_keys(&self) -> usize {
+        let mut total_removed = 0usize;
+        let handler_entries: Vec<Arc<dyn DistroDataHandler>> = self
+            .handlers
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
+        for handler in handler_entries {
+            let keys = handler.get_all_keys().await;
+            for key in keys {
+                if !self.mapper.is_responsible(&key, &self.local_address) {
+                    if let Err(e) = handler.remove_data(&key).await {
+                        warn!("Failed to remove non-responsible key '{}': {}", key, e);
+                    } else {
+                        total_removed += 1;
+                    }
+                }
+            }
+        }
+        if total_removed > 0 {
+            info!(
+                "Distro cleanup: removed {} keys no longer owned by this node",
+                total_removed
+            );
+        }
+        total_removed
+    }
+
     /// Stop the distro protocol, draining pending sync tasks first.
     ///
     /// Waits up to 5 seconds for in-flight sync tasks to complete before
@@ -597,28 +649,58 @@ impl DistroProtocol {
                             );
                         } else {
                             counters.sync_failure.fetch_add(1, Ordering::Relaxed);
-                            // Retry with exponential backoff + jitter
-                            if task.retry_count < 3 {
-                                let mut updated_task = task.clone();
-                                updated_task.retry_count += 1;
-                                let base_delay = config.sync_retry_delay.as_millis() as i64;
-                                let backoff =
-                                    base_delay * (1i64 << updated_task.retry_count.min(4));
-                                // Add ~25% jitter to prevent thundering herd
-                                let jitter = (now % (backoff / 4 + 1)).max(0);
-                                updated_task.scheduled_time = now + backoff + jitter;
-                                sync_tasks.insert(task_key, updated_task);
-                                warn!(
-                                    "Sync failed for {}:{} to {}, retry count: {}",
+                            // Nacos-compatible retry: unlimited attempts with
+                            // capped exponential backoff. The task stays in
+                            // the queue until it succeeds OR the target is
+                            // removed from cluster membership (handled by the
+                            // verify loop's cleanup_non_responsible_keys /
+                            // member refresh). Dropping after N attempts
+                            // risks losing registration under a long network
+                            // partition.
+                            //
+                            // Backoff schedule (cap at 2^6 = 64x base):
+                            //   attempt 1: base * 2
+                            //   attempt 2: base * 4
+                            //   ...
+                            //   attempt 6+: base * 64 (ceiling)
+                            const BACKOFF_CEILING_SHIFT: u32 = 6;
+                            let mut updated_task = task.clone();
+                            updated_task.retry_count =
+                                updated_task.retry_count.saturating_add(1);
+                            let base_delay = config.sync_retry_delay.as_millis() as i64;
+                            let shift = updated_task.retry_count.min(BACKOFF_CEILING_SHIFT);
+                            let backoff = base_delay.saturating_mul(1i64 << shift);
+                            // ~25% jitter to prevent thundering herd
+                            let jitter = (now % (backoff / 4 + 1)).max(0);
+                            updated_task.scheduled_time = now + backoff + jitter;
+                            sync_tasks.insert(task_key, updated_task);
+                            // Log level rises with retry count so chronic
+                            // failures surface without spamming on transient ones.
+                            let rc = task.retry_count + 1;
+                            if rc <= 3 {
+                                debug!(
+                                    "Sync retry {} for {}:{} to {} (backoff={}ms)",
+                                    rc,
                                     task.data_type,
                                     task.key,
                                     task.target_address,
-                                    task.retry_count + 1
+                                    backoff
                                 );
-                            } else {
+                            } else if rc <= 10 {
+                                warn!(
+                                    "Sync retry {} for {}:{} to {} (backoff={}ms)",
+                                    rc,
+                                    task.data_type,
+                                    task.key,
+                                    task.target_address,
+                                    backoff
+                                );
+                            } else if rc.is_multiple_of(10) {
+                                // Every 10th retry above 10, surface an error
                                 error!(
-                                    "Sync failed after max retries for {}:{} to {}",
-                                    task.data_type, task.key, task.target_address
+                                    "Sync still failing after {} retries for {}:{} to {} — \
+                                     check network connectivity to peer",
+                                    rc, task.data_type, task.key, task.target_address
                                 );
                             }
                         }
@@ -644,6 +726,7 @@ impl DistroProtocol {
         let client_manager = self.client_manager.clone();
         let sync_tasks = self.sync_tasks.clone();
         let counters = self.counters.clone();
+        let mapper = self.mapper.clone();
 
         tokio::spawn(async move {
             loop {
@@ -663,6 +746,47 @@ impl DistroProtocol {
                     hasher.finish() % 2000
                 };
                 tokio::time::sleep(config.verify_interval + Duration::from_millis(jitter_ms)).await;
+
+                // Refresh responsibility mapping against current membership
+                // before running verify. Without this, stale membership can
+                // cause sync/verify targeting a down node, or keeping keys
+                // owned by a new node. This replaces the need for an
+                // external member-change event subscription.
+                {
+                    let healthy: Vec<String> = members
+                        .iter()
+                        .filter(|e| {
+                            matches!(e.value().state, batata_api::model::NodeState::Up)
+                        })
+                        .map(|e| e.key().clone())
+                        .collect();
+                    mapper.update_members(healthy);
+                }
+
+                // Drop locally-stored keys this node is no longer responsible for.
+                // Iterating handlers separately keeps the main verify loop below
+                // unchanged and avoids holding extra locks during network I/O.
+                let mut cleanup_removed = 0usize;
+                let cleanup_entries: Vec<Arc<dyn DistroDataHandler>> = handlers
+                    .iter()
+                    .map(|e| e.value().clone())
+                    .collect();
+                for handler in cleanup_entries {
+                    let keys = handler.get_all_keys().await;
+                    for key in keys {
+                        if !mapper.is_responsible(&key, &local_address) {
+                            if handler.remove_data(&key).await.is_ok() {
+                                cleanup_removed += 1;
+                            }
+                        }
+                    }
+                }
+                if cleanup_removed > 0 {
+                    info!(
+                        "Distro verify-cycle cleanup: removed {} non-responsible keys",
+                        cleanup_removed
+                    );
+                }
 
                 // Get all members except self
                 let other_members: Vec<String> = members

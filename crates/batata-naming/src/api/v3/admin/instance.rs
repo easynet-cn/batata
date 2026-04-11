@@ -234,8 +234,15 @@ async fn register_instance(
         metadata,
     };
 
-    let result =
-        naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    let result = crate::service::register_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &form.service_name,
+        instance,
+    )
+    .await;
 
     if result {
         info!(
@@ -306,12 +313,15 @@ async fn deregister_instance(
         ..Default::default()
     };
 
-    let result = naming_service.deregister_instance(
+    let result = crate::service::deregister_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
         namespace_id,
         group_name,
         &params.service_name,
         &instance,
-    );
+    )
+    .await;
 
     if result {
         // Notify gRPC subscribers about the instance change
@@ -410,7 +420,15 @@ async fn update_instance(
         metadata,
     };
 
-    naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    crate::service::register_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &form.service_name,
+        instance,
+    )
+    .await;
 
     // Notify gRPC subscribers about the instance update
     if let Some(ref cm) = connection_manager {
@@ -625,12 +643,15 @@ async fn update_metadata(
             for (k, v) in &metadata {
                 updated_instance.metadata.insert(k.clone(), v.clone());
             }
-            naming_service.register_instance(
+            crate::service::register_instance_dispatch(
+                &naming_service,
+                data.raft_node.as_ref(),
                 namespace_id,
                 group_name,
                 &form.service_name,
                 updated_instance,
-            );
+            )
+            .await;
         }
     }
 
@@ -705,12 +726,15 @@ async fn partial_update_instance(
             }
         }
 
-        let result = naming_service.register_instance(
+        let result = crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
             namespace_id,
             group_name,
             &form.service_name,
             existing,
-        );
+        )
+        .await;
 
         if result {
             Result::<bool>::http_success(true)
@@ -851,12 +875,15 @@ async fn delete_metadata_batch(
             for key in &keys_to_delete {
                 updated_instance.metadata.remove(key);
             }
-            naming_service.register_instance(
+            crate::service::register_instance_dispatch(
+                &naming_service,
+                data.raft_node.as_ref(),
                 namespace_id,
                 group_name,
                 &params.service_name,
                 updated_instance,
-            );
+            )
+            .await;
         }
     }
 

@@ -183,7 +183,15 @@ async fn register_or_beat(
         metadata,
     };
 
-    naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    crate::service::register_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &form.service_name,
+        instance,
+    )
+    .await;
 
     Result::<bool>::http_success(true)
 }
@@ -236,7 +244,15 @@ async fn deregister(
         ..Default::default()
     };
 
-    naming_service.deregister_instance(namespace_id, group_name, &params.service_name, &instance);
+    crate::service::deregister_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &params.service_name,
+        &instance,
+    )
+    .await;
 
     Result::<bool>::http_success(true)
 }

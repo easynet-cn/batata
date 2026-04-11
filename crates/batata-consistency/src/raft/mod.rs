@@ -4,6 +4,7 @@
 pub mod config;
 pub mod grpc_service;
 pub mod log_store;
+pub mod naming_hook;
 pub mod network;
 pub mod node;
 pub mod plugin;
@@ -16,6 +17,7 @@ pub mod types;
 // Re-export commonly used types
 pub use config::RaftConfig;
 pub use grpc_service::{RaftGrpcService, RaftManagementGrpcService};
+pub use naming_hook::{NamingApplyHook, SharedNamingHook, new_shared_naming_hook};
 pub use node::{RaftNode, RaftNodeBuilder};
 pub use plugin::{PluginRegistry, RaftPluginHandler};
 pub use reader::RocksDbReader;

@@ -10,6 +10,24 @@ use crate::model::{Instance, Service};
 use super::{NamingService, build_instance_key, build_instance_key_parts, build_service_key};
 
 impl NamingService {
+    /// Lookup a single instance by its storage key (`ip#port#cluster`).
+    /// Returns a clone of the stored instance, or `None` if not found.
+    ///
+    /// Used by the Raft apply-back hook's `on_update` to load the current
+    /// value so partial updates can merge correctly instead of overwriting
+    /// unspecified fields with defaults.
+    pub fn get_instance_by_key(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        instance_key: &str,
+    ) -> Option<Instance> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let instances = self.services.get(&service_key)?;
+        instances.get(instance_key).map(|e| (**e.value()).clone())
+    }
+
     /// Register a service instance
     pub fn register_instance(
         &self,

@@ -298,8 +298,23 @@ mod tests {
     fn test_stream_chunk_to_sse() {
         let chunk = StreamChunk::content("hello");
         let sse = chunk.to_sse_event();
-        assert!(sse.starts_with("data: "));
+        // SSE format: "event: message\ndata: {json}\n\n" (matches Nacos SseEmitter)
+        assert!(sse.starts_with("event: message\n"));
+        assert!(sse.contains("data: "));
         assert!(sse.ends_with("\n\n"));
         assert!(sse.contains("\"chunk\":\"hello\""));
+        // StreamResponseType serialized as lowercase
+        assert!(sse.contains("\"type\":\"content\""));
+    }
+
+    #[test]
+    fn test_stream_chunk_to_sse_error() {
+        let chunk = StreamChunk::error("something went wrong");
+        let sse = chunk.to_sse_error_event();
+        assert!(sse.starts_with("event: error\n"));
+        assert!(sse.contains("data: "));
+        assert!(sse.ends_with("\n\n"));
+        assert!(sse.contains("\"done\":true"));
+        assert!(sse.contains("\"type\":\"done\""));
     }
 }

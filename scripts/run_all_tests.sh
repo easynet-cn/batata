@@ -74,17 +74,17 @@ cleanup() {
     done
     SERVER_PIDS=()
 
-    # Stop Docker containers if started
+    # Stop Podman containers if started
     if [ "$DOCKER_COMPOSE_STARTED" = true ]; then
         log_info "Stopping test databases..."
         cd "$PROJECT_ROOT"
-        docker-compose -f docker-compose.test.yml down -v 2>/dev/null || true
+        podman-compose -f podman-compose.test.yml down -v 2>/dev/null || true
     fi
 
     if [ "$SDK_DOCKER_STARTED" = true ]; then
         log_info "Stopping SDK test stack..."
         cd "${PROJECT_ROOT}/sdk-tests"
-        docker-compose down -v 2>/dev/null || true
+        podman-compose down -v 2>/dev/null || true
         cd "$PROJECT_ROOT"
     fi
 
@@ -175,27 +175,27 @@ init_admin() {
     return 1
 }
 
-# Wait for Docker service to be healthy
-# Usage: wait_for_docker_healthy SERVICE_NAME [timeout_secs]
-wait_for_docker_healthy() {
+# Wait for Podman container to be healthy
+# Usage: wait_for_podman_healthy SERVICE_NAME [timeout_secs]
+wait_for_podman_healthy() {
     local service="$1"
     local timeout="${2:-120}"
     local elapsed=0
 
-    log_info "Waiting for Docker service '${service}' to be healthy (timeout=${timeout}s)..."
+    log_info "Waiting for Podman container '${service}' to be healthy (timeout=${timeout}s)..."
 
     while [ $elapsed -lt $timeout ]; do
         local status
-        status=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "not_found")
+        status=$(podman inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "not_found")
         if [ "$status" = "healthy" ]; then
-            log_info "Docker service '${service}' is healthy (took ${elapsed}s)"
+            log_info "Podman container '${service}' is healthy (took ${elapsed}s)"
             return 0
         fi
         sleep 5
         elapsed=$((elapsed + 5))
     done
 
-    log_fail "Docker service '${service}' did not become healthy within ${timeout}s"
+    log_fail "Podman container '${service}' did not become healthy within ${timeout}s"
     return 1
 }
 
@@ -421,13 +421,13 @@ run_standalone_externaldb() {
 
     cd "$PROJECT_ROOT"
 
-    # Start MySQL via docker-compose
+    # Start MySQL via podman-compose
     log_info "Starting MySQL test database..."
-    docker-compose -f docker-compose.test.yml up -d mysql-test
+    podman-compose -f podman-compose.test.yml up -d mysql-test
     DOCKER_COMPOSE_STARTED=true
 
     # Wait for MySQL healthy
-    if ! wait_for_docker_healthy "batata-mysql-test" 120; then
+    if ! wait_for_podman_healthy "batata-mysql-test" 120; then
         log_fail "MySQL did not become healthy"
         return 1
     fi
@@ -476,11 +476,11 @@ run_cluster_externaldb() {
 
     # MySQL should already be running from standalone_externaldb stage
     # Ensure it's still healthy
-    if ! docker inspect --format='{{.State.Health.Status}}' "batata-mysql-test" 2>/dev/null | grep -q "healthy"; then
+    if ! podman inspect --format='{{.State.Health.Status}}' "batata-mysql-test" 2>/dev/null | grep -q "healthy"; then
         log_info "Restarting MySQL test database..."
-        docker-compose -f docker-compose.test.yml up -d mysql-test
+        podman-compose -f podman-compose.test.yml up -d mysql-test
         DOCKER_COMPOSE_STARTED=true
-        if ! wait_for_docker_healthy "batata-mysql-test" 120; then
+        if ! wait_for_podman_healthy "batata-mysql-test" 120; then
             log_fail "MySQL did not become healthy"
             return 1
         fi
@@ -561,7 +561,7 @@ EOF
 
     # Stop Docker databases
     log_info "Stopping test databases..."
-    docker-compose -f docker-compose.test.yml down -v 2>/dev/null || true
+    podman-compose -f podman-compose.test.yml down -v 2>/dev/null || true
     DOCKER_COMPOSE_STARTED=false
 
     if [ $test_rc -ne 0 ]; then
@@ -583,21 +583,21 @@ run_sdk() {
     cd "$PROJECT_ROOT"
 
     # Check prerequisites
-    require_cmd docker || return 1
-    require_cmd docker-compose || return 1
+    require_cmd podman || return 1
+    require_cmd podman-compose || return 1
 
-    # Start full stack via sdk-tests/docker-compose.yml
+    # Start full stack via sdk-tests/podman-compose.yml
     log_info "Starting SDK test stack (MySQL + Batata + test containers)..."
     cd "${PROJECT_ROOT}/sdk-tests"
-    docker-compose up -d --build mysql batata
+    podman-compose up -d --build mysql batata
     SDK_DOCKER_STARTED=true
     cd "$PROJECT_ROOT"
 
     # Wait for batata service to be healthy
-    if ! wait_for_docker_healthy "batata-test-server" 180; then
-        log_fail "Batata server in SDK docker stack did not become healthy"
+    if ! wait_for_podman_healthy "batata-test-server" 180; then
+        log_fail "Batata server in SDK podman stack did not become healthy"
         cd "${PROJECT_ROOT}/sdk-tests"
-        docker-compose logs batata 2>/dev/null | tail -50
+        podman-compose logs batata 2>/dev/null | tail -50
         cd "$PROJECT_ROOT"
         return 1
     fi
@@ -612,7 +612,7 @@ run_sdk() {
     log_info "Running Nacos Java SDK tests..."
     local nacos_rc=0
     cd "${PROJECT_ROOT}/sdk-tests"
-    docker-compose run --rm nacos-tests || nacos_rc=$?
+    podman-compose run --rm nacos-tests || nacos_rc=$?
     cd "$PROJECT_ROOT"
 
     if [ $nacos_rc -eq 0 ]; then
@@ -625,7 +625,7 @@ run_sdk() {
     log_info "Running Consul Go SDK tests..."
     local consul_rc=0
     cd "${PROJECT_ROOT}/sdk-tests"
-    docker-compose run --rm consul-tests || consul_rc=$?
+    podman-compose run --rm consul-tests || consul_rc=$?
     cd "$PROJECT_ROOT"
 
     if [ $consul_rc -eq 0 ]; then
@@ -637,7 +637,7 @@ run_sdk() {
     # Tear down SDK stack
     log_info "Stopping SDK test stack..."
     cd "${PROJECT_ROOT}/sdk-tests"
-    docker-compose down -v 2>/dev/null || true
+    podman-compose down -v 2>/dev/null || true
     cd "$PROJECT_ROOT"
     SDK_DOCKER_STARTED=false
 
@@ -720,7 +720,7 @@ fi
 # --- Full: Standalone ExternalDb ---
 if [ "$RUN_FULL" = true ] && [ "$OVERALL_EXIT_CODE" -eq 0 ]; then
     # Check Docker availability
-    if command -v docker &>/dev/null && command -v docker-compose &>/dev/null; then
+    if command -v podman &>/dev/null && command -v podman-compose &>/dev/null; then
         stage_rc=0
         run_standalone_externaldb || stage_rc=$?
         if [ $stage_rc -eq 0 ]; then
@@ -737,7 +737,7 @@ fi
 
 # --- Full: Cluster ExternalDb ---
 if [ "$RUN_FULL" = true ] && [ "$OVERALL_EXIT_CODE" -eq 0 ]; then
-    if command -v docker &>/dev/null && command -v docker-compose &>/dev/null; then
+    if command -v podman &>/dev/null && command -v podman-compose &>/dev/null; then
         stage_rc=0
         run_cluster_externaldb || stage_rc=$?
         if [ $stage_rc -eq 0 ]; then

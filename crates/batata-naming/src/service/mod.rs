@@ -8,12 +8,18 @@
 //! - `cluster`: Cluster configuration and statistics
 //! - `metadata`: Service metadata operations
 
+mod client_op;
 mod cluster;
 mod fuzzy_watch;
 mod instance;
 mod metadata;
 mod provider;
 mod subscription;
+
+pub use client_op::{
+    ClientOperationService, ClientOperationServiceProxy, EphemeralClientOperationService,
+    PersistentClientOperationService, deregister_instance_dispatch, register_instance_dispatch,
+};
 
 use std::{collections::HashSet, sync::Arc};
 

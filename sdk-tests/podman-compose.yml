@@ -1,9 +1,13 @@
-version: '3.8'
+# SDK Tests Stack (Podman Compose)
+#
+# Usage:
+#   Start infra:   podman-compose up -d mysql batata
+#   Run SDK tests: podman-compose --profile tests up
 
 services:
   # MySQL database for Batata
   mysql:
-    image: mysql:8.0
+    image: docker.io/library/mysql:latest
     container_name: batata-test-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -25,13 +29,13 @@ services:
   batata:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: Containerfile
     container_name: batata-test-server
     ports:
-      - "8848:8848"   # Main HTTP
-      - "9848:9848"   # gRPC SDK
-      - "9849:9849"   # gRPC Cluster
-      - "8081:8081"   # Console
+      - "8848:8848"
+      - "9848:9848"
+      - "9849:9849"
+      - "8081:8081"
     environment:
       - DB_URL=mysql://root:root@mysql:3306/batata
       - NACOS_AUTH_ENABLED=true
@@ -40,7 +44,7 @@ services:
       mysql:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v2/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8848/nacos/v3/admin/core/state/liveness"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -51,7 +55,7 @@ services:
   nacos-tests:
     build:
       context: ./nacos-java-tests
-      dockerfile: Dockerfile
+      dockerfile: Containerfile
     container_name: nacos-sdk-tests
     environment:
       - NACOS_SERVER=batata:8848
@@ -69,7 +73,7 @@ services:
   consul-tests:
     build:
       context: ./consul-go-tests
-      dockerfile: Dockerfile
+      dockerfile: Containerfile
     container_name: consul-sdk-tests
     environment:
       - CONSUL_HTTP_ADDR=batata:8848

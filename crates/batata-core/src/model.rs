@@ -518,63 +518,119 @@ impl Configuration {
     }
 
     // ===================== Distro Protocol Configuration =====================
+    //
+    // All distro getters accept both batata-native (`batata.cluster.distro.*`)
+    // and Nacos 3.x compatible (`nacos.core.protocol.distro.data.*`) keys so
+    // an operator can drop an existing Nacos `application.properties` in
+    // place without rewriting distro tuning. Precedence: batata-native wins
+    // over Nacos, so a site-local override does not get shadowed by an
+    // inherited Nacos file.
 
-    /// Distro sync delay in milliseconds (default: 1000)
+    /// Read an integer from the first config key that is present, falling
+    /// back to a default if neither key exists. Centralizes the batata →
+    /// Nacos alias lookup for distro parameters.
+    fn get_int_or(&self, primary: &str, alias: &str, default: i64) -> i64 {
+        self.config
+            .get_int(primary)
+            .or_else(|_| self.config.get_int(alias))
+            .unwrap_or(default)
+    }
+
+    /// Read a boolean from primary or alias, with default fallback.
+    fn get_bool_or(&self, primary: &str, alias: &str, default: bool) -> bool {
+        self.config
+            .get_bool(primary)
+            .or_else(|_| self.config.get_bool(alias))
+            .unwrap_or(default)
+    }
+
+    /// Distro sync delay in milliseconds (default: 1000, Nacos-aligned)
     pub fn distro_sync_delay_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.sync_delay_ms")
-            .unwrap_or(1000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.sync_delay_ms",
+            "nacos.core.protocol.distro.data.sync.delayMs",
+            1000,
+        ) as u64
     }
 
-    /// Distro sync timeout in milliseconds (default: 3000)
+    /// Distro sync timeout in milliseconds (default: 3000, Nacos-aligned)
     pub fn distro_sync_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.sync_timeout_ms")
-            .unwrap_or(3000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.sync_timeout_ms",
+            "nacos.core.protocol.distro.data.sync.timeoutMs",
+            3000,
+        ) as u64
     }
 
-    /// Distro sync retry delay in milliseconds (default: 3000)
+    /// Distro sync retry delay in milliseconds (default: 3000, Nacos-aligned)
     pub fn distro_sync_retry_delay_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.sync_retry_delay_ms")
-            .unwrap_or(3000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.sync_retry_delay_ms",
+            "nacos.core.protocol.distro.data.sync.retryDelayMs",
+            3000,
+        ) as u64
     }
 
-    /// Distro verify interval in milliseconds (default: 5000)
+    /// Distro verify interval in milliseconds (default: 5000, Nacos-aligned)
     pub fn distro_verify_interval_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.verify_interval_ms")
-            .unwrap_or(5000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.verify_interval_ms",
+            "nacos.core.protocol.distro.data.verify.intervalMs",
+            5000,
+        ) as u64
     }
 
-    /// Distro verify timeout in milliseconds (default: 3000)
+    /// Distro verify timeout in milliseconds (default: 3000, Nacos-aligned)
     pub fn distro_verify_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.verify_timeout_ms")
-            .unwrap_or(3000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.verify_timeout_ms",
+            "nacos.core.protocol.distro.data.verify.timeoutMs",
+            3000,
+        ) as u64
     }
 
-    /// Distro load retry delay in milliseconds (default: 30000)
+    /// Distro load retry delay in milliseconds (default: 30000, Nacos-aligned).
+    /// Maps to Nacos `loadDataRetryDelayMillis`.
     pub fn distro_load_retry_delay_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.cluster.distro.load_retry_delay_ms")
-            .unwrap_or(30000) as u64
+        self.get_int_or(
+            "batata.cluster.distro.load_retry_delay_ms",
+            "nacos.core.protocol.distro.data.load.retryDelayMs",
+            30000,
+        ) as u64
     }
 
-    /// Max retry attempts for initial data loading from peers (default: 5)
+    /// Distro load timeout in milliseconds (default: 30000, Nacos-aligned).
+    /// Maps to Nacos `loadDataTimeoutMillis`. Currently unused by batata's
+    /// load path (which relies on retry delay), but exposed for wire-level
+    /// config compatibility with Nacos `application.properties`.
+    pub fn distro_load_timeout_ms(&self) -> u64 {
+        self.get_int_or(
+            "batata.cluster.distro.load_timeout_ms",
+            "nacos.core.protocol.distro.data.load.timeoutMs",
+            30000,
+        ) as u64
+    }
+
+    /// Max retry attempts for initial data loading from peers (default: 5).
+    /// This is a batata-specific parameter — Nacos retries indefinitely.
+    /// Set to 0 to match Nacos semantics (interpreted as unlimited).
     pub fn distro_load_max_retries(&self) -> u32 {
-        self.config
-            .get_int("batata.cluster.distro.load_max_retries")
-            .unwrap_or(5) as u32
+        self.get_int_or(
+            "batata.cluster.distro.load_max_retries",
+            "nacos.core.protocol.distro.data.load.maxRetries",
+            5,
+        ) as u32
     }
 
     /// Whether to require successful initial data load before marking node ready (default: false).
     /// false = Nacos-compatible: start immediately, verify cycle fills data.
     /// true  = strict: node stays NOT_READY until initial sync completes.
     pub fn distro_require_initial_load(&self) -> bool {
-        self.config
-            .get_bool("batata.cluster.distro.require_initial_load")
-            .unwrap_or(false)
+        self.get_bool_or(
+            "batata.cluster.distro.require_initial_load",
+            "nacos.core.protocol.distro.data.requireInitialLoad",
+            false,
+        )
     }
 
     // ===================== Cluster Health Check Configuration =====================

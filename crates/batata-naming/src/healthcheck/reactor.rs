@@ -331,6 +331,15 @@ impl HealthCheckReactor {
                 continue;
             }
 
+            // Skip persistent instances — their health state is authoritative
+            // from Raft (PersistentInstanceUpdate) and must not be mutated by
+            // a local active health probe, which would bypass consensus and
+            // create split views across the cluster. Ephemeral instances
+            // continue through active checking + heartbeat expiration.
+            if !instance.ephemeral {
+                continue;
+            }
+
             // Get cluster configuration
             let cluster_config = self
                 .naming_service

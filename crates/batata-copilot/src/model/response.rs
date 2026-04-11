@@ -2,14 +2,29 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Type of streaming chunk
+/// Type of streaming chunk — serialized as lowercase to match Nacos
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StreamResponseType {
+    #[serde(rename = "thinking")]
     Thinking,
+    #[serde(rename = "tool_call")]
     ToolCall,
+    #[serde(rename = "content")]
     Content,
+    #[serde(rename = "done")]
     Done,
+}
+
+impl StreamResponseType {
+    /// Parse from string code, defaults to Content for unknown codes (matches Nacos behavior)
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            "thinking" => Self::Thinking,
+            "tool_call" => Self::ToolCall,
+            "done" => Self::Done,
+            _ => Self::Content,
+        }
+    }
 }
 
 /// A single SSE streaming chunk
@@ -63,9 +78,15 @@ impl StreamChunk {
         }
     }
 
-    /// Format as SSE event string
+    /// Format as SSE event with "message" event name (matches Nacos SseEmitter format)
     pub fn to_sse_event(&self) -> String {
         let json = serde_json::to_string(self).unwrap_or_default();
-        format!("data: {}\n\n", json)
+        format!("event: message\ndata: {}\n\n", json)
+    }
+
+    /// Format as SSE event with "error" event name
+    pub fn to_sse_error_event(&self) -> String {
+        let json = serde_json::to_string(self).unwrap_or_default();
+        format!("event: error\ndata: {}\n\n", json)
     }
 }

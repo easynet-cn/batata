@@ -3,3 +3,4 @@
 pub mod distro;
 pub mod naming_fuzzy_watch;
 pub mod naming_handler;
+pub mod raft_hook;

@@ -1,9 +1,16 @@
 # ==============================================================================
-# Multi-stage build for Batata server
+# Multi-stage build for Batata server (Podman / Buildah)
+#
+# Build:
+#   podman build -t batata:latest .
+#   podman build -t batata:latest -f Containerfile .
+#
+# Run:
+#   podman run -d --name batata -p 8848:8848 -p 8081:8081 -p 9848:9848 batata:latest
 # ==============================================================================
 
 # Stage 1: Build
-FROM rust:1.87-bookworm AS builder
+FROM docker.io/library/rust:latest AS builder
 
 WORKDIR /build
 
@@ -16,7 +23,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Cache dependency build
+# Copy source and build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY proto/ proto/
@@ -26,7 +33,7 @@ RUN cargo build --release -p batata-server \
     && strip target/release/batata-server
 
 # Stage 2: Runtime (minimal image)
-FROM debian:bookworm-slim AS runtime
+FROM docker.io/library/debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

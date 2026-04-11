@@ -4,7 +4,7 @@
 //! These tests require a running Batata server.
 //!
 //! To run these tests:
-//! 1. Start a Batata server (e.g., using docker-compose.test.yml)
+//! 1. Start a Batata server (e.g., using podman-compose.test.yml)
 //! 2. Run: cargo test --test integration_test -- --ignored
 
 use batata_api::naming::model::Instance;

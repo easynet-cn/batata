@@ -64,6 +64,12 @@ impl PayloadHandler for InstanceRequestHandler {
         if instance.cluster_name.is_empty() {
             instance.cluster_name = "DEFAULT".to_string();
         }
+        // Capture ephemeral flag before `instance` is moved into the write
+        // call. Distro broadcast only applies to the AP path; persistent
+        // instances arriving through InstanceRequest (unusual but possible)
+        // must NOT be re-synced via Distro because their authoritative
+        // source is Raft.
+        let is_ephemeral = instance.ephemeral;
         let req_type = &request.r#type;
         let connection_id = &connection.meta_info.connection_id;
 
@@ -166,16 +172,20 @@ impl PayloadHandler for InstanceRequestHandler {
                 warn!("Failed to notify fuzzy watchers: {}", e);
             }
 
-            // Trigger distro sync to other cluster nodes (ephemeral instances only)
-            if let Some(ref distro) = self.distro_protocol {
-                let service_key =
-                    crate::service::build_service_key(namespace, group_name, service_name);
-                let distro = distro.clone();
-                tokio::spawn(async move {
-                    distro
-                        .sync_data(DistroDataType::NamingInstance, &service_key)
-                        .await;
-                });
+            // Trigger distro sync to other cluster nodes (ephemeral only).
+            // Persistent instances never broadcast via Distro — their
+            // authoritative source is Raft.
+            if is_ephemeral {
+                if let Some(ref distro) = self.distro_protocol {
+                    let service_key =
+                        crate::service::build_service_key(namespace, group_name, service_name);
+                    let distro = distro.clone();
+                    tokio::spawn(async move {
+                        distro
+                            .sync_data(DistroDataType::NamingInstance, &service_key)
+                            .await;
+                    });
+                }
             }
         }
 
@@ -383,6 +393,11 @@ impl PayloadHandler for BatchInstanceRequestHandler {
                 inst.cluster_name = "DEFAULT".to_string();
             }
         }
+        // Nacos 3.x BatchInstanceRequest is defined only for ephemeral
+        // instances. If any incoming instance is non-ephemeral, skip
+        // Distro broadcast for the whole batch — persistent instances
+        // must not leak into the AP path.
+        let batch_all_ephemeral = !instances.is_empty() && instances.iter().all(|i| i.ephemeral);
         let req_type = &request.r#type;
         let connection_id = &connection.meta_info.connection_id;
 
@@ -479,16 +494,19 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             self.notify_subscribers(namespace, group_name, service_name)
                 .await;
 
-            // Trigger distro sync to other cluster nodes (ephemeral instances only)
-            if let Some(ref distro) = self.distro_protocol {
-                let service_key =
-                    crate::service::build_service_key(namespace, group_name, service_name);
-                let distro = distro.clone();
-                tokio::spawn(async move {
-                    distro
-                        .sync_data(DistroDataType::NamingInstance, &service_key)
-                        .await;
-                });
+            // Trigger distro sync to other cluster nodes only when the
+            // whole batch is ephemeral (persistent must go through Raft).
+            if batch_all_ephemeral {
+                if let Some(ref distro) = self.distro_protocol {
+                    let service_key =
+                        crate::service::build_service_key(namespace, group_name, service_name);
+                    let distro = distro.clone();
+                    tokio::spawn(async move {
+                        distro
+                            .sync_data(DistroDataType::NamingInstance, &service_key)
+                            .await;
+                    });
+                }
             }
         }
 
@@ -812,6 +830,12 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 pub struct PersistentInstanceRequestHandler {
     pub naming_service: Arc<dyn NamingServiceProvider>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    /// Raft node for replicating persistent instance writes. When present,
+    /// register/deregister go through `RaftRequest::PersistentInstance*`
+    /// so all cluster members apply the change via the state machine and
+    /// the data survives process restart. When absent (single-node dev
+    /// mode without Raft), falls back to direct in-memory writes.
+    pub raft_node: Option<Arc<batata_consistency::raft::RaftNode>>,
 }
 
 #[tonic::async_trait]
@@ -836,7 +860,66 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
         // Mark instance as persistent (non-ephemeral)
         instance.ephemeral = false;
 
-        let result = if req_type == REGISTER_INSTANCE {
+        let result = if let Some(ref raft) = self.raft_node {
+            // CP path: replicate via Raft. The apply-back hook installed on
+            // the state machine updates NamingService DashMap on every node
+            // (leader + followers) so reads see the change immediately.
+            let instance_id = format!(
+                "{}#{}#{}",
+                instance.ip,
+                instance.port,
+                if instance.cluster_name.is_empty() {
+                    "DEFAULT"
+                } else {
+                    &instance.cluster_name
+                }
+            );
+            if req_type == REGISTER_INSTANCE {
+                let metadata_json = serde_json::to_string(&instance.metadata)
+                    .unwrap_or_else(|_| "{}".to_string());
+                let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister {
+                    namespace_id: namespace.clone(),
+                    group_name: group_name.clone(),
+                    service_name: service_name.clone(),
+                    instance_id,
+                    ip: instance.ip.clone(),
+                    port: instance.port as u16,
+                    weight: instance.weight,
+                    healthy: instance.healthy,
+                    enabled: instance.enabled,
+                    metadata: metadata_json,
+                    cluster_name: if instance.cluster_name.is_empty() {
+                        "DEFAULT".to_string()
+                    } else {
+                        instance.cluster_name.clone()
+                    },
+                };
+                match raft.write(req).await {
+                    Ok(resp) => resp.success,
+                    Err(e) => {
+                        warn!("Raft write PersistentInstanceRegister failed: {}", e);
+                        false
+                    }
+                }
+            } else if req_type == DE_REGISTER_INSTANCE {
+                let req = batata_consistency::raft::RaftRequest::PersistentInstanceDeregister {
+                    namespace_id: namespace.clone(),
+                    group_name: group_name.clone(),
+                    service_name: service_name.clone(),
+                    instance_id,
+                };
+                match raft.write(req).await {
+                    Ok(resp) => resp.success,
+                    Err(e) => {
+                        warn!("Raft write PersistentInstanceDeregister failed: {}", e);
+                        false
+                    }
+                }
+            } else {
+                warn!("Unsupported persistent instance request type: {}", req_type);
+                false
+            }
+        } else if req_type == REGISTER_INSTANCE {
             self.naming_service
                 .register_instance(namespace, group_name, service_name, instance)
         } else if req_type == DE_REGISTER_INSTANCE {

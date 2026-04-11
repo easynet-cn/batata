@@ -100,8 +100,8 @@ cargo test --test unit_test -- --nocapture
 首先启动 Batata 服务器：
 
 ```bash
-# 使用 Docker Compose
-docker-compose -f docker-compose.test.yml up -d
+# 使用 Podman Compose
+podman-compose -f podman-compose.test.yml up -d
 
 # 或者手动启动服务器
 cargo run --bin batata-server

@@ -15,7 +15,7 @@ use batata_server::{
     startup::{self, AIServices, GracefulShutdown, OtelConfig, XdsServerHandle, start_xds_service},
 };
 use batata_server_common::ServerStatusManager;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[allow(clippy::type_complexity)]
 #[actix_web::main]
@@ -273,6 +273,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         persistence_ctx.server_member_manager.clone(),
         config_subscriber_manager.clone(),
     )?;
+
+    // Wire the naming apply hook so Raft state machine applies of
+    // `PersistentInstance*` flow back into the in-memory NamingService
+    // DashMap on every node. Also replay committed persistent instances
+    // from RocksDB CF_INSTANCES so cold starts (and process restarts)
+    // rehydrate the DashMap from the authoritative Raft-backed store.
+    if let (Some(raft), Some(ns)) =
+        (&persistence_ctx.raft_node, &naming_service_concrete)
+    {
+        let hook = std::sync::Arc::new(
+            batata_naming::handler::raft_hook::NamingApplyHookImpl::new(ns.clone()),
+        );
+        raft.register_naming_hook(hook).await;
+        match raft.replay_persistent_instances().await {
+            Ok(n) => info!(
+                "Persistent instance replay complete: {} instances restored",
+                n
+            ),
+            Err(e) => warn!("Persistent instance replay failed: {}", e),
+        }
+    }
 
     // Server registry for per-server health aggregation
     let server_registry = Arc::new(batata_core::ServerRegistry::new());

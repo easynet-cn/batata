@@ -676,14 +676,14 @@ cargo run --release -p batata-server
 
 3. Start all nodes
 
-### Docker
+### Podman
 
 ```bash
 # Build image
-docker build -t batata:latest .
+podman build -t batata:latest .
 
 # Run container
-docker run -d \
+podman run -d \
   -p 8848:8848 \
   -p 8081:8081 \
   -p 9848:9848 \
@@ -691,10 +691,23 @@ docker run -d \
   batata:latest
 ```
 
-### Docker Compose
+### Podman Compose
 
 ```bash
-docker-compose up -d
+# Embedded mode (no DB)
+podman-compose up batata
+
+# With MySQL
+podman-compose --profile mysql up
+
+# With PostgreSQL
+podman-compose --profile postgres up
+
+# 3-node cluster
+podman-compose --profile cluster up
+
+# Server + Console separated
+podman-compose --profile split up
 ```
 
 ## Database Setup

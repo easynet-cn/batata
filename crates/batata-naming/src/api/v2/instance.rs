@@ -165,9 +165,17 @@ pub async fn register_instance(
         );
     }
 
-    // Register instance
-    let result =
-        naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    // Register via ephemeral/persistent dispatch: persistent instances
+    // (ephemeral=false) go through Raft; ephemeral stay in-memory.
+    let result = crate::service::register_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &form.service_name,
+        instance,
+    )
+    .await;
 
     if result {
         info!(
@@ -179,15 +187,18 @@ pub async fn register_instance(
             "Instance registered successfully"
         );
 
-        // Trigger distro sync to other cluster nodes (ephemeral instances only)
-        if let Some(ref distro) = distro_protocol {
-            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
-            let distro = distro.get_ref().clone();
-            tokio::spawn(async move {
-                distro
-                    .sync_data(DistroDataType::NamingInstance, &service_key)
-                    .await;
-            });
+        // Trigger distro sync only for ephemeral — persistent uses Raft.
+        if form.ephemeral.unwrap_or(true) {
+            if let Some(ref distro) = distro_protocol {
+                let service_key =
+                    format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+                let distro = distro.get_ref().clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
+            }
         }
 
         Result::<String>::http_success("ok".to_string())
@@ -251,13 +262,16 @@ pub async fn deregister_instance(
         ..Default::default()
     };
 
-    // Deregister instance
-    let result = naming_service.deregister_instance(
+    // Deregister via ephemeral/persistent dispatch.
+    let result = crate::service::deregister_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
         namespace_id,
         group_name,
         &params.service_name,
         &instance,
-    );
+    )
+    .await;
 
     if result {
         info!(
@@ -281,15 +295,18 @@ pub async fn deregister_instance(
             );
         }
 
-        // Trigger distro sync to other cluster nodes (ephemeral instances only)
-        if let Some(ref distro) = distro_protocol {
-            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, params.service_name);
-            let distro = distro.get_ref().clone();
-            tokio::spawn(async move {
-                distro
-                    .sync_data(DistroDataType::NamingInstance, &service_key)
-                    .await;
-            });
+        // Trigger distro sync only for ephemeral — persistent uses Raft.
+        if params.ephemeral.unwrap_or(true) {
+            if let Some(ref distro) = distro_protocol {
+                let service_key =
+                    format!("{}@@{}@@{}", namespace_id, group_name, params.service_name);
+                let distro = distro.get_ref().clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
+            }
         }
 
         Result::<String>::http_success("ok".to_string())
@@ -363,9 +380,17 @@ pub async fn update_instance(
         metadata,
     };
 
-    // Update by re-registering (which updates if exists)
-    let result =
-        naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    // Update by re-registering through the dispatch helper so persistent
+    // updates replicate via Raft.
+    let result = crate::service::register_instance_dispatch(
+        &naming_service,
+        data.raft_node.as_ref(),
+        namespace_id,
+        group_name,
+        &form.service_name,
+        instance,
+    )
+    .await;
 
     if result {
         info!(
@@ -377,15 +402,18 @@ pub async fn update_instance(
             "Instance updated successfully"
         );
 
-        // Trigger distro sync to other cluster nodes (ephemeral instances only)
-        if let Some(ref distro) = distro_protocol {
-            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
-            let distro = distro.get_ref().clone();
-            tokio::spawn(async move {
-                distro
-                    .sync_data(DistroDataType::NamingInstance, &service_key)
-                    .await;
-            });
+        // Trigger distro sync only for ephemeral — persistent uses Raft.
+        if form.ephemeral.unwrap_or(true) {
+            if let Some(ref distro) = distro_protocol {
+                let service_key =
+                    format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+                let distro = distro.get_ref().clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
+            }
         }
 
         Result::<String>::http_success("ok".to_string())
@@ -682,12 +710,16 @@ pub async fn batch_update_metadata(
                 updated_instance.metadata.insert(k.clone(), v.clone());
             }
 
-            if naming_service.register_instance(
+            if crate::service::register_instance_dispatch(
+                &naming_service,
+                data.raft_node.as_ref(),
                 namespace_id,
                 group_name,
                 &form.service_name,
                 updated_instance,
-            ) {
+            )
+            .await
+            {
                 updated_count += 1;
             }
         }
@@ -809,12 +841,16 @@ pub async fn batch_delete_metadata(
                 updated_instance.metadata.remove(key);
             }
 
-            if naming_service.register_instance(
+            if crate::service::register_instance_dispatch(
+                &naming_service,
+                data.raft_node.as_ref(),
                 namespace_id,
                 group_name,
                 &params.service_name,
                 updated_instance,
-            ) {
+            )
+            .await
+            {
                 updated_count += 1;
             }
         }
@@ -896,12 +932,15 @@ pub async fn patch_instance(
             }
         }
 
-        let result = naming_service.register_instance(
+        let result = crate::service::register_instance_dispatch(
+            &naming_service,
+            data.raft_node.as_ref(),
             namespace_id,
             group_name,
             &form.service_name,
             existing,
-        );
+        )
+        .await;
 
         if result {
             Result::<String>::http_success("ok".to_string())
