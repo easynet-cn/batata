@@ -7,7 +7,8 @@ use rocksdb::DB;
 
 use super::state_machine::{
     CF_CONFIG, CF_CONFIG_GRAY, CF_CONFIG_HISTORY, CF_INSTANCES, CF_NAMESPACE, CF_PERMISSIONS,
-    CF_ROLES, CF_USERS, RocksStateMachine,
+    CF_ROLES, CF_USERS, RocksStateMachine, StoredConfig, StoredConfigGray, StoredConfigHistory,
+    StoredInstance,
 };
 
 /// Read-only interface for querying data stored in RocksDB
@@ -48,17 +49,49 @@ impl RocksDbReader {
         tenant: &str,
     ) -> anyhow::Result<Option<serde_json::Value>> {
         let key = RocksStateMachine::config_key(data_id, group, tenant);
-        self.get_json(CF_CONFIG, &key)
+        let cf = self.cf_handle(CF_CONFIG)?;
+        match self
+            .db
+            .get_cf(cf, key.as_bytes())
+            .map_err(|e| anyhow::anyhow!("RocksDB get error: {}", e))?
+        {
+            Some(bytes) => {
+                let stored: StoredConfig = bincode::deserialize(&bytes)
+                    .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
+                Ok(Some(serde_json::to_value(&stored)?))
+            }
+            None => Ok(None),
+        }
     }
 
     /// List all configs, optionally filtered by tenant prefix
     pub fn list_configs(&self, tenant: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+        let cf = self.cf_handle(CF_CONFIG)?;
+        let mut values = Vec::new();
         if tenant.is_empty() {
-            self.iterate_cf_values(CF_CONFIG)
+            let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            for item in iter {
+                let (_, v) =
+                    item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+                let stored: StoredConfig = bincode::deserialize(&v)
+                    .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
+                values.push(serde_json::to_value(&stored)?);
+            }
         } else {
             let prefix = format!("{}@@", tenant);
-            self.iterate_cf_values_with_prefix(CF_CONFIG, &prefix)
+            let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+            for item in iter {
+                let (k, v) =
+                    item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+                if !k.starts_with(prefix.as_bytes()) {
+                    break;
+                }
+                let stored: StoredConfig = bincode::deserialize(&v)
+                    .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
+                values.push(serde_json::to_value(&stored)?);
+            }
         }
+        Ok(values)
     }
 
     /// Count configs in a namespace (tenant)
@@ -159,52 +192,43 @@ impl RocksDbReader {
                     break;
                 }
             }
-            let v: serde_json::Value = match serde_json::from_slice(&value) {
-                Ok(v) => v,
+            let stored: StoredConfig = match bincode::deserialize(&value) {
+                Ok(s) => s,
                 Err(_) => continue,
             };
 
-            // Apply filters inline
-            if !data_id_pattern.is_empty() {
-                let did = v["data_id"].as_str().unwrap_or("");
-                if !glob_match(data_id_pattern, did) {
-                    continue;
-                }
+            // Apply filters inline (typed fields — no Value indexing)
+            if !data_id_pattern.is_empty() && !glob_match(data_id_pattern, &stored.data_id) {
+                continue;
             }
-            if !group_pattern.is_empty() {
-                let grp = v["group"].as_str().unwrap_or("");
-                if !glob_match(group_pattern, grp) {
-                    continue;
-                }
+            if !group_pattern.is_empty() && !glob_match(group_pattern, &stored.group) {
+                continue;
             }
             if !app_name.is_empty() {
-                let an = v["app_name"].as_str().unwrap_or("");
+                let an = stored.app_name.as_deref().unwrap_or("");
                 if an != app_name {
                     continue;
                 }
             }
             if !tags.is_empty() {
-                let config_tags = v["config_tags"].as_str().unwrap_or("");
+                let config_tags = stored.config_tags.as_deref().unwrap_or("");
                 if !tags.iter().all(|tag| config_tags.contains(tag.as_str())) {
                     continue;
                 }
             }
             if !types.is_empty() {
-                let config_type = v["config_type"].as_str().unwrap_or("");
+                let config_type = stored.config_type.as_deref().unwrap_or("");
                 if !types.iter().any(|t| t == config_type) {
                     continue;
                 }
             }
-            if !content_pattern.is_empty() {
-                let ct = v["content"].as_str().unwrap_or("");
-                if !ct.contains(content_pattern) {
-                    continue;
-                }
+            if !content_pattern.is_empty() && !stored.content.contains(content_pattern) {
+                continue;
             }
 
             // Passed all filters — count toward total and collect if in page window
             if total >= offset && page_items.len() < page_size as usize {
-                page_items.push(v);
+                page_items.push(serde_json::to_value(&stored)?);
             }
             total += 1;
         }
@@ -277,10 +301,10 @@ impl RocksDbReader {
         if let Some(item) = iter.next() {
             let (key, value) =
                 item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if key_str.starts_with(&prefix) {
-                let json: serde_json::Value = serde_json::from_slice(&value)?;
-                return Ok(Some(json));
+            if key.starts_with(prefix.as_bytes()) {
+                let stored: StoredConfigGray = bincode::deserialize(&value)
+                    .map_err(|e| anyhow::anyhow!("StoredConfigGray decode error: {}", e))?;
+                return Ok(Some(serde_json::to_value(&stored)?));
             }
         }
         Ok(None)
@@ -294,7 +318,19 @@ impl RocksDbReader {
         tenant: &str,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
         let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
-        self.iterate_cf_values_with_prefix(CF_CONFIG_GRAY, &prefix)
+        let cf = self.cf_handle(CF_CONFIG_GRAY)?;
+        let mut values = Vec::new();
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (k, v) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !k.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored: StoredConfigGray = bincode::deserialize(&v)
+                .map_err(|e| anyhow::anyhow!("StoredConfigGray decode error: {}", e))?;
+            values.push(serde_json::to_value(&stored)?);
+        }
+        Ok(values)
     }
 
     // ==================== Config History Operations ====================
@@ -307,9 +343,10 @@ impl RocksDbReader {
 
         for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            if json["id"].as_u64() == Some(nid) || json["id"].as_i64() == Some(nid as i64) {
-                return Ok(Some(json));
+            let stored: StoredConfigHistory = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
+            if stored.id as u64 == nid {
+                return Ok(Some(serde_json::to_value(&stored)?));
             }
         }
         Ok(None)
@@ -327,26 +364,22 @@ impl RocksDbReader {
         let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
 
-        let mut entries = Vec::new();
+        let mut entries: Vec<StoredConfigHistory> = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
 
         for item in iter {
             let (key, value) =
                 item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if !key_str.starts_with(&prefix) {
+            if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
-            entries.push(json);
+            let stored: StoredConfigHistory = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
+            entries.push(stored);
         }
 
         // Sort by created_time descending (most recent first)
-        entries.sort_by(|a, b| {
-            let t_b = b["created_time"].as_i64().unwrap_or(0);
-            let t_a = a["created_time"].as_i64().unwrap_or(0);
-            t_b.cmp(&t_a)
-        });
+        entries.sort_by(|a, b| b.created_time.cmp(&a.created_time));
 
         let total = entries.len() as u64;
         let offset = (page_no.saturating_sub(1)) * page_size;
@@ -354,6 +387,7 @@ impl RocksDbReader {
             .into_iter()
             .skip(offset as usize)
             .take(page_size as usize)
+            .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
             .collect();
 
         Ok((page_items, total))
@@ -373,53 +407,46 @@ impl RocksDbReader {
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
 
-        let mut entries = Vec::new();
+        let mut entries: Vec<StoredConfigHistory> = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
 
         for item in iter {
             let (key, value) =
                 item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if !key_str.starts_with(prefix) {
+            if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
-            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            let stored: StoredConfigHistory = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
 
             // Apply filters
-            if let Some(op) = op_type {
-                let entry_op = json["op_type"].as_str().unwrap_or("");
-                if entry_op != op {
-                    continue;
-                }
+            if let Some(op) = op_type
+                && stored.op_type != op
+            {
+                continue;
             }
             if let Some(user) = src_user {
-                let entry_user = json["src_user"].as_str().unwrap_or("");
+                let entry_user = stored.src_user.as_deref().unwrap_or("");
                 if !entry_user.contains(user) {
                     continue;
                 }
             }
-            if let Some(start) = start_time {
-                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
-                if entry_time < start {
-                    continue;
-                }
+            if let Some(start) = start_time
+                && stored.modified_time < start
+            {
+                continue;
             }
-            if let Some(end) = end_time {
-                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
-                if entry_time > end {
-                    continue;
-                }
+            if let Some(end) = end_time
+                && stored.modified_time > end
+            {
+                continue;
             }
 
-            entries.push(json);
+            entries.push(stored);
         }
 
         // Sort by id descending (newest first)
-        entries.sort_by(|a, b| {
-            let id_a = a["id"].as_u64().unwrap_or(0);
-            let id_b = b["id"].as_u64().unwrap_or(0);
-            id_b.cmp(&id_a)
-        });
+        entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
         let offset = (page_no.saturating_sub(1)) * page_size;
@@ -427,6 +454,7 @@ impl RocksDbReader {
             .into_iter()
             .skip(offset as usize)
             .take(page_size as usize)
+            .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
             .collect();
 
         Ok((page_items, total))
@@ -684,7 +712,19 @@ impl RocksDbReader {
     ) -> anyhow::Result<Option<serde_json::Value>> {
         let key =
             RocksStateMachine::instance_key(namespace_id, group_name, service_name, instance_id);
-        self.get_json(CF_INSTANCES, &key)
+        let cf = self.cf_handle(CF_INSTANCES)?;
+        match self
+            .db
+            .get_cf(cf, key.as_bytes())
+            .map_err(|e| anyhow::anyhow!("RocksDB get error: {}", e))?
+        {
+            Some(bytes) => {
+                let stored: StoredInstance = bincode::deserialize(&bytes)
+                    .map_err(|e| anyhow::anyhow!("StoredInstance decode error: {}", e))?;
+                Ok(Some(serde_json::to_value(&stored)?))
+            }
+            None => Ok(None),
+        }
     }
 
     /// List instances for a service
@@ -695,7 +735,19 @@ impl RocksDbReader {
         service_name: &str,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
         let prefix = format!("{}@@{}@@{}@@", namespace_id, group_name, service_name);
-        self.iterate_cf_values_with_prefix(CF_INSTANCES, &prefix)
+        let cf = self.cf_handle(CF_INSTANCES)?;
+        let mut values = Vec::new();
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (k, v) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !k.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored: StoredInstance = bincode::deserialize(&v)
+                .map_err(|e| anyhow::anyhow!("StoredInstance decode error: {}", e))?;
+            values.push(serde_json::to_value(&stored)?);
+        }
+        Ok(values)
     }
 
     // ==================== Internal Helpers ====================
@@ -736,6 +788,7 @@ impl RocksDbReader {
     }
 
     /// Iterate values in a column family with a key prefix
+    #[allow(dead_code)]
     fn iterate_cf_values_with_prefix(
         &self,
         cf_name: &str,
@@ -775,20 +828,21 @@ mod tests {
     async fn test_reader_config_crud() {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
-        // Write a config directly
+        // Write a config directly (bincode-encoded StoredConfig)
         let key = RocksStateMachine::config_key("test-data", "DEFAULT_GROUP", "public");
-        let value = serde_json::json!({
-            "data_id": "test-data",
-            "group": "DEFAULT_GROUP",
-            "tenant": "public",
-            "content": "key=value",
-            "config_type": "properties",
-            "app_name": "",
-            "md5": "abc123",
-            "config_tags": "",
-        });
+        let stored = StoredConfig {
+            data_id: "test-data".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            tenant: "public".to_string(),
+            content: "key=value".to_string(),
+            md5: "abc123".to_string(),
+            config_type: Some("properties".to_string()),
+            app_name: Some(String::new()),
+            config_tags: Some(String::new()),
+            ..Default::default()
+        };
         let cf = db.cf_handle("batata_config").unwrap();
-        db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
+        db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
             .unwrap();
 
         let reader = RocksDbReader::new(db);
@@ -937,13 +991,14 @@ mod tests {
         let cf = db.cf_handle("batata_config").unwrap();
         for (data_id, group) in &[("d1", "GROUP_A"), ("d2", "GROUP_A"), ("d3", "GROUP_B")] {
             let key = RocksStateMachine::config_key(data_id, group, "public");
-            let value = serde_json::json!({
-                "data_id": data_id,
-                "group": group,
-                "tenant": "public",
-                "content": "test",
-            });
-            db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
+            let stored = StoredConfig {
+                data_id: data_id.to_string(),
+                group: group.to_string(),
+                tenant: "public".to_string(),
+                content: "test".to_string(),
+                ..Default::default()
+            };
+            db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
                 .unwrap();
         }
 

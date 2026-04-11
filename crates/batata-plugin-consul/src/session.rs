@@ -424,6 +424,79 @@ impl ConsulSessionService {
         invalidated
     }
 
+    /// Find sessions bound to a check without mutating storage. Read-only
+    /// scan used by the leader-only `invalidate_sessions_for_check_via_raft`
+    /// path so both identification and destruction are replicated through
+    /// Raft in a single logical step.
+    pub fn find_sessions_for_check(&self, check_id: &str) -> Vec<Session> {
+        self.list_sessions()
+            .into_iter()
+            .filter(|session| {
+                session
+                    .node_checks
+                    .as_ref()
+                    .is_some_and(|checks| checks.iter().any(|c| c == check_id))
+                    || session
+                        .service_checks
+                        .as_ref()
+                        .is_some_and(|checks| checks.iter().any(|c| c.id == check_id))
+            })
+            .collect()
+    }
+
+    /// Leader-only: destroy all sessions bound to a failing check via Raft.
+    ///
+    /// Native Consul cascades check→critical to session→invalidated to
+    /// KV→released. batata's sync `invalidate_sessions_for_check` used to
+    /// bypass Raft with a direct `delete_cf`, so followers never saw the
+    /// removal until their own check reactor independently observed the
+    /// critical state — producing divergent views and potentially dual
+    /// destroys (race between leader and follower local deletes).
+    ///
+    /// This method fixes that by:
+    /// 1. Gating on leader status so only one node initiates the cascade
+    /// 2. Releasing KV locks via the Raft-aware `kv.release_session`
+    /// 3. Calling `destroy_session` which writes `SessionDestroy` through
+    ///    Raft — all nodes apply the same deletion in the same order
+    ///
+    /// Returns the list of sessions that were invalidated (for telemetry).
+    /// On followers this returns an empty vec without touching storage.
+    pub async fn invalidate_sessions_for_check_via_raft(
+        &self,
+        check_id: &str,
+        kv: &crate::kv::ConsulKVService,
+    ) -> Vec<Session> {
+        if !self.is_leader() {
+            return Vec::new();
+        }
+        let linked = self.find_sessions_for_check(check_id);
+        if linked.is_empty() {
+            return Vec::new();
+        }
+
+        let mut invalidated = Vec::new();
+        for session in linked {
+            info!(
+                "Leader invalidating session '{}' (name='{}') via Raft because check '{}' became critical",
+                session.id, session.name, check_id
+            );
+
+            // Release KV locks first (behavior="release") or delete the
+            // held keys (behavior="delete"). Both paths are Raft-replicated.
+            if session.behavior == "delete" {
+                kv.delete_session_keys(&session.id).await;
+            } else {
+                kv.release_session(&session.id).await;
+            }
+
+            // Destroy the session via Raft so followers see the deletion.
+            if self.destroy_session(&session.id).await {
+                invalidated.push(session);
+            }
+        }
+        invalidated
+    }
+
     /// List all active sessions (skips kidx: index entries and expired sessions)
     pub fn list_sessions(&self) -> Vec<Session> {
         let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
@@ -477,7 +550,64 @@ impl ConsulSessionService {
             .collect()
     }
 
-    /// Clean up expired sessions
+    /// Returns whether this node is the Raft leader.
+    ///
+    /// Used by the background TTL sweep to ensure only one node decides
+    /// which sessions have expired; the actual destroy still flows through
+    /// Raft so followers apply the same decision via `SessionDestroy` +
+    /// cascading KV release.
+    pub fn is_leader(&self) -> bool {
+        self.raft_node
+            .as_ref()
+            .map(|r| r.is_leader())
+            .unwrap_or(true) // no Raft ⇒ standalone ⇒ always "leader"
+    }
+
+    /// Clean up expired sessions via Raft.
+    ///
+    /// Leader-only: scan for expired session IDs, then route each destroy
+    /// through `destroy_session` so the `SessionDestroy` Raft entry
+    /// replicates to all followers. Also calls `kv.release_session` so any
+    /// KV locks held by the expired session are released via Raft.
+    ///
+    /// Returns the number of sessions successfully destroyed. A return
+    /// value of 0 means either no expirations or the local node is not
+    /// the leader.
+    pub async fn cleanup_expired_via_raft(
+        &self,
+        kv: &crate::kv::ConsulKVService,
+    ) -> usize {
+        if !self.is_leader() {
+            return 0;
+        }
+        let expired = self.scan_expired_session_ids();
+        if expired.is_empty() {
+            return 0;
+        }
+        let mut destroyed = 0usize;
+        for id in &expired {
+            // Release KV locks first so they're gone when the session
+            // destroy entry applies. Both calls are Raft-replicated; if
+            // one fails we log and continue — the lazy-expire path in
+            // `get_session` is the final safety net.
+            kv.release_session(id).await;
+            if self.destroy_session(id).await {
+                destroyed += 1;
+            }
+        }
+        tracing::info!(
+            "Leader cleaned up {} expired Consul sessions via Raft",
+            destroyed
+        );
+        destroyed
+    }
+
+    /// Clean up expired sessions (legacy: direct RocksDB delete).
+    ///
+    /// **Deprecated for cluster mode** — bypasses Raft and causes
+    /// divergent state across nodes. Kept only for standalone/no-Raft
+    /// deployments and as an emergency recovery tool. Cluster deployments
+    /// must use `cleanup_expired_via_raft` instead.
     pub fn cleanup_expired(&self) {
         let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
             return;

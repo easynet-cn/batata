@@ -8,7 +8,49 @@
 //! make that easy and consistent across all handlers.
 
 use actix_web::HttpRequest;
+use actix_web::HttpResponse;
 use actix_web::HttpResponseBuilder;
+
+/// Error returned by `ensure_linearizable_read` when the request cannot
+/// be served locally. HTTP handlers translate this into a structured
+/// 503 response so clients see clear guidance rather than raw openraft
+/// internals.
+#[derive(Debug)]
+pub enum LinearizableReadError {
+    /// This node is not the Raft leader — the caller must retry against
+    /// the leader. `leader_addr` is the leader's raft-group address
+    /// (e.g. `"127.0.0.1:7848"`) if known; the caller should translate
+    /// this to the leader's Consul HTTP address via its own discovery
+    /// (cluster config, DNS, etc.) since batata does not currently track
+    /// per-node Consul HTTP ports in shared state.
+    NotLeader { leader_addr: Option<String> },
+    /// Any other failure (e.g. Raft read-index timeout, storage error).
+    Other(String),
+}
+
+impl LinearizableReadError {
+    /// Convert the error into a structured Consul-style HTTP response.
+    ///
+    /// - `NotLeader` → HTTP 503 with `X-Consul-Leader-Address` header and
+    ///   a clear error message instructing the caller to retry on the
+    ///   leader. Clients with retry-on-503 logic and leader-aware routing
+    ///   recover transparently.
+    /// - `Other` → HTTP 500 with the inner error message.
+    pub fn into_http_response(self) -> HttpResponse {
+        match self {
+            Self::NotLeader { leader_addr } => {
+                let addr = leader_addr.unwrap_or_else(|| "unknown".to_string());
+                let mut builder = HttpResponse::ServiceUnavailable();
+                builder.insert_header(("X-Consul-Leader-Address", addr.clone()));
+                builder.body(format!(
+                    "consistent read requires leader; retry on leader (raft_addr={})",
+                    addr
+                ))
+            }
+            Self::Other(msg) => HttpResponse::InternalServerError().body(msg),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Query options (parsed from request)

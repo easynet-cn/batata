@@ -49,3 +49,8 @@ const-hex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "raft_serialization_bench"
+harness = false

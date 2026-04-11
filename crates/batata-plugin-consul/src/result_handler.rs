@@ -17,6 +17,7 @@ use crate::check_index::ConsulCheckIndex;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::kv::ConsulKVService;
 use crate::naming_store::ConsulNamingStore;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use crate::session::ConsulSessionService;
 
 /// Services needed for session-check invalidation and service deregistration.
@@ -26,6 +27,9 @@ struct ConsulServices {
     check_index: Arc<ConsulCheckIndex>,
     session_service: Arc<ConsulSessionService>,
     kv_service: Arc<ConsulKVService>,
+    /// Raft writer for routing auto-deregister through the cluster.
+    /// `None` in standalone mode; present in cluster mode.
+    raft_writer: Option<Arc<ConsulRaftWriter>>,
 }
 
 /// Consul-specific result handler.
@@ -68,11 +72,13 @@ impl ConsulResultHandler {
         check_index: Arc<ConsulCheckIndex>,
         session_service: Arc<ConsulSessionService>,
         kv_service: Arc<ConsulKVService>,
+        raft_writer: Option<Arc<ConsulRaftWriter>>,
     ) {
         let _ = self.services.set(ConsulServices {
             check_index,
             session_service,
             kv_service,
+            raft_writer,
         });
     }
 
@@ -80,6 +86,11 @@ impl ConsulResultHandler {
     ///
     /// This matches Consul's `reapServicesInternal()` which uses ServiceID
     /// to call `RemoveService()`, NOT IP:Port matching.
+    ///
+    /// Cluster mode: routes through `ConsulRaftRequest::CatalogDeregister`
+    /// so the removal replicates to all nodes. Only the leader initiates
+    /// the Raft write — followers' check reactors will skip because of
+    /// the leader gate. Standalone mode: direct naming_store mutation.
     fn deregister_by_check_id(&self, check_id: &str) -> bool {
         let Some(services) = self.services.get() else {
             warn!(
@@ -105,12 +116,63 @@ impl ConsulResultHandler {
             if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
             {
                 if reg.service_id() == service_id {
+                    // Cluster mode: leader-only Raft write. Followers
+                    // observe the cascade via `CatalogDeregister` apply
+                    // which runs the naming-store hook installed at
+                    // plugin init. Short-circuit on follower to avoid
+                    // the race where multiple nodes each try to delete.
+                    if let Some(ref writer) = services.raft_writer {
+                        if !writer.is_leader() {
+                            return false;
+                        }
+                        info!(
+                            "Leader deregistering service '{}' (check_id='{}', store_key='{}') via Raft",
+                            service_id, check_id, key
+                        );
+                        let writer = writer.clone();
+                        let key_owned = key.clone();
+                        let service_id_owned = service_id.clone();
+                        let check_id_owned = check_id.to_string();
+                        let check_index = services.check_index.clone();
+                        let idx = self.index_provider.clone();
+                        tokio::spawn(async move {
+                            match writer
+                                .write(ConsulRaftRequest::CatalogDeregister {
+                                    key: key_owned.clone(),
+                                })
+                                .await
+                            {
+                                Ok(r) if r.success => {
+                                    // Hook-driven naming_store update already
+                                    // ran on every node. Clean up ancillary
+                                    // indexes that aren't part of the apply
+                                    // path.
+                                    check_index.remove(&service_id_owned);
+                                    check_index.remove_check(&check_id_owned);
+                                    idx.increment(ConsulTable::Catalog);
+                                }
+                                Ok(r) => {
+                                    warn!(
+                                        "Raft CatalogDeregister rejected during auto-reap: {:?}",
+                                        r.message
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Raft CatalogDeregister failed during auto-reap: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        });
+                        return true;
+                    }
+                    // Standalone mode: direct mutation.
                     info!(
                         "Deregistering service '{}' (check_id='{}', store_key='{}')",
                         service_id, check_id, key
                     );
                     let _ = PluginNamingStore::deregister(&*self.naming_store, key);
-                    // Clean up check_index mappings
                     services.check_index.remove(&service_id);
                     services.check_index.remove_check(check_id);
                     self.index_provider.increment(ConsulTable::Catalog);
@@ -127,39 +189,40 @@ impl ConsulResultHandler {
     }
 
     /// Invalidate sessions linked to a check that became Critical.
-    /// Matches Consul's `checkSessionsTxn()` behavior.
+    ///
+    /// Cluster-mode: delegates to
+    /// `ConsulSessionService::invalidate_sessions_for_check_via_raft`
+    /// which is leader-gated and writes through Raft so all nodes observe
+    /// identical session destruction + KV release. Non-leader nodes
+    /// observe the cascade via applied Raft entries rather than running
+    /// the invalidation themselves. This eliminates the race where
+    /// multiple nodes independently detected the same critical check and
+    /// each raced to delete the session locally.
+    ///
+    /// Standalone-mode: the leader check is a no-op (no Raft configured),
+    /// so the single node runs the full cascade.
     fn invalidate_sessions_for_check(&self, check_id: &str) {
         let Some(services) = self.services.get() else {
             return;
         };
 
-        let invalidated = services
-            .session_service
-            .invalidate_sessions_for_check(check_id);
-
-        if invalidated.is_empty() {
-            return;
-        }
-
-        info!(
-            "Invalidated {} session(s) due to check '{}' becoming critical",
-            invalidated.len(),
-            check_id
-        );
-
-        // Handle KV locks based on session behavior (matches Consul session.go)
+        let check_id_owned = check_id.to_string();
+        let session_service = services.session_service.clone();
         let kv_service = services.kv_service.clone();
         let idx = self.index_provider.clone();
         tokio::spawn(async move {
-            for session in &invalidated {
-                if session.behavior == "delete" {
-                    kv_service.delete_session_keys(&session.id).await;
-                } else {
-                    // "release" (default) — release locks but keep keys
-                    kv_service.release_session(&session.id).await;
-                }
+            let invalidated = session_service
+                .invalidate_sessions_for_check_via_raft(&check_id_owned, &kv_service)
+                .await;
+            if invalidated.is_empty() {
+                return;
             }
-            // Increment KVS and Sessions indexes to wake blocking queries
+            info!(
+                "Invalidated {} session(s) via Raft due to check '{}' becoming critical",
+                invalidated.len(),
+                check_id_owned
+            );
+            // Wake blocking queries watching KVS/Sessions tables
             idx.increment(ConsulTable::KVS);
             idx.increment(ConsulTable::Sessions);
         });
@@ -269,7 +332,7 @@ mod tests {
         let check_index = Arc::new(ConsulCheckIndex::new());
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
-        handler.set_services(check_index.clone(), session_service, kv_service);
+        handler.set_services(check_index.clone(), session_service, kv_service, None);
 
         // Register a service in NamingStore
         let data = serde_json::to_vec(&serde_json::json!({
@@ -337,7 +400,7 @@ mod tests {
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
         let check_index = Arc::new(ConsulCheckIndex::new());
-        handler.set_services(check_index, session_service.clone(), kv_service);
+        handler.set_services(check_index, session_service.clone(), kv_service, None);
 
         // Create a session linked to serfHealth (default)
         let _session = session_service
@@ -351,6 +414,19 @@ mod tests {
 
         // Trigger serfHealth check going critical
         handler.on_check_critical("serfHealth");
+
+        // The invalidation cascade is now async (spawned via tokio) so the
+        // destroy doesn't land before this line. Yield a few times to let
+        // the spawned task make progress. This matches the production
+        // pattern where blocking-query indices get incremented slightly
+        // after the initial check-critical event.
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+            if session_service.list_sessions().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
 
         // Session should be invalidated
         assert_eq!(
@@ -369,7 +445,7 @@ mod tests {
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
         let check_index = Arc::new(ConsulCheckIndex::new());
-        handler.set_services(check_index, session_service.clone(), kv_service);
+        handler.set_services(check_index, session_service.clone(), kv_service, None);
 
         let _session = session_service
             .create_session(crate::model::SessionCreateRequest {

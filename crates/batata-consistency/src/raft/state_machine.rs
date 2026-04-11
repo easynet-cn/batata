@@ -94,6 +94,108 @@ fn json_to_bytes(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(value).unwrap_or_default()
 }
 
+/// Typed persistent instance record stored in `CF_INSTANCES`.
+///
+/// Serialized with `bincode` instead of `serde_json` to avoid the
+/// per-apply 1.5µs decode tax measured in `raft_serialization_bench`.
+/// `metadata` stays as a pre-serialized JSON blob so this struct can be
+/// emitted without a second pass over the user's key/value pairs — the
+/// hook consumers parse the metadata JSON themselves if they need it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredInstance {
+    pub namespace_id: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub instance_id: String,
+    pub ip: String,
+    pub port: u16,
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    pub metadata: String,
+    pub cluster_name: String,
+    pub registered_time: i64,
+    #[serde(default)]
+    pub modified_time: i64,
+}
+
+/// Typed config record stored in `CF_CONFIG`.
+///
+/// Replaces the previous `serde_json::Value` dynamic dispatch which
+/// dominated `apply_config_publish` CPU cost. Reader paths decode this
+/// then re-emit as `serde_json::Value` for backward-compatible API.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredConfig {
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub md5: String,
+    #[serde(default)]
+    pub config_type: Option<String>,
+    #[serde(default)]
+    pub app_name: Option<String>,
+    #[serde(default)]
+    pub config_tags: Option<String>,
+    #[serde(default)]
+    pub desc: Option<String>,
+    #[serde(default, rename = "use")]
+    pub r#use: Option<String>,
+    #[serde(default)]
+    pub effect: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
+    pub encrypted_data_key: Option<String>,
+    #[serde(default)]
+    pub src_user: Option<String>,
+    #[serde(default)]
+    pub src_ip: Option<String>,
+    pub created_time: i64,
+    pub modified_time: i64,
+}
+
+/// Typed config history record stored in `CF_CONFIG_HISTORY`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredConfigHistory {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub md5: String,
+    pub app_name: String,
+    #[serde(default)]
+    pub src_user: Option<String>,
+    #[serde(default)]
+    pub src_ip: Option<String>,
+    pub op_type: String,
+    pub publish_type: String,
+    pub gray_name: String,
+    pub ext_info: String,
+    pub encrypted_data_key: String,
+    pub created_time: i64,
+    pub modified_time: i64,
+}
+
+/// Typed gray config record stored in `CF_CONFIG_GRAY`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredConfigGray {
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub md5: String,
+    pub app_name: String,
+    pub gray_name: String,
+    pub gray_rule: String,
+    pub encrypted_data_key: String,
+    pub src_user: String,
+    pub src_ip: String,
+    pub created_time: i64,
+    pub modified_time: i64,
+}
+
 impl RocksStateMachine {
     /// Get a reference to the underlying RocksDB instance
     pub fn db(&self) -> Arc<DB> {
@@ -795,28 +897,28 @@ impl RocksStateMachine {
         let key = Self::config_key(data_id, group, tenant);
         let now = chrono::Utc::now().timestamp_millis();
 
-        // Single read: fetch existing config for CAS check, created_time preservation,
-        // and op_type determination (Insert vs Update)
-        let existing_value = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            Ok(None) => None,
-            Err(e) => {
-                if cas_md5.is_some() {
-                    return RaftResponse::failure(format!("CAS check failed: {}", e));
+        // Single read: fetch existing StoredConfig for CAS check, created_time
+        // preservation, and op_type determination (Insert vs Update).
+        let existing_stored: Option<StoredConfig> =
+            match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+                Ok(Some(bytes)) => bincode::deserialize(&bytes).ok(),
+                Ok(None) => None,
+                Err(e) => {
+                    if cas_md5.is_some() {
+                        return RaftResponse::failure(format!("CAS check failed: {}", e));
+                    }
+                    None
                 }
-                None
-            }
-        };
+            };
 
         // CAS (Compare-And-Swap) check
         if let Some(expected_md5) = cas_md5 {
-            match &existing_value {
+            match &existing_stored {
                 Some(existing) => {
-                    let current_md5 = existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
-                    if current_md5 != expected_md5 {
+                    if existing.md5 != expected_md5 {
                         return RaftResponse::failure(format!(
                             "CAS conflict: expected md5={}, actual md5={}",
-                            expected_md5, current_md5
+                            expected_md5, existing.md5
                         ));
                     }
                 }
@@ -831,68 +933,76 @@ impl RocksStateMachine {
         }
 
         // Determine op_type from existing value (eliminates pre-write read in distributed layer)
-        let is_update = existing_value.is_some();
+        let is_update = existing_stored.is_some();
 
         // Preserve created_time from existing config on update
-        let created_time = existing_value
-            .and_then(|v| v["created_time"].as_i64())
+        let created_time = existing_stored
+            .as_ref()
+            .map(|c| c.created_time)
             .unwrap_or(now);
 
-        let value = serde_json::json!({
-            "data_id": data_id,
-            "group": group,
-            "tenant": tenant,
-            "content": content,
-            "md5": md5,
-            "config_type": config_type,
-            "app_name": app_name,
-            "config_tags": tag,
-            "desc": desc,
-            "use": r#use,
-            "effect": effect,
-            "schema": schema,
-            "encrypted_data_key": encrypted_data_key,
-            "src_user": src_user,
-            "src_ip": src_ip,
-            "created_time": created_time,
-            "modified_time": now,
-        });
+        let stored = StoredConfig {
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: tenant.to_string(),
+            content: content.to_string(),
+            md5: md5.to_string(),
+            config_type,
+            app_name: app_name.clone(),
+            config_tags: tag,
+            desc,
+            r#use,
+            effect,
+            schema,
+            encrypted_data_key: encrypted_data_key.clone(),
+            src_user: src_user.clone(),
+            src_ip: src_ip.clone(),
+            created_time,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
+        };
 
         // Build a single WriteBatch for config + history (1 fsync instead of 2)
         let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(self.cf_config(), key.as_bytes(), json_to_bytes(&value));
+        batch.put_cf(self.cf_config(), key.as_bytes(), encoded);
 
         // If history info is provided, add history entry to the same batch
         if let Some(hi) = history {
-            // Determine op_type: use the one from history if provided, otherwise derive
             let op_type = if hi.op_type.is_empty() {
-                if is_update { "U" } else { "I" }
+                if is_update { "U" } else { "I" }.to_string()
             } else {
-                &hi.op_type
+                hi.op_type
             };
             let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
-            let history_value = serde_json::json!({
-                "id": now,
-                "data_id": data_id,
-                "group": group,
-                "tenant": tenant,
-                "content": content,
-                "md5": md5,
-                "app_name": app_name.as_deref().unwrap_or_default(),
-                "src_user": src_user,
-                "src_ip": src_ip,
-                "op_type": op_type,
-                "publish_type": hi.publish_type.unwrap_or_else(|| "formal".to_string()),
-                "gray_name": "",
-                "ext_info": hi.ext_info.unwrap_or_default(),
-                "encrypted_data_key": encrypted_data_key.as_deref().unwrap_or_default(),
-                "created_time": now,
-                "modified_time": now,
-            });
+            let history = StoredConfigHistory {
+                id: now,
+                data_id: data_id.to_string(),
+                group: group.to_string(),
+                tenant: tenant.to_string(),
+                content: content.to_string(),
+                md5: md5.to_string(),
+                app_name: app_name.clone().unwrap_or_default(),
+                src_user: src_user.clone(),
+                src_ip: src_ip.clone(),
+                op_type,
+                publish_type: hi.publish_type.unwrap_or_else(|| "formal".to_string()),
+                gray_name: String::new(),
+                ext_info: hi.ext_info.unwrap_or_default(),
+                encrypted_data_key: encrypted_data_key.clone().unwrap_or_default(),
+                created_time: now,
+                modified_time: now,
+            };
+            let history_encoded = match bincode::serialize(&history) {
+                Ok(b) => b,
+                Err(e) => return RaftResponse::failure(format!("history encode error: {}", e)),
+            };
             batch.put_cf(
                 self.cf_config_history(),
                 history_key.as_bytes(),
-                json_to_bytes(&history_value),
+                history_encoded,
             );
         }
 
@@ -924,28 +1034,32 @@ impl RocksStateMachine {
 
         if let Some(hi) = history {
             let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
-            let history_value = serde_json::json!({
-                "id": now,
-                "data_id": data_id,
-                "group": group,
-                "tenant": tenant,
-                "content": hi.content,
-                "md5": hi.md5,
-                "app_name": hi.app_name,
-                "src_user": hi.src_user,
-                "src_ip": hi.src_ip,
-                "op_type": "D",
-                "publish_type": "formal",
-                "gray_name": "",
-                "ext_info": hi.ext_info,
-                "encrypted_data_key": hi.encrypted_data_key,
-                "created_time": now,
-                "modified_time": now,
-            });
+            let history = StoredConfigHistory {
+                id: now,
+                data_id: data_id.to_string(),
+                group: group.to_string(),
+                tenant: tenant.to_string(),
+                content: hi.content,
+                md5: hi.md5,
+                app_name: hi.app_name,
+                src_user: Some(hi.src_user),
+                src_ip: Some(hi.src_ip),
+                op_type: "D".to_string(),
+                publish_type: "formal".to_string(),
+                gray_name: String::new(),
+                ext_info: hi.ext_info,
+                encrypted_data_key: hi.encrypted_data_key,
+                created_time: now,
+                modified_time: now,
+            };
+            let encoded = match bincode::serialize(&history) {
+                Ok(b) => b,
+                Err(e) => return RaftResponse::failure(format!("history encode error: {}", e)),
+            };
             batch.put_cf(
                 self.cf_config_history(),
                 history_key.as_bytes(),
-                json_to_bytes(&history_value),
+                encoded,
             );
         }
 
@@ -986,8 +1100,8 @@ impl RocksStateMachine {
             let cf = self.cf_config_gray();
             match self.db.get_cf(cf, key.as_bytes()) {
                 Ok(Some(bytes)) => {
-                    if let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                        let current_md5 = existing["md5"].as_str().unwrap_or("");
+                    if let Ok(existing) = bincode::deserialize::<StoredConfigGray>(&bytes) {
+                        let current_md5 = existing.md5.as_str();
                         if current_md5 != expected_md5.as_str() {
                             return RaftResponse::failure(format!(
                                 "CAS conflict: expected md5={}, actual md5={}",
@@ -1009,26 +1123,30 @@ impl RocksStateMachine {
             }
         }
 
-        let value = serde_json::json!({
-            "data_id": data_id,
-            "group": group,
-            "tenant": tenant,
-            "content": content,
-            "md5": md5_val,
-            "app_name": app_name.unwrap_or_default(),
-            "gray_name": gray_name,
-            "gray_rule": gray_rule,
-            "encrypted_data_key": encrypted_data_key.unwrap_or_default(),
-            "src_user": src_user.unwrap_or_default(),
-            "src_ip": src_ip.unwrap_or_default(),
-            "created_time": now,
-            "modified_time": now,
-        });
+        let stored = StoredConfigGray {
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: tenant.to_string(),
+            content: content.to_string(),
+            md5: md5_val,
+            app_name: app_name.unwrap_or_default(),
+            gray_name: gray_name.to_string(),
+            gray_rule: gray_rule.to_string(),
+            encrypted_data_key: encrypted_data_key.unwrap_or_default(),
+            src_user: src_user.unwrap_or_default(),
+            src_ip: src_ip.unwrap_or_default(),
+            created_time: now,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
+        };
 
         match self.db.put_cf_opt(
             self.cf_config_gray(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1137,29 +1255,33 @@ impl RocksStateMachine {
         last_modified_time: i64,
     ) -> RaftResponse {
         let key = Self::config_history_key(data_id, group, tenant, id as u64);
-        let value = serde_json::json!({
-            "id": id,
-            "data_id": data_id,
-            "group": group,
-            "tenant": tenant,
-            "content": content,
-            "md5": md5,
-            "app_name": app_name.unwrap_or_default(),
-            "src_user": src_user,
-            "src_ip": src_ip,
-            "op_type": op_type,
-            "publish_type": publish_type.unwrap_or_else(|| "formal".to_string()),
-            "gray_name": gray_name.unwrap_or_default(),
-            "ext_info": ext_info.unwrap_or_default(),
-            "encrypted_data_key": encrypted_data_key.unwrap_or_default(),
-            "created_time": created_time,
-            "modified_time": last_modified_time,
-        });
+        let stored = StoredConfigHistory {
+            id,
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: tenant.to_string(),
+            content: content.to_string(),
+            md5: md5.to_string(),
+            app_name: app_name.unwrap_or_default(),
+            src_user,
+            src_ip,
+            op_type: op_type.to_string(),
+            publish_type: publish_type.unwrap_or_else(|| "formal".to_string()),
+            gray_name: gray_name.unwrap_or_default(),
+            ext_info: ext_info.unwrap_or_default(),
+            encrypted_data_key: encrypted_data_key.unwrap_or_default(),
+            created_time,
+            modified_time: last_modified_time,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
+        };
 
         match self.db.put_cf_opt(
             self.cf_config_history(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1183,33 +1305,29 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
 
-        // Read existing config and update tags
-        let existing = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
+        let mut stored: StoredConfig = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
+                Ok(s) => s,
+                Err(e) => return RaftResponse::failure(format!("decode error: {}", e)),
+            },
+            _ => return RaftResponse::failure("Config not found for tag update"),
         };
+        stored.config_tags = Some(tag.to_string());
+        stored.modified_time = chrono::Utc::now().timestamp_millis();
 
-        if let Some(mut existing) = existing {
-            existing["config_tags"] = serde_json::json!(tag);
-            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
-
-            match self.db.put_cf_opt(
-                self.cf_config(),
-                key.as_bytes(),
-                json_to_bytes(&existing),
-                &self.write_opts,
-            ) {
-                Ok(_) => {
-                    debug!("Config tags updated: {}", key);
-                    RaftResponse::success()
-                }
-                Err(e) => {
-                    error!("Failed to update config tags: {}", e);
-                    RaftResponse::failure(format!("Failed to update config tags: {}", e))
-                }
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
+        };
+        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
+            Ok(_) => {
+                debug!("Config tags updated: {}", key);
+                RaftResponse::success()
             }
-        } else {
-            RaftResponse::failure("Config not found for tag update")
+            Err(e) => {
+                error!("Failed to update config tags: {}", e);
+                RaftResponse::failure(format!("Failed to update config tags: {}", e))
+            }
         }
     }
 
@@ -1222,33 +1340,29 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
 
-        // Read existing config and clear tags
-        let existing = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
+        let mut stored: StoredConfig = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
+                Ok(s) => s,
+                Err(e) => return RaftResponse::failure(format!("decode error: {}", e)),
+            },
+            _ => return RaftResponse::failure("Config not found for tag delete"),
         };
+        stored.config_tags = Some(String::new());
+        stored.modified_time = chrono::Utc::now().timestamp_millis();
 
-        if let Some(mut existing) = existing {
-            existing["config_tags"] = serde_json::json!("");
-            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
-
-            match self.db.put_cf_opt(
-                self.cf_config(),
-                key.as_bytes(),
-                json_to_bytes(&existing),
-                &self.write_opts,
-            ) {
-                Ok(_) => {
-                    debug!("Config tags deleted: {}", key);
-                    RaftResponse::success()
-                }
-                Err(e) => {
-                    error!("Failed to delete config tags: {}", e);
-                    RaftResponse::failure(format!("Failed to delete config tags: {}", e))
-                }
+        let encoded = match bincode::serialize(&stored) {
+            Ok(b) => b,
+            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
+        };
+        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
+            Ok(_) => {
+                debug!("Config tags deleted: {}", key);
+                RaftResponse::success()
             }
-        } else {
-            RaftResponse::failure("Config not found for tag delete")
+            Err(e) => {
+                error!("Failed to delete config tags: {}", e);
+                RaftResponse::failure(format!("Failed to delete config tags: {}", e))
+            }
         }
     }
 
@@ -1532,25 +1646,34 @@ impl RocksStateMachine {
         cluster_name: &str,
     ) -> RaftResponse {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
-        let value = serde_json::json!({
-            "namespace_id": namespace_id,
-            "group_name": group_name,
-            "service_name": service_name,
-            "instance_id": instance_id,
-            "ip": ip,
-            "port": port,
-            "weight": weight,
-            "healthy": healthy,
-            "enabled": enabled,
-            "metadata": metadata,
-            "cluster_name": cluster_name,
-            "registered_time": chrono::Utc::now().timestamp_millis(),
-        });
+        let now = chrono::Utc::now().timestamp_millis();
+        let stored = StoredInstance {
+            namespace_id: namespace_id.to_string(),
+            group_name: group_name.to_string(),
+            service_name: service_name.to_string(),
+            instance_id: instance_id.to_string(),
+            ip: ip.to_string(),
+            port,
+            weight,
+            healthy,
+            enabled,
+            metadata: metadata.to_string(),
+            cluster_name: cluster_name.to_string(),
+            registered_time: now,
+            modified_time: now,
+        };
+        let encoded = match bincode::serialize(&stored) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to bincode-encode StoredInstance: {}", e);
+                return RaftResponse::failure(format!("encode error: {}", e));
+            }
+        };
 
         match self.db.put_cf_opt(
             self.cf_instances(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            encoded,
             &self.write_opts,
         ) {
             Ok(_) => {
@@ -1603,41 +1726,51 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
 
-        // Read existing instance
-        let existing = match self.db.get_cf(self.cf_instances(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
+        // Read existing instance as typed StoredInstance (bincode)
+        let mut stored: StoredInstance = match self.db.get_cf(self.cf_instances(), key.as_bytes())
+        {
+            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Failed to decode StoredInstance: {}", e);
+                    return RaftResponse::failure(format!("decode error: {}", e));
+                }
+            },
+            _ => return RaftResponse::failure("Instance not found"),
         };
 
-        let value = if let Some(mut existing) = existing {
-            if let Some(ip) = ip {
-                existing["ip"] = serde_json::json!(ip);
+        if let Some(ip) = ip {
+            stored.ip = ip;
+        }
+        if let Some(port) = port {
+            stored.port = port;
+        }
+        if let Some(weight) = weight {
+            stored.weight = weight;
+        }
+        if let Some(healthy) = healthy {
+            stored.healthy = healthy;
+        }
+        if let Some(enabled) = enabled {
+            stored.enabled = enabled;
+        }
+        if let Some(metadata) = metadata {
+            stored.metadata = metadata;
+        }
+        stored.modified_time = chrono::Utc::now().timestamp_millis();
+
+        let encoded = match bincode::serialize(&stored) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to encode StoredInstance: {}", e);
+                return RaftResponse::failure(format!("encode error: {}", e));
             }
-            if let Some(port) = port {
-                existing["port"] = serde_json::json!(port);
-            }
-            if let Some(weight) = weight {
-                existing["weight"] = serde_json::json!(weight);
-            }
-            if let Some(healthy) = healthy {
-                existing["healthy"] = serde_json::json!(healthy);
-            }
-            if let Some(enabled) = enabled {
-                existing["enabled"] = serde_json::json!(enabled);
-            }
-            if let Some(metadata) = metadata {
-                existing["metadata"] = serde_json::json!(metadata);
-            }
-            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
-            existing
-        } else {
-            return RaftResponse::failure("Instance not found");
         };
 
         match self.db.put_cf_opt(
             self.cf_instances(),
             key.as_bytes(),
-            json_to_bytes(&value),
+            encoded,
             &self.write_opts,
         ) {
             Ok(_) => {

@@ -51,6 +51,26 @@ static POLICY_CACHE: LazyLock<Cache<String, AclPolicy>> = LazyLock::new(|| {
         .build()
 });
 
+/// Clear every ACL cache.
+///
+/// Called by the Consul Raft apply hook whenever a committed ACL write
+/// (token/policy/role/auth-method/binding-rule set or delete) lands on
+/// the local node, so followers see policy changes immediately instead
+/// of waiting up to 60 s for the moka TTL to expire.
+///
+/// This is a blunt invalidation — it clears all entries in all three
+/// caches rather than trying to identify which specific token/policy
+/// changed. The cost is one cold-read per active token/policy after the
+/// apply, which is cheap compared to the correctness hazard of stale
+/// authorization decisions. Consul itself also rebuilds the full cache
+/// on ACL change notifications.
+pub fn invalidate_all_caches() {
+    TOKEN_CACHE.invalidate_all();
+    PARSED_RULES_CACHE.invalidate_all();
+    POLICY_CACHE.invalidate_all();
+    tracing::debug!("ACL caches invalidated (token + parsed_rules + policy)");
+}
+
 /// Expanded ACL token with resolved policies and roles
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]

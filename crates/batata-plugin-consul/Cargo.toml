@@ -71,3 +71,8 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 actix-http = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "consul_store_bench"
+harness = false

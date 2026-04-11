@@ -266,6 +266,35 @@ impl ConsulKVService {
         }
     }
 
+    /// Satisfy a linearizable read guarantee when the caller requested
+    /// `?consistent` mode. On the leader this blocks until the local
+    /// state machine has applied every entry committed at the time of
+    /// the call, matching Consul's `default=consistent` semantics. On a
+    /// standalone node (no Raft), this is a no-op. On a follower, this
+    /// returns `NotLeader { leader_addr }` so the HTTP handler can emit
+    /// a clean 503 response with the leader hint, rather than surfacing
+    /// openraft's raw `ForwardToLeader` error text.
+    ///
+    /// Call this before any read that honors `?consistent`.
+    pub async fn ensure_linearizable_read(
+        &self,
+    ) -> Result<(), crate::consul_meta::LinearizableReadError> {
+        let Some(ref raft) = self.raft_node else {
+            return Ok(());
+        };
+        if !raft.is_leader() {
+            return Err(crate::consul_meta::LinearizableReadError::NotLeader {
+                leader_addr: raft.leader_addr(),
+            });
+        }
+        raft.linearizable_read().await.map_err(|e| {
+            crate::consul_meta::LinearizableReadError::Other(format!(
+                "linearizable_read failed: {}",
+                e
+            ))
+        })
+    }
+
     /// Scan existing KV entries to find the max modify_index.
     fn scan_max_index(db: &Arc<DB>) -> u64 {
         let mut max_index = 0u64;
@@ -1418,6 +1447,22 @@ pub async fn get_kv(
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Honor ?consistent — wait for the local state machine to catch up to
+    // the latest committed Raft log index so the following read returns
+    // fully-linearizable state. On a standalone node this is a no-op.
+    // On a follower, returns a clean 503 with `X-Consul-Leader-Address`
+    // so clients can retry on the leader.
+    let opts = crate::consul_meta::ConsulQueryOptions::from_request(&req);
+    if matches!(
+        opts.consistency,
+        crate::consul_meta::ConsistencyMode::Consistent
+    ) {
+        if let Err(e) = kv_service.ensure_linearizable_read().await {
+            tracing::debug!("consistent KV read rejected locally: {:?}", e);
+            return e.into_http_response();
+        }
     }
 
     let raw = query.raw.unwrap_or(false);

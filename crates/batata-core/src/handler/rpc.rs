@@ -114,6 +114,17 @@ pub trait ConnectionCleanupHandler: Send + Sync {
     fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String>;
     /// Remove subscriber associated with a connection
     fn remove_subscriber(&self, connection_id: &str);
+    /// Notify the cluster that ephemeral instances owned by a disconnected
+    /// connection have been removed.
+    ///
+    /// Called after `deregister_all_by_connection` with the list of service
+    /// keys whose instance set changed locally. Implementations should push
+    /// an async Distro sync so peers converge immediately — otherwise they
+    /// wait up to one verify cycle (~5s) before reconciling.
+    ///
+    /// Default impl is a no-op so existing implementations remain valid
+    /// until they adopt the broadcast path.
+    async fn broadcast_disconnect(&self, _affected_service_keys: &[String]) {}
 }
 
 /// Empty headers constant to avoid repeated allocations
@@ -902,6 +913,11 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                         connection_id,
                         affected.len()
                     );
+                    // Push the change to cluster peers immediately. Without
+                    // this, peers only learn about the deregistration on
+                    // the next verify cycle (~5s), during which queries
+                    // can return stale instances.
+                    cleanup.broadcast_disconnect(&affected).await;
                 }
                 cleanup.remove_subscriber(&connection_id);
             }

@@ -49,6 +49,13 @@ pub struct InstanceRequestHandler {
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
     /// Distro protocol for syncing ephemeral instances across cluster nodes
     pub distro_protocol: Option<Arc<DistroProtocol>>,
+    /// Ephemeral/persistent dispatch proxy. When present, register and
+    /// deregister route through the proxy so Raft writes for persistent
+    /// instances happen automatically. Set by startup when both a
+    /// NamingService and (optionally) RaftNode / DistroProtocol are wired.
+    /// When `None`, handler falls back to direct naming_service calls —
+    /// used in tests and degraded single-node scenarios.
+    pub client_op_proxy: Option<Arc<crate::service::ClientOperationServiceProxy>>,
 }
 
 #[tonic::async_trait]
@@ -101,12 +108,24 @@ impl PayloadHandler for InstanceRequestHandler {
         );
 
         let result = if req_type == REGISTER_INSTANCE {
-            let ok = self.naming_service.register_instance(
-                namespace,
-                group_name,
-                service_name,
-                instance,
-            );
+            // Route through the ClientOperationServiceProxy when available —
+            // this ensures persistent instances (ephemeral=false) arriving
+            // through InstanceRequest are written via Raft, not just the
+            // in-memory DashMap. Falls back to direct write if no proxy
+            // is wired (unit tests).
+            let ok = if let Some(ref proxy) = self.client_op_proxy {
+                use crate::service::ClientOperationService;
+                proxy
+                    .register_instance(namespace, group_name, service_name, instance)
+                    .await
+            } else {
+                self.naming_service.register_instance(
+                    namespace,
+                    group_name,
+                    service_name,
+                    instance,
+                )
+            };
             if ok {
                 self.naming_service.add_publisher(
                     connection_id,
@@ -122,12 +141,19 @@ impl PayloadHandler for InstanceRequestHandler {
             }
             ok
         } else if req_type == DE_REGISTER_INSTANCE {
-            let ok = self.naming_service.deregister_instance(
-                namespace,
-                group_name,
-                service_name,
-                &instance,
-            );
+            let ok = if let Some(ref proxy) = self.client_op_proxy {
+                use crate::service::ClientOperationService;
+                proxy
+                    .deregister_instance(namespace, group_name, service_name, &instance)
+                    .await
+            } else {
+                self.naming_service.deregister_instance(
+                    namespace,
+                    group_name,
+                    service_name,
+                    &instance,
+                )
+            };
             if ok {
                 self.naming_service.remove_publisher(
                     connection_id,

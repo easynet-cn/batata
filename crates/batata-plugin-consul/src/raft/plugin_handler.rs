@@ -16,6 +16,7 @@ use batata_consistency::raft::request::{RaftRequest, RaftResponse};
 use rocksdb::{DB, WriteBatch};
 use tracing::{debug, error, info, warn};
 
+use super::apply_hook::{SharedConsulApplyHook, new_shared_hook};
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use crate::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
@@ -34,18 +35,49 @@ type SnapshotCfData = std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>>
 /// Size of the checksum trailer appended to snapshot data (8 bytes for u64)
 const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
 
+/// Per-variant payload the apply-back hook needs after a successful apply.
+/// Stored alongside the original request so the handler can invoke the
+/// hook without re-deserializing or cloning the whole request enum.
+enum HookDispatch {
+    CatalogRegister {
+        key: String,
+        registration_json: String,
+    },
+    CatalogDeregister {
+        key: String,
+    },
+    /// Any ACL mutation (token/policy/role/auth-method/binding-rule).
+    /// The hook clears all ACL caches — no per-entity dispatch needed.
+    AclChange,
+}
+
 pub struct ConsulRaftPluginHandler {
     /// Per-table index — updated on every apply to notify blocking queries.
     table_index: ConsulTableIndex,
+    /// Apply-back hook slot. When registered, the handler invokes the hook
+    /// after writing to RocksDB so follower nodes can refresh their
+    /// in-memory caches (notably `ConsulNamingStore`). Shared `Arc<RwLock>`
+    /// lets plugin construction install the hook after the handler is
+    /// already embedded in the core Raft state machine.
+    apply_hook: SharedConsulApplyHook,
 }
 
 impl ConsulRaftPluginHandler {
     pub fn new(table_index: ConsulTableIndex) -> Self {
-        Self { table_index }
+        Self {
+            table_index,
+            apply_hook: new_shared_hook(),
+        }
     }
 
     pub fn new_arc(table_index: ConsulTableIndex) -> Arc<Self> {
         Arc::new(Self::new(table_index))
+    }
+
+    /// Get a shared handle to the apply hook slot so callers can install
+    /// their concrete hook implementation after construction.
+    pub fn apply_hook(&self) -> SharedConsulApplyHook {
+        self.apply_hook.clone()
     }
 }
 
@@ -82,7 +114,62 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             }
         };
 
+        // Snapshot request metadata the hook needs BEFORE the request is
+        // moved into `apply_consul_request`. Variants that don't carry
+        // hook-relevant data leave this as None.
+        let hook_dispatch: Option<HookDispatch> = match &request {
+            ConsulRaftRequest::CatalogRegister {
+                key,
+                registration_json,
+            } => Some(HookDispatch::CatalogRegister {
+                key: key.clone(),
+                registration_json: registration_json.clone(),
+            }),
+            ConsulRaftRequest::CatalogDeregister { key } => {
+                Some(HookDispatch::CatalogDeregister { key: key.clone() })
+            }
+            // All ACL mutations flow through a single hook dispatch —
+            // the concrete hook impl invalidates every cached entry on
+            // every ACL change, so per-variant discrimination would buy
+            // nothing.
+            ConsulRaftRequest::ACLTokenSet { .. }
+            | ConsulRaftRequest::ACLTokenDelete { .. }
+            | ConsulRaftRequest::ACLPolicySet { .. }
+            | ConsulRaftRequest::ACLPolicyDelete { .. }
+            | ConsulRaftRequest::ACLRoleSet { .. }
+            | ConsulRaftRequest::ACLRoleDelete { .. }
+            | ConsulRaftRequest::ACLAuthMethodSet { .. }
+            | ConsulRaftRequest::ACLAuthMethodDelete { .. }
+            | ConsulRaftRequest::ACLBindingRuleSet { .. }
+            | ConsulRaftRequest::ACLBindingRuleDelete { .. }
+            | ConsulRaftRequest::ACLBootstrap { .. } => Some(HookDispatch::AclChange),
+            _ => None,
+        };
+
         let consul_resp = apply_consul_request(db, &self.table_index, request, log_index);
+
+        // Fire the apply-back hook only on success. Uses `try_read` to
+        // avoid blocking the apply path when the hook slot is being
+        // installed; a missed notification is preferable to a stall, and
+        // cold-start recovery refreshes the view anyway.
+        if consul_resp.success {
+            if let Some(dispatch) = hook_dispatch {
+                if let Ok(guard) = self.apply_hook.try_read() {
+                    if let Some(hook) = guard.as_ref() {
+                        match &dispatch {
+                            HookDispatch::CatalogRegister {
+                                key,
+                                registration_json,
+                            } => hook.on_catalog_register(key, registration_json),
+                            HookDispatch::CatalogDeregister { key } => {
+                                hook.on_catalog_deregister(key)
+                            }
+                            HookDispatch::AclChange => hook.on_acl_change(),
+                        }
+                    }
+                }
+            }
+        }
 
         // Convert ConsulRaftResponse -> RaftResponse
         if consul_resp.success {
@@ -919,5 +1006,35 @@ impl ConsulRaftWriter {
     ) -> Result<ConsulRaftResponse, Box<dyn std::error::Error + Send + Sync>> {
         let (resp, _) = self.write_with_index(request).await?;
         Ok(resp)
+    }
+
+    /// Check whether this node is currently the Raft leader.
+    ///
+    /// Callers use this to gate leader-only background tasks (e.g. session
+    /// TTL expiration sweep) so that exactly one node decides when a
+    /// committed state change should happen. The actual mutation still
+    /// flows through `write`, which replicates the decision to followers.
+    pub fn is_leader(&self) -> bool {
+        self.core_raft.is_leader()
+    }
+
+    /// Satisfy a linearizable read — wait until this node has applied all
+    /// entries committed at the time of the call.
+    ///
+    /// Used by Consul `?consistent` query mode. Only succeeds on the leader;
+    /// followers get a `ForwardToLeader` error because openraft's
+    /// `ensure_linearizable` can only be invoked on the leader. Callers
+    /// should detect the error and either forward the HTTP request or
+    /// emit an HTTP 307 redirect to the leader's address.
+    pub async fn linearizable_read(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.core_raft.linearizable_read().await
+    }
+
+    /// Get the current Raft leader's address, if known.
+    /// Used by consistent-read redirect path.
+    pub fn leader_addr(&self) -> Option<String> {
+        self.core_raft.leader_addr()
     }
 }

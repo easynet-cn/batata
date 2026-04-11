@@ -448,6 +448,66 @@ impl DistroProtocol {
         self.mapper.update_members(healthy);
     }
 
+    /// Subscribe to cluster member change events and immediately trigger
+    /// `refresh_mapper` + `cleanup_non_responsible_keys` whenever the
+    /// membership changes. The verify loop still runs its own periodic
+    /// refresh as a safety net (so single missed events do not stall
+    /// reconciliation), but event-driven refresh drops the typical
+    /// convergence time from up to one verify_interval (~5s) down to
+    /// milliseconds.
+    ///
+    /// Safe to call from any context — spawns a background listener task.
+    pub fn subscribe_member_changes(
+        self: &Arc<Self>,
+        publisher: Arc<super::member_event::MemberChangeEventPublisher>,
+    ) {
+        let mut rx = publisher.subscribe();
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            use super::member_event::MemberChangeType;
+            loop {
+                match rx.recv().await {
+                    Ok(evt) => {
+                        // Only act on changes that affect responsibility.
+                        // Metadata updates don't change the healthy-member
+                        // set so skip them to avoid unnecessary work.
+                        if !matches!(
+                            evt.change_type,
+                            MemberChangeType::MemberJoin
+                                | MemberChangeType::MemberLeave
+                                | MemberChangeType::MemberStateChange
+                        ) {
+                            continue;
+                        }
+                        info!(
+                            "Distro: membership change detected ({}), refreshing mapper",
+                            evt.change_type
+                        );
+                        this.refresh_mapper();
+                        let removed = this.cleanup_non_responsible_keys().await;
+                        if removed > 0 {
+                            info!(
+                                "Distro event-driven cleanup: removed {} non-responsible keys",
+                                removed
+                            );
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(
+                            "Distro member-change listener lagged: {} events skipped; \
+                             verify loop will reconcile on next cycle",
+                            skipped
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!("Distro member-change listener: channel closed, stopping");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     /// Drop all locally-stored keys that the local node is no longer
     /// responsible for after the most recent mapper refresh.
     ///

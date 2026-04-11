@@ -487,6 +487,29 @@ impl ConsulCatalogService {
         self
     }
 
+    /// Satisfy a linearizable read guarantee for `?consistent` mode.
+    /// See `ConsulKVService::ensure_linearizable_read` for details. No-op
+    /// on standalone. Returns `NotLeader` on follower so the handler can
+    /// emit a 503 with leader hint.
+    pub async fn ensure_linearizable_read(
+        &self,
+    ) -> Result<(), crate::consul_meta::LinearizableReadError> {
+        let Some(ref raft) = self.raft_node else {
+            return Ok(());
+        };
+        if !raft.is_leader() {
+            return Err(crate::consul_meta::LinearizableReadError::NotLeader {
+                leader_addr: raft.leader_addr(),
+            });
+        }
+        raft.linearizable_read().await.map_err(|e| {
+            crate::consul_meta::LinearizableReadError::Other(format!(
+                "linearizable_read failed: {}",
+                e
+            ))
+        })
+    }
+
     /// Get all unique service names with their tags
     pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
         self.naming_store.service_names_with_tags(namespace)
@@ -1172,6 +1195,19 @@ pub async fn list_services(
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
+    // Honor ?consistent — wait for local state machine to catch up to
+    // committed index so the read is fully linearizable.
+    let opts = crate::consul_meta::ConsulQueryOptions::from_request(&req);
+    if matches!(
+        opts.consistency,
+        crate::consul_meta::ConsistencyMode::Consistent
+    ) {
+        if let Err(e) = catalog.ensure_linearizable_read().await {
+            tracing::debug!("consistent catalog read rejected locally: {:?}", e);
+            return e.into_http_response();
+        }
+    }
+
     let services = catalog.get_services(&namespace);
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta)
@@ -1203,6 +1239,18 @@ pub async fn get_service(
 
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
+    // Honor ?consistent — satisfy linearizable read before snapshot.
+    let opts = crate::consul_meta::ConsulQueryOptions::from_request(&req);
+    if matches!(
+        opts.consistency,
+        crate::consul_meta::ConsistencyMode::Consistent
+    ) {
+        if let Err(e) = catalog.ensure_linearizable_read().await {
+            tracing::debug!("consistent catalog read rejected locally: {:?}", e);
+            return e.into_http_response();
+        }
+    }
 
     let mut services = catalog.get_service_instances(&namespace, &service_name, &tag_filters);
 

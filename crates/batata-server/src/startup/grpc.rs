@@ -228,6 +228,7 @@ fn register_naming_handlers(
     connection_manager: Arc<ConnectionManager>,
     distro_protocol: Option<Arc<DistroProtocol>>,
     raft_node: Option<Arc<RaftNode>>,
+    client_op_proxy: Arc<batata_naming::service::ClientOperationServiceProxy>,
 ) {
     let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> = naming_service;
     registry.register_handler(Arc::new(InstanceRequestHandler {
@@ -235,6 +236,7 @@ fn register_naming_handlers(
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
         distro_protocol: distro_protocol.clone(),
+        client_op_proxy: Some(client_op_proxy.clone()),
     }));
     registry.register_handler(Arc::new(BatchInstanceRequestHandler {
         naming_service: naming_service.clone(),
@@ -626,13 +628,51 @@ pub fn start_grpc_servers(
         None
     };
 
+    // Wire distro to membership events: whenever a peer joins/leaves/state
+    // changes, refresh the responsibility mapper and drop keys no longer
+    // owned by this node. Without this, reconciliation waits up to one
+    // verify cycle (~5s). The verify loop still runs its own periodic
+    // refresh as a safety net.
+    if !is_standalone {
+        if let Some(ref smm) = server_member_manager {
+            distro_protocol
+                .subscribe_member_changes(smm.event_publisher().clone());
+        }
+    }
+
+    // Build the ClientOperationServiceProxy that routes instance writes by
+    // the `instance.ephemeral` flag:
+    //   ephemeral=true  → EphemeralClientOperationService  (DashMap + Distro)
+    //   ephemeral=false → PersistentClientOperationService (Raft + apply hook)
+    //
+    // Handlers consume this via trait object so both paths share the same
+    // invocation surface. Standalone deployments still use the proxy, but
+    // its persistent branch falls back to direct DashMap writes (logged
+    // as a WARN at construction).
+    let client_op_proxy = {
+        use batata_naming::service::{
+            ClientOperationServiceProxy, EphemeralClientOperationService,
+            PersistentClientOperationService,
+        };
+        let ephemeral = Arc::new(EphemeralClientOperationService::new(
+            naming_service.clone(),
+            distro_for_naming.clone(),
+        ));
+        let persistent = Arc::new(PersistentClientOperationService::new(
+            naming_service.clone(),
+            raft_node.clone(),
+        ));
+        Arc::new(ClientOperationServiceProxy::new(ephemeral, persistent))
+    };
+
     register_naming_handlers(
         &mut handler_registry,
         naming_service.clone(),
         naming_fuzzy_watch_manager,
         connection_manager.clone(),
-        distro_for_naming,
+        distro_for_naming.clone(),
         raft_node.clone(),
+        client_op_proxy,
     );
 
     // Register distro handlers
@@ -654,13 +694,27 @@ pub fn start_grpc_servers(
 
     let handler_registry_arc = Arc::new(handler_registry);
 
+    // Build the connection cleanup handler. In cluster mode, wrap
+    // NamingService so bi-stream disconnect triggers an immediate
+    // Distro sync push to peers; in standalone mode, use NamingService
+    // directly since there are no peers to notify.
+    let cleanup_handler: Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler> =
+        if let Some(ref distro) = distro_for_naming {
+            Arc::new(batata_naming::DistroAwareCleanup::new(
+                naming_service.clone(),
+                distro.clone(),
+            ))
+        } else {
+            naming_service.clone()
+        };
+
     // Create gRPC services (reuse connection_manager created earlier)
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
     let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(
         handler_registry_arc.clone(),
         connection_manager,
         config_subscriber_manager,
-        Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
+        Some(cleanup_handler),
     );
 
     // Capture gRPC performance tuning parameters from configuration

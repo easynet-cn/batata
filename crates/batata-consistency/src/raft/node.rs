@@ -244,25 +244,28 @@ impl RaftNode {
                     continue;
                 }
             };
-            let value: serde_json::Value = match serde_json::from_slice(&v) {
-                Ok(v) => v,
+            // bincode-encoded StoredInstance written by apply_instance_register.
+            // Persistent storage format is intentionally unversioned —
+            // RocksDB data dirs must be wiped on upgrade.
+            let stored: super::state_machine::StoredInstance = match bincode::deserialize(&v) {
+                Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!("Failed to parse instance during replay: {}", e);
+                    tracing::warn!("Failed to decode StoredInstance during replay: {}", e);
                     continue;
                 }
             };
             hook.on_register(
-                value["namespace_id"].as_str().unwrap_or(""),
-                value["group_name"].as_str().unwrap_or(""),
-                value["service_name"].as_str().unwrap_or(""),
-                value["instance_id"].as_str().unwrap_or(""),
-                value["ip"].as_str().unwrap_or(""),
-                value["port"].as_u64().unwrap_or(0) as u16,
-                value["weight"].as_f64().unwrap_or(1.0),
-                value["healthy"].as_bool().unwrap_or(true),
-                value["enabled"].as_bool().unwrap_or(true),
-                value["metadata"].as_str().unwrap_or("{}"),
-                value["cluster_name"].as_str().unwrap_or("DEFAULT"),
+                &stored.namespace_id,
+                &stored.group_name,
+                &stored.service_name,
+                &stored.instance_id,
+                &stored.ip,
+                stored.port,
+                stored.weight,
+                stored.healthy,
+                stored.enabled,
+                &stored.metadata,
+                &stored.cluster_name,
             );
             count += 1;
         }

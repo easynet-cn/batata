@@ -34,8 +34,56 @@ use crate::operator::ConsulOperatorService;
 use crate::peering::ConsulPeeringService;
 use crate::query::ConsulQueryService;
 use crate::raft::ConsulRaftWriter;
+use crate::constants::CF_CONSUL_CATALOG;
+use crate::naming_store::ConsulNamingStore;
 use crate::session::ConsulSessionService;
 use crate::snapshot::ConsulSnapshotService;
+
+/// Bridge from the Consul Raft plugin handler's apply-back hook to the
+/// in-memory `ConsulNamingStore`. Keeps follower-side query state
+/// consistent with committed Raft log.
+struct NamingStoreApplyHook {
+    store: Arc<ConsulNamingStore>,
+}
+
+impl NamingStoreApplyHook {
+    fn new(store: Arc<ConsulNamingStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl crate::raft::ConsulApplyHook for NamingStoreApplyHook {
+    fn on_catalog_register(&self, key: &str, registration_json: &str) {
+        use batata_plugin::PluginNamingStore;
+        let data = bytes::Bytes::copy_from_slice(registration_json.as_bytes());
+        if let Err(e) = self.store.register(key, data) {
+            tracing::warn!(
+                "NamingStoreApplyHook: register failed for key {}: {:?}",
+                key,
+                e
+            );
+        }
+    }
+
+    fn on_catalog_deregister(&self, key: &str) {
+        use batata_plugin::PluginNamingStore;
+        if let Err(e) = self.store.deregister(key) {
+            tracing::warn!(
+                "NamingStoreApplyHook: deregister failed for key {}: {:?}",
+                key,
+                e
+            );
+        }
+    }
+
+    fn on_acl_change(&self) {
+        // Blunt but correct: clear every ACL cache so follower
+        // authorization decisions reflect the committed policy change
+        // within the apply latency rather than waiting up to 60 s for
+        // the moka TTL to fire.
+        crate::acl::invalidate_all_caches();
+    }
+}
 
 /// Inner state holding all initialized Consul services.
 ///
@@ -65,6 +113,10 @@ pub struct ConsulPluginInner {
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
     pub registry: Arc<InstanceCheckRegistry>,
+    /// Raft writer for routing Consul writes through the unified Raft
+    /// group. `None` in standalone mode; `Some` in cluster mode. Used by
+    /// `ConsulResultHandler` auto-deregister and other leader-gated cascades.
+    pub raft_writer: Option<Arc<ConsulRaftWriter>>,
 }
 
 /// Consul compatibility protocol adapter plugin.
@@ -163,6 +215,7 @@ impl ConsulPlugin {
             operator: ConsulOperatorService::with_dc_config(&self.dc_config),
             dc_config: self.dc_config.clone(),
             registry,
+            raft_writer: None,
         }
     }
 
@@ -250,12 +303,13 @@ impl ConsulPlugin {
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_raft(db, consul_raft.clone(), &self.dc_config),
             namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
-                consul_raft,
+                consul_raft.clone(),
                 index_provider.clone(),
             ),
             dc_config: self.dc_config.clone(),
             index_provider,
             registry,
+            raft_writer: Some(consul_raft),
         }
     }
 
@@ -455,6 +509,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             inner.health.check_index(),
             Arc::new(inner.session.clone()),
             Arc::new(inner.kv.clone()),
+            inner.raft_writer.clone(),
         );
 
         self.inner
@@ -553,21 +608,25 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             tracing::info!("Consul active health check reactor started");
         }
 
-        // Session TTL cleanup
+        // Session TTL cleanup — leader-only, routes destroys through Raft.
+        //
+        // Before this fix every node independently swept its own RocksDB,
+        // producing divergent state in a multi-node cluster (leader and
+        // followers could disagree about which sessions had expired).
+        // Now only the leader decides, and the decisions replicate via
+        // `SessionDestroy` Raft entries so all nodes apply the same
+        // cleanup in the same order. The sweep still runs on every node
+        // (cheap) so that leader changes don't stall cleanup.
         let session_svc = inner.session.clone();
         let kv_svc = inner.kv.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                let expired = session_svc.scan_expired_session_ids();
-                if !expired.is_empty() {
-                    tracing::info!("Cleaning up {} expired Consul sessions", expired.len());
-                    for id in &expired {
-                        kv_svc.release_session(id).await;
-                    }
-                    session_svc.cleanup_expired();
-                }
+                // `cleanup_expired_via_raft` internally checks leader
+                // status and routes each destroy through Raft. It's a
+                // no-op on followers.
+                let _ = session_svc.cleanup_expired_via_raft(&kv_svc).await;
             }
         });
 
@@ -593,9 +652,14 @@ impl ConsulPlugin {
         // Create a table index for blocking query notifications
         let table_index = ConsulTableIndex::new();
 
-        // Register the Consul plugin handler with the core Raft state machine
+        // Create the plugin handler and capture its apply-hook slot before
+        // the handler is moved into the Raft state machine. The slot is a
+        // shared `Arc<RwLock<_>>`, so installing the concrete hook after
+        // registration is still visible to the handler inside Raft.
         let plugin_handler =
             crate::raft::plugin_handler::ConsulRaftPluginHandler::new_arc(table_index.clone());
+        let apply_hook_slot = plugin_handler.apply_hook();
+
         if let Err(e) = core_raft.register_plugin(plugin_handler).await {
             tracing::error!(
                 "Failed to register Consul Raft plugin: {}, falling back to in-memory",
@@ -604,6 +668,47 @@ impl ConsulPlugin {
             return self.build_inner_standalone(consul_naming_store, consul_registry);
         }
         tracing::info!("Consul Raft plugin handler registered with core Raft");
+
+        // Install the apply-back hook: when the state machine applies a
+        // `CatalogRegister`/`CatalogDeregister` log entry, update the
+        // in-memory `ConsulNamingStore` on ALL nodes (leader + followers).
+        // Without this, followers only see new registrations in RocksDB,
+        // and `ConsulNamingStore::get_service_entries` — the actual query
+        // path — returns stale/empty results.
+        {
+            let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(
+                NamingStoreApplyHook::new(consul_naming_store.clone()),
+            );
+            *apply_hook_slot.write().await = Some(hook);
+            tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
+        }
+
+        // Cold-start recovery: after the hook is installed, rehydrate the
+        // in-memory naming store from committed catalog data in RocksDB.
+        // New applies after this point flow through the hook naturally,
+        // so we only need to replay what was already committed.
+        {
+            use batata_plugin::PluginNamingStore;
+            let db = core_raft.db();
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CATALOG) {
+                let mut count = 0usize;
+                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter {
+                    let Ok((k, v)) = item else { continue };
+                    let Ok(key) = std::str::from_utf8(&k) else {
+                        continue;
+                    };
+                    let data = bytes::Bytes::copy_from_slice(&v);
+                    if consul_naming_store.register(key, data).is_ok() {
+                        count += 1;
+                    }
+                }
+                tracing::info!(
+                    "Consul catalog cold-start replay complete: {} entries restored",
+                    count
+                );
+            }
+        }
 
         // Create a writer adapter that routes Consul requests through PluginWrite
         let consul_writer = Arc::new(ConsulRaftWriter::new(core_raft.clone()));
