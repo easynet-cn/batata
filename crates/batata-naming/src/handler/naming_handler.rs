@@ -1165,7 +1165,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                 info!(
                     "NamingFuzzyWatch initial sync: {} matched services out of {} total",
                     matched.len(),
-                    self.naming_service.get_all_service_keys().len()
+                    self.naming_service.service_count()
                 );
                 {
                     let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);

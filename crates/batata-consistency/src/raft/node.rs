@@ -472,25 +472,48 @@ impl RaftNode {
         use batata_api::raft::ClientWriteRequest;
         use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
 
-        let channel = {
-            let mut guard = self.leader_channel.lock().await;
-            match guard.as_ref() {
-                Some(cached) if cached.addr == leader_addr => cached.channel.clone(),
-                _ => {
-                    let endpoint = format!("http://{}", leader_addr);
-                    let channel = tonic::transport::Channel::from_shared(endpoint)
-                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
-                        .connect_timeout(Duration::from_secs(5))
-                        .tcp_keepalive(Some(Duration::from_secs(10)))
-                        .tcp_nodelay(true)
-                        .http2_keep_alive_interval(Duration::from_secs(10))
-                        .connect()
-                        .await?;
-                    *guard = Some(LeaderChannel {
-                        addr: leader_addr.to_string(),
-                        channel: channel.clone(),
-                    });
-                    channel
+        // Cache lookup — release the lock immediately so concurrent forwards
+        // don't serialize on each other. Holding the Mutex across
+        // `Channel::connect().await` (up to 5s) previously turned parallel
+        // follower writes into a single-file queue.
+        let cached_channel = {
+            let guard = self.leader_channel.lock().await;
+            guard
+                .as_ref()
+                .filter(|cached| cached.addr == leader_addr)
+                .map(|cached| cached.channel.clone())
+        };
+
+        let channel = match cached_channel {
+            Some(channel) => channel,
+            None => {
+                // Cache miss: connect without holding the Mutex. Multiple
+                // concurrent misses may race to create channels; that's fine
+                // because `connect()` is idempotent and the install step below
+                // is double-checked so only one channel ends up cached.
+                let endpoint = format!("http://{}", leader_addr);
+                let new_channel = tonic::transport::Channel::from_shared(endpoint)
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
+                    .connect_timeout(Duration::from_secs(5))
+                    .tcp_keepalive(Some(Duration::from_secs(10)))
+                    .tcp_nodelay(true)
+                    .http2_keep_alive_interval(Duration::from_secs(10))
+                    .connect()
+                    .await?;
+
+                let mut guard = self.leader_channel.lock().await;
+                match guard.as_ref() {
+                    // Another task already installed a channel for the same
+                    // leader — prefer the cached one so the racing duplicate
+                    // drops when we return.
+                    Some(cached) if cached.addr == leader_addr => cached.channel.clone(),
+                    _ => {
+                        *guard = Some(LeaderChannel {
+                            addr: leader_addr.to_string(),
+                            channel: new_channel.clone(),
+                        });
+                        new_channel
+                    }
                 }
             }
         };

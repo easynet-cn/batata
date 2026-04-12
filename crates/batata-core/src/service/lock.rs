@@ -16,8 +16,6 @@ pub(crate) struct LockEntry {
     /// Monotonically increasing fencing token assigned on first acquire
     fencing_token: u64,
     acquired_at: Instant,
-    #[allow(dead_code)]
-    created_at: Instant,
     ttl: Duration,
 }
 
@@ -112,7 +110,6 @@ impl LockService {
                         lock_count: 1,
                         fencing_token: token,
                         acquired_at: now,
-                        created_at: now,
                         ttl,
                     };
                     debug!(key = %key, owner = %owner, fencing_token = token, "Lock acquired (replaced expired)");
@@ -130,7 +127,6 @@ impl LockService {
                     lock_count: 1,
                     fencing_token: token,
                     acquired_at: now,
-                    created_at: now,
                     ttl,
                 });
                 debug!(key = %key, owner = %owner, fencing_token = token, "Lock acquired");

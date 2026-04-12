@@ -13,11 +13,17 @@ use super::registry_task::RegistryCheckTask;
 use super::task::HealthCheckTask;
 use crate::service::{ClusterConfig, NamingService};
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+/// Bounded capacity for the reactor message channel. Large enough to absorb
+/// cluster-wide registration bursts (rolling upgrades, mass joins) but small
+/// enough that a stuck event loop applies backpressure instead of OOMing.
+const REACTOR_CHANNEL_CAPACITY: usize = 4096;
 
 /// Health check reactor message
 #[derive(Debug)]
@@ -46,30 +52,33 @@ pub struct HealthCheckReactor {
     /// Health check configuration
     config: Arc<HealthCheckConfig>,
 
-    /// Active health check tasks (task_id -> task)
-    tasks: Arc<DashMap<String, HealthCheckTask>>,
+    /// Active task IDs. Presence = task is alive; the per-task state lives
+    /// inside the spawned loop, so we deliberately don't store it here — that
+    /// avoids cloning a full HealthCheckTask on every tick.
+    tasks: Arc<DashMap<Arc<str>, ()>>,
 
-    /// Message sender
-    sender: mpsc::UnboundedSender<ReactorMessage>,
+    /// Message sender. Bounded — bursts beyond capacity are dropped with a warning
+    /// to protect the reactor from runaway queue growth during cluster events.
+    sender: mpsc::Sender<ReactorMessage>,
 
     /// Task handles for cancellation
-    task_handles: Arc<DashMap<String, JoinHandle<()>>>,
+    task_handles: Arc<DashMap<Arc<str>, JoinHandle<()>>>,
 
     /// Optional registry for unified health checks.
     /// Wrapped in Arc<RwLock<>> so the event loop always sees the latest registry
     /// even when `set_registry()` is called after the event loop has started.
-    registry: Arc<std::sync::RwLock<Option<Arc<InstanceCheckRegistry>>>>,
+    registry: Arc<RwLock<Option<Arc<InstanceCheckRegistry>>>>,
 
     /// Interceptor chain for cluster-aware health check execution.
     /// Wrapped in Arc<RwLock<>> so the event loop always sees the latest chain
     /// even after `upgrade_to_cluster()` replaces it.
-    interceptor_chain: Arc<std::sync::RwLock<Arc<HealthCheckInterceptorChain>>>,
+    interceptor_chain: Arc<RwLock<Arc<HealthCheckInterceptorChain>>>,
 }
 
 impl HealthCheckReactor {
     /// Create a new health check reactor
     pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(REACTOR_CHANNEL_CAPACITY);
 
         let standalone_chain = Arc::new(HealthCheckInterceptorChain::standalone(config.clone()));
         let reactor = Self {
@@ -78,8 +87,8 @@ impl HealthCheckReactor {
             tasks: Arc::new(DashMap::new()),
             sender,
             task_handles: Arc::new(DashMap::new()),
-            registry: Arc::new(std::sync::RwLock::new(None)),
-            interceptor_chain: Arc::new(std::sync::RwLock::new(standalone_chain)),
+            registry: Arc::new(RwLock::new(None)),
+            interceptor_chain: Arc::new(RwLock::new(standalone_chain)),
         };
 
         // Start the reactor event loop
@@ -91,20 +100,17 @@ impl HealthCheckReactor {
     /// Set the registry for unified health checks.
     /// Can be called after the event loop has started — the loop reads through the RwLock.
     pub fn set_registry(&self, registry: Arc<InstanceCheckRegistry>) {
-        *self.registry.write().unwrap_or_else(|e| e.into_inner()) = Some(registry);
+        *self.registry.write() = Some(registry);
     }
 
     /// Replace the interceptor chain (e.g., upgrading from standalone to cluster mode).
     /// Must be called **before** health check tasks are scheduled.
     pub fn set_interceptor_chain(&self, chain: Arc<HealthCheckInterceptorChain>) {
-        *self
-            .interceptor_chain
-            .write()
-            .unwrap_or_else(|e| e.into_inner()) = chain;
+        *self.interceptor_chain.write() = chain;
     }
 
     /// Start the reactor event loop
-    fn start_event_loop(&self, mut receiver: mpsc::UnboundedReceiver<ReactorMessage>) {
+    fn start_event_loop(&self, mut receiver: mpsc::Receiver<ReactorMessage>) {
         let naming_service = self.naming_service.clone();
         let config = self.config.clone();
         let tasks = self.tasks.clone();
@@ -119,25 +125,23 @@ impl HealthCheckReactor {
                 match msg {
                     ReactorMessage::Schedule { task } => {
                         let task = *task;
-                        let task_id = task.get_task_id().to_string();
+                        let task_id: Arc<str> = Arc::from(task.get_task_id());
 
                         // Cancel existing task if present
-                        if let Some((_, handle)) = task_handles.remove(&task_id) {
+                        if let Some((_, handle)) = task_handles.remove(task_id.as_ref()) {
                             handle.abort();
                         }
 
-                        // Store the task
-                        tasks.insert(task_id.clone(), task.clone());
+                        // Mark task as active (presence-only, no value clone)
+                        tasks.insert(Arc::clone(&task_id), ());
 
                         // Read the latest interceptor chain (lock released immediately)
-                        let chain = interceptor_chain_lock
-                            .read()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clone();
+                        let chain = interceptor_chain_lock.read().clone();
 
                         // Schedule the task
                         Self::schedule_task_loop(
                             task,
+                            task_id,
                             naming_service.clone(),
                             config.clone(),
                             tasks.clone(),
@@ -148,30 +152,25 @@ impl HealthCheckReactor {
                     }
                     ReactorMessage::Cancel { task_id } => {
                         // Cancel the task
-                        if let Some((_, handle)) = task_handles.remove(&task_id) {
+                        if let Some((_, handle)) = task_handles.remove(task_id.as_str()) {
                             handle.abort();
                         }
-                        tasks.remove(&task_id);
+                        tasks.remove(task_id.as_str());
                         debug!("Cancelled health check task: {}", task_id);
                     }
                     ReactorMessage::ScheduleRegistryCheck { check_key } => {
-                        let registry = registry_lock
-                            .read()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clone();
+                        let registry = registry_lock.read().clone();
                         if let Some(ref reg) = registry {
                             let reg_clone = reg.clone();
-                            let check_key_clone = check_key.clone();
+                            let check_key_arc: Arc<str> = Arc::from(check_key.as_str());
 
                             // Cancel existing handle if present
-                            if let Some((_, handle)) = task_handles.remove(&check_key) {
+                            if let Some((_, handle)) = task_handles.remove(check_key_arc.as_ref()) {
                                 handle.abort();
                             }
 
-                            let task_handles_clone = task_handles.clone();
-                            let check_key_for_handle = check_key.clone();
                             let handle = tokio::spawn(async move {
-                                let task = RegistryCheckTask::new(check_key_clone, reg_clone);
+                                let task = RegistryCheckTask::new(check_key, reg_clone);
                                 loop {
                                     task.execute().await;
 
@@ -191,7 +190,7 @@ impl HealthCheckReactor {
                                 }
                             });
 
-                            task_handles_clone.insert(check_key_for_handle, handle);
+                            task_handles.insert(check_key_arc, handle);
                         } else {
                             debug!(
                                 "Registry not set, skipping ScheduleRegistryCheck for {}",
@@ -217,14 +216,14 @@ impl HealthCheckReactor {
     /// Schedule a task loop (matches Nacos scheduleCheck)
     async fn schedule_task_loop(
         task: HealthCheckTask,
+        task_id: Arc<str>,
         _naming_service: Arc<NamingService>,
         _config: Arc<HealthCheckConfig>,
-        tasks: Arc<DashMap<String, HealthCheckTask>>,
-        task_handles: Arc<DashMap<String, JoinHandle<()>>>,
+        tasks: Arc<DashMap<Arc<str>, ()>>,
+        task_handles: Arc<DashMap<Arc<str>, JoinHandle<()>>>,
         interceptor_chain: Arc<HealthCheckInterceptorChain>,
     ) {
-        let task_id = task.get_task_id().to_string();
-        let task_id_clone = task_id.clone();
+        let loop_task_id = Arc::clone(&task_id);
 
         let handle = tokio::spawn(async move {
             let mut task = task;
@@ -234,7 +233,7 @@ impl HealthCheckReactor {
                 if !interceptor_chain.should_execute(task.get_task_id()) {
                     // Still sleep and re-check — responsibility can change when members change
                     tokio::time::sleep(task.get_check_rt_normalized()).await;
-                    if tasks.get(&task_id_clone).is_none() {
+                    if !tasks.contains_key(loop_task_id.as_ref()) {
                         break;
                     }
                     continue;
@@ -262,14 +261,15 @@ impl HealthCheckReactor {
                 // Get next check interval (adaptive)
                 let check_interval = task.get_check_rt_normalized();
 
-                // Check if task is still active
-                if tasks.get(&task_id_clone).is_none() {
-                    debug!("Task {} cancelled, exiting loop", task_id_clone);
+                // Check if task is still active — presence-only, no value update.
+                // The per-tick task state (consecutive_failures, adaptive
+                // interval, etc.) lives in this local `task` binding; we no
+                // longer mirror it into `tasks`, which eliminates a full
+                // HealthCheckTask clone on every tick.
+                if !tasks.contains_key(loop_task_id.as_ref()) {
+                    debug!("Task {} cancelled, exiting loop", loop_task_id);
                     break;
                 }
-
-                // Update task in map
-                tasks.insert(task_id_clone.clone(), task.clone());
 
                 // Wait for next check
                 tokio::time::sleep(check_interval).await;
@@ -293,25 +293,40 @@ impl HealthCheckReactor {
         let task_id = task.get_task_id().to_string();
         debug!("Scheduling health check task: {}", task_id);
 
-        let _ = self.sender.send(ReactorMessage::Schedule {
+        if let Err(err) = self.sender.try_send(ReactorMessage::Schedule {
             task: Box::new(task),
-        });
+        }) {
+            warn!(
+                "Reactor channel full or closed, dropping Schedule({}): {}",
+                task_id, err
+            );
+        }
     }
 
     /// Cancel a health check task
     pub fn cancel_check(&self, task_id: &str) {
         debug!("Cancelling health check task: {}", task_id);
-        let _ = self.sender.send(ReactorMessage::Cancel {
+        if let Err(err) = self.sender.try_send(ReactorMessage::Cancel {
             task_id: task_id.to_string(),
-        });
+        }) {
+            warn!(
+                "Reactor channel full or closed, dropping Cancel({}): {}",
+                task_id, err
+            );
+        }
     }
 
     /// Schedule a registry-driven check (for unified health system)
     pub fn schedule_registry_check(&self, check_key: &str) {
         debug!("Scheduling registry check: {}", check_key);
-        let _ = self.sender.send(ReactorMessage::ScheduleRegistryCheck {
+        if let Err(err) = self.sender.try_send(ReactorMessage::ScheduleRegistryCheck {
             check_key: check_key.to_string(),
-        });
+        }) {
+            warn!(
+                "Reactor channel full or closed, dropping ScheduleRegistryCheck({}): {}",
+                check_key, err
+            );
+        }
     }
 
     /// Schedule health checks for all instances (called on service registration)
@@ -389,7 +404,7 @@ impl HealthCheckReactor {
 
     /// Shutdown the reactor
     pub async fn shutdown(&self) {
-        let _ = self.sender.send(ReactorMessage::Shutdown);
+        let _ = self.sender.send(ReactorMessage::Shutdown).await;
 
         // Wait a bit for tasks to finish
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -402,14 +417,18 @@ impl HealthCheckReactor {
 
     /// Get all task IDs
     pub fn get_all_task_ids(&self) -> Vec<String> {
-        self.tasks.iter().map(|entry| entry.key().clone()).collect()
+        self.tasks
+            .iter()
+            .map(|entry| entry.key().as_ref().to_owned())
+            .collect()
     }
 }
 
 impl Drop for HealthCheckReactor {
     fn drop(&mut self) {
-        // Send shutdown message when reactor is dropped
-        let _ = self.sender.send(ReactorMessage::Shutdown);
+        // Best-effort non-blocking shutdown signal; if the channel is full or
+        // closed the event loop will exit on its own once the sender drops.
+        let _ = self.sender.try_send(ReactorMessage::Shutdown);
     }
 }
 

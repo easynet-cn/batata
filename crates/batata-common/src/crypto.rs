@@ -77,7 +77,7 @@ impl ConfigEncryptionService {
     /// Generate a new random 256-bit key
     pub fn generate_key() -> [u8; 32] {
         let mut key = [0u8; 32];
-        rand::rng().fill(&mut key[..]);
+        rand::rng().fill_bytes(&mut key);
         key
     }
 
@@ -93,7 +93,7 @@ impl ConfigEncryptionService {
     pub fn encrypt(&self, plaintext: &str) -> CryptoResult<String> {
         // Generate random 12-byte nonce
         let mut nonce_bytes = [0u8; 12];
-        rand::rng().fill(&mut nonce_bytes[..]);
+        rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Encrypt the data
@@ -151,7 +151,7 @@ impl ConfigEncryptionService {
 
         // Encrypt content with data key
         let mut nonce_bytes = [0u8; 12];
-        rand::rng().fill(&mut nonce_bytes[..]);
+        rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = data_cipher

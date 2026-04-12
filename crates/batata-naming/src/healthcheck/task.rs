@@ -44,8 +44,9 @@ pub struct HealthCheckTask {
     /// Naming service for updating health status
     naming_service: Arc<NamingService>,
 
-    /// Task ID (unique identifier)
-    task_id: String,
+    /// Task ID (unique identifier). `Arc<str>` so reactor bookkeeping can
+    /// share refcounts instead of deep-cloning on every schedule event.
+    task_id: Arc<str>,
 
     /// Normalized check interval (adaptive)
     check_rt_normalized: Duration,
@@ -98,10 +99,10 @@ impl HealthCheckTask {
         config: Arc<HealthCheckConfig>,
         naming_service: Arc<NamingService>,
     ) -> Self {
-        let task_id = format!(
+        let task_id: Arc<str> = Arc::from(format!(
             "{}:{}:{}",
             instance.ip, instance.port, instance.cluster_name
-        );
+        ));
         let check_type = HealthCheckType::from_str(&cluster_config.health_check_type);
 
         let check_rt_normalized = Self::init_check_interval(&config, &check_type);

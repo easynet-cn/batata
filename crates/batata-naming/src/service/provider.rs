@@ -104,6 +104,11 @@ impl NamingServiceProvider for NamingService {
         self.get_all_service_keys()
     }
 
+    fn service_count(&self) -> usize {
+        // Direct DashMap len — avoids the allocation the default impl would do.
+        NamingService::service_count(self)
+    }
+
     fn batch_register_instances(
         &self,
         namespace: &str,
@@ -184,10 +189,14 @@ impl NamingServiceProvider for NamingService {
     }
 
     fn get_instance_count(&self) -> (usize, usize) {
-        // Aggregate across all services: (total_instances, total_services)
+        // Aggregate across all services: (total_instances, total_services).
+        // Walk the key list once — the previous implementation collected it
+        // twice (once for `.len()`, once for the loop) which doubled the
+        // Vec<String> allocation cost on large clusters.
         let mut total_instances = 0usize;
-        let total_services = self.get_all_service_keys().len();
+        let mut total_services = 0usize;
         for key in self.get_all_service_keys() {
+            total_services += 1;
             if let Some((ns, group, svc)) = super::parse_service_key(&key) {
                 total_instances += NamingService::get_instance_count(self, ns, group, svc);
             }

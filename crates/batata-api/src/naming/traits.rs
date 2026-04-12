@@ -98,6 +98,13 @@ pub trait NamingServiceProvider: Send + Sync {
 
     fn get_all_service_keys(&self) -> Vec<String>;
 
+    /// Count of registered services without allocating a key list.
+    /// Default impl delegates to `get_all_service_keys().len()` so existing
+    /// implementors keep compiling; override for O(1) maps.
+    fn service_count(&self) -> usize {
+        self.get_all_service_keys().len()
+    }
+
     fn batch_register_instances(
         &self,
         namespace: &str,

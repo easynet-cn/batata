@@ -346,6 +346,12 @@ impl NamingService {
         self.services.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Count of services without allocating a Vec of keys.
+    /// Prefer this over `get_all_service_keys().len()` in logging / metrics paths.
+    pub fn service_count(&self) -> usize {
+        self.services.len()
+    }
+
     /// List all services in a namespace.
     /// Uses the service_name_index for O(1) prefix lookup instead of scanning all services.
     pub fn list_services(

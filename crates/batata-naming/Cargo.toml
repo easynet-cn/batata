@@ -23,6 +23,7 @@ actix-web = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
+parking_lot = { workspace = true }
 
 # Random
 rand = { workspace = true }

@@ -3,7 +3,7 @@
 //! Provides weighted random selection from healthy instances.
 
 use batata_api::naming::model::{Instance, Service};
-use rand::Rng;
+use rand::RngExt;
 use rand::seq::IndexedRandom;
 use tracing::debug;
 
