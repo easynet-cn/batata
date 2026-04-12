@@ -288,7 +288,16 @@ impl ConfigPersistence for ExternalDbPersistService {
             }
         }
 
-        let existing = query.one(&tx).await?;
+        // When CAS is active, use SELECT FOR UPDATE to lock the row
+        // exclusively. This prevents the TOCTOU race: a second concurrent
+        // transaction blocks here until the first commits, then re-reads
+        // the updated MD5 and fails the CAS check. Without FOR UPDATE,
+        // MySQL REPEATABLE READ snapshot-reads allow both to pass.
+        let existing = if cas_md5.is_some() {
+            query.lock(sea_orm::sea_query::LockType::Update).one(&tx).await?
+        } else {
+            query.one(&tx).await?
+        };
 
         // CAS conflict check
         if cas_md5.is_some() && existing.is_none() {
@@ -297,6 +306,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                 .filter(config_info::Column::DataId.eq(data_id))
                 .filter(config_info::Column::GroupId.eq(group_id))
                 .filter(config_info::Column::TenantId.eq(tenant_id))
+                .lock(sea_orm::sea_query::LockType::Update)
                 .one(&tx)
                 .await?;
             if exists.is_some() {

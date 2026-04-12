@@ -574,10 +574,11 @@ pub async fn get_service_health(
 ///   Service == "name"
 fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec<ServiceHealth> {
     // Parse simple filter: field == "value" or field != "value"
+    // Also supports unquoted: field == value (Go SDK sends this)
     let filter = filter.trim();
 
-    // Try to parse: <selector> <op> "<value>"
     let (selector, op, expected) = if let Some(rest) = filter.strip_suffix('"') {
+        // Quoted: `field == "value"`
         if let Some(pos) = rest.rfind('"') {
             let expected = &rest[pos + 1..];
             let before = rest[..pos].trim();
@@ -591,6 +592,15 @@ fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec
         } else {
             return results;
         }
+    } else if let Some(eq_pos) = filter.find("==") {
+        // Unquoted: `field == value`
+        let selector = filter[..eq_pos].trim();
+        let expected = filter[eq_pos + 2..].trim();
+        (selector, "==", expected)
+    } else if let Some(ne_pos) = filter.find("!=") {
+        let selector = filter[..ne_pos].trim();
+        let expected = filter[ne_pos + 2..].trim();
+        (selector, "!=", expected)
     } else {
         return results;
     };
@@ -1282,24 +1292,35 @@ fn parse_duration(s: &str) -> Option<u64> {
 fn apply_health_check_filter(checks: Vec<HealthCheck>, filter: &str) -> Vec<HealthCheck> {
     let filter = filter.trim();
 
-    // Parse: <field> <operator> "<value>"
-    if let Some(rest) = filter.strip_suffix('"')
+    let get_field = |check: &HealthCheck, field: &str| -> Option<String> {
+        match field {
+            "Name" => Some(check.name.clone()),
+            "CheckID" => Some(check.check_id.clone()),
+            "Status" => Some(check.status.clone()),
+            "ServiceName" => Some(check.service_name.clone()),
+            "ServiceID" => Some(check.service_id.clone()),
+            _ => None,
+        }
+    };
+
+    // Parse filter expression. Supports both:
+    //   Status == "passing"     (quoted, Consul API format)
+    //   Status == passing       (unquoted, Go SDK sends this)
+    // Matching go-bexpr behavior from Consul original.
+    let (before, value) = if let Some(rest) = filter.strip_suffix('"')
         && let Some(pos) = rest.rfind('"')
     {
-        let value = &rest[pos + 1..];
-        let before = rest[..pos].trim();
+        // Quoted value: `field op "value"`
+        (rest[..pos].trim(), &rest[pos + 1..])
+    } else {
+        // Unquoted value: `field op value` — split on last space
+        match filter.rfind(' ') {
+            Some(pos) => (filter[..pos].trim(), filter[pos + 1..].trim()),
+            None => return checks, // unparseable
+        }
+    };
 
-        let get_field = |check: &HealthCheck, field: &str| -> Option<String> {
-            match field {
-                "Name" => Some(check.name.clone()),
-                "CheckID" => Some(check.check_id.clone()),
-                "Status" => Some(check.status.clone()),
-                "ServiceName" => Some(check.service_name.clone()),
-                "ServiceID" => Some(check.service_id.clone()),
-                _ => None,
-            }
-        };
-
+    {
         if let Some(field) = before.strip_suffix("contains") {
             let field = field.trim();
             return checks
