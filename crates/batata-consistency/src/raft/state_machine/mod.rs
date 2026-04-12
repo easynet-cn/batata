@@ -1475,4 +1475,116 @@ mod tests {
         let key_empty = RocksStateMachine::namespace_key("");
         assert_eq!(key_empty, "");
     }
+
+    /// Reentrant lock semantics (P0-2 fix): same owner acquiring the same
+    /// lock twice must increment `lock_count` and require matching releases
+    /// to fully unlock. Previously acquire+acquire+release would drop the
+    /// lock — incompatible with Nacos AtomicLockService semantics.
+    #[tokio::test]
+    async fn test_lock_reentrant_semantics() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(tmp.path())
+            .await
+            .expect("state machine");
+
+        // First acquire: fresh lock, depth = 1
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None);
+        assert!(resp.success, "first acquire must succeed");
+        let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
+        assert_eq!(v["lock_count"].as_u64(), Some(1));
+        assert_eq!(v["fence_token"].as_u64(), Some(1));
+        assert_eq!(v["owner"].as_str(), Some("owner-a"));
+
+        // Second acquire by same owner: depth = 2, same fence token
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 99, None);
+        assert!(resp.success, "reentrant acquire must succeed");
+        let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
+        assert_eq!(v["lock_count"].as_u64(), Some(2));
+        assert_eq!(
+            v["fence_token"].as_u64(),
+            Some(1),
+            "fence token must remain stable across reentrant acquires"
+        );
+
+        // Third acquire by same owner: depth = 3
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 77, None);
+        assert!(resp.success);
+        let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
+        assert_eq!(v["lock_count"].as_u64(), Some(3));
+
+        // Different owner is rejected while held
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None);
+        assert!(!resp.success, "different owner must fail to acquire");
+
+        // Release once: depth 3 -> 2, still locked
+        let resp = sm.apply_lock_release("public", "k1", "owner-a", None);
+        assert!(resp.success);
+        let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
+        assert_eq!(v["lock_count"].as_u64(), Some(2));
+        assert_eq!(v["state"].as_str(), Some("Locked"));
+
+        // Different owner still rejected
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None);
+        assert!(!resp.success);
+
+        // Release again: depth 2 -> 1, still locked
+        let resp = sm.apply_lock_release("public", "k1", "owner-a", None);
+        assert!(resp.success);
+
+        // Final release: depth 1 -> 0, lock becomes Free
+        let resp = sm.apply_lock_release("public", "k1", "owner-a", None);
+        assert!(resp.success);
+
+        // Now another owner can acquire
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 42, None);
+        assert!(resp.success, "new owner must acquire after full release");
+        let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
+        assert_eq!(v["owner"].as_str(), Some("owner-b"));
+        assert_eq!(v["lock_count"].as_u64(), Some(1));
+        assert_eq!(
+            v["fence_token"].as_u64(),
+            Some(42),
+            "new owner gets its own fence token"
+        );
+    }
+
+    /// Legacy entries without `lock_count` field must be treated as depth=1
+    /// so existing on-disk Raft logs upgrade cleanly.
+    #[tokio::test]
+    async fn test_lock_legacy_entry_depth_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(tmp.path())
+            .await
+            .expect("state machine");
+
+        // Write a legacy-shaped value directly (no lock_count field).
+        let key = RocksStateMachine::lock_key("public", "legacy");
+        let now = chrono::Utc::now().timestamp_millis();
+        let legacy = serde_json::json!({
+            "namespace": "public",
+            "name": "legacy",
+            "owner": "owner-a",
+            "state": "Locked",
+            "fence_token": 7,
+            "ttl_ms": 60000,
+            "acquired_at": now,
+            "expires_at": now + 60000,
+            "renewal_count": 0,
+            "owner_metadata": null,
+        });
+        sm.db
+            .put_cf_opt(
+                sm.cf_locks(),
+                key.as_bytes(),
+                serde_json::to_vec(&legacy).unwrap(),
+                &sm.write_opts,
+            )
+            .unwrap();
+
+        // Single release must fully free it (legacy depth is 1).
+        let resp = sm.apply_lock_release("public", "legacy", "owner-a", None);
+        assert!(resp.success);
+        let resp = sm.apply_lock_acquire("public", "legacy", "owner-b", 60_000, 8, None);
+        assert!(resp.success, "legacy entry must fully release in one call");
+    }
 }

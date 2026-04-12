@@ -204,6 +204,15 @@ async fn init_embedded_cluster(
     .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;
 
     let raft_node = Arc::new(raft_node);
+
+    // Start the distributed lock expire scanner. Runs on every node but only
+    // issues replicated `LockExpire` writes when this node is the Raft
+    // leader. Matches Nacos's `LockExpireTask` cadence (5s default) and
+    // prevents indefinite growth of `CF_LOCKS` when clients forget to
+    // release held locks.
+    let _lock_expire_scanner = raft_node
+        .start_lock_expire_scanner(std::time::Duration::from_secs(5));
+
     let reader = batata_consistency::RocksDbReader::new(rdb.clone());
     let cache_ttl = configuration.config_read_cache_ttl_secs();
     let cache_max = configuration.config_read_cache_max_entries();

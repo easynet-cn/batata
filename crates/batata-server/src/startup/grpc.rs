@@ -342,14 +342,22 @@ impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalid
 }
 
 /// Registers the lock operation handler.
+///
+/// When `raft_node` is supplied, lock writes are routed through Raft
+/// consensus (CP lock, the mode Nacos SDKs expect). In standalone mode
+/// `raft_node` is `None` and the handler falls back to the in-memory
+/// `LockService` — locks are then single-node and lost on restart.
 fn register_lock_handlers(
     registry: &mut HandlerRegistry,
     lock_service: Arc<LockService>,
     auth_service: Arc<GrpcAuthService>,
+    raft_node: Option<Arc<RaftNode>>,
 ) {
     registry.register_handler(Arc::new(LockOperationHandler {
         lock_service,
         auth_service,
+        raft_node,
+        fence_counter: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     }));
 }
 
@@ -681,12 +689,14 @@ pub fn start_grpc_servers(
     // Register cluster handlers
     register_cluster_handlers(&mut handler_registry, &server_member_manager);
 
-    // Register lock handlers
+    // Register lock handlers. In cluster mode, pass raft_node so locks go
+    // through Raft consensus (matching Nacos SDK expectations).
     let lock_service = Arc::new(LockService::new());
     register_lock_handlers(
         &mut handler_registry,
         lock_service,
         grpc_auth_service_arc.clone(),
+        raft_node.clone(),
     );
 
     // Register AI handlers (MCP + A2A)

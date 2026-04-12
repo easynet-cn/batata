@@ -36,6 +36,9 @@ futures = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Metrics facade (lock alive-count gauge published by the expire scanner)
+metrics = { workspace = true }
+
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }

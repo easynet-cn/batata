@@ -551,6 +551,152 @@ impl RaftNode {
         Ok(())
     }
 
+    /// Start a background task that periodically reaps expired locks.
+    ///
+    /// The task runs on every node but only issues `LockExpire` writes when
+    /// this node is the Raft leader (followers are no-ops to avoid duplicate
+    /// write amplification). Each scan iterates `CF_LOCKS`, decodes the JSON
+    /// blob to find entries whose `expires_at` is in the past and whose
+    /// state is still `Locked`, then issues a replicated `LockExpire` for
+    /// each — matching Nacos's `LockExpireTask` semantics.
+    ///
+    /// The returned `JoinHandle` can be awaited during shutdown. The task
+    /// terminates when the holding `Arc<RaftNode>` is dropped (it holds a
+    /// `Weak` reference to observe shutdown).
+    pub fn start_lock_expire_scanner(
+        self: &Arc<Self>,
+        interval: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        use std::sync::Weak;
+        let weak: Weak<Self> = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // First tick fires immediately; skip it so we don't burst on startup
+            // before the node has finished joining the cluster.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let Some(node) = weak.upgrade() else {
+                    debug!("Lock expire scanner exiting (RaftNode dropped)");
+                    break;
+                };
+                // Every node scans the local RocksDB to publish the
+                // alive-count gauge (so follower dashboards stay truthful),
+                // but only the leader issues LockExpire writes.
+                let (expired, alive_count) = match node.scan_expired_locks() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("Lock expire scanner: scan failed: {}", e);
+                        continue;
+                    }
+                };
+                metrics::gauge!("nacos_monitor_lock_alive_count").set(alive_count as f64);
+
+                if !node.is_leader() {
+                    continue;
+                }
+                if expired.is_empty() {
+                    continue;
+                }
+                debug!("Lock expire scanner: {} expired lock(s)", expired.len());
+                for (namespace, name) in expired {
+                    let req = super::request::RaftRequest::LockExpire {
+                        namespace: namespace.clone(),
+                        name: name.clone(),
+                    };
+                    if let Err(e) = node.write(req).await {
+                        tracing::warn!(
+                            "Lock expire scanner: write LockExpire({}::{}) failed: {}",
+                            namespace,
+                            name,
+                            e
+                        );
+                    }
+                }
+            }
+        })
+    }
+
+    /// List all lock entries from `CF_LOCKS`. Returns the raw JSON values
+    /// for admin introspection. Filters by namespace when non-empty.
+    pub fn list_locks(
+        &self,
+        namespace_filter: &str,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        let cf = self
+            .db
+            .cf_handle(super::state_machine::CF_LOCKS)
+            .ok_or("CF_LOCKS missing")?;
+        let mut results = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_key, val) = match item {
+                Ok(kv) => kv,
+                Err(e) => return Err(Box::new(e)),
+            };
+            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&val) else {
+                continue;
+            };
+            if !namespace_filter.is_empty() {
+                if v["namespace"].as_str() != Some(namespace_filter) {
+                    continue;
+                }
+            }
+            results.push(v);
+        }
+        Ok(results)
+    }
+
+    /// Scan `CF_LOCKS` for entries whose `expires_at` is in the past and
+    /// whose `state == "Locked"`. Returns `(expired, alive_count)` where
+    /// `expired` is the list of `(namespace, name)` to reap and
+    /// `alive_count` is the number of currently-held (non-expired,
+    /// `state == "Locked"`) entries observed in this pass.
+    ///
+    /// This is a read-only scan — it does NOT mutate state. Callers (e.g.
+    /// the expire scanner) must route the actual expire through Raft so
+    /// followers apply the same state change.
+    fn scan_expired_locks(
+        &self,
+    ) -> Result<(Vec<(String, String)>, u64), Box<dyn std::error::Error + Send + Sync>> {
+        let cf = self
+            .db
+            .cf_handle(super::state_machine::CF_LOCKS)
+            .ok_or("CF_LOCKS missing")?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut expired = Vec::new();
+        let mut alive_count: u64 = 0;
+        let iter = self
+            .db
+            .iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_key, val) = match item {
+                Ok(kv) => kv,
+                Err(e) => return Err(Box::new(e)),
+            };
+            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&val) else {
+                continue;
+            };
+            if v["state"].as_str() != Some("Locked") {
+                continue;
+            }
+            let Some(exp) = v["expires_at"].as_i64() else {
+                continue;
+            };
+            if exp > now_ms {
+                alive_count += 1;
+                continue;
+            }
+            let ns = v["namespace"].as_str().unwrap_or("").to_string();
+            let name = v["name"].as_str().unwrap_or("").to_string();
+            if !name.is_empty() {
+                expired.push((ns, name));
+            }
+        }
+        Ok((expired, alive_count))
+    }
+
     /// Shutdown the Raft node
     pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Shutting down Raft node: id={}", self.node_id);

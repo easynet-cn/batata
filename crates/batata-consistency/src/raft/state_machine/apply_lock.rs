@@ -36,13 +36,21 @@ impl RocksStateMachine {
             {
                 // Lock is held, check if same owner
                 if existing["owner"].as_str() == Some(owner) {
-                    // Same owner, renew the lock
+                    // Reentrant acquire: bump the count, refresh TTL, keep
+                    // the original fence_token and acquired_at so fencing
+                    // remains stable across nested lock() calls (matches
+                    // Nacos AtomicLockService.lock_count semantics).
+                    let prev_count = existing["lock_count"].as_u64().unwrap_or(1);
+                    let new_count = prev_count.saturating_add(1);
+                    let stable_fence_token =
+                        existing["fence_token"].as_u64().unwrap_or(fence_token);
                     let value = serde_json::json!({
                         "namespace": namespace,
                         "name": name,
                         "owner": owner,
                         "state": "Locked",
-                        "fence_token": fence_token,
+                        "fence_token": stable_fence_token,
+                        "lock_count": new_count,
                         "ttl_ms": ttl_ms,
                         "acquired_at": existing["acquired_at"],
                         "expires_at": expires_at,
@@ -57,7 +65,10 @@ impl RocksStateMachine {
                         &self.write_opts,
                     ) {
                         Ok(_) => {
-                            debug!("Lock re-acquired by same owner: {}", key);
+                            debug!(
+                                "Lock reentrant-acquired by same owner: {} (depth={})",
+                                key, new_count
+                            );
                             return RaftResponse::success_with_data(
                                 serde_json::to_vec(&value).unwrap_or_default(),
                             );
@@ -76,13 +87,14 @@ impl RocksStateMachine {
             }
         }
 
-        // Lock is free or expired, acquire it
+        // Lock is free or expired, acquire it fresh (lock_count starts at 1)
         let value = serde_json::json!({
             "namespace": namespace,
             "name": name,
             "owner": owner,
             "state": "Locked",
             "fence_token": fence_token,
+            "lock_count": 1,
             "ttl_ms": ttl_ms,
             "acquired_at": now,
             "expires_at": expires_at,
@@ -138,13 +150,41 @@ impl RocksStateMachine {
             return RaftResponse::failure("Fence token mismatch");
         }
 
-        // Release the lock
+        // Reentrant release: decrement lock_count. Only fully release when
+        // it reaches zero. Legacy entries without the field are treated as
+        // depth=1 for backward compatibility.
+        let prev_count = existing["lock_count"].as_u64().unwrap_or(1);
+        if prev_count > 1 {
+            let new_count = prev_count - 1;
+            let mut updated = existing.clone();
+            updated["lock_count"] = serde_json::json!(new_count);
+            match self.db.put_cf_opt(
+                self.cf_locks(),
+                key.as_bytes(),
+                json_to_bytes(&updated),
+                &self.write_opts,
+            ) {
+                Ok(_) => {
+                    debug!("Lock reentrant-released: {} (depth={})", key, new_count);
+                    return RaftResponse::success_with_data(
+                        serde_json::to_vec(&updated).unwrap_or_default(),
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to release lock: {}", e);
+                    return RaftResponse::failure(format!("Failed to release lock: {}", e));
+                }
+            }
+        }
+
+        // Fully release the lock (count was 1 or legacy)
         let value = serde_json::json!({
             "namespace": namespace,
             "name": name,
             "owner": null,
             "state": "Free",
             "fence_token": existing["fence_token"],
+            "lock_count": 0,
             "ttl_ms": existing["ttl_ms"],
             "acquired_at": null,
             "expires_at": null,
@@ -159,7 +199,7 @@ impl RocksStateMachine {
             &self.write_opts,
         ) {
             Ok(_) => {
-                debug!("Lock released: {}", key);
+                debug!("Lock fully released: {}", key);
                 RaftResponse::success()
             }
             Err(e) => {
