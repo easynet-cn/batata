@@ -19,7 +19,7 @@ impl AuthPersistence for ExternalDbPersistService {
             .map(|m| UserInfo {
                 username: m.username,
                 password: m.password,
-                enabled: m.enabled != 0,
+                enabled: m.enabled,
             });
 
         Ok(user)
@@ -67,7 +67,7 @@ impl AuthPersistence for ExternalDbPersistService {
             .map(|m| UserInfo {
                 username: m.username,
                 password: m.password,
-                enabled: m.enabled != 0,
+                enabled: m.enabled,
             })
             .collect();
 
@@ -83,7 +83,7 @@ impl AuthPersistence for ExternalDbPersistService {
         let entity = users::ActiveModel {
             username: Set(username.to_string()),
             password: Set(password_hash.to_string()),
-            enabled: Set(1),
+            enabled: Set(true),
         };
 
         users::Entity::insert(entity).exec(&self.db).await?;
@@ -218,7 +218,8 @@ impl AuthPersistence for ExternalDbPersistService {
                 .exec(&self.db)
                 .await?;
         } else {
-            roles::Entity::delete_by_id((role.to_string(), username.to_string()))
+            // PK order in entity is (username, role) — must match
+            roles::Entity::delete_by_id((username.to_string(), role.to_string()))
                 .exec(&self.db)
                 .await?;
         }

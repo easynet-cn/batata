@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "config_info_gray")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: u64,
+    pub id: i64,
     pub data_id: String,
     pub group_id: String,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]

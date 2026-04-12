@@ -91,7 +91,7 @@ pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> 
     let entity = users::ActiveModel {
         username: Set(username.to_string()),
         password: Set(hashed_password),
-        enabled: Set(1),
+        enabled: Set(true),
     };
 
     users::Entity::insert(entity).exec(db).await?;

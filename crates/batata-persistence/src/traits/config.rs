@@ -125,7 +125,7 @@ pub trait ConfigPersistence: Send + Sync {
     /// Find a config history entry by its ID (nid)
     async fn config_history_find_by_id(
         &self,
-        nid: u64,
+        nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>>;
 
     /// Search config history with pagination
@@ -139,7 +139,7 @@ pub trait ConfigPersistence: Send + Sync {
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>>;
 
     /// Count configs in a namespace
-    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i32>;
+    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i64>;
 
     /// Find all group names in a namespace
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>>;
@@ -150,7 +150,7 @@ pub trait ConfigPersistence: Send + Sync {
         data_id: &str,
         group: &str,
         namespace_id: &str,
-        current_nid: u64,
+        current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>>;
 
     /// Find all configs in a namespace (lightweight, without content)

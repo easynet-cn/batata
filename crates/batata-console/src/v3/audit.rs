@@ -193,7 +193,7 @@ pub async fn list_audit_logs(
 pub async fn get_audit_log(
     req: HttpRequest,
     data: web::Data<AppState>,
-    path: web::Path<u64>,
+    path: web::Path<i64>,
 ) -> impl Responder {
     let resource = "*:*:*";
     secured!(

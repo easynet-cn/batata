@@ -592,7 +592,7 @@ impl BatataApiClient {
     /// Get history entry by ID
     pub async fn history_get(
         &self,
-        nid: u64,
+        nid: i64,
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
@@ -600,7 +600,7 @@ impl BatataApiClient {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
-            nid: u64,
+            nid: i64,
             data_id: &'a str,
             group_name: &'a str,
             namespace_id: &'a str,

@@ -336,7 +336,7 @@ impl RocksDbReader {
     // ==================== Config History Operations ====================
 
     /// Get a config history entry by ID
-    pub fn get_config_history_by_id(&self, nid: u64) -> anyhow::Result<Option<serde_json::Value>> {
+    pub fn get_config_history_by_id(&self, nid: i64) -> anyhow::Result<Option<serde_json::Value>> {
         // History entries have compound keys; we need to scan and find by id field
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
@@ -345,7 +345,7 @@ impl RocksDbReader {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let stored: StoredConfigHistory = bincode::deserialize(&value)
                 .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
-            if stored.id as u64 == nid {
+            if stored.id as i64 == nid {
                 return Ok(Some(serde_json::to_value(&stored)?));
             }
         }

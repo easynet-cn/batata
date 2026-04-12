@@ -1,4 +1,5 @@
 use sea_orm_migration::{prelude::*, schema::*};
+use crate::column_helper::long_text_null;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -17,12 +18,12 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(
-                        timestamp(AiResourceVersion::GmtCreate)
+                        date_time(AiResourceVersion::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(AiResourceVersion::GmtModified)
+                        date_time(AiResourceVersion::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -37,8 +38,8 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(text_null(AiResourceVersion::Storage))
-                    .col(text_null(AiResourceVersion::PublishPipelineInfo))
+                    .col(long_text_null(AiResourceVersion::Storage, manager.get_database_backend()))
+                    .col(long_text_null(AiResourceVersion::PublishPipelineInfo, manager.get_database_backend()))
                     .col(
                         big_integer(AiResourceVersion::DownloadCount)
                             .not_null()
@@ -48,7 +49,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Unique key: namespace_id + name + type + version
+        // UNIQUE KEY `uk_ai_resource_ver_ns_name_type_ver`
         manager
             .create_index(
                 Index::create()
@@ -64,6 +65,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_ai_resource_ver_name` (`name`)
         manager
             .create_index(
                 Index::create()
@@ -75,6 +77,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_ai_resource_ver_status` (`status`)
         manager
             .create_index(
                 Index::create()
@@ -86,6 +89,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_ai_resource_ver_gmt_modified` (`gmt_modified`)
         manager
             .create_index(
                 Index::create()

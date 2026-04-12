@@ -1,18 +1,19 @@
 pub use sea_orm_migration::prelude::*;
 
-mod m20250317_000001_create_config_info;
-mod m20250317_000002_create_config_info_gray;
-mod m20250317_000003_create_config_tags_relation;
-mod m20250317_000004_create_group_capacity;
-mod m20250317_000005_create_his_config_info;
-mod m20250317_000006_create_tenant_capacity;
-mod m20250317_000007_create_tenant_info;
-mod m20250317_000008_create_users;
-mod m20250317_000009_create_roles;
-mod m20250317_000010_create_permissions;
-mod m20250329_000011_create_pipeline_execution;
-mod m20250329_000012_create_ai_resource;
-mod m20250329_000013_create_ai_resource_version;
+pub(crate) mod column_helper;
+mod m20260412_000001_create_config_info;
+mod m20260412_000002_create_config_info_gray;
+mod m20260412_000003_create_config_tags_relation;
+mod m20260412_000004_create_group_capacity;
+mod m20260412_000005_create_his_config_info;
+mod m20260412_000006_create_tenant_capacity;
+mod m20260412_000007_create_tenant_info;
+mod m20260412_000008_create_users;
+mod m20260412_000009_create_roles;
+mod m20260412_000010_create_permissions;
+mod m20260412_000011_create_pipeline_execution;
+mod m20260412_000012_create_ai_resource;
+mod m20260412_000013_create_ai_resource_version;
 
 pub struct Migrator;
 
@@ -23,19 +24,19 @@ pub const MIGRATION_COUNT: usize = 13;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            Box::new(m20250317_000001_create_config_info::Migration),
-            Box::new(m20250317_000002_create_config_info_gray::Migration),
-            Box::new(m20250317_000003_create_config_tags_relation::Migration),
-            Box::new(m20250317_000004_create_group_capacity::Migration),
-            Box::new(m20250317_000005_create_his_config_info::Migration),
-            Box::new(m20250317_000006_create_tenant_capacity::Migration),
-            Box::new(m20250317_000007_create_tenant_info::Migration),
-            Box::new(m20250317_000008_create_users::Migration),
-            Box::new(m20250317_000009_create_roles::Migration),
-            Box::new(m20250317_000010_create_permissions::Migration),
-            Box::new(m20250329_000011_create_pipeline_execution::Migration),
-            Box::new(m20250329_000012_create_ai_resource::Migration),
-            Box::new(m20250329_000013_create_ai_resource_version::Migration),
+            Box::new(m20260412_000001_create_config_info::Migration),
+            Box::new(m20260412_000002_create_config_info_gray::Migration),
+            Box::new(m20260412_000003_create_config_tags_relation::Migration),
+            Box::new(m20260412_000004_create_group_capacity::Migration),
+            Box::new(m20260412_000005_create_his_config_info::Migration),
+            Box::new(m20260412_000006_create_tenant_capacity::Migration),
+            Box::new(m20260412_000007_create_tenant_info::Migration),
+            Box::new(m20260412_000008_create_users::Migration),
+            Box::new(m20260412_000009_create_roles::Migration),
+            Box::new(m20260412_000010_create_permissions::Migration),
+            Box::new(m20260412_000011_create_pipeline_execution::Migration),
+            Box::new(m20260412_000012_create_ai_resource::Migration),
+            Box::new(m20260412_000013_create_ai_resource_version::Migration),
         ]
     }
 }

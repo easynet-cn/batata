@@ -199,7 +199,7 @@ pub trait ConsoleDataSource: Send + Sync {
     // ============== History Operations ==============
 
     /// Find history by ID
-    async fn history_find_by_id(&self, nid: u64)
+    async fn history_find_by_id(&self, nid: i64)
     -> anyhow::Result<Option<ConfigHistoryDetailInfo>>;
 
     /// Search history with pagination
@@ -224,7 +224,7 @@ pub trait ConsoleDataSource: Send + Sync {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-        id: u64,
+        id: i64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>>;
 
     // ============== Service Operations ==============

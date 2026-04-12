@@ -10,7 +10,7 @@ pub struct Namespace {
     pub namespace_show_name: String,
     pub namespace_desc: String,
     pub quota: i32,
-    pub config_count: i32,
+    pub config_count: i64,
     #[serde(rename = "type")]
     pub type_: i32,
 }

@@ -1,11 +1,14 @@
 use sea_orm_migration::{prelude::*, schema::*};
 
+use crate::column_helper::long_text;
+
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let backend = manager.get_database_backend();
         manager
             .create_table(
                 Table::create()
@@ -14,15 +17,15 @@ impl MigrationTrait for Migration {
                     .col(big_integer(ConfigInfo::Id).auto_increment().primary_key())
                     .col(string_len(ConfigInfo::DataId, 255).not_null())
                     .col(string_len_null(ConfigInfo::GroupId, 128))
-                    .col(text(ConfigInfo::Content).not_null())
+                    .col(long_text(ConfigInfo::Content, backend))
                     .col(string_len_null(ConfigInfo::Md5, 32))
                     .col(
-                        timestamp(ConfigInfo::GmtCreate)
+                        date_time(ConfigInfo::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(ConfigInfo::GmtModified)
+                        date_time(ConfigInfo::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -44,7 +47,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Unique index: data_id + group_id + tenant_id
+        // UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`)
         manager
             .create_index(
                 Index::create()
@@ -59,33 +62,14 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_configinfo_tenant_group_modified` (`tenant_id`,`group_id`,`gmt_modified`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_config_tenant_id")
+                    .name("idx_configinfo_tenant_group_modified")
                     .table(ConfigInfo::Table)
                     .col(ConfigInfo::TenantId)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_config_app_name")
-                    .table(ConfigInfo::Table)
-                    .col(ConfigInfo::AppName)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_config_gmt_modified")
-                    .table(ConfigInfo::Table)
+                    .col(ConfigInfo::GroupId)
                     .col(ConfigInfo::GmtModified)
                     .if_not_exists()
                     .to_owned(),

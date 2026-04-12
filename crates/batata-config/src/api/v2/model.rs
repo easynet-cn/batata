@@ -233,7 +233,7 @@ impl HistoryListParam {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryDetailParam {
     /// History entry ID (nid)
-    pub nid: u64,
+    pub nid: i64,
     /// Data ID of the config (required)
     #[serde(alias = "dataId")]
     pub data_id: String,
@@ -258,7 +258,7 @@ impl HistoryDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryPreviousParam {
     /// Current history entry ID
-    pub id: u64,
+    pub id: i64,
     /// Data ID of the config (required)
     #[serde(alias = "dataId")]
     pub data_id: String,

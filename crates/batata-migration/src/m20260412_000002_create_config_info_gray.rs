@@ -1,4 +1,5 @@
 use sea_orm_migration::{prelude::*, schema::*};
+use crate::column_helper::long_text;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -12,23 +13,23 @@ impl MigrationTrait for Migration {
                     .table(ConfigInfoGray::Table)
                     .if_not_exists()
                     .col(
-                        big_unsigned(ConfigInfoGray::Id)
+                        big_integer(ConfigInfoGray::Id)
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(string_len(ConfigInfoGray::DataId, 255).not_null())
                     .col(string_len(ConfigInfoGray::GroupId, 128).not_null())
-                    .col(text(ConfigInfoGray::Content).not_null())
+                    .col(long_text(ConfigInfoGray::Content, manager.get_database_backend()).not_null())
                     .col(string_len_null(ConfigInfoGray::Md5, 32))
                     .col(text_null(ConfigInfoGray::SrcUser))
                     .col(string_len_null(ConfigInfoGray::SrcIp, 100))
                     .col(
-                        timestamp(ConfigInfoGray::GmtCreate)
+                        date_time(ConfigInfoGray::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(ConfigInfoGray::GmtModified)
+                        date_time(ConfigInfoGray::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -49,6 +50,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // UNIQUE KEY `uk_configinfogray_datagrouptenantgray`
         manager
             .create_index(
                 Index::create()
@@ -64,10 +66,11 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_dataid_gmt_modified` (`data_id`,`gmt_modified`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_gray_dataid_gmt_modified")
+                    .name("idx_dataid_gmt_modified")
                     .table(ConfigInfoGray::Table)
                     .col(ConfigInfoGray::DataId)
                     .col(ConfigInfoGray::GmtModified)
@@ -76,10 +79,11 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_gmt_modified` (`gmt_modified`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_gray_gmt_modified")
+                    .name("idx_gmt_modified")
                     .table(ConfigInfoGray::Table)
                     .col(ConfigInfoGray::GmtModified)
                     .if_not_exists()

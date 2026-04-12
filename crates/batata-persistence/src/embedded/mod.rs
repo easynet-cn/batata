@@ -99,7 +99,7 @@ impl EmbeddedPersistService {
     /// Convert a JSON value to ConfigHistoryStorageData
     pub fn json_to_history(v: &serde_json::Value) -> ConfigHistoryStorageData {
         ConfigHistoryStorageData {
-            id: v["id"].as_u64().unwrap_or(0),
+            id: v["id"].as_i64().unwrap_or(0),
             data_id: v["data_id"].as_str().unwrap_or("").to_string(),
             group: v["group"].as_str().unwrap_or("").to_string(),
             tenant: v["tenant"].as_str().unwrap_or("").to_string(),
@@ -138,7 +138,7 @@ impl EmbeddedPersistService {
     }
 
     /// Convert JSON to NamespaceInfo
-    pub fn json_to_namespace(v: &serde_json::Value, config_count: i32) -> NamespaceInfo {
+    pub fn json_to_namespace(v: &serde_json::Value, config_count: i64) -> NamespaceInfo {
         NamespaceInfo {
             namespace_id: v["namespace_id"].as_str().unwrap_or("").to_string(),
             namespace_name: v["namespace_name"].as_str().unwrap_or("").to_string(),
@@ -582,7 +582,7 @@ impl ConfigPersistence for EmbeddedPersistService {
 
     async fn config_history_find_by_id(
         &self,
-        nid: u64,
+        nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
         let json = self.reader.get_config_history_by_id(nid)?;
         Ok(json.as_ref().map(Self::json_to_history))
@@ -604,8 +604,8 @@ impl ConfigPersistence for EmbeddedPersistService {
         Ok(Page::new(total, page_no, page_size, page_items))
     }
 
-    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i32> {
-        self.reader.count_configs(namespace_id)
+    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i64> {
+        self.reader.count_configs(namespace_id).map(|v| v as i64)
     }
 
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>> {
@@ -617,13 +617,13 @@ impl ConfigPersistence for EmbeddedPersistService {
         data_id: &str,
         group: &str,
         namespace_id: &str,
-        current_nid: u64,
+        current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
         let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
         let mut best: Option<serde_json::Value> = None;
-        let mut best_id: u64 = 0;
+        let mut best_id: i64 = 0;
 
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
@@ -635,7 +635,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             }
             let stored: batata_consistency::raft::state_machine::StoredConfigHistory =
                 bincode::deserialize(&value)?;
-            let id = stored.id as u64;
+            let id = stored.id as i64;
             if id < current_nid && id > best_id {
                 best_id = id;
                 best = Some(serde_json::to_value(&stored)?);
@@ -835,7 +835,7 @@ impl NamespacePersistence for EmbeddedPersistService {
 
         for ns in &namespaces {
             let ns_id = ns["namespace_id"].as_str().unwrap_or("");
-            let config_count = self.reader.count_configs(ns_id)?;
+            let config_count = self.reader.count_configs(ns_id)? as i64;
             result.push(Self::json_to_namespace(ns, config_count));
         }
 
@@ -849,7 +849,7 @@ impl NamespacePersistence for EmbeddedPersistService {
         let json = self.reader.get_namespace(namespace_id)?;
         match json {
             Some(ref v) => {
-                let config_count = self.reader.count_configs(namespace_id)?;
+                let config_count = self.reader.count_configs(namespace_id)? as i64;
                 Ok(Some(Self::json_to_namespace(v, config_count)))
             }
             None => Ok(None),
@@ -1181,11 +1181,11 @@ impl CapacityPersistence for EmbeddedPersistService {
     async fn capacity_upsert_tenant(
         &self,
         tenant_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo> {
         let key = format!("capacity:tenant:{}", tenant_id);
 
@@ -1222,7 +1222,7 @@ impl CapacityPersistence for EmbeddedPersistService {
         }
 
         // Compute usage by counting configs in this namespace
-        info.usage = self.reader.count_configs(tenant_id)? as u32;
+        info.usage = self.reader.count_configs(tenant_id)? as i32;
 
         // Write back
         let json = serde_json::to_vec(&info)?;
@@ -1255,11 +1255,11 @@ impl CapacityPersistence for EmbeddedPersistService {
     async fn capacity_upsert_group(
         &self,
         group_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo> {
         let key = format!("capacity:group:{}", group_id);
 

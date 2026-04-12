@@ -15,19 +15,19 @@ pub struct CapacityRequest {
     /// Group ID
     pub group: Option<String>,
     /// Maximum configs quota
-    pub quota: Option<u32>,
+    pub quota: Option<i32>,
     /// Maximum config size in bytes
     #[serde(alias = "maxSize")]
-    pub max_size: Option<u32>,
+    pub max_size: Option<i32>,
     /// Maximum aggregate config count
     #[serde(alias = "maxAggrCount")]
-    pub max_aggr_count: Option<u32>,
+    pub max_aggr_count: Option<i32>,
     /// Maximum aggregate config size
     #[serde(alias = "maxAggrSize")]
-    pub max_aggr_size: Option<u32>,
+    pub max_aggr_size: Option<i32>,
     /// Maximum history count
     #[serde(alias = "maxHistoryCount")]
-    pub max_history_count: Option<u32>,
+    pub max_history_count: Option<i32>,
 }
 
 /// Capacity response
@@ -43,15 +43,15 @@ pub struct CapacityResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapacityData {
-    pub id: Option<u64>,
+    pub id: Option<i64>,
     pub tenant: Option<String>,
     pub group: Option<String>,
-    pub quota: u32,
-    pub usage: u32,
-    pub max_size: u32,
-    pub max_aggr_count: u32,
-    pub max_aggr_size: u32,
-    pub max_history_count: u32,
+    pub quota: i32,
+    pub usage: i32,
+    pub max_size: i32,
+    pub max_aggr_count: i32,
+    pub max_aggr_size: i32,
+    pub max_history_count: i32,
 }
 
 impl CapacityResponse {

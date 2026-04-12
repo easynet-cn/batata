@@ -30,6 +30,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // UNIQUE KEY `uk_configtagrelation_configidtag` (`id`,`tag_name`,`tag_type`)
         manager
             .create_index(
                 Index::create()
@@ -44,24 +45,12 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_tenant_id` (`tenant_id`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_tags_tenant_id")
+                    .name("idx_tenant_id")
                     .table(ConfigTagsRelation::Table)
-                    .col(ConfigTagsRelation::TenantId)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_tags_config_lookup")
-                    .table(ConfigTagsRelation::Table)
-                    .col(ConfigTagsRelation::DataId)
-                    .col(ConfigTagsRelation::GroupId)
                     .col(ConfigTagsRelation::TenantId)
                     .if_not_exists()
                     .to_owned(),

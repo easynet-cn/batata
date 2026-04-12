@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
                     .table(TenantCapacity::Table)
                     .if_not_exists()
                     .col(
-                        big_unsigned(TenantCapacity::Id)
+                        big_integer(TenantCapacity::Id)
                             .auto_increment()
                             .primary_key(),
                     )
@@ -21,23 +21,23 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(unsigned(TenantCapacity::Quota).not_null().default(0))
-                    .col(unsigned(TenantCapacity::Usage).not_null().default(0))
-                    .col(unsigned(TenantCapacity::MaxSize).not_null().default(0))
-                    .col(unsigned(TenantCapacity::MaxAggrCount).not_null().default(0))
-                    .col(unsigned(TenantCapacity::MaxAggrSize).not_null().default(0))
+                    .col(integer(TenantCapacity::Quota).not_null().default(0))
+                    .col(integer(TenantCapacity::Usage).not_null().default(0))
+                    .col(integer(TenantCapacity::MaxSize).not_null().default(0))
+                    .col(integer(TenantCapacity::MaxAggrCount).not_null().default(0))
+                    .col(integer(TenantCapacity::MaxAggrSize).not_null().default(0))
                     .col(
-                        unsigned(TenantCapacity::MaxHistoryCount)
+                        integer(TenantCapacity::MaxHistoryCount)
                             .not_null()
                             .default(0),
                     )
                     .col(
-                        timestamp(TenantCapacity::GmtCreate)
+                        date_time(TenantCapacity::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(TenantCapacity::GmtModified)
+                        date_time(TenantCapacity::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -45,10 +45,11 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // UNIQUE KEY `uk_tenant_id` (`tenant_id`)
         manager
             .create_index(
                 Index::create()
-                    .name("uk_tenant_capacity_tenant_id")
+                    .name("uk_tenant_id")
                     .table(TenantCapacity::Table)
                     .col(TenantCapacity::TenantId)
                     .unique()

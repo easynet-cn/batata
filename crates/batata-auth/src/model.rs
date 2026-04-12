@@ -575,7 +575,7 @@ mod tests {
         let model = users::Model {
             username: "testuser".to_string(),
             password: "hashed_password".to_string(),
-            enabled: 1,
+            enabled: true,
         };
         let user = User::from(model);
         assert_eq!(user.username, "testuser");

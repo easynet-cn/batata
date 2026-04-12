@@ -201,7 +201,7 @@ pub struct NamespaceInfo {
     pub namespace_id: String,
     pub namespace_name: String,
     pub namespace_desc: String,
-    pub config_count: i32,
+    pub config_count: i64,
     pub quota: i32,
 }
 
@@ -231,7 +231,7 @@ pub struct ConfigStorageData {
 /// Config history entry stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigHistoryStorageData {
-    pub id: u64,
+    pub id: i64,
     pub data_id: String,
     pub group: String,
     pub tenant: String,
@@ -253,21 +253,21 @@ pub struct ConfigHistoryStorageData {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CapacityInfo {
     /// Unique identifier
-    pub id: Option<u64>,
+    pub id: Option<i64>,
     /// Tenant ID or Group ID
     pub identifier: String,
     /// Maximum number of configs allowed
-    pub quota: u32,
+    pub quota: i32,
     /// Current usage count
-    pub usage: u32,
+    pub usage: i32,
     /// Maximum config size in bytes
-    pub max_size: u32,
+    pub max_size: i32,
     /// Maximum aggregate config count
-    pub max_aggr_count: u32,
+    pub max_aggr_count: i32,
     /// Maximum aggregate config size
-    pub max_aggr_size: u32,
+    pub max_aggr_size: i32,
     /// Maximum history count
-    pub max_history_count: u32,
+    pub max_history_count: i32,
 }
 
 /// Gray config data stored in embedded backends
@@ -461,7 +461,7 @@ mod tests {
             namespace_id: "prod".to_string(),
             namespace_name: "Production".to_string(),
             namespace_desc: "Production environment".to_string(),
-            config_count: 42,
+            config_count: 42i64,
             quota: 200,
         };
         let json = serde_json::to_string(&ns).unwrap();

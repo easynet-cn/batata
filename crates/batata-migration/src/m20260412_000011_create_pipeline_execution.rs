@@ -1,4 +1,5 @@
 use sea_orm_migration::{prelude::*, schema::*};
+use crate::column_helper::long_text;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -17,7 +18,7 @@ impl MigrationTrait for Migration {
                     .col(string_len_null(PipelineExecution::NamespaceId, 128))
                     .col(string_len_null(PipelineExecution::Version, 64))
                     .col(string_len(PipelineExecution::Status, 32).not_null())
-                    .col(text(PipelineExecution::Pipeline).not_null())
+                    .col(long_text(PipelineExecution::Pipeline, manager.get_database_backend()).not_null())
                     .col(big_integer(PipelineExecution::CreateTime).not_null())
                     .col(big_integer(PipelineExecution::UpdateTime).not_null())
                     .to_owned(),

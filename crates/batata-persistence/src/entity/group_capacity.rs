@@ -7,15 +7,15 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "group_capacity")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: u64,
+    pub id: i64,
     #[sea_orm(unique)]
     pub group_id: String,
-    pub quota: u32,
-    pub usage: u32,
-    pub max_size: u32,
-    pub max_aggr_count: u32,
-    pub max_aggr_size: u32,
-    pub max_history_count: u32,
+    pub quota: i32,
+    pub usage: i32,
+    pub max_size: i32,
+    pub max_aggr_count: i32,
+    pub max_aggr_size: i32,
+    pub max_history_count: i32,
     pub gmt_create: DateTime,
     pub gmt_modified: DateTime,
 }

@@ -216,7 +216,7 @@ impl ConfigListenerInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
     #[serde_as(as = "DisplayFromStr")]
-    pub id: u64,
+    pub id: i64,
     pub last_id: i64,
     pub data_id: String,
     pub group: String,
@@ -479,7 +479,7 @@ impl From<ConfigInfoGrayWrapper> for ConfigGrayInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
-    pub id: u64,
+    pub id: i64,
     pub data_id: String,
     pub group: String,
     pub tenant: String,
@@ -520,7 +520,7 @@ impl From<entity::his_config_info::Model> for ConfigHistoryBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
-    pub id: u64,
+    pub id: i64,
     pub data_id: String,
     pub group: String,
     pub tenant: String,

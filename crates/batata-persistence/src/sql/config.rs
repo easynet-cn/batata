@@ -268,30 +268,43 @@ impl ConfigPersistence for ExternalDbPersistService {
         let tags = normalize_tags(config_tags);
         let now = chrono::Local::now().naive_local();
 
-        let existing = config_info::Entity::find()
+        // Start transaction BEFORE reading so the CAS check and UPDATE are
+        // atomic — prevents TOCTOU race where two concurrent requests both
+        // read the same MD5 and both pass the check. Matches Nacos's approach
+        // of putting the MD5 in the UPDATE WHERE clause.
+        let tx = self.db.begin().await?;
+
+        let mut query = config_info::Entity::find()
             .filter(config_info::Column::DataId.eq(data_id))
             .filter(config_info::Column::GroupId.eq(group_id))
-            .filter(config_info::Column::TenantId.eq(tenant_id))
-            .one(&self.db)
-            .await?;
+            .filter(config_info::Column::TenantId.eq(tenant_id));
 
-        // CAS check: if cas_md5 provided, verify current MD5 matches before update
+        // CAS: add MD5 filter to the SELECT so we only get the row if MD5 matches.
+        // If cas_md5 is provided but the row doesn't match, `existing` will be None
+        // and we know the CAS failed (either config doesn't exist or MD5 mismatch).
         if let Some(expected_md5) = cas_md5 {
-            if let Some(ref entity) = existing {
-                let current_md5 = entity.md5.as_deref().unwrap_or("");
-                if current_md5 != expected_md5 {
-                    anyhow::bail!(
-                        "CAS conflict: expected md5={}, actual md5={}",
-                        expected_md5,
-                        current_md5
-                    );
-                }
-            } else if !expected_md5.is_empty() {
-                anyhow::bail!("CAS conflict: config does not exist");
+            if !expected_md5.is_empty() {
+                query = query.filter(config_info::Column::Md5.eq(expected_md5));
             }
         }
 
-        let tx = self.db.begin().await?;
+        let existing = query.one(&tx).await?;
+
+        // CAS conflict check
+        if cas_md5.is_some() && existing.is_none() {
+            // Re-check without MD5 filter to distinguish "not exists" from "MD5 mismatch"
+            let exists = config_info::Entity::find()
+                .filter(config_info::Column::DataId.eq(data_id))
+                .filter(config_info::Column::GroupId.eq(group_id))
+                .filter(config_info::Column::TenantId.eq(tenant_id))
+                .one(&tx)
+                .await?;
+            if exists.is_some() {
+                anyhow::bail!("CAS conflict: MD5 mismatch");
+            } else if cas_md5.map(|m| !m.is_empty()).unwrap_or(false) {
+                anyhow::bail!("CAS conflict: config does not exist");
+            }
+        }
 
         match existing {
             Some(entity) => {
@@ -304,8 +317,8 @@ impl ConfigPersistence for ExternalDbPersistService {
                 // Record history
                 let ext_info = build_ext_info(&old_tags, &entity);
                 let his = his_config_info::ActiveModel {
-                    id: Set(entity.id as u64),
-                    nid: Set(0),
+                    id: Set(entity.id),
+                    nid: NotSet,
                     data_id: Set(entity.data_id.clone()),
                     group_id: Set(entity.group_id.clone().unwrap_or_default()),
                     app_name: Set(entity.app_name.clone()),
@@ -415,8 +428,8 @@ impl ConfigPersistence for ExternalDbPersistService {
 
                 // Record creation in history — reuse md5_hash instead of recomputing
                 let his = his_config_info::ActiveModel {
-                    id: Set(new_id as u64),
-                    nid: Set(0),
+                    id: Set(new_id),
+                    nid: NotSet,
                     data_id: Set(data_id.to_string()),
                     group_id: Set(group_id.to_string()),
                     app_name: Set(Some(app_name.to_string())),
@@ -498,8 +511,8 @@ impl ConfigPersistence for ExternalDbPersistService {
             let ext_info = build_ext_info(&tags, &entity);
             let now = chrono::Local::now().naive_local();
             let his = his_config_info::ActiveModel {
-                id: Set(entity.id as u64),
-                nid: Set(0),
+                id: Set(entity.id),
+                nid: NotSet,
                 data_id: Set(entity.data_id),
                 group_id: Set(entity.group_id.unwrap_or_default()),
                 app_name: Set(entity.app_name),
@@ -728,8 +741,8 @@ impl ConfigPersistence for ExternalDbPersistService {
         let history_records: Vec<his_config_info::ActiveModel> = entities
             .iter()
             .map(|entity| his_config_info::ActiveModel {
-                id: Set(entity.id as u64),
-                nid: Set(0),
+                id: Set(entity.id),
+                nid: NotSet,
                 data_id: Set(entity.data_id.clone()),
                 group_id: Set(entity.group_id.clone().unwrap_or_default()),
                 app_name: Set(entity.app_name.clone()),
@@ -766,7 +779,7 @@ impl ConfigPersistence for ExternalDbPersistService {
 
     async fn config_history_find_by_id(
         &self,
-        nid: u64,
+        nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
         let result = his_config_info::Entity::find()
             .filter(his_config_info::Column::Nid.eq(nid))
@@ -821,7 +834,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         Ok(Page::new(count, page_no, page_size, items))
     }
 
-    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i32> {
+    async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i64> {
         let count = config_info::Entity::find()
             .select_only()
             .column_as(Expr::col(Asterisk).count(), "count")
@@ -829,7 +842,7 @@ impl ConfigPersistence for ExternalDbPersistService {
             .into_tuple::<i64>()
             .one(&self.db)
             .await?
-            .unwrap_or_default() as i32;
+            .unwrap_or_default();
 
         Ok(count)
     }
@@ -855,7 +868,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         data_id: &str,
         group: &str,
         namespace_id: &str,
-        current_nid: u64,
+        current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
         let result = his_config_info::Entity::find()
             .filter(his_config_info::Column::TenantId.eq(namespace_id))

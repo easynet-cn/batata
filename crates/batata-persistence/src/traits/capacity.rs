@@ -17,11 +17,11 @@ pub trait CapacityPersistence: Send + Sync {
     async fn capacity_upsert_tenant(
         &self,
         tenant_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo>;
 
     /// Delete tenant capacity
@@ -35,11 +35,11 @@ pub trait CapacityPersistence: Send + Sync {
     async fn capacity_upsert_group(
         &self,
         group_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo>;
 
     /// Delete group capacity

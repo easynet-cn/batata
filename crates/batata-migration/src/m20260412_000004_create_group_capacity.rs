@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
                     .table(GroupCapacity::Table)
                     .if_not_exists()
                     .col(
-                        big_unsigned(GroupCapacity::Id)
+                        big_integer(GroupCapacity::Id)
                             .auto_increment()
                             .primary_key(),
                     )
@@ -21,23 +21,23 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(unsigned(GroupCapacity::Quota).not_null().default(0))
-                    .col(unsigned(GroupCapacity::Usage).not_null().default(0))
-                    .col(unsigned(GroupCapacity::MaxSize).not_null().default(0))
-                    .col(unsigned(GroupCapacity::MaxAggrCount).not_null().default(0))
-                    .col(unsigned(GroupCapacity::MaxAggrSize).not_null().default(0))
+                    .col(integer(GroupCapacity::Quota).not_null().default(0))
+                    .col(integer(GroupCapacity::Usage).not_null().default(0))
+                    .col(integer(GroupCapacity::MaxSize).not_null().default(0))
+                    .col(integer(GroupCapacity::MaxAggrCount).not_null().default(0))
+                    .col(integer(GroupCapacity::MaxAggrSize).not_null().default(0))
                     .col(
-                        unsigned(GroupCapacity::MaxHistoryCount)
+                        integer(GroupCapacity::MaxHistoryCount)
                             .not_null()
                             .default(0),
                     )
                     .col(
-                        timestamp(GroupCapacity::GmtCreate)
+                        date_time(GroupCapacity::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(GroupCapacity::GmtModified)
+                        date_time(GroupCapacity::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -45,6 +45,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // UNIQUE KEY `uk_group_id` (`group_id`)
         manager
             .create_index(
                 Index::create()

@@ -427,7 +427,7 @@ impl ConsoleDataSource for LocalDataSource {
 
     async fn history_find_by_id(
         &self,
-        nid: u64,
+        nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         let result = self.persistence.config_history_find_by_id(nid).await?;
         Ok(result.map(ConfigHistoryDetailInfo::from))
@@ -474,7 +474,7 @@ impl ConsoleDataSource for LocalDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-        id: u64,
+        id: i64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         let result = self
             .persistence

@@ -9,11 +9,11 @@ use crate::traits::*;
 
 use super::ExternalDbPersistService;
 
-const DEFAULT_QUOTA: u32 = 200;
-const DEFAULT_MAX_SIZE: u32 = 102400; // 100KB
-const DEFAULT_MAX_AGGR_COUNT: u32 = 10000;
-const DEFAULT_MAX_AGGR_SIZE: u32 = 2097152; // 2MB
-const DEFAULT_MAX_HISTORY_COUNT: u32 = 24;
+const DEFAULT_QUOTA: i32 = 200;
+const DEFAULT_MAX_SIZE: i32 = 102400; // 100KB
+const DEFAULT_MAX_AGGR_COUNT: i32 = 10000;
+const DEFAULT_MAX_AGGR_SIZE: i32 = 2097152; // 2MB
+const DEFAULT_MAX_HISTORY_COUNT: i32 = 24;
 
 #[async_trait]
 impl CapacityPersistence for ExternalDbPersistService {
@@ -39,11 +39,11 @@ impl CapacityPersistence for ExternalDbPersistService {
     async fn capacity_upsert_tenant(
         &self,
         tenant_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo> {
         let existing = tenant_capacity::Entity::find()
             .filter(tenant_capacity::Column::TenantId.eq(tenant_id))
@@ -145,11 +145,11 @@ impl CapacityPersistence for ExternalDbPersistService {
     async fn capacity_upsert_group(
         &self,
         group_id: &str,
-        quota: Option<u32>,
-        max_size: Option<u32>,
-        max_aggr_count: Option<u32>,
-        max_aggr_size: Option<u32>,
-        max_history_count: Option<u32>,
+        quota: Option<i32>,
+        max_size: Option<i32>,
+        max_aggr_count: Option<i32>,
+        max_aggr_size: Option<i32>,
+        max_history_count: Option<i32>,
     ) -> anyhow::Result<CapacityInfo> {
         let existing = group_capacity::Entity::find()
             .filter(group_capacity::Column::GroupId.eq(group_id))

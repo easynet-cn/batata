@@ -9,21 +9,24 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(Roles::Table)
+                    .table(Permissions::Table)
                     .if_not_exists()
-                    .col(string_len(Roles::Username, 50).not_null())
-                    .col(string_len(Roles::Role, 50).not_null())
+                    .col(string_len(Permissions::Role, 50).not_null())
+                    .col(string_len(Permissions::Resource, 128).not_null())
+                    .col(string_len(Permissions::Action, 8).not_null())
                     .to_owned(),
             )
             .await?;
 
+        // UNIQUE INDEX `uk_role_permission` (`role`,`resource`,`action`)
         manager
             .create_index(
                 Index::create()
-                    .name("uk_user_role")
-                    .table(Roles::Table)
-                    .col(Roles::Username)
-                    .col(Roles::Role)
+                    .name("uk_role_permission")
+                    .table(Permissions::Table)
+                    .col(Permissions::Role)
+                    .col(Permissions::Resource)
+                    .col(Permissions::Action)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -35,14 +38,15 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(Roles::Table).to_owned())
+            .drop_table(Table::drop().table(Permissions::Table).to_owned())
             .await
     }
 }
 
 #[derive(DeriveIden)]
-enum Roles {
+enum Permissions {
     Table,
-    Username,
     Role,
+    Resource,
+    Action,
 }

@@ -22,17 +22,17 @@ impl NamespacePersistence for ExternalDbPersistService {
             .all(&self.db)
             .await?;
 
-        let config_count_rows: Vec<(String, i32)> = config_info::Entity::find()
+        let config_count_rows: Vec<(String, i64)> = config_info::Entity::find()
             .select_only()
             .column(config_info::Column::TenantId)
             .column_as(config_info::Column::Id.count(), "count")
             .filter(config_info::Column::TenantId.is_not_null())
             .group_by(config_info::Column::TenantId)
-            .into_tuple::<(String, i32)>()
+            .into_tuple::<(String, i64)>()
             .all(&self.db)
             .await?;
 
-        let config_counts: HashMap<String, i32> = config_count_rows.into_iter().collect();
+        let config_counts: HashMap<String, i64> = config_count_rows.into_iter().collect();
 
         let mut namespaces: Vec<NamespaceInfo> = tenants
             .into_iter()
@@ -87,7 +87,7 @@ impl NamespacePersistence for ExternalDbPersistService {
             .await?;
 
         if let Some(t) = tenant_opt {
-            let count: i32 = self
+            let count: i64 = self
                 .config_count_by_namespace(namespace_id)
                 .await
                 .unwrap_or(0);

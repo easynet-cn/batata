@@ -79,7 +79,7 @@ batata.db.pool.max_lifetime: 1800
 batata.db.pool.sqlx_logging: false
 
 # Auto-run database migrations on startup (only for external DB mode)
-batata.db.migration.enabled: false
+batata.db.migration.enabled: true
 
 # Base data directory (for embedded modes only)
 #batata.persistence.embedded.data_dir: data

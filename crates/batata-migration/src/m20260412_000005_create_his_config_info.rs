@@ -1,4 +1,5 @@
 use sea_orm_migration::{prelude::*, schema::*};
+use crate::column_helper::{long_text, long_text_null};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -11,24 +12,24 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(HisConfigInfo::Table)
                     .if_not_exists()
-                    .col(big_unsigned(HisConfigInfo::Id).not_null())
+                    .col(big_integer(HisConfigInfo::Id).not_null())
                     .col(
-                        big_unsigned(HisConfigInfo::Nid)
+                        big_integer(HisConfigInfo::Nid)
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(string_len(HisConfigInfo::DataId, 255).not_null())
                     .col(string_len(HisConfigInfo::GroupId, 128).not_null())
                     .col(string_len_null(HisConfigInfo::AppName, 128))
-                    .col(text(HisConfigInfo::Content).not_null())
+                    .col(long_text(HisConfigInfo::Content, manager.get_database_backend()).not_null())
                     .col(string_len_null(HisConfigInfo::Md5, 32))
                     .col(
-                        timestamp(HisConfigInfo::GmtCreate)
+                        date_time(HisConfigInfo::GmtCreate)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
                     .col(
-                        timestamp(HisConfigInfo::GmtModified)
+                        date_time(HisConfigInfo::GmtModified)
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
@@ -47,15 +48,16 @@ impl MigrationTrait for Migration {
                     )
                     .col(string_len_null(HisConfigInfo::PublishType, 50).default("formal"))
                     .col(string_len_null(HisConfigInfo::GrayName, 50))
-                    .col(text_null(HisConfigInfo::ExtInfo))
+                    .col(long_text_null(HisConfigInfo::ExtInfo, manager.get_database_backend()))
                     .to_owned(),
             )
             .await?;
 
+        // KEY `idx_gmt_create` (`gmt_create`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_his_gmt_create")
+                    .name("idx_gmt_create")
                     .table(HisConfigInfo::Table)
                     .col(HisConfigInfo::GmtCreate)
                     .if_not_exists()
@@ -63,6 +65,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_gmt_modified` (`gmt_modified`)
         manager
             .create_index(
                 Index::create()
@@ -74,10 +77,11 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_did` (`data_id`)
         manager
             .create_index(
                 Index::create()
-                    .name("idx_his_did")
+                    .name("idx_did")
                     .table(HisConfigInfo::Table)
                     .col(HisConfigInfo::DataId)
                     .if_not_exists()

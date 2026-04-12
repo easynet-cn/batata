@@ -16,7 +16,7 @@ struct FindOneParam {
     data_id: String,
     group_name: String,
     namespace_id: String,
-    nid: u64,
+    nid: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,8 +39,8 @@ struct FindConfigsbyNamespaceIdParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DiffParam {
-    nid1: u64,
-    nid2: u64,
+    nid1: i64,
+    nid2: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +49,7 @@ struct RollbackParam {
     data_id: String,
     group_name: String,
     namespace_id: Option<String>,
-    nid: u64,
+    nid: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -488,7 +488,7 @@ struct PreviousParam {
     group_name: String,
     #[serde(default)]
     namespace_id: Option<String>,
-    id: u64,
+    id: i64,
 }
 
 #[get("previous")]

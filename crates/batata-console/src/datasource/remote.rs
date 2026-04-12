@@ -715,7 +715,7 @@ impl ConsoleDataSource for RemoteDataSource {
 
     async fn history_find_by_id(
         &self,
-        nid: u64,
+        nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         let result = self.client.history_get(nid, "", "", "").await?;
         Ok(result.map(convert_config_history_detail_info))
@@ -752,7 +752,7 @@ impl ConsoleDataSource for RemoteDataSource {
         _data_id: &str,
         _group_name: &str,
         _namespace_id: &str,
-        _id: u64,
+        _id: i64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         // Remote mode: not yet supported via client API
         Ok(None)

@@ -27,6 +27,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // UNIQUE KEY `uk_tenant_info_kptenantid` (`kp`,`tenant_id`)
         manager
             .create_index(
                 Index::create()
@@ -40,6 +41,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // KEY `idx_tenant_id` (`tenant_id`)
         manager
             .create_index(
                 Index::create()

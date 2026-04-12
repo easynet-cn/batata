@@ -36,7 +36,7 @@ struct HistoryDetailParam {
     group_name: String,
     #[serde(default)]
     namespace_id: Option<String>,
-    nid: u64,
+    nid: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,7 +46,7 @@ struct HistoryPreviousParam {
     group_name: String,
     #[serde(default)]
     namespace_id: Option<String>,
-    id: u64,
+    id: i64,
 }
 
 #[derive(Debug, Deserialize)]

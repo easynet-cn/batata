@@ -734,7 +734,7 @@ impl Configuration {
     pub fn db_migration_enabled(&self) -> bool {
         self.config
             .get_bool("batata.db.migration.enabled")
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 
     // ========================================================================

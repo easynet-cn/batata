@@ -90,7 +90,7 @@ struct NamespaceResponse {
     namespace_show_name: String,
     namespace_desc: String,
     quota: i32,
-    config_count: i32,
+    config_count: i64,
     #[serde(rename = "type")]
     type_: i32,
 }
