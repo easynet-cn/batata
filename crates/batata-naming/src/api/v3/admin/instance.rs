@@ -570,17 +570,17 @@ async fn list_instances(
             .build()
     );
 
-    let mut instances = naming_service.get_instances(
+    // Push the healthy filter into get_instances so unhealthy entries are
+    // dropped before the Arc → Instance deep clone. Filtering afterwards
+    // deep-cloned every instance including the ones we were about to throw
+    // away.
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         cluster,
-        false,
+        healthy_only,
     );
-
-    if healthy_only {
-        instances.retain(|i| i.healthy);
-    }
 
     // Return List<Instance> directly (not wrapped in InstanceListResponse)
     // to match Nacos maintainer client's expected format

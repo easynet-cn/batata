@@ -6,7 +6,6 @@
 // Allow complex types for snapshot data structures
 #![allow(clippy::type_complexity)]
 
-use md5::Digest;
 use std::hash::Hasher;
 use std::io::Cursor;
 use std::path::Path;
@@ -69,9 +68,13 @@ const CF_META: &str = "batata_meta";
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
 
-/// RocksDB-based state machine for Raft
+/// RocksDB-based state machine for Raft.
+///
+/// Fields are `pub(super)` so apply-handler submodules (`apply_config`,
+/// `apply_lock`, …) can touch DB + write options without going through an
+/// accessor that clones `Arc<DB>` on every call.
 pub struct RocksStateMachine {
-    db: Arc<DB>,
+    pub(super) db: Arc<DB>,
     /// Last applied log ID
     last_applied: RwLock<Option<LogId<NodeId>>>,
     /// Last membership configuration
@@ -85,160 +88,25 @@ pub struct RocksStateMachine {
     /// `apply_instance_*` succeeds to keep `NamingService` DashMap in sync.
     naming_hook: SharedNamingHook,
     /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
-    write_opts: rocksdb::WriteOptions,
+    pub(super) write_opts: rocksdb::WriteOptions,
 }
 
 /// Serialize a JSON value directly to bytes, avoiding intermediate String allocation.
+///
+/// `pub(super)` so apply-handler submodules can share this helper.
 #[inline]
-fn json_to_bytes(value: &serde_json::Value) -> Vec<u8> {
+pub(super) fn json_to_bytes(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(value).unwrap_or_default()
 }
 
-/// Typed persistent instance record stored in `CF_INSTANCES`.
-///
-/// Serialized with `bincode` instead of `serde_json` to avoid the
-/// per-apply 1.5µs decode tax measured in `raft_serialization_bench`.
-/// `metadata` stays as a pre-serialized JSON blob so this struct can be
-/// emitted without a second pass over the user's key/value pairs — the
-/// hook consumers parse the metadata JSON themselves if they need it.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredInstance {
-    pub namespace_id: String,
-    pub group_name: String,
-    pub service_name: String,
-    pub instance_id: String,
-    pub ip: String,
-    pub port: u16,
-    pub weight: f64,
-    pub healthy: bool,
-    pub enabled: bool,
-    pub metadata: String,
-    pub cluster_name: String,
-    pub registered_time: i64,
-    #[serde(default)]
-    pub modified_time: i64,
-}
-
-/// Typed config record stored in `CF_CONFIG`.
-///
-/// Replaces the previous `serde_json::Value` dynamic dispatch which
-/// dominated `apply_config_publish` CPU cost. Reader paths decode this
-/// then re-emit as `serde_json::Value` for backward-compatible API.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredConfig {
-    pub data_id: String,
-    pub group: String,
-    pub tenant: String,
-    pub content: String,
-    pub md5: String,
-    #[serde(default)]
-    pub config_type: Option<String>,
-    #[serde(default)]
-    pub app_name: Option<String>,
-    #[serde(default)]
-    pub config_tags: Option<String>,
-    #[serde(default)]
-    pub desc: Option<String>,
-    #[serde(default, rename = "use")]
-    pub r#use: Option<String>,
-    #[serde(default)]
-    pub effect: Option<String>,
-    #[serde(default)]
-    pub schema: Option<String>,
-    #[serde(default)]
-    pub encrypted_data_key: Option<String>,
-    #[serde(default)]
-    pub src_user: Option<String>,
-    #[serde(default)]
-    pub src_ip: Option<String>,
-    pub created_time: i64,
-    pub modified_time: i64,
-}
-
-/// Typed config history record stored in `CF_CONFIG_HISTORY`.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredConfigHistory {
-    pub id: i64,
-    pub data_id: String,
-    pub group: String,
-    pub tenant: String,
-    pub content: String,
-    pub md5: String,
-    pub app_name: String,
-    #[serde(default)]
-    pub src_user: Option<String>,
-    #[serde(default)]
-    pub src_ip: Option<String>,
-    pub op_type: String,
-    pub publish_type: String,
-    pub gray_name: String,
-    pub ext_info: String,
-    pub encrypted_data_key: String,
-    pub created_time: i64,
-    pub modified_time: i64,
-}
-
-/// Typed gray config record stored in `CF_CONFIG_GRAY`.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredConfigGray {
-    pub data_id: String,
-    pub group: String,
-    pub tenant: String,
-    pub content: String,
-    pub md5: String,
-    pub app_name: String,
-    pub gray_name: String,
-    pub gray_rule: String,
-    pub encrypted_data_key: String,
-    pub src_user: String,
-    pub src_ip: String,
-    pub created_time: i64,
-    pub modified_time: i64,
-}
-
-/// Typed value for CF_NAMESPACE entries (bincode-encoded).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredNamespace {
-    pub namespace_id: String,
-    pub namespace_name: String,
-    #[serde(default)]
-    pub namespace_desc: Option<String>,
-    #[serde(default)]
-    pub created_time: i64,
-    #[serde(default)]
-    pub modified_time: i64,
-}
-
-/// Typed value for CF_USERS entries (bincode-encoded).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredUser {
-    pub username: String,
-    pub password_hash: String,
-    pub enabled: bool,
-    #[serde(default)]
-    pub created_time: i64,
-    #[serde(default)]
-    pub modified_time: i64,
-}
-
-/// Typed value for CF_ROLES entries (bincode-encoded).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredRole {
-    pub role: String,
-    pub username: String,
-    #[serde(default)]
-    pub created_time: i64,
-}
-
-/// Typed value for CF_PERMISSIONS entries (bincode-encoded).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct StoredPermission {
-    pub role: String,
-    pub resource: String,
-    pub action: String,
-    #[serde(default)]
-    pub created_time: i64,
-}
+mod apply_config;
+mod apply_lock;
+mod keys;
+mod records;
+pub use records::{
+    StoredConfig, StoredConfigGray, StoredConfigHistory, StoredInstance, StoredNamespace,
+    StoredPermission, StoredRole, StoredUser,
+};
 
 impl RocksStateMachine {
     /// Get a reference to the underlying RocksDB instance
@@ -441,56 +309,55 @@ impl RocksStateMachine {
     /// 1. Column families are created during DB initialization
     /// 2. If they don't exist, it indicates severe DB corruption that cannot be recovered
     /// 3. The application cannot function without these column families
-    fn cf_config(&self) -> &ColumnFamily {
+    pub(super) fn cf_config(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_CONFIG)
             .expect("CF_CONFIG must exist - database may be corrupted")
     }
 
-    fn cf_namespace(&self) -> &ColumnFamily {
+    pub(super) fn cf_namespace(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_NAMESPACE)
             .expect("CF_NAMESPACE must exist - database may be corrupted")
     }
 
-    fn cf_users(&self) -> &ColumnFamily {
+    pub(super) fn cf_users(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_USERS)
             .expect("CF_USERS must exist - database may be corrupted")
     }
 
-    fn cf_roles(&self) -> &ColumnFamily {
+    pub(super) fn cf_roles(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_ROLES)
             .expect("CF_ROLES must exist - database may be corrupted")
     }
 
-    fn cf_permissions(&self) -> &ColumnFamily {
+    pub(super) fn cf_permissions(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_PERMISSIONS)
             .expect("CF_PERMISSIONS must exist - database may be corrupted")
     }
 
-    fn cf_instances(&self) -> &ColumnFamily {
+    pub(super) fn cf_instances(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_INSTANCES)
             .expect("CF_INSTANCES must exist - database may be corrupted")
     }
 
-    fn cf_locks(&self) -> &ColumnFamily {
+    pub(super) fn cf_locks(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_LOCKS)
             .expect("CF_LOCKS must exist - database may be corrupted")
     }
 
-    fn cf_config_history(&self) -> &ColumnFamily {
+    pub(super) fn cf_config_history(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_CONFIG_HISTORY)
             .expect("CF_CONFIG_HISTORY must exist - database may be corrupted")
     }
 
-    #[allow(dead_code)]
-    fn cf_config_gray(&self) -> &ColumnFamily {
+    pub(super) fn cf_config_gray(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_CONFIG_GRAY)
             .expect("CF_CONFIG_GRAY must exist - database may be corrupted")
@@ -500,59 +367,6 @@ impl RocksStateMachine {
         self.db
             .cf_handle(CF_META)
             .expect("CF_META must exist - database may be corrupted")
-    }
-
-    /// Generate config key
-    pub fn config_key(data_id: &str, group: &str, tenant: &str) -> String {
-        format!("{}@@{}@@{}", tenant, group, data_id)
-    }
-
-    /// Generate config history key
-    pub fn config_history_key(data_id: &str, group: &str, tenant: &str, id: u64) -> String {
-        format!("{}@@{}@@{}@@{}", tenant, group, data_id, id)
-    }
-
-    /// Generate config gray key
-    pub fn config_gray_key(data_id: &str, group: &str, tenant: &str, gray_name: &str) -> String {
-        format!("{}@@{}@@{}@@{}", tenant, group, data_id, gray_name)
-    }
-
-    /// Generate namespace key
-    pub fn namespace_key(namespace_id: &str) -> String {
-        namespace_id.to_string()
-    }
-
-    /// Generate user key
-    pub fn user_key(username: &str) -> String {
-        username.to_string()
-    }
-
-    /// Generate role key
-    pub fn role_key(role: &str, username: &str) -> String {
-        format!("{}@@{}", role, username)
-    }
-
-    /// Generate permission key
-    pub fn permission_key(role: &str, resource: &str, action: &str) -> String {
-        format!("{}@@{}@@{}", role, resource, action)
-    }
-
-    /// Generate instance key
-    pub fn instance_key(
-        namespace_id: &str,
-        group_name: &str,
-        service_name: &str,
-        instance_id: &str,
-    ) -> String {
-        format!(
-            "{}@@{}@@{}@@{}",
-            namespace_id, group_name, service_name, instance_id
-        )
-    }
-
-    /// Generate lock key
-    pub fn lock_key(namespace: &str, name: &str) -> String {
-        format!("{}::{}", namespace, name)
     }
 
     /// Apply a single request to the state machine
@@ -921,505 +735,6 @@ impl RocksStateMachine {
         }
     }
 
-    // Config operations
-
-    /// Publish config and optionally insert history in a single atomic WriteBatch.
-    /// This replaces the previous two-step approach (apply_config_publish + apply_config_history_insert)
-    /// with a single RocksDB WriteBatch, reducing from 2 fsyncs to 1 and ensuring atomicity.
-    /// The op_type (Insert/Update) is determined here from the existing value, removing the
-    /// need for a pre-write read in the distributed persistence layer.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_config_publish_batched(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        content: &str,
-        md5: &str,
-        config_type: Option<String>,
-        app_name: Option<String>,
-        tag: Option<String>,
-        desc: Option<String>,
-        src_user: Option<String>,
-        src_ip: Option<String>,
-        r#use: Option<String>,
-        effect: Option<String>,
-        schema: Option<String>,
-        encrypted_data_key: Option<String>,
-        cas_md5: Option<&str>,
-        history: Option<super::request::ConfigHistoryInfo>,
-    ) -> RaftResponse {
-        let key = Self::config_key(data_id, group, tenant);
-        let now = chrono::Utc::now().timestamp_millis();
-
-        // Single read: fetch existing StoredConfig for CAS check, created_time
-        // preservation, and op_type determination (Insert vs Update).
-        let existing_stored: Option<StoredConfig> =
-            match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-                Ok(Some(bytes)) => bincode::deserialize(&bytes).ok(),
-                Ok(None) => None,
-                Err(e) => {
-                    if cas_md5.is_some() {
-                        return RaftResponse::failure(format!("CAS check failed: {}", e));
-                    }
-                    None
-                }
-            };
-
-        // CAS (Compare-And-Swap) check
-        if let Some(expected_md5) = cas_md5 {
-            match &existing_stored {
-                Some(existing) => {
-                    if existing.md5 != expected_md5 {
-                        return RaftResponse::failure(format!(
-                            "CAS conflict: expected md5={}, actual md5={}",
-                            expected_md5, existing.md5
-                        ));
-                    }
-                }
-                None => {
-                    if !expected_md5.is_empty() {
-                        return RaftResponse::failure(
-                            "CAS conflict: config does not exist".to_string(),
-                        );
-                    }
-                }
-            }
-        }
-
-        // Determine op_type from existing value (eliminates pre-write read in distributed layer)
-        let is_update = existing_stored.is_some();
-
-        // Preserve created_time from existing config on update
-        let created_time = existing_stored
-            .as_ref()
-            .map(|c| c.created_time)
-            .unwrap_or(now);
-
-        let stored = StoredConfig {
-            data_id: data_id.to_string(),
-            group: group.to_string(),
-            tenant: tenant.to_string(),
-            content: content.to_string(),
-            md5: md5.to_string(),
-            config_type,
-            app_name: app_name.clone(),
-            config_tags: tag,
-            desc,
-            r#use,
-            effect,
-            schema,
-            encrypted_data_key: encrypted_data_key.clone(),
-            src_user: src_user.clone(),
-            src_ip: src_ip.clone(),
-            created_time,
-            modified_time: now,
-        };
-        let encoded = match bincode::serialize(&stored) {
-            Ok(b) => b,
-            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
-        };
-
-        // Build a single WriteBatch for config + history (1 fsync instead of 2)
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(self.cf_config(), key.as_bytes(), encoded);
-
-        // If history info is provided, add history entry to the same batch
-        if let Some(hi) = history {
-            let op_type = if hi.op_type.is_empty() {
-                if is_update { "U" } else { "I" }.to_string()
-            } else {
-                hi.op_type
-            };
-            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
-            let history = StoredConfigHistory {
-                id: now,
-                data_id: data_id.to_string(),
-                group: group.to_string(),
-                tenant: tenant.to_string(),
-                content: content.to_string(),
-                md5: md5.to_string(),
-                app_name: app_name.clone().unwrap_or_default(),
-                src_user: src_user.clone(),
-                src_ip: src_ip.clone(),
-                op_type,
-                publish_type: hi.publish_type.unwrap_or_else(|| "formal".to_string()),
-                gray_name: String::new(),
-                ext_info: hi.ext_info.unwrap_or_default(),
-                encrypted_data_key: encrypted_data_key.clone().unwrap_or_default(),
-                created_time: now,
-                modified_time: now,
-            };
-            let history_encoded = match bincode::serialize(&history) {
-                Ok(b) => b,
-                Err(e) => return RaftResponse::failure(format!("history encode error: {}", e)),
-            };
-            batch.put_cf(
-                self.cf_config_history(),
-                history_key.as_bytes(),
-                history_encoded,
-            );
-        }
-
-        match self.db.write_opt(batch, &self.write_opts) {
-            Ok(_) => {
-                debug!("Config published: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to publish config: {}", e);
-                RaftResponse::failure(format!("Failed to publish config: {}", e))
-            }
-        }
-    }
-
-    /// Remove config and optionally insert delete history in a single atomic WriteBatch.
-    fn apply_config_remove_batched(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        history: Option<Box<super::request::ConfigDeleteHistoryInfo>>,
-    ) -> RaftResponse {
-        let key = Self::config_key(data_id, group, tenant);
-        let now = chrono::Utc::now().timestamp_millis();
-
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.delete_cf(self.cf_config(), key.as_bytes());
-
-        if let Some(hi) = history.map(|b| *b) {
-            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
-            let history = StoredConfigHistory {
-                id: now,
-                data_id: data_id.to_string(),
-                group: group.to_string(),
-                tenant: tenant.to_string(),
-                content: hi.content,
-                md5: hi.md5,
-                app_name: hi.app_name,
-                src_user: Some(hi.src_user),
-                src_ip: Some(hi.src_ip),
-                op_type: "D".to_string(),
-                publish_type: "formal".to_string(),
-                gray_name: String::new(),
-                ext_info: hi.ext_info,
-                encrypted_data_key: hi.encrypted_data_key,
-                created_time: now,
-                modified_time: now,
-            };
-            let encoded = match bincode::serialize(&history) {
-                Ok(b) => b,
-                Err(e) => return RaftResponse::failure(format!("history encode error: {}", e)),
-            };
-            batch.put_cf(
-                self.cf_config_history(),
-                history_key.as_bytes(),
-                encoded,
-            );
-        }
-
-        match self.db.write_opt(batch, &self.write_opts) {
-            Ok(_) => {
-                debug!("Config removed: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to remove config: {}", e);
-                RaftResponse::failure(format!("Failed to remove config: {}", e))
-            }
-        }
-    }
-
-    // Gray config operations
-    #[allow(clippy::too_many_arguments)]
-    fn apply_config_gray_publish(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        content: &str,
-        gray_name: &str,
-        gray_rule: &str,
-        app_name: Option<String>,
-        encrypted_data_key: Option<String>,
-        src_user: Option<String>,
-        src_ip: Option<String>,
-        cas_md5: Option<String>,
-    ) -> RaftResponse {
-        let key = Self::config_gray_key(data_id, group, tenant, gray_name);
-        let now = chrono::Utc::now().timestamp_millis();
-        let md5_val = const_hex::encode(md5::Md5::digest(content.as_bytes()));
-
-        // CAS check: if cas_md5 provided, verify current gray MD5 matches
-        if let Some(ref expected_md5) = cas_md5 {
-            let cf = self.cf_config_gray();
-            match self.db.get_cf(cf, key.as_bytes()) {
-                Ok(Some(bytes)) => {
-                    if let Ok(existing) = bincode::deserialize::<StoredConfigGray>(&bytes) {
-                        let current_md5 = existing.md5.as_str();
-                        if current_md5 != expected_md5.as_str() {
-                            return RaftResponse::failure(format!(
-                                "CAS conflict: expected md5={}, actual md5={}",
-                                expected_md5, current_md5
-                            ));
-                        }
-                    }
-                }
-                Ok(None) => {
-                    if !expected_md5.is_empty() {
-                        return RaftResponse::failure(
-                            "CAS conflict: gray config does not exist".to_string(),
-                        );
-                    }
-                }
-                Err(e) => {
-                    return RaftResponse::failure(format!("CAS check failed: {}", e));
-                }
-            }
-        }
-
-        let stored = StoredConfigGray {
-            data_id: data_id.to_string(),
-            group: group.to_string(),
-            tenant: tenant.to_string(),
-            content: content.to_string(),
-            md5: md5_val,
-            app_name: app_name.unwrap_or_default(),
-            gray_name: gray_name.to_string(),
-            gray_rule: gray_rule.to_string(),
-            encrypted_data_key: encrypted_data_key.unwrap_or_default(),
-            src_user: src_user.unwrap_or_default(),
-            src_ip: src_ip.unwrap_or_default(),
-            created_time: now,
-            modified_time: now,
-        };
-        let encoded = match bincode::serialize(&stored) {
-            Ok(b) => b,
-            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
-        };
-
-        match self.db.put_cf_opt(
-            self.cf_config_gray(),
-            key.as_bytes(),
-            encoded,
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Gray config published: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to publish gray config: {}", e);
-                RaftResponse::failure(format!("Failed to publish gray config: {}", e))
-            }
-        }
-    }
-
-    fn apply_config_gray_remove(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        gray_name: &str,
-    ) -> RaftResponse {
-        let cf = self.cf_config_gray();
-
-        // If gray_name is specified, delete only that specific gray config
-        if !gray_name.is_empty() {
-            let key = Self::config_gray_key(data_id, group, tenant, gray_name);
-            match self.db.delete_cf_opt(cf, key.as_bytes(), &self.write_opts) {
-                Ok(_) => {
-                    debug!("Gray config removed: {}", key);
-                    return RaftResponse::success();
-                }
-                Err(e) => {
-                    error!("Failed to remove gray config: {}", e);
-                    return RaftResponse::failure(format!("Failed to remove gray config: {}", e));
-                }
-            }
-        }
-
-        // Scan and delete all gray configs for this data_id/group/tenant
-        let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
-
-        let mut keys_to_delete = Vec::new();
-        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
-        for item in iter {
-            match item {
-                Ok((key, _)) => {
-                    let key_str = String::from_utf8_lossy(&key);
-                    if !key_str.starts_with(&prefix) {
-                        break;
-                    }
-                    keys_to_delete.push(key.to_vec());
-                }
-                Err(e) => {
-                    error!("Failed to iterate gray configs: {}", e);
-                    return RaftResponse::failure(format!("Failed to iterate gray configs: {}", e));
-                }
-            }
-        }
-
-        if keys_to_delete.is_empty() {
-            return RaftResponse::success();
-        }
-
-        let mut batch = rocksdb::WriteBatch::default();
-        for key in &keys_to_delete {
-            batch.delete_cf(cf, key);
-        }
-
-        match self.db.write_opt(batch, &self.write_opts) {
-            Ok(_) => {
-                debug!(
-                    "Gray configs removed for {}/{}/{}: {} entries",
-                    tenant,
-                    group,
-                    data_id,
-                    keys_to_delete.len()
-                );
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to remove gray configs: {}", e);
-                RaftResponse::failure(format!("Failed to remove gray configs: {}", e))
-            }
-        }
-    }
-
-    // Config history operations
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
-    fn apply_config_history_insert(
-        &self,
-        id: i64,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        content: &str,
-        md5: &str,
-        app_name: Option<String>,
-        src_user: Option<String>,
-        src_ip: Option<String>,
-        op_type: &str,
-        publish_type: Option<String>,
-        gray_name: Option<String>,
-        ext_info: Option<String>,
-        encrypted_data_key: Option<String>,
-        created_time: i64,
-        last_modified_time: i64,
-    ) -> RaftResponse {
-        let key = Self::config_history_key(data_id, group, tenant, id as u64);
-        let stored = StoredConfigHistory {
-            id,
-            data_id: data_id.to_string(),
-            group: group.to_string(),
-            tenant: tenant.to_string(),
-            content: content.to_string(),
-            md5: md5.to_string(),
-            app_name: app_name.unwrap_or_default(),
-            src_user,
-            src_ip,
-            op_type: op_type.to_string(),
-            publish_type: publish_type.unwrap_or_else(|| "formal".to_string()),
-            gray_name: gray_name.unwrap_or_default(),
-            ext_info: ext_info.unwrap_or_default(),
-            encrypted_data_key: encrypted_data_key.unwrap_or_default(),
-            created_time,
-            modified_time: last_modified_time,
-        };
-        let encoded = match bincode::serialize(&stored) {
-            Ok(b) => b,
-            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
-        };
-
-        match self.db.put_cf_opt(
-            self.cf_config_history(),
-            key.as_bytes(),
-            encoded,
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Config history inserted: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to insert config history: {}", e);
-                RaftResponse::failure(format!("Failed to insert config history: {}", e))
-            }
-        }
-    }
-
-    // Config tags operations - tags are stored as comma-separated in the config entry
-    fn apply_config_tags_update(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        tag: &str,
-    ) -> RaftResponse {
-        let key = Self::config_key(data_id, group, tenant);
-
-        let mut stored: StoredConfig = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
-                Ok(s) => s,
-                Err(e) => return RaftResponse::failure(format!("decode error: {}", e)),
-            },
-            _ => return RaftResponse::failure("Config not found for tag update"),
-        };
-        stored.config_tags = Some(tag.to_string());
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
-
-        let encoded = match bincode::serialize(&stored) {
-            Ok(b) => b,
-            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
-        };
-        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
-            Ok(_) => {
-                debug!("Config tags updated: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to update config tags: {}", e);
-                RaftResponse::failure(format!("Failed to update config tags: {}", e))
-            }
-        }
-    }
-
-    fn apply_config_tags_delete(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        _tag: &str,
-    ) -> RaftResponse {
-        let key = Self::config_key(data_id, group, tenant);
-
-        let mut stored: StoredConfig = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
-                Ok(s) => s,
-                Err(e) => return RaftResponse::failure(format!("decode error: {}", e)),
-            },
-            _ => return RaftResponse::failure("Config not found for tag delete"),
-        };
-        stored.config_tags = Some(String::new());
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
-
-        let encoded = match bincode::serialize(&stored) {
-            Ok(b) => b,
-            Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
-        };
-        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
-            Ok(_) => {
-                debug!("Config tags deleted: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to delete config tags: {}", e);
-                RaftResponse::failure(format!("Failed to delete config tags: {}", e))
-            }
-        }
-    }
 
     // Namespace operations
     fn apply_namespace_create(
@@ -1872,294 +1187,6 @@ impl RocksStateMachine {
             Err(e) => {
                 error!("Failed to update instance: {}", e);
                 RaftResponse::failure(format!("Failed to update instance: {}", e))
-            }
-        }
-    }
-
-    // Lock operations (ADV-005)
-    fn apply_lock_acquire(
-        &self,
-        namespace: &str,
-        name: &str,
-        owner: &str,
-        ttl_ms: u64,
-        fence_token: u64,
-        owner_metadata: Option<String>,
-    ) -> RaftResponse {
-        let key = Self::lock_key(namespace, name);
-        let now = chrono::Utc::now().timestamp_millis();
-        let expires_at = now + ttl_ms as i64;
-
-        // Check if lock exists and is held
-        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_locks(), key.as_bytes())
-            && let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        {
-            // Check if lock is still valid (not expired)
-            if let Some(exp) = existing["expires_at"].as_i64()
-                && exp > now
-            {
-                // Lock is held, check if same owner
-                if existing["owner"].as_str() == Some(owner) {
-                    // Same owner, renew the lock
-                    let value = serde_json::json!({
-                        "namespace": namespace,
-                        "name": name,
-                        "owner": owner,
-                        "state": "Locked",
-                        "fence_token": fence_token,
-                        "ttl_ms": ttl_ms,
-                        "acquired_at": existing["acquired_at"],
-                        "expires_at": expires_at,
-                        "renewal_count": existing["renewal_count"].as_u64().unwrap_or(0),
-                        "owner_metadata": owner_metadata,
-                    });
-
-                    match self.db.put_cf_opt(
-                        self.cf_locks(),
-                        key.as_bytes(),
-                        json_to_bytes(&value),
-                        &self.write_opts,
-                    ) {
-                        Ok(_) => {
-                            debug!("Lock re-acquired by same owner: {}", key);
-                            return RaftResponse::success_with_data(
-                                serde_json::to_vec(&value).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => {
-                            error!("Failed to acquire lock: {}", e);
-                            return RaftResponse::failure(format!("Failed to acquire lock: {}", e));
-                        }
-                    }
-                }
-                // Lock is held by different owner
-                return RaftResponse::failure(format!(
-                    "Lock is held by {}",
-                    existing["owner"].as_str().unwrap_or("unknown")
-                ));
-            }
-        }
-
-        // Lock is free or expired, acquire it
-        let value = serde_json::json!({
-            "namespace": namespace,
-            "name": name,
-            "owner": owner,
-            "state": "Locked",
-            "fence_token": fence_token,
-            "ttl_ms": ttl_ms,
-            "acquired_at": now,
-            "expires_at": expires_at,
-            "renewal_count": 0,
-            "owner_metadata": owner_metadata,
-        });
-
-        match self.db.put_cf_opt(
-            self.cf_locks(),
-            key.as_bytes(),
-            json_to_bytes(&value),
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Lock acquired: {}", key);
-                RaftResponse::success_with_data(serde_json::to_vec(&value).unwrap_or_default())
-            }
-            Err(e) => {
-                error!("Failed to acquire lock: {}", e);
-                RaftResponse::failure(format!("Failed to acquire lock: {}", e))
-            }
-        }
-    }
-
-    fn apply_lock_release(
-        &self,
-        namespace: &str,
-        name: &str,
-        owner: &str,
-        fence_token: Option<u64>,
-    ) -> RaftResponse {
-        let key = Self::lock_key(namespace, name);
-
-        // Get existing lock
-        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
-        };
-
-        let Some(existing) = existing else {
-            return RaftResponse::failure("Lock not found");
-        };
-
-        // Check owner
-        if existing["owner"].as_str() != Some(owner) {
-            return RaftResponse::failure("Not the lock owner");
-        }
-
-        // Check fence token if provided
-        if let Some(expected_token) = fence_token
-            && existing["fence_token"].as_u64() != Some(expected_token)
-        {
-            return RaftResponse::failure("Fence token mismatch");
-        }
-
-        // Release the lock
-        let value = serde_json::json!({
-            "namespace": namespace,
-            "name": name,
-            "owner": null,
-            "state": "Free",
-            "fence_token": existing["fence_token"],
-            "ttl_ms": existing["ttl_ms"],
-            "acquired_at": null,
-            "expires_at": null,
-            "renewal_count": 0,
-            "owner_metadata": null,
-        });
-
-        match self.db.put_cf_opt(
-            self.cf_locks(),
-            key.as_bytes(),
-            json_to_bytes(&value),
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Lock released: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to release lock: {}", e);
-                RaftResponse::failure(format!("Failed to release lock: {}", e))
-            }
-        }
-    }
-
-    fn apply_lock_renew(
-        &self,
-        namespace: &str,
-        name: &str,
-        owner: &str,
-        ttl_ms: Option<u64>,
-    ) -> RaftResponse {
-        let key = Self::lock_key(namespace, name);
-        let now = chrono::Utc::now().timestamp_millis();
-
-        // Get existing lock
-        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
-        };
-
-        let Some(mut existing) = existing else {
-            return RaftResponse::failure("Lock not found");
-        };
-
-        // Check owner
-        if existing["owner"].as_str() != Some(owner) {
-            return RaftResponse::failure("Not the lock owner");
-        }
-
-        // Check if lock is still valid
-        if let Some(exp) = existing["expires_at"].as_i64()
-            && exp <= now
-        {
-            return RaftResponse::failure("Lock has expired");
-        }
-
-        // Update TTL and expires_at
-        let new_ttl = ttl_ms.unwrap_or_else(|| existing["ttl_ms"].as_u64().unwrap_or(30000));
-        let expires_at = now + new_ttl as i64;
-        let renewal_count = existing["renewal_count"].as_u64().unwrap_or(0) + 1;
-
-        existing["ttl_ms"] = serde_json::json!(new_ttl);
-        existing["expires_at"] = serde_json::json!(expires_at);
-        existing["renewal_count"] = serde_json::json!(renewal_count);
-
-        match self.db.put_cf_opt(
-            self.cf_locks(),
-            key.as_bytes(),
-            json_to_bytes(&existing),
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Lock renewed: {} (renewal #{})", key, renewal_count);
-                RaftResponse::success_with_data(serde_json::to_vec(&existing).unwrap_or_default())
-            }
-            Err(e) => {
-                error!("Failed to renew lock: {}", e);
-                RaftResponse::failure(format!("Failed to renew lock: {}", e))
-            }
-        }
-    }
-
-    fn apply_lock_force_release(&self, namespace: &str, name: &str) -> RaftResponse {
-        let key = Self::lock_key(namespace, name);
-
-        // Force release regardless of owner
-        let value = serde_json::json!({
-            "namespace": namespace,
-            "name": name,
-            "owner": null,
-            "state": "Free",
-            "fence_token": 0,
-            "ttl_ms": 0,
-            "acquired_at": null,
-            "expires_at": null,
-            "renewal_count": 0,
-            "owner_metadata": null,
-        });
-
-        match self.db.put_cf_opt(
-            self.cf_locks(),
-            key.as_bytes(),
-            json_to_bytes(&value),
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Lock force released: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to force release lock: {}", e);
-                RaftResponse::failure(format!("Failed to force release lock: {}", e))
-            }
-        }
-    }
-
-    fn apply_lock_expire(&self, namespace: &str, name: &str) -> RaftResponse {
-        let key = Self::lock_key(namespace, name);
-
-        // Check existence without deserialization (saves JSON parse overhead)
-        match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(_)) => {}                    // Key exists, proceed to expire
-            _ => return RaftResponse::success(), // Nothing to expire
-        }
-
-        let value = serde_json::json!({
-            "namespace": namespace,
-            "name": name,
-            "owner": null,
-            "state": "Expired",
-            "fence_token": 0,
-            "ttl_ms": 0,
-            "acquired_at": null,
-            "expires_at": null,
-            "renewal_count": 0,
-            "owner_metadata": null,
-        });
-
-        match self.db.put_cf_opt(
-            self.cf_locks(),
-            key.as_bytes(),
-            json_to_bytes(&value),
-            &self.write_opts,
-        ) {
-            Ok(_) => {
-                debug!("Lock expired: {}", key);
-                RaftResponse::success()
-            }
-            Err(e) => {
-                error!("Failed to expire lock: {}", e);
-                RaftResponse::failure(format!("Failed to expire lock: {}", e))
             }
         }
     }

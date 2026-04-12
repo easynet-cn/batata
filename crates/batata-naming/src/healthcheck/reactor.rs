@@ -111,8 +111,6 @@ impl HealthCheckReactor {
 
     /// Start the reactor event loop
     fn start_event_loop(&self, mut receiver: mpsc::Receiver<ReactorMessage>) {
-        let naming_service = self.naming_service.clone();
-        let config = self.config.clone();
         let tasks = self.tasks.clone();
         let task_handles = self.task_handles.clone();
         let registry_lock = self.registry.clone();
@@ -142,13 +140,10 @@ impl HealthCheckReactor {
                         Self::schedule_task_loop(
                             task,
                             task_id,
-                            naming_service.clone(),
-                            config.clone(),
                             tasks.clone(),
                             task_handles.clone(),
                             chain,
-                        )
-                        .await;
+                        );
                     }
                     ReactorMessage::Cancel { task_id } => {
                         // Cancel the task
@@ -213,12 +208,15 @@ impl HealthCheckReactor {
         });
     }
 
-    /// Schedule a task loop (matches Nacos scheduleCheck)
-    async fn schedule_task_loop(
+    /// Schedule a task loop (matches Nacos scheduleCheck).
+    ///
+    /// Sync because the body only spawns a task and inserts a handle — no
+    /// awaits are needed. Previously this was `async fn` and took unused
+    /// `naming_service` / `config` Arcs that the caller cloned per schedule
+    /// event, producing pure waste.
+    fn schedule_task_loop(
         task: HealthCheckTask,
         task_id: Arc<str>,
-        _naming_service: Arc<NamingService>,
-        _config: Arc<HealthCheckConfig>,
         tasks: Arc<DashMap<Arc<str>, ()>>,
         task_handles: Arc<DashMap<Arc<str>, JoinHandle<()>>>,
         interceptor_chain: Arc<HealthCheckInterceptorChain>,

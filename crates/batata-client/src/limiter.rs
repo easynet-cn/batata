@@ -2,10 +2,10 @@
 //!
 //! Provides token bucket and sliding window rate limiting.
 
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 
 /// Rate limiter using token bucket algorithm
 #[derive(Clone)]
@@ -36,7 +36,10 @@ impl RateLimiter {
     ///
     /// Returns true if a token was acquired, false otherwise
     pub async fn try_acquire(&self) -> bool {
-        let mut last_refill = self.last_refill.lock().await;
+        // parking_lot::Mutex: no `.await` — the critical section is pure
+        // compute, and holding a tokio::sync::Mutex here forced an async
+        // wait that was strictly slower than a fast userspace lock.
+        let mut last_refill = self.last_refill.lock();
         let now = Instant::now();
         let elapsed = now.duration_since(*last_refill);
 
@@ -74,7 +77,7 @@ impl RateLimiter {
 
     /// Reset the limiter
     pub async fn reset(&self) {
-        let mut last_refill = self.last_refill.lock().await;
+        let mut last_refill = self.last_refill.lock();
         self.tokens.store(self.capacity, Ordering::Relaxed);
         *last_refill = Instant::now();
     }
@@ -104,7 +107,7 @@ impl SlidingWindowLimiter {
 
     /// Try to allow a request
     pub async fn try_allow(&self) -> bool {
-        let mut requests = self.requests.lock().await;
+        let mut requests = self.requests.lock();
         let now = Instant::now();
 
         // Remove requests outside the window
@@ -121,7 +124,7 @@ impl SlidingWindowLimiter {
 
     /// Get current request count in the window
     pub async fn current_count(&self) -> usize {
-        let requests = self.requests.lock().await;
+        let requests = self.requests.lock();
         let now = Instant::now();
         requests
             .iter()
@@ -131,7 +134,7 @@ impl SlidingWindowLimiter {
 
     /// Reset the limiter
     pub async fn reset(&self) {
-        let mut requests = self.requests.lock().await;
+        let mut requests = self.requests.lock();
         requests.clear();
     }
 }
