@@ -1,5 +1,5 @@
 // AI/MCP persistent storage constants
-// Aligned with Nacos 3.x AI module config-backed storage patterns
+// Aligned with Batata AI module config-backed storage patterns (Nacos 3.x compatible)
 
 // =============================================================================
 // Config Groups (used as group_id in config_info table)

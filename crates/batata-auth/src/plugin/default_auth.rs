@@ -1,7 +1,7 @@
-//! Nacos auth plugin (default) and LDAP auth plugin
+//! Default auth plugin and LDAP auth plugin
 //!
-//! NacosAuthPlugin: JWT token validation + RBAC via persistence layer
-//! LdapAuthPlugin: Composes NacosAuthPlugin with LDAP authentication for login
+//! DefaultAuthPlugin: JWT token validation + RBAC via persistence layer
+//! LdapAuthPlugin: Composes DefaultAuthPlugin with LDAP authentication for login
 
 use std::sync::Arc;
 
@@ -14,17 +14,17 @@ use crate::service::ldap::LdapAuthService;
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
 
-/// Nacos auth plugin — the default authentication backend.
+/// Default auth plugin — the standard authentication backend.
 ///
 /// Uses JWT tokens for authentication and RBAC via the persistence
-/// layer for authorization. This is the standard Nacos auth model.
-pub struct NacosAuthPlugin {
+/// layer for authorization. Plugin name is "nacos" for SDK compatibility.
+pub struct DefaultAuthPlugin {
     secret_key: String,
     pub(crate) token_expire_seconds: i64,
     pub(crate) persistence: Arc<dyn PersistenceService>,
 }
 
-impl NacosAuthPlugin {
+impl DefaultAuthPlugin {
     pub fn new(
         secret_key: String,
         token_expire_seconds: i64,
@@ -87,7 +87,7 @@ impl NacosAuthPlugin {
 }
 
 #[async_trait::async_trait]
-impl AuthPlugin for NacosAuthPlugin {
+impl AuthPlugin for DefaultAuthPlugin {
     fn plugin_name(&self) -> &str {
         "nacos"
     }
@@ -200,20 +200,20 @@ impl AuthPlugin for NacosAuthPlugin {
 // LDAP Auth Plugin
 // ============================================================================
 
-/// LDAP auth plugin — composes NacosAuthPlugin with LDAP for login.
+/// LDAP auth plugin — composes DefaultAuthPlugin with LDAP for login.
 ///
-/// Token validation and RBAC are shared with the inner NacosAuthPlugin
+/// Token validation and RBAC are shared with the inner DefaultAuthPlugin
 /// because LDAP users also get JWT tokens after login.
-/// Login flow: admin users → nacos plugin; others → LDAP bind.
+/// Login flow: admin users → default plugin; others → LDAP bind.
 pub struct LdapAuthPlugin {
-    nacos_plugin: NacosAuthPlugin,
+    default_plugin: DefaultAuthPlugin,
     ldap_service: LdapAuthService,
 }
 
 impl LdapAuthPlugin {
-    pub fn new(nacos_plugin: NacosAuthPlugin, ldap_service: LdapAuthService) -> Self {
+    pub fn new(default_plugin: DefaultAuthPlugin, ldap_service: LdapAuthService) -> Self {
         Self {
-            nacos_plugin,
+            default_plugin,
             ldap_service,
         }
     }
@@ -230,7 +230,7 @@ impl AuthPlugin for LdapAuthPlugin {
     }
 
     async fn validate_identity(&self, identity: &mut IdentityContext) -> AuthCheckResult {
-        self.nacos_plugin.validate_identity(identity).await
+        self.default_plugin.validate_identity(identity).await
     }
 
     async fn validate_authority(
@@ -238,15 +238,15 @@ impl AuthPlugin for LdapAuthPlugin {
         identity: &IdentityContext,
         permission: &AuthPermission,
     ) -> AuthCheckResult {
-        self.nacos_plugin
+        self.default_plugin
             .validate_authority(identity, permission)
             .await
     }
 
     async fn login(&self, username: &str, password: &str) -> Result<LoginResult, String> {
         // Admin users always use local auth (bypass LDAP)
-        if self.nacos_plugin.is_global_admin(username).await {
-            return self.nacos_plugin.login(username, password).await;
+        if self.default_plugin.is_global_admin(username).await {
+            return self.default_plugin.login(username, password).await;
         }
 
         // Try LDAP authentication (returns AuthResult directly, not Result)
@@ -257,7 +257,7 @@ impl AuthPlugin for LdapAuthPlugin {
 
             // Ensure user exists in local DB for RBAC
             let user_exists = self
-                .nacos_plugin
+                .default_plugin
                 .persistence
                 .user_find_by_username(username)
                 .await
@@ -270,7 +270,7 @@ impl AuthPlugin for LdapAuthPlugin {
                 let placeholder_hash =
                     bcrypt::hash("LDAP_USER_NO_LOCAL_PASSWORD", 10).unwrap_or_default();
                 let _ = self
-                    .nacos_plugin
+                    .default_plugin
                     .persistence
                     .user_create(username, &placeholder_hash, true)
                     .await;
@@ -279,19 +279,19 @@ impl AuthPlugin for LdapAuthPlugin {
 
             // Generate JWT token
             unblacklist_user(username);
-            let token = self.nacos_plugin.generate_token(username)?;
-            let is_admin = self.nacos_plugin.is_global_admin(username).await;
+            let token = self.default_plugin.generate_token(username)?;
+            let is_admin = self.default_plugin.is_global_admin(username).await;
 
             Ok(LoginResult {
                 token,
-                token_ttl: self.nacos_plugin.token_expire_seconds,
+                token_ttl: self.default_plugin.token_expire_seconds,
                 username: username.to_string(),
                 is_global_admin: is_admin,
             })
         } else {
             // LDAP auth failed, try local fallback
             debug!(username, "LDAP auth failed, trying local fallback");
-            self.nacos_plugin.login(username, password).await
+            self.default_plugin.login(username, password).await
         }
     }
 }

@@ -90,8 +90,8 @@ batata.db.migration.enabled: true
 # Authentication
 # =============================================================================
 
-# Auth system type: nacos (default), ldap, or oauth
-batata.core.auth.system.type: nacos
+# Auth system type: default, ldap, or oauth
+batata.core.auth.system.type: default
 
 # Enable auth for each API surface
 batata.core.auth.enabled: true
@@ -100,13 +100,13 @@ batata.core.auth.console.enabled: true
 
 # Server identity for trusted server-to-server communication
 # Used by InnerApi auth bypass and Console remote mode
-batata.core.auth.server.identity.key: nacos-server-key
-batata.core.auth.server.identity.value: nacos-server-value
+batata.core.auth.server.identity.key: default-server-key
+batata.core.auth.server.identity.value: default-server-value
 
 # JWT token configuration
-batata.core.auth.plugin.nacos.token.expire.seconds: 18000
+batata.core.auth.plugin.default.token.expire.seconds: 18000
 # Secret key (Base64-encoded). Generate with: openssl rand -base64 32
-batata.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
+batata.core.auth.plugin.default.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
 
 # --- LDAP Configuration (when batata.core.auth.system.type=ldap) ---
 #batata.core.auth.ldap.url: ldap://localhost:389
@@ -158,7 +158,7 @@ batata.plugin.control.max_connections: 50000
 
 # --- Config Gray Version Management ---
 # Maximum number of gray (beta/tag) versions per config entry (default: 10)
-# Matches Nacos nacos.config.gray.version.max.count property.
+# Matches batata.config.gray.version.max.count property.
 #batata.config.gray.version.max_count: 10
 
 # --- Config Encryption ---

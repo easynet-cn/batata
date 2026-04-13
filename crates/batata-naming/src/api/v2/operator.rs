@@ -1,6 +1,6 @@
 //! V2 Operator API handlers
 //!
-//! Implements the Nacos V2 operator management API endpoints:
+//! Implements the Batata V2 operator management API endpoints (Nacos-compatible):
 //! - GET /nacos/v2/ns/operator/switches - Get system switches
 //! - PUT /nacos/v2/ns/operator/switches - Update system switches
 //! - GET /nacos/v2/ns/operator/metrics - Get naming service metrics

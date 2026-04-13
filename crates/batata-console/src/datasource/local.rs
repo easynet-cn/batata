@@ -26,13 +26,13 @@ use std::collections::{HashMap, HashSet};
 
 use batata_plugin::PluginStateProvider;
 use batata_server_common::model::{
-    AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, BATATA_VERSION_KEY,
-    CONFIG_RENTENTION_DAYS_PROPERTY_STATE, Configuration, DATASOURCE_PLATFORM_PROPERTY_STATE,
-    DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE,
-    DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
-    IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
-    NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION, NACOS_VERSION_KEY, NOTIFY_CONNECT_TIMEOUT,
-    NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
+    AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, BATATA_VERSION_KEY, COMPAT_VERSION,
+    COMPAT_VERSION_KEY, CONFIG_RENTENTION_DAYS_PROPERTY_STATE, Configuration,
+    DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
+    DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
+    IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
+    MAX_HEALTH_CHECK_FAIL_COUNT, NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT,
+    PLUGIN_DATASOURCE_LOG_STATE, SERVER_PORT_STATE, STARTUP_MODE_STATE,
 };
 
 /// Local data source — direct PersistenceService access
@@ -547,7 +547,8 @@ impl ConsoleDataSource for LocalDataSource {
             .iter()
             .map(|name| {
                 // Zero-copy snapshot — we only need counts and cluster names.
-                let instances = naming.get_instances_snapshot(namespace_id, group_name, name, "", false);
+                let instances =
+                    naming.get_instances_snapshot(namespace_id, group_name, name, "", false);
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
                 let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
@@ -640,7 +641,8 @@ impl ConsoleDataSource for LocalDataSource {
             .collect();
 
         // Collect cluster names from service storage (zero-copy snapshot).
-        let instances = naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
+        let instances =
+            naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
         let mut all_cluster_names: HashSet<String> =
             instances.iter().map(|i| i.cluster_name.clone()).collect();
         for cfg in &cluster_configs {
@@ -794,7 +796,8 @@ impl ConsoleDataSource for LocalDataSource {
         }
 
         // Zero-copy snapshot — empty-check only.
-        let instances = naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
+        let instances =
+            naming.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
         if !instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "service {} has {} instances, cannot delete",
@@ -898,7 +901,7 @@ impl ConsoleDataSource for LocalDataSource {
             Some(cfg.datasource_platform()),
         );
         state_map.insert(
-            NACOS_PLUGIN_DATASOURCE_LOG_STATE.to_string(),
+            PLUGIN_DATASOURCE_LOG_STATE.to_string(),
             Some(format!("{}", cfg.plugin_datasource_log())),
         );
         state_map.insert(
@@ -974,8 +977,8 @@ impl ConsoleDataSource for LocalDataSource {
         // Env module state
         state_map.insert(STARTUP_MODE_STATE.to_string(), Some(cfg.startup_mode()));
         state_map.insert(FUNCTION_MODE_STATE.to_string(), cfg.function_mode());
-        state_map.insert(NACOS_VERSION.to_string(), Some(cfg.version()));
-        state_map.insert(NACOS_VERSION_KEY.to_string(), Some(cfg.nacos_version()));
+        state_map.insert(COMPAT_VERSION.to_string(), Some(cfg.version()));
+        state_map.insert(COMPAT_VERSION_KEY.to_string(), Some(cfg.compat_version()));
         state_map.insert(BATATA_VERSION_KEY.to_string(), Some(cfg.batata_version()));
 
         // Console module state

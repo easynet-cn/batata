@@ -3,7 +3,7 @@
 //! This crate provides:
 //! - Service registration
 //! - Service discovery
-//! - Nacos-compatible health checking (TCP/HTTP with heartbeat monitoring)
+//! - Health checking (Nacos-compatible TCP/HTTP with heartbeat monitoring)
 //! - Load balancing
 //! - Service selector evaluation
 //! - Metadata persistence

@@ -1,6 +1,6 @@
-//! File-based logging module inspired by Nacos logging structure.
+//! File-based logging module inspired by the Nacos logging structure.
 //!
-//! This module provides multi-file logging similar to Nacos, where different
+//! This module provides multi-file logging (similar to Nacos) where different
 //! components write to separate log files with daily rotation:
 //!
 //! | Log File             | Component                        | Target Prefixes                     |
@@ -8,7 +8,7 @@
 //! | batata.log          | Root logger (all components)      | (all)                               |
 //! | naming-server.log   | Service discovery                 | batata_naming                       |
 //! | config-server.log   | Configuration management          | batata_config                       |
-//! | nacos-cluster.log   | Cluster communication             | batata_core::cluster                |
+//! | batata-cluster.log  | Cluster communication             | batata_core::cluster                |
 //! | core-auth.log       | Authentication and authorization  | batata_auth                         |
 //! | remote.log          | Remote/gRPC communication         | batata_api, batata_core::connection |
 //! | console.log         | Console management API            | batata_console                      |
@@ -82,7 +82,7 @@ struct ComponentLogDef {
     targets: &'static [&'static str],
 }
 
-/// Component log definitions matching Nacos's per-module logging strategy.
+/// Component log definitions matching the Nacos per-module logging strategy.
 ///
 /// Each entry produces a separate rolling log file. Events are routed based on
 /// their `tracing` target (Rust module path). The root `batata.log` file always
@@ -100,7 +100,7 @@ const COMPONENT_LOGS: &[ComponentLogDef] = &[
     },
     // Nacos: nacos-cluster.log
     ComponentLogDef {
-        file_name: "nacos-cluster.log",
+        file_name: "batata-cluster.log",
         targets: &["batata_core::cluster"],
     },
     // Nacos: core-auth.log
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_component_log_count() {
-        // We should have 10 component log files matching Nacos categories
+        // We should have 10 component log files (matching Nacos log categories)
         assert_eq!(COMPONENT_LOGS.len(), 10);
     }
 }

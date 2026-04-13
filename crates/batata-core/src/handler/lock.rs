@@ -94,8 +94,13 @@ impl PayloadHandler for LockOperationHandler {
         let result = match operation.as_str() {
             LOCK_OP_ACQUIRE => {
                 let acquired = if let Some(ref raft) = self.raft_node {
-                    self.raft_acquire(raft.as_ref(), &lock_instance.key, &owner, lock_instance.expired_time)
-                        .await
+                    self.raft_acquire(
+                        raft.as_ref(),
+                        &lock_instance.key,
+                        &owner,
+                        lock_instance.expired_time,
+                    )
+                    .await
                 } else {
                     self.lock_service
                         .acquire(&lock_instance.key, &owner, lock_instance.expired_time)

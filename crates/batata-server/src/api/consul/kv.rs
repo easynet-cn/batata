@@ -107,7 +107,7 @@ pub async fn import_kv(
         Err(e) => return HttpResponse::BadRequest().json(ConsulError::new(e.to_string())),
     };
 
-    // Get user info from connection (Consul API doesn't have auth context like Nacos)
+    // Get user info from connection (Consul API doesn't have auth context like Batata)
     let src_user = "consul-import".to_string();
     let src_ip = req
         .connection_info()

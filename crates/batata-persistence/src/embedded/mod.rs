@@ -709,9 +709,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             .iter()
             .skip(offset as usize)
             .take(page_size as usize)
-            .map(|stored| {
-                Self::json_to_history(&serde_json::to_value(stored).unwrap_or_default())
-            })
+            .map(|stored| Self::json_to_history(&serde_json::to_value(stored).unwrap_or_default()))
             .collect();
 
         Ok(Page::new(total, page_no, page_size, page_items))

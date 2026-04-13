@@ -1,4 +1,4 @@
-//! Batata Client - Rust SDK for Nacos clients
+//! Batata Client - Rust SDK for Batata clients
 //!
 //! This crate provides:
 //! - HTTP client with authentication, retry, and failover

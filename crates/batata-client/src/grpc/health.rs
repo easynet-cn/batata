@@ -1,7 +1,7 @@
 //! gRPC connection health monitoring
 //!
 //! Periodic health check for the gRPC connection with automatic
-//! reconnection on failure. Matches Nacos Java RpcClient behavior.
+//! reconnection on failure. Matches Nacos Java SDK RpcClient behavior.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

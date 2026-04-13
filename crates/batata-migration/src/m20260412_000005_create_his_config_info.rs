@@ -1,5 +1,5 @@
-use sea_orm_migration::{prelude::*, schema::*};
 use crate::column_helper::{long_text, long_text_null};
+use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -21,7 +21,10 @@ impl MigrationTrait for Migration {
                     .col(string_len(HisConfigInfo::DataId, 255).not_null())
                     .col(string_len(HisConfigInfo::GroupId, 128).not_null())
                     .col(string_len_null(HisConfigInfo::AppName, 128))
-                    .col(long_text(HisConfigInfo::Content, manager.get_database_backend()).not_null())
+                    .col(
+                        long_text(HisConfigInfo::Content, manager.get_database_backend())
+                            .not_null(),
+                    )
                     .col(string_len_null(HisConfigInfo::Md5, 32))
                     .col(
                         date_time(HisConfigInfo::GmtCreate)
@@ -48,7 +51,10 @@ impl MigrationTrait for Migration {
                     )
                     .col(string_len_null(HisConfigInfo::PublishType, 50).default("formal"))
                     .col(string_len_null(HisConfigInfo::GrayName, 50))
-                    .col(long_text_null(HisConfigInfo::ExtInfo, manager.get_database_backend()))
+                    .col(long_text_null(
+                        HisConfigInfo::ExtInfo,
+                        manager.get_database_backend(),
+                    ))
                     .to_owned(),
             )
             .await?;

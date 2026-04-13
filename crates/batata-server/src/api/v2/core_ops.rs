@@ -1,6 +1,6 @@
 //! V2 Core Operations API handlers
 //!
-//! Implements the Nacos V2 core ops API endpoints (deprecated, use V3 admin):
+//! Implements the Batata V2 core ops API endpoints (Nacos V2-compatible, deprecated in favor of V3 admin):
 //! - POST /nacos/v2/core/ops/raft - Raft operations (transferLeader, doSnapshot, etc.)
 //! - GET /nacos/v2/core/ops/ids - Get ID generator health
 //! - PUT /nacos/v2/core/ops/log - Update log level

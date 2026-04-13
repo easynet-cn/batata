@@ -1,6 +1,7 @@
-//! Remote API models for Nacos protocol communication
+//! Remote API models for Batata protocol communication
 //!
-//! This module defines request/response models used in Nacos remote communication.
+//! This module defines request/response models used in Batata remote communication.
+//! Wire-compatible with the Nacos gRPC protocol.
 
 pub mod model;
 

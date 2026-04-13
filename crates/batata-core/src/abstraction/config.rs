@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use super::types::{ChangeType, ConfigItem, ConfigQuery, PagedResult};
 
 /// Configuration store abstraction trait
-/// Implementations: NacosConfigStore, ConsulKVStore
+/// Implementations: BatataConfigStore, ConsulKVStore
 #[async_trait]
 pub trait ConfigStore: Send + Sync {
     /// Get a configuration item

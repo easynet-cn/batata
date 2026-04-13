@@ -1,6 +1,6 @@
 //! V2 Instance API handlers
 //!
-//! Implements the Nacos V2 instance management API endpoints:
+//! Implements the Batata V2 instance management API endpoints (Nacos-compatible):
 //! - POST /nacos/v2/ns/instance - Register instance
 //! - DELETE /nacos/v2/ns/instance - Deregister instance
 //! - PUT /nacos/v2/ns/instance - Update instance
@@ -701,8 +701,13 @@ pub async fn batch_update_metadata(
     }
 
     // Snapshot existing instances — only matching ones get cloned.
-    let snapshot =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &form.service_name, "", false);
+    let snapshot = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &form.service_name,
+        "",
+        false,
+    );
 
     let mut updated_count = 0;
     for arc in snapshot {
@@ -832,8 +837,13 @@ pub async fn batch_delete_metadata(
     }
 
     // Snapshot existing instances — only matching ones get cloned.
-    let snapshot =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
+    let snapshot = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+    );
 
     let mut updated_count = 0;
     for arc in snapshot {
@@ -1142,7 +1152,8 @@ pub async fn get_instance_statuses(
     );
 
     // Zero-copy snapshot — we only read two fields, no ownership needed.
-    let snapshot = naming_service.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
+    let snapshot =
+        naming_service.get_instances_snapshot(namespace_id, group_name, service_name, "", false);
 
     let statuses: HashMap<String, bool> = snapshot
         .iter()

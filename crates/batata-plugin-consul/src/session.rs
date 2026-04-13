@@ -573,10 +573,7 @@ impl ConsulSessionService {
     /// Returns the number of sessions successfully destroyed. A return
     /// value of 0 means either no expirations or the local node is not
     /// the leader.
-    pub async fn cleanup_expired_via_raft(
-        &self,
-        kv: &crate::kv::ConsulKVService,
-    ) -> usize {
+    pub async fn cleanup_expired_via_raft(&self, kv: &crate::kv::ConsulKVService) -> usize {
         if !self.is_leader() {
             return 0;
         }

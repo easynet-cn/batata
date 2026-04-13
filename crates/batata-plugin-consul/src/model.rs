@@ -411,7 +411,7 @@ pub struct AgentServiceRegistration {
     #[serde(rename = "Checks", alias = "checks", default)]
     pub checks: Option<Vec<AgentServiceCheck>>,
 
-    /// Namespace (Consul Enterprise, maps to Nacos namespace)
+    /// Namespace (Consul Enterprise, maps to Batata namespace)
     #[serde(rename = "Namespace", alias = "namespace", default)]
     pub namespace: Option<String>,
 }

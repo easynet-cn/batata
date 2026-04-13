@@ -1,6 +1,7 @@
-//! Remote API models for Nacos protocol communication
+//! Remote API models for Batata protocol communication
 //!
-//! This module defines request/response models used in Nacos remote communication.
+//! This module defines request/response models used in Batata remote communication.
+//! Wire-compatible with the Nacos gRPC protocol.
 
 use std::collections::HashMap;
 
@@ -455,7 +456,7 @@ pub struct ConnectionSetupRequest {
     pub tenant: String,
     pub labels: HashMap<String, String>,
     pub client_abilities: ClientAbilities,
-    /// Client ability table for capability negotiation (Nacos 3.x)
+    /// Client ability table for capability negotiation (Nacos 3.x compatible)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ability_table: Option<HashMap<String, bool>>,
 }

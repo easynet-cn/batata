@@ -1,6 +1,6 @@
-//! Nacos V2 Open API implementation
+//! Batata V2 Open API implementation
 //!
-//! This module provides the V2 API endpoints compatible with Nacos 2.x/3.x.
+//! This module provides the V2 API endpoints compatible with Nacos 2.x/3.x SDKs.
 //! The V2 API uses a unified response format with code, message, and data fields.
 
 pub mod capacity;

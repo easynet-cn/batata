@@ -1,10 +1,9 @@
 //! Auth plugin implementations
 //!
-//! Provides pluggable authentication backends following the Nacos 3.x
-//! `AuthPluginService` SPI pattern. The active plugin is selected via
-//! config key `batata.core.auth.system.type`.
+//! Provides pluggable authentication backends. The active plugin is
+//! selected via config key `batata.core.auth.system.type`.
 
-pub mod nacos;
+pub mod default_auth;
 
 use std::sync::Arc;
 
@@ -30,15 +29,18 @@ pub fn create_auth_plugin(
 ) -> Arc<dyn AuthPlugin> {
     match auth_type {
         "ldap" => {
-            let nacos_plugin =
-                nacos::NacosAuthPlugin::new(secret_key, token_expire_seconds, persistence);
+            let default_plugin =
+                default_auth::DefaultAuthPlugin::new(secret_key, token_expire_seconds, persistence);
             let ldap_config = ldap_config.expect("LDAP config required for ldap auth type");
             let ldap_service = crate::service::ldap::LdapAuthService::new(ldap_config);
-            Arc::new(nacos::LdapAuthPlugin::new(nacos_plugin, ldap_service))
+            Arc::new(default_auth::LdapAuthPlugin::new(
+                default_plugin,
+                ldap_service,
+            ))
         }
         _ => {
-            // "nacos" is the default
-            Arc::new(nacos::NacosAuthPlugin::new(
+            // "nacos" auth type is the default
+            Arc::new(default_auth::DefaultAuthPlugin::new(
                 secret_key,
                 token_expire_seconds,
                 persistence,

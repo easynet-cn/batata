@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Consul-specific Raft request types.
 ///
 /// These are applied by the Consul plugin handler and produce a dedicated
-/// Raft log index space, independent of Nacos operations.
+/// Raft log index space, independent of Batata core operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConsulRaftRequest {
     // ==================== KV Operations ====================

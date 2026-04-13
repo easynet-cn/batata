@@ -14,12 +14,12 @@ Batata console datasource has 4 deployment combinations:
 
 | Mode | Storage | Nodes | Config Requirement |
 |------|---------|-------|--------------------|
-| **Standalone + Embedded** | RocksDB | 1 | `spring.sql.init.platform` = empty |
-| **Standalone + ExternalDb** | MySQL/PostgreSQL | 1 | `spring.sql.init.platform` = mysql/postgresql |
-| **Cluster + ExternalDb** | MySQL/PostgreSQL (shared) | 3 | `spring.sql.init.platform` = mysql/postgresql |
-| **Cluster + Embedded** | Raft + RocksDB | 3 | `spring.sql.init.platform` = empty |
+| **Standalone + Embedded** | RocksDB | 1 | `batata.sql.init.platform` = empty |
+| **Standalone + ExternalDb** | MySQL/PostgreSQL | 1 | `batata.sql.init.platform` = mysql/postgresql |
+| **Cluster + ExternalDb** | MySQL/PostgreSQL (shared) | 3 | `batata.sql.init.platform` = mysql/postgresql |
+| **Cluster + Embedded** | Raft + RocksDB | 3 | `batata.sql.init.platform` = empty |
 
-The storage mode is determined by `spring.sql.init.platform` in `conf/application.yml`, **independent** of standalone/cluster mode. See [Storage Mode Decision Logic](#storage-mode-decision-logic) for details.
+The storage mode is determined by `batata.sql.init.platform` in `conf/application.yml`, **independent** of standalone/cluster mode. See [Storage Mode Decision Logic](#storage-mode-decision-logic) for details.
 
 ## Quick Start
 
@@ -28,7 +28,7 @@ The storage mode is determined by `spring.sql.init.platform` in `conf/applicatio
 No external database required. Simplest mode to test.
 
 ```bash
-# Ensure spring.sql.init.platform is empty in conf/application.yml
+# Ensure batata.sql.init.platform is empty in conf/application.yml
 # Start server
 cargo run -p batata-server -- -m standalone &
 
@@ -42,7 +42,7 @@ cargo run -p batata-server -- -m standalone &
 # Initialize database
 mysql -u user -p batata < conf/mysql-schema.sql
 
-# Ensure spring.sql.init.platform: mysql in conf/application.yml
+# Ensure batata.sql.init.platform: mysql in conf/application.yml
 # Start server
 cargo run -p batata-server -- -m standalone --db-url "mysql://user:pass@localhost:3306/batata" &
 
@@ -90,7 +90,7 @@ echo "127.0.0.1:8848
 127.0.0.1:8858
 127.0.0.1:8868" > conf/cluster.conf
 
-# Ensure spring.sql.init.platform is empty in conf/application.yml
+# Ensure batata.sql.init.platform is empty in conf/application.yml
 # Start 3 nodes (each needs separate data dir)
 cargo run -p batata-server -- -m cluster \
   --main-port 8848 --console-port 8081 &
@@ -192,16 +192,16 @@ Cluster scripts additionally test:
 
 ## Storage Mode Decision Logic
 
-The storage mode is determined by `spring.sql.init.platform` configuration, with priority **higher** than the standalone/cluster flag:
+The storage mode is determined by `batata.sql.init.platform` configuration, with priority **higher** than the standalone/cluster flag:
 
 ```
-spring.sql.init.platform = "mysql" or "postgresql"
+batata.sql.init.platform = "mysql" or "postgresql"
     → ExternalDb (regardless of standalone/cluster)
 
-spring.sql.init.platform = empty + standalone mode
+batata.sql.init.platform = empty + standalone mode
     → StandaloneEmbedded (single-node RocksDB)
 
-spring.sql.init.platform = empty + cluster mode
+batata.sql.init.platform = empty + cluster mode
     → DistributedEmbedded (Raft + RocksDB)
 ```
 
@@ -259,8 +259,8 @@ batata.member.list: "127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
 
 ### Embedded mode but using external DB
 
-If `spring.sql.init.platform` is set to `mysql` or `postgresql` in `conf/application.yml`, the server will use ExternalDb mode even if started with `-m standalone`. Clear the platform value for embedded mode:
+If `batata.sql.init.platform` is set to `mysql` or `postgresql` in `conf/application.yml`, the server will use ExternalDb mode even if started with `-m standalone`. Clear the platform value for embedded mode:
 
 ```yaml
-spring.sql.init.platform:   # empty = embedded mode
+batata.sql.init.platform:   # empty = embedded mode
 ```

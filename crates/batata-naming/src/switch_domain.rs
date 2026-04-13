@@ -1,4 +1,4 @@
-//! Runtime-mutable switch domain for Nacos naming module.
+//! Runtime-mutable switch domain for Batata naming module.
 //!
 //! Matches Nacos's `SwitchDomain` bean which holds runtime-tunable parameters
 //! for the naming service. Values can be changed via PUT /operator/switches.

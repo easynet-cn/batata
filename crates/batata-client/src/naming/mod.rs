@@ -37,7 +37,7 @@ use self::listener::{EventListener, NamingEvent};
 use self::redo::{InstanceRedoData, NamingGrpcRedoService, SubscriberRedoData};
 use self::service_info_holder::{ServiceInfoHolder, build_service_key};
 
-/// Nacos-compatible naming service backed by gRPC.
+/// Batata naming service backed by gRPC (Nacos-compatible).
 ///
 /// Uses `NamingGrpcRedoService` for state-tracked instance registration and
 /// subscription redo, matching the Nacos Java SDK pattern.

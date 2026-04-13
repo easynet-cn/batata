@@ -1,7 +1,7 @@
 //! gRPC Authentication and Authorization Service
 //!
 //! This module provides authentication and authorization for gRPC requests,
-//! similar to Nacos's GrpcProtocolAuthService.
+//! Compatible with Nacos's GrpcProtocolAuthService.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};

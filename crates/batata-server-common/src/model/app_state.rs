@@ -16,12 +16,12 @@ use super::server_status::ServerStatusManager;
 use super::{
     config::Configuration,
     constants::{
-        AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE,
-        DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
-        DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
-        IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
-        MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
-        NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
+        AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, COMPAT_VERSION,
+        CONFIG_RENTENTION_DAYS_PROPERTY_STATE, DATASOURCE_PLATFORM_PROPERTY_STATE,
+        DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE,
+        DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
+        IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT, NOTIFY_CONNECT_TIMEOUT,
+        NOTIFY_SOCKET_TIMEOUT, PLUGIN_DATASOURCE_LOG_STATE, SERVER_PORT_STATE, STARTUP_MODE_STATE,
     },
 };
 
@@ -241,7 +241,7 @@ impl AppState {
             Some(self.configuration.datasource_platform()),
         );
         state.insert(
-            NACOS_PLUGIN_DATASOURCE_LOG_STATE.to_string(),
+            PLUGIN_DATASOURCE_LOG_STATE.to_string(),
             Some(format!("{}", self.configuration.plugin_datasource_log())),
         );
         state.insert(
@@ -336,7 +336,7 @@ impl AppState {
             self.configuration.function_mode(),
         );
         state.insert(
-            NACOS_VERSION.to_string(),
+            COMPAT_VERSION.to_string(),
             Some(self.configuration.version()),
         );
         state.insert(

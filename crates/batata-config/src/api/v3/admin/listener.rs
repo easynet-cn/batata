@@ -1,6 +1,6 @@
 //! V3 Admin config listener endpoints
 //!
-//! Implements the Nacos V3 Admin config listener API:
+//! Implements the Batata V3 Admin config listener API (Nacos-compatible):
 //! - GET /nacos/v3/admin/cs/listener - Get listener state by config
 //! - GET /nacos/v3/admin/cs/listener/ip - Get listener state by client IP
 

@@ -1,6 +1,6 @@
 //! V2 Config Listener API handlers
 //!
-//! Implements the Nacos V2 configuration change listener API endpoint:
+//! Implements the Batata V2 configuration change listener API endpoint (Nacos-compatible):
 //! - POST /nacos/v2/cs/config/listener - Listen for configuration changes
 
 use actix_web::{HttpRequest, Responder, post, web};

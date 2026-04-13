@@ -161,7 +161,7 @@ impl Default for PluginContext {
 
 /// Protocol adapter plugin for compatibility layers (e.g., Consul, Eureka, Apollo).
 ///
-/// Protocol adapters translate external protocols into Batata-native (Nacos) operations.
+/// Protocol adapters translate external protocols into Batata-native operations.
 /// Batata's core is a Nacos-compatible service discovery and configuration platform.
 /// Protocol adapter plugins enable clients of other systems to interact with Batata
 /// using their native protocols.
@@ -339,10 +339,10 @@ pub trait HealthCheckResultHandler: Send + Sync {
 /// Plugin naming store for protocol-specific service registration.
 ///
 /// Each protocol adapter plugin can register its own naming store to manage
-/// service data independently from the core Nacos naming service.
+/// service data independently from the core Batata naming service.
 ///
 /// Key design:
-/// - **Core (Nacos)** data lives in `NamingService` — the batata core.
+/// - **Core (Batata)** data lives in `NamingService` — the batata core.
 /// - **Plugin** data lives in plugin-owned stores — completely isolated.
 /// - No data conversion between core and plugins.
 /// - Each plugin defines its own key format and data model.

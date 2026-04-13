@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 use batata_persistence::entity::{permissions, roles, users};
 
 // Auth configuration keys
-pub const NACOS_CORE_AUTH_ENABLED: &str = "batata.core.auth.enabled";
-pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "batata.core.auth.console.enabled";
-pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "batata.core.auth.admin.enabled";
-pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "batata.core.auth.system.type";
-pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "batata.core.auth.server.identity.key";
-pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "batata.core.auth.server.identity.value";
+pub const AUTH_ENABLED_KEY: &str = "batata.core.auth.enabled";
+pub const AUTH_CONSOLE_ENABLED_KEY: &str = "batata.core.auth.console.enabled";
+pub const AUTH_ADMIN_ENABLED_KEY: &str = "batata.core.auth.admin.enabled";
+pub const AUTH_SYSTEM_TYPE_KEY: &str = "batata.core.auth.system.type";
+pub const AUTH_SERVER_IDENTITY_KEY_PROP: &str = "batata.core.auth.server.identity.key";
+pub const AUTH_SERVER_IDENTITY_VALUE_PROP: &str = "batata.core.auth.server.identity.value";
 
 pub const AUTH_PLUGIN_TYPE: &str = "nacos";
 pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
@@ -28,21 +28,22 @@ pub const PARAM_PASSWORD: &str = "password";
 pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
 pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "console/user/password";
 pub const LOCK_OPERATOR_POINT: &str = "grpc/lock";
-pub const NACOS_USER_KEY: &str = "nacosuser";
+/// Kept as "nacosuser" for wire-format compatibility
+pub const USER_CONTEXT_KEY: &str = "nacosuser";
 pub const TOKEN_SECRET_KEY: &str = "batata.core.auth.plugin.nacos.token.secret.key";
 pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
 pub const TOKEN_EXPIRE_SECONDS: &str = "batata.core.auth.plugin.nacos.token.expire.seconds";
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
 
 // LDAP configuration keys
-pub const NACOS_CORE_AUTH_LDAP_URL: &str = "batata.core.auth.ldap.url";
-pub const NACOS_CORE_AUTH_LDAP_BASEDC: &str = "batata.core.auth.ldap.basedc";
-pub const NACOS_CORE_AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
-pub const NACOS_CORE_AUTH_LDAP_USERDN: &str = "batata.core.auth.ldap.userDn";
-pub const NACOS_CORE_AUTH_LDAP_PASSWORD: &str = "batata.core.auth.ldap.password";
-pub const NACOS_CORE_AUTH_LDAP_FILTER_PREFIX: &str = "batata.core.auth.ldap.filter.prefix";
-pub const NACOS_CORE_AUTH_CASE_SENSITIVE: &str = "batata.core.auth.ldap.case.sensitive";
-pub const NACOS_CORE_AUTH_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
+pub const AUTH_LDAP_URL: &str = "batata.core.auth.ldap.url";
+pub const AUTH_LDAP_BASEDC: &str = "batata.core.auth.ldap.basedc";
+pub const AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
+pub const AUTH_LDAP_USERDN: &str = "batata.core.auth.ldap.userDn";
+pub const AUTH_LDAP_PASSWORD: &str = "batata.core.auth.ldap.password";
+pub const AUTH_LDAP_FILTER_PREFIX: &str = "batata.core.auth.ldap.filter.prefix";
+pub const AUTH_LDAP_CASE_SENSITIVE: &str = "batata.core.auth.ldap.case.sensitive";
+pub const AUTH_LDAP_IGNORE_PARTIAL_RESULT: &str =
     "batata.core.auth.ldap.ignore.partial.result.exception";
 pub const LDAP_PREFIX: &str = "LDAP_";
 
@@ -79,20 +80,20 @@ impl From<&users::Model> for User {
     }
 }
 
-/// Nacos user with authentication token
+/// Authenticated user with JWT token
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NacosUser {
+pub struct AuthenticatedUser {
     pub username: String,
     pub password: String,
     pub token: String,
     pub global_admin: bool,
 }
 
-/// JWT payload for Nacos authentication
+/// JWT payload for authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NacosJwtPayload {
+pub struct JwtPayload {
     pub sub: String,
     pub exp: i64,
 }
@@ -300,8 +301,8 @@ mod tests {
     #[test]
     fn test_ldap_constants() {
         assert_eq!(LDAP_AUTH_PLUGIN_TYPE, "ldap");
-        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "batata.core.auth.ldap.url");
-        assert_eq!(NACOS_CORE_AUTH_LDAP_BASEDC, "batata.core.auth.ldap.basedc");
+        assert_eq!(AUTH_LDAP_URL, "batata.core.auth.ldap.url");
+        assert_eq!(AUTH_LDAP_BASEDC, "batata.core.auth.ldap.basedc");
         assert_eq!(LDAP_PREFIX, "LDAP_");
     }
 
@@ -408,8 +409,8 @@ mod tests {
     }
 
     #[test]
-    fn test_nacos_user_serialization() {
-        let user = NacosUser {
+    fn test_authenticated_user_serialization() {
+        let user = AuthenticatedUser {
             username: "admin".to_string(),
             password: "hashed".to_string(),
             token: "jwt.token.here".to_string(),
@@ -421,21 +422,21 @@ mod tests {
     }
 
     #[test]
-    fn test_nacos_user_deserialization() {
+    fn test_authenticated_user_deserialization() {
         let json = r#"{"username":"admin","password":"pass","token":"tok","globalAdmin":false}"#;
-        let user: NacosUser = serde_json::from_str(json).unwrap();
+        let user: AuthenticatedUser = serde_json::from_str(json).unwrap();
         assert_eq!(user.username, "admin");
         assert!(!user.global_admin);
     }
 
     #[test]
-    fn test_nacos_jwt_payload_serialization() {
-        let payload = NacosJwtPayload {
+    fn test_jwt_payload_serialization() {
+        let payload = JwtPayload {
             sub: "testuser".to_string(),
             exp: 1700000000,
         };
         let json = serde_json::to_string(&payload).unwrap();
-        let deserialized: NacosJwtPayload = serde_json::from_str(&json).unwrap();
+        let deserialized: JwtPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.sub, "testuser");
         assert_eq!(deserialized.exp, 1700000000);
     }

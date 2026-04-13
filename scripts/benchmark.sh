@@ -19,7 +19,7 @@
 #   ./scripts/benchmark.sh quick            # Quick smoke test (5s each)
 #
 # Environment:
-#   SERVER=127.0.0.1:8848   Nacos server address
+#   SERVER=127.0.0.1:8848   Batata server address
 #   CONSUL=127.0.0.1:8500   Consul server address
 #   THREADS=4               Concurrent threads
 #   DURATION=30s            Test duration

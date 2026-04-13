@@ -3,10 +3,10 @@
 //! Provides DNS-based service discovery for Batata.
 //! Supports A, AAAA, SRV, and TXT records.
 //!
-//! Query format: {service-name}.{group-name}.{namespace}.svc.nacos.local
+//! Query format: {service-name}.{group-name}.{namespace}.svc.batata.local
 //!
 //! Example:
-//! - Query: api-service.DEFAULT_GROUP.public.svc.nacos.local
+//! - Query: api-service.DEFAULT_GROUP.public.svc.batata.local
 //! - Returns: A records with healthy instance IPs
 
 use std::net::SocketAddr;
@@ -39,7 +39,7 @@ impl Default for DnsConfig {
             bind_address: "0.0.0.0".to_string(),
             port: 8853,
             default_ttl: 30,
-            suffix: "svc.nacos.local".to_string(),
+            suffix: "svc.batata.local".to_string(),
         }
     }
 }
@@ -62,7 +62,7 @@ impl DnsConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30),
             suffix: std::env::var("BATATA_DNS_SUFFIX")
-                .unwrap_or_else(|_| "svc.nacos.local".to_string()),
+                .unwrap_or_else(|_| "svc.batata.local".to_string()),
         }
     }
 }
@@ -176,7 +176,8 @@ impl DnsServer {
         if let Some((namespace, group, service)) = Self::parse_service_name(&qname, &config.suffix)
         {
             // Zero-copy snapshot; build_response reads fields via Arc deref.
-            let instances = naming_service.get_instances_snapshot(&namespace, &group, &service, "", true);
+            let instances =
+                naming_service.get_instances_snapshot(&namespace, &group, &service, "", true);
 
             if !instances.is_empty() {
                 // Build response with A records
@@ -239,7 +240,7 @@ impl DnsServer {
     }
 
     /// Parse service name from DNS query
-    /// Format: {service}.{group}.{namespace}.svc.nacos.local
+    /// Format: {service}.{group}.{namespace}.svc.batata.local
     fn parse_service_name(qname: &str, suffix: &str) -> Option<(String, String, String)> {
         let suffix_lower = suffix.to_lowercase();
         if !qname.ends_with(&suffix_lower) {
@@ -333,8 +334,8 @@ impl DnsServer {
                 // TTL
                 response.extend_from_slice(&ttl.to_be_bytes());
 
-                // Build target name (ip.svc.nacos.local)
-                let target = format!("instance-{}.svc.nacos.local", i);
+                // Build target name (ip.svc.batata.local)
+                let target = format!("instance-{}.svc.batata.local", i);
                 let target_len = target.len() + 2; // +2 for length prefix and null terminator
 
                 // RDLENGTH = 6 (priority, weight, port) + target_len
@@ -392,11 +393,11 @@ mod tests {
 
     #[test]
     fn test_parse_service_name() {
-        let suffix = "svc.nacos.local";
+        let suffix = "svc.batata.local";
 
         // Full format
         let result = DnsServer::parse_service_name(
-            "api-service.default_group.public.svc.nacos.local",
+            "api-service.default_group.public.svc.batata.local",
             suffix,
         );
         assert_eq!(
@@ -410,7 +411,7 @@ mod tests {
 
         // Two parts (default namespace)
         let result =
-            DnsServer::parse_service_name("api-service.default_group.svc.nacos.local", suffix);
+            DnsServer::parse_service_name("api-service.default_group.svc.batata.local", suffix);
         assert_eq!(
             result,
             Some((
@@ -421,7 +422,7 @@ mod tests {
         );
 
         // One part (default namespace and group)
-        let result = DnsServer::parse_service_name("api-service.svc.nacos.local", suffix);
+        let result = DnsServer::parse_service_name("api-service.svc.batata.local", suffix);
         assert_eq!(
             result,
             Some((
@@ -442,6 +443,6 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.port, 8853);
         assert_eq!(config.default_ttl, 30);
-        assert_eq!(config.suffix, "svc.nacos.local");
+        assert_eq!(config.suffix, "svc.batata.local");
     }
 }

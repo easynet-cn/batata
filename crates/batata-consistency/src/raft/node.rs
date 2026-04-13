@@ -213,10 +213,7 @@ impl RaftNode {
     ///
     /// Safe to call after Raft startup — the hook slot is shared with the
     /// state machine via `Arc<RwLock<_>>` and consulted on every apply.
-    pub async fn register_naming_hook(
-        &self,
-        hook: Arc<dyn super::naming_hook::NamingApplyHook>,
-    ) {
+    pub async fn register_naming_hook(&self, hook: Arc<dyn super::naming_hook::NamingApplyHook>) {
         *self.naming_hook.write().await = Some(hook);
     }
 
@@ -591,7 +588,7 @@ impl RaftNode {
                         continue;
                     }
                 };
-                metrics::gauge!("nacos_monitor_lock_alive_count").set(alive_count as f64);
+                metrics::gauge!("batata_monitor_lock_alive_count").set(alive_count as f64);
 
                 if !node.is_leader() {
                     continue;
@@ -667,9 +664,7 @@ impl RaftNode {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut expired = Vec::new();
         let mut alive_count: u64 = 0;
-        let iter = self
-            .db
-            .iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (_key, val) = match item {
                 Ok(kv) => kv,

@@ -1,6 +1,6 @@
 //! V2 API routing configuration
 //!
-//! This module configures the routes for the Nacos V2 Open API.
+//! This module configures the routes for the Batata V2 Open API (Nacos V2-compatible).
 
 use actix_web::{Scope, web};
 
@@ -115,7 +115,7 @@ pub fn naming_routes() -> Scope {
                 .service(operator::update_switches)
                 .service(operator::get_metrics),
         )
-        // Nacos registers operator endpoints under both /operator and /ops (dual path)
+        // Operator endpoints registered under both /operator and /ops (dual path, for Nacos SDK compatibility)
         .service(
             web::scope("/ops")
                 .route("switches", web::get().to(operator::get_switches_handler))

@@ -1,7 +1,7 @@
 //! Distro protocol implementation for ephemeral data synchronization
 //!
 //! The Distro protocol is used to sync ephemeral data (like service instances) across cluster nodes.
-//! This is the AP (Availability, Partition tolerance) mode in Nacos, used for ephemeral instances.
+//! This is the AP (Availability, Partition tolerance) mode in Batata (Nacos-compatible), used for ephemeral instances.
 
 use std::{
     sync::{
@@ -521,11 +521,8 @@ impl DistroProtocol {
     /// handlers.
     pub async fn cleanup_non_responsible_keys(&self) -> usize {
         let mut total_removed = 0usize;
-        let handler_entries: Vec<Arc<dyn DistroDataHandler>> = self
-            .handlers
-            .iter()
-            .map(|e| e.value().clone())
-            .collect();
+        let handler_entries: Vec<Arc<dyn DistroDataHandler>> =
+            self.handlers.iter().map(|e| e.value().clone()).collect();
         for handler in handler_entries {
             let keys = handler.get_all_keys().await;
             for key in keys {
@@ -725,8 +722,7 @@ impl DistroProtocol {
                             //   attempt 6+: base * 64 (ceiling)
                             const BACKOFF_CEILING_SHIFT: u32 = 6;
                             let mut updated_task = task.clone();
-                            updated_task.retry_count =
-                                updated_task.retry_count.saturating_add(1);
+                            updated_task.retry_count = updated_task.retry_count.saturating_add(1);
                             let base_delay = config.sync_retry_delay.as_millis() as i64;
                             let shift = updated_task.retry_count.min(BACKOFF_CEILING_SHIFT);
                             let backoff = base_delay.saturating_mul(1i64 << shift);
@@ -740,20 +736,12 @@ impl DistroProtocol {
                             if rc <= 3 {
                                 debug!(
                                     "Sync retry {} for {}:{} to {} (backoff={}ms)",
-                                    rc,
-                                    task.data_type,
-                                    task.key,
-                                    task.target_address,
-                                    backoff
+                                    rc, task.data_type, task.key, task.target_address, backoff
                                 );
                             } else if rc <= 10 {
                                 warn!(
                                     "Sync retry {} for {}:{} to {} (backoff={}ms)",
-                                    rc,
-                                    task.data_type,
-                                    task.key,
-                                    task.target_address,
-                                    backoff
+                                    rc, task.data_type, task.key, task.target_address, backoff
                                 );
                             } else if rc.is_multiple_of(10) {
                                 // Every 10th retry above 10, surface an error
@@ -815,9 +803,7 @@ impl DistroProtocol {
                 {
                     let healthy: Vec<String> = members
                         .iter()
-                        .filter(|e| {
-                            matches!(e.value().state, batata_api::model::NodeState::Up)
-                        })
+                        .filter(|e| matches!(e.value().state, batata_api::model::NodeState::Up))
                         .map(|e| e.key().clone())
                         .collect();
                     mapper.update_members(healthy);
@@ -827,10 +813,8 @@ impl DistroProtocol {
                 // Iterating handlers separately keeps the main verify loop below
                 // unchanged and avoids holding extra locks during network I/O.
                 let mut cleanup_removed = 0usize;
-                let cleanup_entries: Vec<Arc<dyn DistroDataHandler>> = handlers
-                    .iter()
-                    .map(|e| e.value().clone())
-                    .collect();
+                let cleanup_entries: Vec<Arc<dyn DistroDataHandler>> =
+                    handlers.iter().map(|e| e.value().clone()).collect();
                 for handler in cleanup_entries {
                     let keys = handler.get_all_keys().await;
                     for key in keys {

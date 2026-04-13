@@ -1,4 +1,4 @@
-//! Main entry point for Batata Nacos-compatible server.
+//! Main entry point for Batata server (Nacos-compatible).
 //!
 //! This file orchestrates server startup by delegating to specialized modules
 //! for persistence, cluster, consul, and HTTP/gRPC server initialization.
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 2: Determine deployment mode
     // ====================================================================
     let deployment_type = configuration.deployment_type();
-    let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE;
+    let is_console_remote = deployment_type == model::common::DEPLOYMENT_TYPE_CONSOLE;
 
     if is_console_remote
         && configuration.console_remote_username() == "batata"
@@ -279,9 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // DashMap on every node. Also replay committed persistent instances
     // from RocksDB CF_INSTANCES so cold starts (and process restarts)
     // rehydrate the DashMap from the authoritative Raft-backed store.
-    if let (Some(raft), Some(ns)) =
-        (&persistence_ctx.raft_node, &naming_service_concrete)
-    {
+    if let (Some(raft), Some(ns)) = (&persistence_ctx.raft_node, &naming_service_concrete) {
         let hook = std::sync::Arc::new(
             batata_naming::handler::raft_hook::NamingApplyHookImpl::new(ns.clone()),
         );
@@ -750,7 +748,7 @@ async fn run_http_servers(
     let server_main_port = app_state.configuration.server_main_port();
     let server_context_path = app_state.configuration.server_context_path();
     let mcp_registry_enabled = app_state.configuration.mcp_registry_enabled()
-        || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
+        || deployment_type == model::common::DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = app_state.configuration.mcp_registry_port();
 
     // Register HTTP server state trackers
@@ -758,7 +756,7 @@ async fn run_http_servers(
     let console_http_state = batata_core::ServerStateTracker::new();
 
     match deployment_type {
-        model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
+        model::common::DEPLOYMENT_TYPE_CONSOLE => {
             let console_server_port = app_state.configuration.console_server_port();
             let console_context_path = app_state.configuration.console_server_context_path();
             let console = startup::console_server(
@@ -779,10 +777,9 @@ async fn run_http_servers(
                 }
             }
         }
-        model::common::NACOS_DEPLOYMENT_TYPE_SERVER
-        | model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP => {
+        model::common::DEPLOYMENT_TYPE_SERVER | model::common::DEPLOYMENT_TYPE_SERVER_WITH_MCP => {
             info!(
-                "Starting Nacos main server on {}:{}",
+                "Starting Batata main server on {}:{}",
                 server_address, server_main_port
             );
             let mcp_registry_for_server = ai_services.mcp_registry.clone();
@@ -866,7 +863,7 @@ async fn run_http_servers(
             );
 
             info!(
-                "Starting Nacos main server on {}:{}",
+                "Starting Batata main server on {}:{}",
                 server_address, server_main_port
             );
             let main = startup::main_server(

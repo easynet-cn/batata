@@ -226,7 +226,7 @@ impl InstanceCheckRegistry {
         }
     }
 
-    /// Convenience constructor for the core (Nacos) naming service.
+    /// Convenience constructor for the core Batata naming service.
     ///
     /// Creates a `CoreResultHandler` wrapping the given NamingServiceProvider,
     /// so health status changes are synced to the NamingService.

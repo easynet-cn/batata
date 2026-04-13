@@ -1,5 +1,5 @@
 // Console MCP server management API endpoints
-// Aligned with Nacos V3 Console API contract
+// Aligned with Batata V3 Console API contract
 // Uses Arc<dyn McpServerService> trait object (wired in batata-server)
 
 use std::collections::HashMap;

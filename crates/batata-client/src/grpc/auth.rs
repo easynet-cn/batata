@@ -1,6 +1,6 @@
 //! Authentication provider for gRPC connections
 //!
-//! Handles HTTP-based JWT authentication against the Nacos server,
+//! Handles HTTP-based JWT authentication against the Batata server,
 //! caching the token and refreshing before expiry.
 
 use std::sync::{Arc, RwLock};

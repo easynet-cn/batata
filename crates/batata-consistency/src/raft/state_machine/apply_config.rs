@@ -201,11 +201,7 @@ impl RocksStateMachine {
                 Ok(b) => b,
                 Err(e) => return RaftResponse::failure(format!("history encode error: {}", e)),
             };
-            batch.put_cf(
-                self.cf_config_history(),
-                history_key.as_bytes(),
-                encoded,
-            );
+            batch.put_cf(self.cf_config_history(), history_key.as_bytes(), encoded);
         }
 
         match self.db.write_opt(batch, &self.write_opts) {
@@ -463,7 +459,10 @@ impl RocksStateMachine {
             Ok(b) => b,
             Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
         };
-        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
+        match self
+            .db
+            .put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts)
+        {
             Ok(_) => {
                 debug!("Config tags updated: {}", key);
                 RaftResponse::success()
@@ -498,7 +497,10 @@ impl RocksStateMachine {
             Ok(b) => b,
             Err(e) => return RaftResponse::failure(format!("encode error: {}", e)),
         };
-        match self.db.put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts) {
+        match self
+            .db
+            .put_cf_opt(self.cf_config(), key.as_bytes(), encoded, &self.write_opts)
+        {
             Ok(_) => {
                 debug!("Config tags deleted: {}", key);
                 RaftResponse::success()

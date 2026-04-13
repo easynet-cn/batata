@@ -294,7 +294,10 @@ impl ConfigPersistence for ExternalDbPersistService {
         // the updated MD5 and fails the CAS check. Without FOR UPDATE,
         // MySQL REPEATABLE READ snapshot-reads allow both to pass.
         let existing = if cas_md5.is_some() {
-            query.lock(sea_orm::sea_query::LockType::Update).one(&tx).await?
+            query
+                .lock(sea_orm::sea_query::LockType::Update)
+                .one(&tx)
+                .await?
         } else {
             query.one(&tx).await?
         };

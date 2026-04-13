@@ -1,4 +1,4 @@
-// batata-maintainer-client: Admin/maintainer HTTP client for Batata/Nacos
+// batata-maintainer-client: Admin/maintainer HTTP client for Batata
 
 pub mod client;
 pub mod config;

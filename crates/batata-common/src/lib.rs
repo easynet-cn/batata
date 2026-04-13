@@ -74,9 +74,9 @@ pub fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
 
 /// Build a config group key: "dataId+group+tenant"
 ///
-/// This is the canonical Nacos key format used for config persistence,
+/// This is the canonical key format used for config persistence,
 /// listener change detection, and batch MD5 comparison.
-/// Matches Nacos Java `GroupKey.getKeyTenant(dataId, group, tenant)`.
+/// Compatible with Nacos Java `GroupKey.getKeyTenant(dataId, group, tenant)`.
 #[inline]
 pub fn build_config_key(data_id: &str, group: &str, tenant: &str) -> String {
     let mut key = String::with_capacity(data_id.len() + group.len() + tenant.len() + 2);

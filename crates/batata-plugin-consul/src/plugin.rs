@@ -23,6 +23,7 @@ use crate::catalog::ConsulCatalogService;
 use crate::config_entry::ConsulConfigEntryService;
 use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
+use crate::constants::CF_CONSUL_CATALOG;
 use crate::coordinate::ConsulCoordinateService;
 use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
@@ -30,12 +31,11 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTableIndex};
 use crate::kv::ConsulKVService;
 use crate::lock::{ConsulLockService, ConsulSemaphoreService};
 use crate::model::{ConsulDatacenterConfig, ConsulPluginConfig};
+use crate::naming_store::ConsulNamingStore;
 use crate::operator::ConsulOperatorService;
 use crate::peering::ConsulPeeringService;
 use crate::query::ConsulQueryService;
 use crate::raft::ConsulRaftWriter;
-use crate::constants::CF_CONSUL_CATALOG;
-use crate::naming_store::ConsulNamingStore;
 use crate::session::ConsulSessionService;
 use crate::snapshot::ConsulSnapshotService;
 
@@ -676,9 +676,8 @@ impl ConsulPlugin {
         // and `ConsulNamingStore::get_service_entries` — the actual query
         // path — returns stale/empty results.
         {
-            let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(
-                NamingStoreApplyHook::new(consul_naming_store.clone()),
-            );
+            let hook: Arc<dyn crate::raft::ConsulApplyHook> =
+                Arc::new(NamingStoreApplyHook::new(consul_naming_store.clone()));
             *apply_hook_slot.write().await = Some(hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
         }

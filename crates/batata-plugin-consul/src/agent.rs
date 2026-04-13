@@ -30,7 +30,7 @@ use batata_plugin::PluginNamingStore;
 /// Consul Agent service adapter
 ///
 /// Uses ConsulNamingStore for native Consul service storage, completely
-/// independent from the core Nacos NamingService.
+/// independent from the core Batata NamingService.
 #[derive(Clone)]
 pub struct ConsulAgentService {
     naming_store: Arc<ConsulNamingStore>,

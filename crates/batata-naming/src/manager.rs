@@ -1,14 +1,14 @@
 //! NamingManager — unified entry point for naming services
 //!
-//! Holds the core Nacos NamingService and any registered plugin naming stores.
+//! Holds the core Batata NamingService and any registered plugin naming stores.
 //!
 //! ```text
 //! NamingManager
-//! ├── core: NamingService          (batata core, Nacos compatible)
+//! ├── core: NamingService          (Batata core, Nacos compatible)
 //! └── plugins: Map<id, Store>      (Consul, Eureka, Apollo, ...)
 //! ```
 //!
-//! - The core is always available and handles all Nacos SDK traffic.
+//! - The core is always available and handles all SDK traffic (Nacos-compatible).
 //! - Plugin stores are optional and handle their own protocol's traffic.
 //! - Core and plugins are completely isolated — no data sharing.
 
@@ -22,12 +22,12 @@ use crate::service::NamingService;
 
 /// Unified naming manager.
 ///
-/// Provides access to the core Nacos naming service and any registered
+/// Provides access to the core Batata naming service and any registered
 /// plugin naming stores. Designed to be stored as `Arc<NamingManager>`
 /// and shared across HTTP/gRPC handlers.
 #[derive(Clone)]
 pub struct NamingManager {
-    /// Core naming service (batata/Nacos)
+    /// Core naming service (Batata)
     core: Arc<NamingService>,
     /// Plugin naming stores, keyed by plugin_id
     plugins: Arc<DashMap<String, Arc<dyn PluginNamingStore>>>,
@@ -42,7 +42,7 @@ impl NamingManager {
         }
     }
 
-    /// Get the core Nacos naming service.
+    /// Get the core Batata naming service.
     pub fn core(&self) -> &Arc<NamingService> {
         &self.core
     }

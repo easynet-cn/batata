@@ -1,12 +1,12 @@
 //! gRPC request parameter validation.
 //!
 //! Validates namespace IDs, group names, data IDs, and service names
-//! from gRPC requests before handler dispatch. Follows Nacos conventions.
+//! from gRPC requests before handler dispatch. Follows Nacos-compatible conventions.
 
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// Maximum allowed lengths for parameters (matching Nacos)
+/// Maximum allowed lengths for parameters (Nacos-compatible)
 const MAX_NAMESPACE_ID_LEN: usize = 128;
 const MAX_GROUP_LEN: usize = 128;
 const MAX_DATA_ID_LEN: usize = 256;

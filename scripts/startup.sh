@@ -49,7 +49,7 @@ case "$(uname)" in
     Linux*)  linux=true ;;
 esac
 
-# Parse options (compatible with Nacos startup.sh)
+# Parse options (compatible with Nacos startup.sh flags for migration convenience)
 export MODE="cluster"
 export DEPLOYMENT="merged"
 export MEMBER_LIST=""

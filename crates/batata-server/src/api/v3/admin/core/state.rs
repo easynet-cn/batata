@@ -10,7 +10,7 @@ use crate::{error, model::common::AppState, model::response::Result};
 /// GET /v3/admin/core/state
 ///
 /// Returns server state information as a key-value map.
-/// No authentication required - matches Nacos ServerStateController (no @Secured).
+/// No authentication required - matches Nacos ServerStateController behavior (no @Secured).
 #[get("")]
 async fn get_state(data: web::Data<AppState>) -> impl Responder {
     let mut state = HashMap::new();

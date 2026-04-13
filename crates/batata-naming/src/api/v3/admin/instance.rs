@@ -634,8 +634,13 @@ async fn update_metadata(
     let instance_keys = parse_instance_keys(&form.instances);
 
     // Zero-copy snapshot — only matching instances get deep-cloned.
-    let snapshot =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &form.service_name, "", false);
+    let snapshot = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &form.service_name,
+        "",
+        false,
+    );
 
     let mut updated_ips = Vec::new();
     for arc in snapshot {
@@ -873,8 +878,13 @@ async fn delete_metadata_batch(
     }
 
     // Zero-copy snapshot — only matching instances get deep-cloned.
-    let snapshot =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
+    let snapshot = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+    );
 
     let mut updated_ips = Vec::new();
     for arc in snapshot {

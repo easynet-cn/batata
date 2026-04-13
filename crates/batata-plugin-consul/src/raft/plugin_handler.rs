@@ -1026,9 +1026,7 @@ impl ConsulRaftWriter {
     /// `ensure_linearizable` can only be invoked on the leader. Callers
     /// should detect the error and either forward the HTTP request or
     /// emit an HTTP 307 redirect to the leader's address.
-    pub async fn linearizable_read(
-        &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn linearizable_read(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.core_raft.linearizable_read().await
     }
 

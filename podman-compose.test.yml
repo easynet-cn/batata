@@ -74,8 +74,8 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=mysql://batata:batata@mysql-test:3306/batata_test
-      - NACOS_SERVER_MAIN_PORT=8848
-      - NACOS_CONSOLE_PORT=8081
+      - BATATA_SERVER_MAIN_PORT=8848
+      - BATATA_CONSOLE_PORT=8081
     ports:
       - "18848:8848"
       - "19848:9848"

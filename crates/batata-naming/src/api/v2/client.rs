@@ -1,6 +1,6 @@
 //! V2 Client API handlers
 //!
-//! Implements the Nacos V2 client management API endpoints:
+//! Implements the Batata V2 client management API endpoints (Nacos-compatible):
 //! - GET /nacos/v2/ns/client/list - Get client list
 //! - GET /nacos/v2/ns/client - Get client detail
 //! - GET /nacos/v2/ns/client/publish/list - Get published services

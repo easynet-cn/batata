@@ -12,7 +12,7 @@
 #   quick     (default) cargo fmt check + clippy + unit tests
 #   standard  quick + standalone embedded E2E tests
 #   full      standard + cluster embedded E2E + external DB E2E (requires Docker)
-#   sdk       full + Nacos Java SDK + Consul Go SDK tests (requires Docker)
+#   sdk       full + Nacos Java SDK + Consul Go SDK compatibility tests (requires Docker)
 #
 # Options:
 #   --skip-build   Skip cargo build --release (reuse existing binary)

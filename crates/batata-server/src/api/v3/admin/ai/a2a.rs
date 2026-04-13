@@ -1,5 +1,5 @@
 //! V3 Admin A2A agent management endpoints
-//! Aligned with Nacos V3 Admin API contract
+//! Aligned with Nacos V3 Admin API contract for SDK compatibility
 //! Uses config-backed persistence when available, falls back to in-memory registry
 
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use crate::{
     secured,
 };
 
-/// Form data for A2A agent registration - accepts JSON-as-string params like Nacos.
+/// Form data for A2A agent registration - accepts JSON-as-string params (Nacos SDK compatible).
 /// The nacos-maintainer-client sends: agentCard=<JSON>&agentName=xxx&namespaceId=xxx
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

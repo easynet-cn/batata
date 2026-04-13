@@ -1,5 +1,5 @@
-use sea_orm_migration::{prelude::*, schema::*};
 use crate::column_helper::long_text;
+use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -19,7 +19,10 @@ impl MigrationTrait for Migration {
                     )
                     .col(string_len(ConfigInfoGray::DataId, 255).not_null())
                     .col(string_len(ConfigInfoGray::GroupId, 128).not_null())
-                    .col(long_text(ConfigInfoGray::Content, manager.get_database_backend()).not_null())
+                    .col(
+                        long_text(ConfigInfoGray::Content, manager.get_database_backend())
+                            .not_null(),
+                    )
                     .col(string_len_null(ConfigInfoGray::Md5, 32))
                     .col(text_null(ConfigInfoGray::SrcUser))
                     .col(string_len_null(ConfigInfoGray::SrcIp, 100))

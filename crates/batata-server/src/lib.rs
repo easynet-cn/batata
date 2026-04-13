@@ -1,4 +1,4 @@
-// Main library module for Batata - A Nacos-compatible service discovery and configuration management system
+// Main library module for Batata - a service discovery and configuration management system (Nacos-compatible)
 // This file re-exports security models and common types from batata-server-common
 
 // Module declarations

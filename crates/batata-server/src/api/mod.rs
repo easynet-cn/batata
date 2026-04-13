@@ -37,12 +37,12 @@ pub use batata_api::distro;
 // Shared logic between V2 and V3 API implementations
 pub mod shared;
 
-// Nacos V2 Open API implementation
+// Batata V2 Open API implementation (Nacos V2-compatible)
 // Note: V1 API is NOT supported. Batata follows Nacos 3.x direction
 // which focuses on V2 and V3 APIs for modern clients.
 pub mod v2;
 
-// Nacos V3 Admin and Client API implementation
+// Batata V3 Admin and Client API implementation
 pub mod v3;
 
 // AI Capabilities API (MCP Server Registry, A2A Communication)

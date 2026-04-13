@@ -110,12 +110,10 @@ impl NamingApplyHook for NamingApplyHookImpl {
     ) {
         // Load the current instance and merge only the Some() fields — a
         // partial update must not wipe fields the caller didn't specify.
-        let Some(mut existing) = self.naming.get_instance_by_key(
-            namespace_id,
-            group_name,
-            service_name,
-            instance_id,
-        ) else {
+        let Some(mut existing) =
+            self.naming
+                .get_instance_by_key(namespace_id, group_name, service_name, instance_id)
+        else {
             tracing::warn!(
                 "on_update: instance not found (ns={}, group={}, svc={}, id={}) — skipping",
                 namespace_id,

@@ -25,9 +25,9 @@ struct GetParam {
     namespace_id: String,
 }
 
-/// Namespace create form — aligned with Nacos NamespaceForm.
-/// The Nacos maintainer-client sends `namespaceId` as the namespace ID param.
-/// The Nacos console sends `customNamespaceId` (legacy alias).
+/// Namespace create form — aligned with Nacos NamespaceForm for SDK compatibility.
+/// The nacos-maintainer-client sends `namespaceId` as the namespace ID param.
+/// The console sends `customNamespaceId` (legacy alias).
 /// Both are accepted; `namespaceId` takes priority.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,7 +141,7 @@ async fn create_namespace(
             .build()
     );
 
-    // Nacos maintainer-client sends `namespaceId`, console sends `customNamespaceId`
+    // nacos-maintainer-client sends `namespaceId`, console sends `customNamespaceId`
     // Accept both, with `namespaceId` taking priority
     let mut namespace_id = form
         .namespace_id
@@ -178,7 +178,7 @@ async fn create_namespace(
         );
     }
 
-    // Nacos behavior: check duplicate before create (throws NacosApiException if exists)
+    // Check duplicate before create (returns error if exists, matching Nacos behavior)
     match data.persistence().namespace_check(&namespace_id).await {
         Ok(true) => {
             return common::Result::<String>::http_bad_request(

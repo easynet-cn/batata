@@ -336,9 +336,13 @@ impl HealthCheckReactor {
         // Snapshot instances for this service (zero-copy Arc clones).
         // We early-skip disabled/persistent instances without paying any
         // value-clone cost; only survivors get deep-cloned into HealthCheckTask.
-        let snapshot =
-            self.naming_service
-                .get_instances_snapshot(namespace, group_name, service_name, "", false);
+        let snapshot = self.naming_service.get_instances_snapshot(
+            namespace,
+            group_name,
+            service_name,
+            "",
+            false,
+        );
 
         for arc in snapshot {
             // Skip disabled instances

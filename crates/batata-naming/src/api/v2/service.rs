@@ -1,6 +1,6 @@
 //! V2 Service API handlers
 //!
-//! Implements the Nacos V2 service management API endpoints:
+//! Implements the Batata V2 service management API endpoints (Nacos-compatible):
 //! - POST /nacos/v2/ns/service - Create service
 //! - DELETE /nacos/v2/ns/service - Delete service
 //! - PUT /nacos/v2/ns/service - Update service
@@ -192,8 +192,13 @@ pub async fn delete_service(
     }
 
     // Check if service has Batata-registered instances (zero-copy snapshot).
-    let instances =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
+    let instances = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+    );
 
     if !instances.is_empty() {
         return Result::<String>::http_response(
@@ -387,8 +392,13 @@ pub async fn get_service(
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
     // Zero-copy snapshot — we only need cluster names and counts.
-    let instances =
-        naming_service.get_instances_snapshot(namespace_id, group_name, &params.service_name, "", false);
+    let instances = naming_service.get_instances_snapshot(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+    );
 
     // Collect cluster names from instances
     let mut clusters: std::collections::HashSet<_> =

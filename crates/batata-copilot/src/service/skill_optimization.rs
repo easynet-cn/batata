@@ -322,7 +322,7 @@ fn build_conversation_messages(
     messages
 }
 
-/// Append conversation messages in Nacos format
+/// Append conversation messages in Batata/Nacos format
 fn append_conversation_messages(sb: &mut String, messages: &[ConversationMessage]) {
     for message in messages {
         let msg_type = message.msg_type.to_lowercase();

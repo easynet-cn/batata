@@ -1,6 +1,6 @@
-//! Nacos to xDS Resource Conversion
+//! Batata/Nacos to xDS Resource Conversion
 //!
-//! This module provides conversion functions to transform Nacos service
+//! This module provides conversion functions to transform Batata service
 //! discovery data into xDS resources for Envoy/Istio consumption.
 
 use std::collections::{HashMap, HashSet};

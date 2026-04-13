@@ -528,7 +528,7 @@ impl Configuration {
 
     /// Read an integer from the first config key that is present, falling
     /// back to a default if neither key exists. Centralizes the batata →
-    /// Nacos alias lookup for distro parameters.
+    /// Nacos-compatible alias lookup for distro parameters.
     fn get_int_or(&self, primary: &str, alias: &str, default: i64) -> i64 {
         self.config
             .get_int(primary)

@@ -1,6 +1,6 @@
 //! Request and response models for V2 API
 //!
-//! These models follow the Nacos V2 API specification with camelCase JSON serialization.
+//! These models follow the Nacos V2 API specification (camelCase JSON) for SDK compatibility.
 
 use serde::{Deserialize, Serialize};
 

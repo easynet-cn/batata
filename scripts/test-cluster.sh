@@ -5,7 +5,7 @@
 # Usage:
 #   ./scripts/test-cluster.sh                      # All tests
 #   ./scripts/test-cluster.sh consul               # Consul Go tests only
-#   ./scripts/test-cluster.sh nacos                # Nacos Java tests only
+#   ./scripts/test-cluster.sh nacos                # Nacos Java SDK tests only
 #   ./scripts/test-cluster.sh consul "TestKV"      # Filter by test name
 #   ./scripts/test-cluster.sh nacos "Cluster"      # Filter by test class
 #
@@ -59,8 +59,8 @@ run_consul() {
     echo -e "\n${BOLD}Consul: ${GREEN}${pass} PASS${NC} ${RED}${fail} FAIL${NC}"
 }
 
-run_nacos() {
-    echo -e "\n${BOLD}=== Nacos Java Tests ===${NC}"
+run_batata() {
+    echo -e "\n${BOLD}=== Nacos Java SDK Tests ===${NC}"
     local test_flag=""
     [ -n "$FILTER" ] && test_flag="-Dtest=Nacos${FILTER}*"
 
@@ -77,8 +77,8 @@ run_nacos() {
 
 case "$SUITE" in
     consul)  run_consul ;;
-    nacos)   run_nacos ;;
-    all)     run_consul; run_nacos ;;
+    nacos)   run_batata ;;
+    all)     run_consul; run_batata ;;
     *)       echo "Usage: $0 {all|consul|nacos} [filter]"; exit 1 ;;
 esac
 

@@ -152,7 +152,7 @@ pub fn console_server(
 ///
 /// Generic server builder for protocol adapter plugins (e.g., Consul, Eureka).
 /// Each plugin provides its own routes and app_data via `ProtocolAdapterPlugin::configure()`.
-/// The server runs on a dedicated port without Nacos authentication middleware,
+/// The server runs on a dedicated port without Batata authentication middleware,
 /// since protocol adapters use their own auth systems (e.g., Consul ACL tokens).
 #[cfg(feature = "consul")]
 pub fn plugin_http_server(
@@ -388,7 +388,7 @@ impl Default for CloudServices {
 
 /// Creates and binds the main HTTP server.
 ///
-/// The main server provides core Nacos-compatible API endpoints
+/// The main server provides core Batata API endpoints (Nacos-compatible)
 /// including config management, service discovery, AI capabilities,
 /// cloud native integrations, and metrics.
 /// Consul compatibility is served on a dedicated port.

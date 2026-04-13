@@ -101,7 +101,10 @@ fn bench_serialize(c: &mut Criterion) {
     let cases = [
         ("config_publish_small", config_publish_small()),
         ("config_publish_large", config_publish_large()),
-        ("persistent_instance_register", persistent_instance_register()),
+        (
+            "persistent_instance_register",
+            persistent_instance_register(),
+        ),
         ("plugin_write_consul_kv", plugin_write_consul_kv()),
     ];
 
@@ -123,7 +126,10 @@ fn bench_deserialize(c: &mut Criterion) {
     let cases = [
         ("config_publish_small", config_publish_small()),
         ("config_publish_large", config_publish_large()),
-        ("persistent_instance_register", persistent_instance_register()),
+        (
+            "persistent_instance_register",
+            persistent_instance_register(),
+        ),
         ("plugin_write_consul_kv", plugin_write_consul_kv()),
     ];
 

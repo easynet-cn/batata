@@ -1,6 +1,6 @@
 //! V2 Cluster API handlers
 //!
-//! Implements the Nacos V2 cluster management API endpoints:
+//! Implements the Batata V2 cluster management API endpoints (Nacos V2-compatible):
 //! - GET /nacos/v2/core/cluster/node/self - Get current node
 //! - GET /nacos/v2/core/cluster/node/list - Get node list
 //! - GET /nacos/v2/core/cluster/node/self/health - Get node health

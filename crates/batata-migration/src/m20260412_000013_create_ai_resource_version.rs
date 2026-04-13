@@ -1,5 +1,5 @@
-use sea_orm_migration::{prelude::*, schema::*};
 use crate::column_helper::long_text_null;
+use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -38,8 +38,14 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(long_text_null(AiResourceVersion::Storage, manager.get_database_backend()))
-                    .col(long_text_null(AiResourceVersion::PublishPipelineInfo, manager.get_database_backend()))
+                    .col(long_text_null(
+                        AiResourceVersion::Storage,
+                        manager.get_database_backend(),
+                    ))
+                    .col(long_text_null(
+                        AiResourceVersion::PublishPipelineInfo,
+                        manager.get_database_backend(),
+                    ))
                     .col(
                         big_integer(AiResourceVersion::DownloadCount)
                             .not_null()

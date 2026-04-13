@@ -1,5 +1,5 @@
 // Console AgentSpec management API endpoints
-// Aligned with Nacos V3 Console API contract
+// Aligned with Batata V3 Console API contract
 // Mirrors admin endpoints under /v3/console/ai/agentspecs with ConsoleApi security
 
 use std::sync::Arc;

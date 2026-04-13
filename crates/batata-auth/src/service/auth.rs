@@ -10,7 +10,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use moka::sync::Cache;
 use parking_lot::RwLock;
 
-use crate::model::NacosJwtPayload;
+use crate::model::JwtPayload;
 
 /// Configuration for auth caches
 #[derive(Clone, Debug)]
@@ -39,7 +39,7 @@ impl Default for AuthCacheConfig {
 /// Cached token data containing the full payload
 #[derive(Clone)]
 struct CachedTokenData {
-    claims: NacosJwtPayload,
+    claims: JwtPayload,
 }
 
 /// JWT Token cache to avoid repeated validation of the same token
@@ -102,7 +102,7 @@ pub fn init_auth_caches(config: AuthCacheConfig) {
 pub fn decode_jwt_token_cached(
     token: &str,
     secret_key: &str,
-) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
+) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<JwtPayload>> {
     // Check if token is blacklisted (revoked)
     if token_blacklist().contains_key(token) {
         return Err(jsonwebtoken::errors::Error::from(
@@ -155,9 +155,9 @@ pub fn decode_jwt_token_cached(
 pub fn decode_jwt_token(
     token: &str,
     secret_key: &str,
-) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
+) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<JwtPayload>> {
     let decoding_key = DecodingKey::from_base64_secret(secret_key)?;
-    decode::<NacosJwtPayload>(token, &decoding_key, &Validation::default())
+    decode::<JwtPayload>(token, &decoding_key, &Validation::default())
 }
 
 /// Invalidate a token from the cache
@@ -221,7 +221,7 @@ pub fn encode_jwt_token(
         .unwrap_or_else(chrono::Utc::now)
         .timestamp();
 
-    let payload = NacosJwtPayload {
+    let payload = JwtPayload {
         sub: sub.to_string(),
         exp,
     };

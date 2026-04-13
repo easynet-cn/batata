@@ -119,12 +119,8 @@ impl PayloadHandler for InstanceRequestHandler {
                     .register_instance(namespace, group_name, service_name, instance)
                     .await
             } else {
-                self.naming_service.register_instance(
-                    namespace,
-                    group_name,
-                    service_name,
-                    instance,
-                )
+                self.naming_service
+                    .register_instance(namespace, group_name, service_name, instance)
             };
             if ok {
                 self.naming_service.add_publisher(
@@ -901,10 +897,10 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
                 }
             );
             if req_type == REGISTER_INSTANCE {
-                let metadata_json = serde_json::to_string(&instance.metadata)
-                    .unwrap_or_else(|_| "{}".to_string());
-                let req = batata_consistency::raft::RaftRequest::PersistentInstanceRegister(
-                    Box::new(
+                let metadata_json =
+                    serde_json::to_string(&instance.metadata).unwrap_or_else(|_| "{}".to_string());
+                let req =
+                    batata_consistency::raft::RaftRequest::PersistentInstanceRegister(Box::new(
                         batata_consistency::raft::request::PersistentInstanceRegisterPayload {
                             namespace_id: namespace.clone(),
                             group_name: group_name.clone(),
@@ -922,8 +918,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
                                 instance.cluster_name.clone()
                             },
                         },
-                    ),
-                );
+                    ));
                 match raft.write(req).await {
                     Ok(resp) => resp.success,
                     Err(e) => {

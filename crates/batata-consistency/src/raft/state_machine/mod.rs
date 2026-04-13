@@ -130,7 +130,6 @@ impl RocksStateMachine {
         self.naming_hook.clone()
     }
 
-
     /// Register a plugin handler for processing PluginWrite operations.
     ///
     /// The plugin's column families must already exist in RocksDB — pass them
@@ -617,12 +616,7 @@ impl RocksStateMachine {
                 );
                 if resp.success {
                     if let Some(hook) = self.naming_hook.read().await.as_ref() {
-                        hook.on_deregister(
-                            &namespace_id,
-                            &group_name,
-                            &service_name,
-                            &instance_id,
-                        );
+                        hook.on_deregister(&namespace_id, &group_name, &service_name, &instance_id);
                     }
                 }
                 resp
@@ -734,7 +728,6 @@ impl RocksStateMachine {
             }
         }
     }
-
 
     // Namespace operations
     fn apply_namespace_create(
@@ -860,12 +853,10 @@ impl RocksStateMachine {
             Ok(b) => b,
             Err(e) => return RaftResponse::failure(format!("Failed to encode user: {}", e)),
         };
-        match self.db.put_cf_opt(
-            self.cf_users(),
-            key.as_bytes(),
-            &encoded,
-            &self.write_opts,
-        ) {
+        match self
+            .db
+            .put_cf_opt(self.cf_users(), key.as_bytes(), &encoded, &self.write_opts)
+        {
             Ok(_) => {
                 debug!("User created: {}", username);
                 RaftResponse::success()
@@ -907,12 +898,10 @@ impl RocksStateMachine {
             Ok(b) => b,
             Err(e) => return RaftResponse::failure(format!("Failed to encode user: {}", e)),
         };
-        match self.db.put_cf_opt(
-            self.cf_users(),
-            key.as_bytes(),
-            &encoded,
-            &self.write_opts,
-        ) {
+        match self
+            .db
+            .put_cf_opt(self.cf_users(), key.as_bytes(), &encoded, &self.write_opts)
+        {
             Ok(_) => {
                 debug!("User updated: {}", username);
                 RaftResponse::success()
@@ -954,12 +943,10 @@ impl RocksStateMachine {
             Ok(b) => b,
             Err(e) => return RaftResponse::failure(format!("Failed to encode role: {}", e)),
         };
-        match self.db.put_cf_opt(
-            self.cf_roles(),
-            key.as_bytes(),
-            &encoded,
-            &self.write_opts,
-        ) {
+        match self
+            .db
+            .put_cf_opt(self.cf_roles(), key.as_bytes(), &encoded, &self.write_opts)
+        {
             Ok(_) => {
                 debug!("Role assigned: {} -> {}", role, username);
                 RaftResponse::success()
@@ -1134,8 +1121,7 @@ impl RocksStateMachine {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
 
         // Read existing instance as typed StoredInstance (bincode)
-        let mut stored: StoredInstance = match self.db.get_cf(self.cf_instances(), key.as_bytes())
-        {
+        let mut stored: StoredInstance = match self.db.get_cf(self.cf_instances(), key.as_bytes()) {
             Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
                 Ok(s) => s,
                 Err(e) => {

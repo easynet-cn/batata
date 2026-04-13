@@ -1,5 +1,5 @@
 // Console A2A agent management API endpoints
-// Aligned with Nacos V3 Console API contract
+// Aligned with Batata V3 Console API contract
 // Uses Arc<dyn A2aAgentService> trait object (wired in batata-server)
 
 use std::sync::Arc;

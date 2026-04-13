@@ -344,7 +344,7 @@ impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalid
 /// Registers the lock operation handler.
 ///
 /// When `raft_node` is supplied, lock writes are routed through Raft
-/// consensus (CP lock, the mode Nacos SDKs expect). In standalone mode
+/// consensus (CP lock, the mode Nacos SDKs expect for compatibility). In standalone mode
 /// `raft_node` is `None` and the handler falls back to the in-memory
 /// `LockService` — locks are then single-node and lost on restart.
 fn register_lock_handlers(
@@ -643,8 +643,7 @@ pub fn start_grpc_servers(
     // refresh as a safety net.
     if !is_standalone {
         if let Some(ref smm) = server_member_manager {
-            distro_protocol
-                .subscribe_member_changes(smm.event_publisher().clone());
+            distro_protocol.subscribe_member_changes(smm.event_publisher().clone());
         }
     }
 
@@ -690,7 +689,7 @@ pub fn start_grpc_servers(
     register_cluster_handlers(&mut handler_registry, &server_member_manager);
 
     // Register lock handlers. In cluster mode, pass raft_node so locks go
-    // through Raft consensus (matching Nacos SDK expectations).
+    // through Raft consensus (for Nacos SDK compatibility).
     let lock_service = Arc::new(LockService::new());
     register_lock_handlers(
         &mut handler_registry,
@@ -860,15 +859,15 @@ pub fn start_grpc_servers(
     // function returns. This prevents a race condition where
     // `raft_node.initialize()` (called later in main.rs) triggers leader
     // election before peer Raft gRPC servers have bound their ports.
-    // Start Nacos Raft gRPC server (only in distributed embedded mode)
+    // Start Batata Raft gRPC server (only in distributed embedded mode)
     let raft_server_handle = if let Some(raft_node) = raft_node {
         let raft_port = app_state.configuration.raft_port();
         let grpc_raft_addr: std::net::SocketAddr = format!("0.0.0.0:{}", raft_port).parse()?;
-        info!("Starting Nacos Raft gRPC server on {}", grpc_raft_addr);
+        info!("Starting Batata Raft gRPC server on {}", grpc_raft_addr);
 
         let std_listener = std::net::TcpListener::bind(grpc_raft_addr)?;
         std_listener.set_nonblocking(true)?;
-        info!("Nacos Raft gRPC port {} bound and listening", raft_port);
+        info!("Batata Raft gRPC port {} bound and listening", raft_port);
 
         let raft_holder = Arc::new(tokio::sync::RwLock::new(Some(raft_node)));
         let raft_service = batata_consistency::raft::RaftGrpcService::new(raft_holder.clone());
@@ -893,7 +892,7 @@ pub fn start_grpc_servers(
             let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
                 Err(e) => {
-                    tracing::error!("Failed to convert Nacos Raft TCP listener: {}", e);
+                    tracing::error!("Failed to convert Batata Raft TCP listener: {}", e);
                     return;
                 }
             };
@@ -914,7 +913,7 @@ pub fn start_grpc_servers(
                 .serve_with_incoming(incoming)
                 .await;
             if let Err(e) = result {
-                tracing::error!("Nacos Raft gRPC server error: {}", e);
+                tracing::error!("Batata Raft gRPC server error: {}", e);
             }
         });
         Some(handle)

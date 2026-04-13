@@ -56,7 +56,7 @@ use self::listener::ConfigChangeListener;
 /// Default listen loop poll timeout in seconds.
 const DEFAULT_LISTEN_POLL_TIMEOUT_SECS: u64 = 5;
 
-/// Nacos-compatible config service backed by gRPC.
+/// Batata config service backed by gRPC (Nacos-compatible).
 ///
 /// Implements the ClientWorker pattern with a background listen loop
 /// that coordinates between server push notifications and batch listen requests.

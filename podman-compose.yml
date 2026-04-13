@@ -215,8 +215,8 @@ services:
       - "cluster"
       - "-c"
       - "batata-node1:8848,batata-node2:8858,batata-node3:8868"
-      - "--nacos.server.main.port=8858"
-      - "--nacos.console.port=8091"
+      - "--batata.server.main.port=8858"
+      - "--batata.console.port=8091"
     volumes:
       - cluster-node2-data:/app/data
       - ./conf:/app/conf:ro
@@ -250,8 +250,8 @@ services:
       - "cluster"
       - "-c"
       - "batata-node1:8848,batata-node2:8858,batata-node3:8868"
-      - "--nacos.server.main.port=8868"
-      - "--nacos.console.port=8101"
+      - "--batata.server.main.port=8868"
+      - "--batata.console.port=8101"
     volumes:
       - cluster-node3-data:/app/data
       - ./conf:/app/conf:ro
@@ -308,11 +308,11 @@ services:
     environment:
       - BATATA_SERVER_IP=0.0.0.0
       - BATATA_LOG_LEVEL=info
-      - NACOS_SERVERS=http://batata-server-only:8848
+      - BATATA_SERVERS=http://batata-server-only:8848
     command:
       - "-d"
       - "console"
-      - "--nacos.servers=http://batata-server-only:8848"
+      - "--batata.console.remote.server_addr=http://batata-server-only:8848"
     depends_on:
       batata-server:
         condition: service_healthy

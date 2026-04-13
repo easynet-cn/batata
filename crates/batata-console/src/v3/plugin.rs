@@ -1,7 +1,7 @@
 //! Console plugin management API endpoints
 //!
 //! Provides endpoints to list, inspect, and manage plugins at runtime.
-//! Matches Nacos 3.x ConsolePluginController:
+//! Matches the Nacos 3.x ConsolePluginController contract:
 //! - GET /v3/console/plugin/list - List all plugins
 //! - GET /v3/console/plugin - Get plugin detail
 //! - PUT /v3/console/plugin/status - Enable/disable plugin
@@ -98,7 +98,7 @@ async fn list_plugins(
             plugin_name: "nacos".to_string(),
             enabled: data.configuration.auth_enabled(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: "Nacos built-in auth plugin with JWT".to_string(),
+            description: "Batata built-in auth plugin with JWT".to_string(),
         },
         PluginInfo {
             plugin_type: "config-encryption".to_string(),
@@ -152,7 +152,7 @@ async fn get_plugin_detail(
             plugin_name: "nacos".to_string(),
             enabled: data.configuration.auth_enabled(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: "Nacos built-in auth plugin with JWT".to_string(),
+            description: "Batata built-in auth plugin with JWT".to_string(),
             config: serde_json::json!({
                 "authEnabled": data.configuration.auth_enabled(),
             }),

@@ -1,6 +1,6 @@
-//! Nacos-compatible health check module
+//! Batata health check module (Nacos-compatible)
 //!
-//! This module provides health checking functionality that matches Nacos implementation
+//! This module provides health checking functionality compatible with the Nacos implementation
 //! including TCP, HTTP health checks, heartbeat monitoring, and
 //! automatic instance expiration.
 

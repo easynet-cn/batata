@@ -1,6 +1,6 @@
 //! V2 Config API handlers
 //!
-//! Implements the Nacos V2 configuration management API endpoints:
+//! Implements the Batata V2 configuration management API endpoints (Nacos-compatible):
 //! - GET /nacos/v2/cs/config - Get config
 //! - POST /nacos/v2/cs/config - Publish config
 //! - DELETE /nacos/v2/cs/config - Delete config

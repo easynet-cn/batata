@@ -1,5 +1,5 @@
 // gRPC service definitions generated from proto/nacos_grpc_service.proto
-// This module contains message types and service traits for Nacos gRPC
+// This module contains message types and service traits for Batata gRPC (Nacos-compatible)
 
 // Allow non_camel_case_types for generated protobuf code (requestBiStream -> requestBiStreamStream)
 #[allow(non_camel_case_types)]

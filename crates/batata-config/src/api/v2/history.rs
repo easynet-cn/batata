@@ -1,6 +1,6 @@
 //! V2 Config History API handlers
 //!
-//! Implements the Nacos V2 configuration history API endpoints:
+//! Implements the Batata V2 configuration history API endpoints (Nacos-compatible):
 //! - GET /nacos/v2/cs/history/list - Get history list with pagination
 //! - GET /nacos/v2/cs/history - Get specific history entry
 //! - GET /nacos/v2/cs/history/detail - Get history detail with original/updated content comparison

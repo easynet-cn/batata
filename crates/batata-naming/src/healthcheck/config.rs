@@ -1,4 +1,4 @@
-//! Health check configuration for Nacos compatibility
+//! Health check configuration (Nacos-compatible)
 //!
 //! This module provides configuration structures for health checking
 //! that match Nacos's SwitchDomain behavior.

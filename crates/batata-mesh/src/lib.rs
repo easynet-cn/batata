@@ -9,11 +9,11 @@
 //!
 //! The mesh module is organized as follows:
 //! - `xds` - xDS protocol types and generated code
-//! - `conversion` - Nacos to xDS resource conversion
+//! - `conversion` - Batata/Nacos to xDS resource conversion
 //! - `server` - xDS server implementations
 //! - `snapshot` - Resource snapshot management
 //! - `grpc` - gRPC service implementations for ADS
-//! - `sync` - Nacos to xDS synchronization bridge
+//! - `sync` - Batata/Nacos to xDS synchronization bridge
 //! - `mcp` - Istio MCP (Mesh Configuration Protocol) support
 
 pub mod conversion;

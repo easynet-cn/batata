@@ -1,6 +1,6 @@
 //! V2 Console Health API handlers
 //!
-//! Implements the Nacos V2 console health endpoints:
+//! Implements the Batata V2 console health endpoints (Nacos-compatible):
 //! - GET /v2/console/health/liveness - Check if server is alive
 //! - GET /v2/console/health/readiness - Check if server is ready
 

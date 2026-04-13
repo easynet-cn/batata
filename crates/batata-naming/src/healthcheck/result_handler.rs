@@ -1,6 +1,6 @@
 //! Core health check result handler
 //!
-//! Implements `HealthCheckResultHandler` for the batata core (Nacos) naming service.
+//! Implements `HealthCheckResultHandler` for the Batata core naming service.
 //! Updates `Instance.healthy` in `NamingService` when check status changes.
 
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use tracing::debug;
 
 /// Core result handler — updates NamingService instance health.
 ///
-/// This is the built-in handler for batata's core Nacos-compatible naming service.
+/// This is the built-in handler for Batata's core naming service (Nacos-compatible).
 /// It maps the tri-state health (passing/warning/critical) to Nacos's binary
 /// healthy/unhealthy model: passing/warning → healthy, critical → unhealthy.
 ///

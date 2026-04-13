@@ -59,7 +59,7 @@ USER batata
 # Ports: Main HTTP, Console HTTP, SDK gRPC, Cluster gRPC, Consul, MCP Registry
 EXPOSE 8848 8081 9848 9849 8500 9080
 
-# Health check (matches Nacos v3 admin API)
+# Health check (uses v3 admin API, compatible with Nacos SDK expectations)
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -sf http://localhost:8848/nacos/v3/admin/core/state/liveness || exit 1
 

@@ -1,6 +1,6 @@
-//! Nacos to xDS Synchronization Bridge
+//! Batata/Nacos to xDS Synchronization Bridge
 //!
-//! This module provides automatic synchronization between Nacos naming service
+//! This module provides automatic synchronization between Batata naming service
 //! and xDS resource snapshots, enabling seamless service mesh integration.
 
 use std::collections::HashMap;
@@ -205,9 +205,9 @@ impl From<&NacosInstanceData> for NacosInstance {
     }
 }
 
-/// Nacos to xDS Synchronization Bridge
+/// Batata/Nacos to xDS Synchronization Bridge
 ///
-/// This bridge automatically converts Nacos services to xDS resources
+/// This bridge automatically converts Batata services to xDS resources
 /// and updates the xDS server's snapshot cache.
 pub struct NacosSyncBridge {
     /// Configuration
@@ -263,7 +263,7 @@ impl NacosSyncBridge {
             sync_interval_ms = config.sync_interval_ms,
             generate_listeners = config.generate_listeners,
             generate_routes = config.generate_routes,
-            "Starting Nacos-xDS sync bridge"
+            "Starting Batata-xDS sync bridge"
         );
 
         tokio::spawn(async move {
@@ -277,7 +277,7 @@ impl NacosSyncBridge {
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
-                        info!("Nacos-xDS sync bridge shutting down");
+                        info!("Batata-xDS sync bridge shutting down");
                         break;
                     }
                     Some(event) = event_rx.recv() => {

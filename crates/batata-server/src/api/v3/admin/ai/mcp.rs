@@ -1,5 +1,5 @@
 //! V3 Admin MCP server management endpoints
-//! Aligned with Nacos V3 Admin API contract
+//! Aligned with Nacos V3 Admin API contract for SDK compatibility
 //! Uses config-backed persistence when available, falls back to in-memory registry
 
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use crate::{
     secured,
 };
 
-/// Form data for MCP create/update - accepts JSON-as-string params like Nacos.
+/// Form data for MCP create/update - accepts JSON-as-string params (Nacos SDK compatible).
 /// The nacos-maintainer-client sends:
 ///   mcpName=xxx&namespaceId=xxx&serverSpecification=<JSON>&toolSpecification=<JSON>&endpointSpecification=<JSON>
 ///
@@ -57,7 +57,7 @@ impl McpForm {
         let mut reg: McpServerRegistration = serde_json::from_str(&server_json)
             .map_err(|e| format!("Invalid serverSpecification: {}", e))?;
 
-        // Nacos behavior: if name is empty in serverSpecification, fill from mcpName form param
+        // Backfill: if name is empty in serverSpecification, fill from mcpName form param (Nacos SDK compat)
         if reg.name.is_empty()
             && let Some(mcp_name) = &self.mcp_name
             && !mcp_name.is_empty()

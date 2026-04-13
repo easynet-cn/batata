@@ -17,9 +17,7 @@ pub struct ListLocksQuery {
 
 impl Default for ListLocksQuery {
     fn default() -> Self {
-        Self {
-            namespace_id: None,
-        }
+        Self { namespace_id: None }
     }
 }
 

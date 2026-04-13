@@ -1,6 +1,6 @@
 //! V2 Console Namespace API handlers
 //!
-//! Implements the Nacos V2 console namespace management API endpoints:
+//! Implements the Batata V2 console namespace management API endpoints (Nacos-compatible):
 //! - GET /v2/console/namespace/list - List all namespaces
 //! - GET /v2/console/namespace - Get namespace detail
 //! - POST /v2/console/namespace - Create namespace

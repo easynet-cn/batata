@@ -134,16 +134,18 @@ pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "batata.preferHostnameOv
 // ============================================================================
 
 pub const ROOT_WEB_CONTEXT_PATH: &str = "/";
-pub const NACOS_VERSION: &str = "version";
-pub const NACOS_VERSION_KEY: &str = "nacos_version";
+pub const COMPAT_VERSION: &str = "version";
+pub const COMPAT_VERSION_KEY: &str = "nacos_version";
 pub const BATATA_VERSION_KEY: &str = "batata_version";
-pub const NACOS_SERVER_IP: &str = "batata.server.ip";
-pub const NACOS_SERVER_IP_STATE: &str = "nacos_server_ip";
+pub const SERVER_IP_KEY: &str = "batata.server.ip";
+pub const SERVER_IP_STATE: &str = "nacos_server_ip";
 pub const SERVER_PORT_STATE: &str = "server_port";
 pub const WEB_CONTEXT_PATH: &str = "server.servlet.context-path";
-pub const NACOS_SERVER_HEADER: &str = "Nacos-Server";
+/// Kept as "Nacos-Server" for Nacos SDK compatibility
+pub const COMPAT_SERVER_HEADER: &str = "Nacos-Server";
 pub const REQUEST_PATH_SEPARATOR: &str = "-->";
-pub const NACOS_SERVER_CONTEXT: &str = "/nacos";
+/// Kept as "/nacos" for Nacos SDK compatibility
+pub const SERVER_CONTEXT_PATH: &str = "/nacos";
 
 // ============================================================================
 // Network Constants
@@ -163,22 +165,21 @@ pub const COMMA_DIVISION: &str = ",";
 // ============================================================================
 
 pub const AVAILABLE_PROCESSORS_BASIC: &str = "batata.core.sys.basic.processors";
-pub const NACOS_DEPLOYMENT_TYPE: &str = "batata.deployment.type";
-pub const NACOS_DEPLOYMENT_TYPE_MERGED: &str = "merged";
-pub const NACOS_DEPLOYMENT_TYPE_SERVER: &str = "server";
-pub const NACOS_DEPLOYMENT_TYPE_CONSOLE: &str = "console";
-pub const NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
+pub const DEPLOYMENT_TYPE: &str = "batata.deployment.type";
+pub const DEPLOYMENT_TYPE_MERGED: &str = "merged";
+pub const DEPLOYMENT_TYPE_SERVER: &str = "server";
+pub const DEPLOYMENT_TYPE_CONSOLE: &str = "console";
+pub const DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
 
 // ============================================================================
 // Console Mode Constants
 // ============================================================================
 
-pub const NACOS_CONSOLE_REMOTE_SERVER_ADDR: &str = "batata.console.remote.server_addr";
-pub const NACOS_CONSOLE_REMOTE_USERNAME: &str = "batata.console.remote.username";
-pub const NACOS_CONSOLE_REMOTE_PASSWORD: &str = "batata.console.remote.password";
-pub const NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS: &str =
-    "batata.console.remote.connect_timeout_ms";
-pub const NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS: &str = "batata.console.remote.read_timeout_ms";
+pub const CONSOLE_REMOTE_SERVER_ADDR: &str = "batata.console.remote.server_addr";
+pub const CONSOLE_REMOTE_USERNAME: &str = "batata.console.remote.username";
+pub const CONSOLE_REMOTE_PASSWORD: &str = "batata.console.remote.password";
+pub const CONSOLE_REMOTE_CONNECT_TIMEOUT_MS: &str = "batata.console.remote.connect_timeout_ms";
+pub const CONSOLE_REMOTE_READ_TIMEOUT_MS: &str = "batata.console.remote.read_timeout_ms";
 
 // ============================================================================
 // Persistence Constants
@@ -190,8 +191,8 @@ pub const MYSQL: &str = "mysql";
 pub const EMPTY_DATASOURCE_PLATFORM: &str = "";
 pub const EMBEDDED_STORAGE: &str = "embeddedStorage";
 pub const DERBY_BASE_DIR: &str = "derby-data";
-pub const NACOS_PLUGIN_DATASOURCE_LOG: &str = "batata.plugin.datasource.log.enabled";
-pub const NACOS_PLUGIN_DATASOURCE_LOG_STATE: &str = "plugin_datasource_log_enabled";
+pub const PLUGIN_DATASOURCE_LOG: &str = "batata.plugin.datasource.log.enabled";
+pub const PLUGIN_DATASOURCE_LOG_STATE: &str = "plugin_datasource_log_enabled";
 pub const DATASOURCE_PLATFORM_PROPERTY_STATE: &str = "datasource_platform";
 
 // ============================================================================
@@ -221,10 +222,10 @@ pub const HISTORY_ADMIN_V3_PATH: &str = "/v3/admin/cs/history";
 pub const LISTENER_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/listener";
 pub const METRICS_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/metrics";
 pub const CONFIG_V3_CLIENT_API_PATH: &str = "/v3/client/cs/config";
-pub const NACOS_SERVER_VERSION_V2: &str = "/v2";
-pub const NACOS_SERVER_VERSION_V3: &str = "/v3";
-pub const NACOS_CORE_CONTEXT_V2: &str = "/v2/core";
-pub const NACOS_ADMIN_CORE_CONTEXT_V3: &str = "/v3/admin/core";
+pub const SERVER_VERSION_V2: &str = "/v2";
+pub const SERVER_VERSION_V3: &str = "/v3";
+pub const CORE_CONTEXT_V2: &str = "/v2/core";
+pub const ADMIN_CORE_CONTEXT_V3: &str = "/v3/admin/core";
 
 // ============================================================================
 // Encoding Constants
@@ -233,9 +234,10 @@ pub const NACOS_ADMIN_CORE_CONTEXT_V3: &str = "/v3/admin/core";
 pub const ENCODE_GBK: &str = "GBK";
 pub const ENCODE_UTF8: &str = "UTF-8";
 pub const MAP_FILE: &str = "map-file.js";
-pub const NACOS_LINE_SEPARATOR: &str = "\r\n";
-pub const DEFAULT_NACOS_ENCODE: &str = "UTF-8";
-pub const NACOS_PERSIST_ENCODE_KEY: &str = "nacosPersistEncodingKey";
+pub const CRLF_LINE_SEPARATOR: &str = "\r\n";
+pub const DEFAULT_ENCODE_CHARSET: &str = "UTF-8";
+/// Kept as "nacosPersistEncodingKey" for wire-format compatibility
+pub const PERSIST_ENCODE_KEY: &str = "nacosPersistEncodingKey";
 
 // ============================================================================
 // Timeout and Threshold Constants
@@ -358,7 +360,7 @@ pub const DUMP_CHANGE_WORKER_INTERVAL: &str = "dumpChangeWorkerInterval";
 pub const CONFIG_RENTENTION_DAYS: &str = "batata.config.retention.days";
 pub const GRAY_CAPATIBEL_MODEL: &str = "batata.config.gray.compatible.model";
 pub const NAMESPACE_COMPATIBLE_MODE: &str = "batata.config.namespace.compatible.mode";
-pub const NACOS_DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
+pub const DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
     "batata.sys.duplicate.bean.enhancement.enabled";
 
 // ============================================================================
@@ -388,7 +390,7 @@ pub const FUNCTION_MODE_NAMING: &str = "naming";
 // Home Directory Constants
 // ============================================================================
 
-pub const NACOS_HOME_KEY: &str = "batata.home";
+pub const HOME_KEY: &str = "batata.home";
 
 // ============================================================================
 // Internal Configuration Constants

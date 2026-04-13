@@ -22,7 +22,7 @@ use crate::{
     },
 };
 
-/// Admin/maintainer HTTP client for Batata/Nacos
+/// Admin/maintainer HTTP client for Batata
 pub struct MaintainerClient {
     http_client: BatataHttpClient,
 }

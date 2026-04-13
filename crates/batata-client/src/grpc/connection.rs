@@ -1,6 +1,6 @@
 //! gRPC connection lifecycle management
 //!
-//! Manages a single gRPC connection to a Nacos server, including
+//! Manages a single gRPC connection to a Batata server, including
 //! the unary request channel and bi-directional stream for server push.
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::error::{ClientError, Result};
 
-/// Represents an established gRPC connection to a Nacos server.
+/// Represents an established gRPC connection to a Batata server.
 pub struct GrpcConnection {
     /// The underlying tonic channel (cheap to clone — Arc internally)
     channel: Channel,

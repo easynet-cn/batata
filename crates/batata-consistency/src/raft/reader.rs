@@ -71,8 +71,7 @@ impl RocksDbReader {
         if tenant.is_empty() {
             let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
             for item in iter {
-                let (_, v) =
-                    item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+                let (_, v) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
                 let stored: StoredConfig = bincode::deserialize(&v)
                     .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
                 values.push(serde_json::to_value(&stored)?);
@@ -81,8 +80,7 @@ impl RocksDbReader {
             let prefix = format!("{}@@", tenant);
             let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
             for item in iter {
-                let (k, v) =
-                    item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+                let (k, v) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
                 if !k.starts_with(prefix.as_bytes()) {
                     break;
                 }
@@ -766,11 +764,7 @@ impl RocksDbReader {
     /// Used by cold-path CF readers (namespace/user/role/permission) where the
     /// reader API contract is still `serde_json::Value` for backward compat with
     /// persistence callers, but on-disk format is bincode.
-    fn get_bincode<T>(
-        &self,
-        cf_name: &str,
-        key: &str,
-    ) -> anyhow::Result<Option<serde_json::Value>>
+    fn get_bincode<T>(&self, cf_name: &str, key: &str) -> anyhow::Result<Option<serde_json::Value>>
     where
         T: serde::de::DeserializeOwned + serde::Serialize,
     {
@@ -999,8 +993,12 @@ mod tests {
             username: "admin".to_string(),
             ..Default::default()
         };
-        db.put_cf(role_cf, key1.as_bytes(), &bincode::serialize(&role1).unwrap())
-            .unwrap();
+        db.put_cf(
+            role_cf,
+            key1.as_bytes(),
+            &bincode::serialize(&role1).unwrap(),
+        )
+        .unwrap();
 
         let key2 = RocksStateMachine::role_key("ROLE_USER", "alice");
         let role2 = StoredRole {
@@ -1008,8 +1006,12 @@ mod tests {
             username: "alice".to_string(),
             ..Default::default()
         };
-        db.put_cf(role_cf, key2.as_bytes(), &bincode::serialize(&role2).unwrap())
-            .unwrap();
+        db.put_cf(
+            role_cf,
+            key2.as_bytes(),
+            &bincode::serialize(&role2).unwrap(),
+        )
+        .unwrap();
 
         // Write permissions (bincode StoredPermission)
         let perm_cf = db.cf_handle("batata_permissions").unwrap();
@@ -1020,8 +1022,12 @@ mod tests {
             action: "rw".to_string(),
             ..Default::default()
         };
-        db.put_cf(perm_cf, pkey.as_bytes(), &bincode::serialize(&perm).unwrap())
-            .unwrap();
+        db.put_cf(
+            perm_cf,
+            pkey.as_bytes(),
+            &bincode::serialize(&perm).unwrap(),
+        )
+        .unwrap();
 
         let reader = RocksDbReader::new(db);
 

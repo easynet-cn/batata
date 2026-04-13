@@ -1,4 +1,4 @@
-//! gRPC client for Nacos SDK communication
+//! gRPC client for Batata SDK communication
 //!
 //! Provides the `GrpcClient` facade that wraps connection management,
 //! authentication, unary requests, and server push dispatch.
@@ -172,7 +172,7 @@ pub trait ConnectionEventListener: Send + Sync + 'static {
     async fn on_disconnected(&self);
 }
 
-/// gRPC client facade for Nacos SDK communication.
+/// gRPC client facade for Batata SDK communication.
 ///
 /// Manages the gRPC connection, authentication, unary requests,
 /// bi-directional streaming, and server push dispatch.

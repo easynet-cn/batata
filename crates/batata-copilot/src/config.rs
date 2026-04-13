@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 const COPILOT_CONFIG_DATA_ID: &str = "copilot-config.json";
 const COPILOT_CONFIG_GROUP: &str = "nacos-copilot";
 
-/// Copilot configuration — persisted to Nacos Config
+/// Copilot configuration — persisted to Batata Config
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CopilotConfig {
@@ -81,7 +81,7 @@ fn default_model() -> String {
     "qwen-turbo".to_string()
 }
 fn default_studio_project() -> String {
-    "NacosCopilot".to_string()
+    "BatataCopilot".to_string()
 }
 fn default_namespace() -> String {
     "public".to_string()

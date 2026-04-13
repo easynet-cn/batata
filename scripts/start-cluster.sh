@@ -232,7 +232,7 @@ EOF
     check_status
     log_info "Cluster is ready!"
     echo ""
-    echo "  Nacos SDK endpoints:"
+    echo "  Batata SDK endpoints:"
     echo "    Node 1: 127.0.0.1:${NODE1_PORT} (gRPC: $((NODE1_PORT + 1000)))"
     echo "    Node 2: 127.0.0.1:${NODE2_PORT} (gRPC: $((NODE2_PORT + 1000)))"
     echo "    Node 3: 127.0.0.1:${NODE3_PORT} (gRPC: $((NODE3_PORT + 1000)))"

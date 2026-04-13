@@ -1,7 +1,7 @@
 //! Consul-specific naming store — independent service data storage
 //!
 //! Stores Consul services in their native format (AgentService with tags,
-//! weights, connect config, etc.) without converting to Nacos Instance.
+//! weights, connect config, etc.) without converting to Batata Instance.
 //!
 //! Key format: "{namespace}/{service_name}/{service_id}"
 //! Data format: JSON-serialized AgentService
@@ -32,7 +32,7 @@ struct StoredEntry {
 /// Consul naming store — holds service registrations in Consul-native format
 ///
 /// Services are stored as serialized JSON bytes, keyed by "{namespace}/{service_name}/{service_id}".
-/// This avoids the Nacos metadata JSON packing/unpacking overhead.
+/// This avoids the Batata metadata JSON packing/unpacking overhead.
 #[derive(Clone)]
 pub struct ConsulNamingStore {
     /// Key: "{namespace}/{service_name}/{service_id}", Value: serialized AgentService

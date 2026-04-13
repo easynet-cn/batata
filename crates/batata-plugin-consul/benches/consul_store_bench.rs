@@ -80,7 +80,8 @@ fn bench_get_service_entries(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
             b.iter(|| {
-                let entries = store.get_service_entries(black_box("default"), black_box("bench-svc"));
+                let entries =
+                    store.get_service_entries(black_box("default"), black_box("bench-svc"));
                 black_box(entries.len())
             })
         });

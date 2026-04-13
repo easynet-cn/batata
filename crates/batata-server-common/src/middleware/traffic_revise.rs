@@ -62,10 +62,11 @@ fn is_bypass_path(path: &str) -> bool {
         || path.contains("/readiness")
 }
 
-/// Check whether the User-Agent indicates a Nacos cluster peer.
+/// Check whether the User-Agent indicates a cluster peer.
+/// Accepts both "Nacos-Server" (for SDK compatibility) and "Batata-Server".
 fn is_cluster_peer(user_agent: Option<&str>) -> bool {
     user_agent
-        .map(|ua| ua.starts_with("Nacos-Server"))
+        .map(|ua| ua.starts_with("Nacos-Server") || ua.starts_with("Batata-Server"))
         .unwrap_or(false)
 }
 
@@ -138,8 +139,13 @@ mod tests {
 
     #[test]
     fn test_cluster_peer_detection() {
+        // Nacos SDK compatibility
         assert!(is_cluster_peer(Some("Nacos-Server")));
         assert!(is_cluster_peer(Some("Nacos-Server/2.3.0")));
+        // Batata native
+        assert!(is_cluster_peer(Some("Batata-Server")));
+        assert!(is_cluster_peer(Some("Batata-Server/1.0.0")));
+        // Non-peers
         assert!(!is_cluster_peer(Some("Nacos-Client")));
         assert!(!is_cluster_peer(None));
     }

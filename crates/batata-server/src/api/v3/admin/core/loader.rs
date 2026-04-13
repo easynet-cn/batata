@@ -1,7 +1,7 @@
 //! V3 Admin server loader endpoints
 //!
 //! Implements SDK connection load balancing across cluster nodes.
-//! Following the Nacos 3.x ServerLoaderController/NacosServerLoaderService pattern.
+//! Following the Nacos 3.x ServerLoaderController pattern for SDK compatibility.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -240,7 +240,7 @@ async fn smart_reload(
     let mut details = vec![self_metric.clone()];
 
     // For other cluster members, we report 0 connections (in a real cluster,
-    // we'd query via gRPC ServerLoaderInfoRequest - same as Nacos does)
+    // we'd query via gRPC ServerLoaderInfoRequest, same as Nacos does for compatibility)
     for member in &all_members {
         if member.address != self_member.address {
             details.push(ServerLoaderMetric {

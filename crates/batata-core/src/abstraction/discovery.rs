@@ -7,7 +7,7 @@ use super::types::{
 };
 
 /// Service discovery abstraction trait
-/// Implementations: NacosServiceDiscovery, ConsulServiceDiscovery
+/// Implementations: BatataServiceDiscovery, ConsulServiceDiscovery
 #[async_trait]
 pub trait ServiceDiscovery: Send + Sync {
     /// Register a service instance

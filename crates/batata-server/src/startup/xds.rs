@@ -23,7 +23,7 @@ use crate::model::config::XdsConfig;
 pub struct XdsServerHandle {
     /// The xDS server instance
     pub xds_server: Arc<XdsServer>,
-    /// The Nacos-xDS sync bridge
+    /// The Batata-xDS sync bridge (uses NacosSyncBridge type for Nacos SDK compatibility)
     sync_bridge: NacosSyncBridge,
     /// Shutdown signal sender for the gRPC server
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,

@@ -158,10 +158,7 @@ impl ConsulResultHandler {
                                     );
                                 }
                                 Err(e) => {
-                                    warn!(
-                                        "Raft CatalogDeregister failed during auto-reap: {}",
-                                        e
-                                    );
+                                    warn!("Raft CatalogDeregister failed during auto-reap: {}", e);
                                 }
                             }
                         });

@@ -1,7 +1,7 @@
 //! AI/MCP Client Service
 //!
 //! Provides client-side operations for MCP (Model Context Protocol) server
-//! management and A2A (Agent-to-Agent) operations, compatible with Nacos AiService.
+//! management and A2A (Agent-to-Agent) operations, compatible with Batata AiService.
 
 use std::collections::HashMap;
 use std::sync::Arc;

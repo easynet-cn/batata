@@ -1,6 +1,6 @@
 //! V2 Naming Catalog API handler
 //!
-//! Implements the Nacos V2 catalog API endpoint:
+//! Implements the Batata V2 catalog API endpoint (Nacos-compatible):
 //! - GET /nacos/v2/ns/catalog/instances - List catalog instances
 
 use std::collections::HashMap;

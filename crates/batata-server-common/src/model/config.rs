@@ -11,15 +11,14 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use batata_auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
 
 use super::constants::{
-    CONFIG_RENTENTION_DAYS, DATASOURCE_PLATFORM_PROPERTY, DEFAULT_CLUSTER_QUOTA,
-    DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE,
-    DEFAULT_SERVER_PORT, FUNCTION_MODE_PROPERTY_NAME, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
-    IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
-    NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS, NACOS_CONSOLE_REMOTE_PASSWORD,
-    NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS, NACOS_CONSOLE_REMOTE_SERVER_ADDR,
-    NACOS_CONSOLE_REMOTE_USERNAME, NACOS_DEPLOYMENT_TYPE, NACOS_DEPLOYMENT_TYPE_CONSOLE,
-    NACOS_DEPLOYMENT_TYPE_MERGED, NACOS_PLUGIN_DATASOURCE_LOG, NOTIFY_CONNECT_TIMEOUT,
-    NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_PROPERTY, STANDALONE_MODE_PROPERTY_NAME,
+    CONFIG_RENTENTION_DAYS, CONSOLE_REMOTE_CONNECT_TIMEOUT_MS, CONSOLE_REMOTE_PASSWORD,
+    CONSOLE_REMOTE_READ_TIMEOUT_MS, CONSOLE_REMOTE_SERVER_ADDR, CONSOLE_REMOTE_USERNAME,
+    DATASOURCE_PLATFORM_PROPERTY, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
+    DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, DEFAULT_SERVER_PORT,
+    DEPLOYMENT_TYPE, DEPLOYMENT_TYPE_CONSOLE, DEPLOYMENT_TYPE_MERGED, FUNCTION_MODE_PROPERTY_NAME,
+    IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
+    MAX_HEALTH_CHECK_FAIL_COUNT, NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT,
+    PLUGIN_DATASOURCE_LOG, SERVER_PORT_PROPERTY, STANDALONE_MODE_PROPERTY_NAME,
 };
 
 use batata_api::model::{CLUSTER_GRPC_PORT_DEFAULT_OFFSET, SDK_GRPC_PORT_DEFAULT_OFFSET};
@@ -152,7 +151,7 @@ impl Configuration {
         }
         if let Some(v) = args.deployment {
             config_builder = config_builder
-                .set_override(NACOS_DEPLOYMENT_TYPE, v)
+                .set_override(DEPLOYMENT_TYPE, v)
                 .map_err(|e| anyhow::anyhow!("Failed to set deployment type override: {e}"))?;
         }
         if let Some(v) = args.database_url {
@@ -181,8 +180,8 @@ impl Configuration {
 
     pub fn deployment_type(&self) -> String {
         self.config
-            .get_string(NACOS_DEPLOYMENT_TYPE)
-            .unwrap_or(NACOS_DEPLOYMENT_TYPE_MERGED.to_string())
+            .get_string(DEPLOYMENT_TYPE)
+            .unwrap_or(DEPLOYMENT_TYPE_MERGED.to_string())
     }
 
     pub fn is_standalone(&self) -> bool {
@@ -204,10 +203,10 @@ impl Configuration {
     }
 
     pub fn version(&self) -> String {
-        self.config.get_string("nacos.version").unwrap_or_default()
+        env!("CARGO_PKG_VERSION").to_string()
     }
 
-    pub fn nacos_version(&self) -> String {
+    pub fn compat_version(&self) -> String {
         self.config.get_string("nacos.version").unwrap_or_default()
     }
 
@@ -305,12 +304,12 @@ impl Configuration {
     /// Check if console is in remote mode.
     /// Derived from deployment type: `console` deployment → remote mode.
     pub fn is_console_remote_mode(&self) -> bool {
-        self.deployment_type() == NACOS_DEPLOYMENT_TYPE_CONSOLE
+        self.deployment_type() == DEPLOYMENT_TYPE_CONSOLE
     }
 
     pub fn console_remote_server_addr(&self) -> String {
         self.config
-            .get_string(NACOS_CONSOLE_REMOTE_SERVER_ADDR)
+            .get_string(CONSOLE_REMOTE_SERVER_ADDR)
             .unwrap_or("http://127.0.0.1:8848".to_string())
     }
 
@@ -374,25 +373,25 @@ impl Configuration {
 
     pub fn console_remote_username(&self) -> String {
         self.config
-            .get_string(NACOS_CONSOLE_REMOTE_USERNAME)
+            .get_string(CONSOLE_REMOTE_USERNAME)
             .unwrap_or("batata".to_string())
     }
 
     pub fn console_remote_password(&self) -> String {
         self.config
-            .get_string(NACOS_CONSOLE_REMOTE_PASSWORD)
+            .get_string(CONSOLE_REMOTE_PASSWORD)
             .unwrap_or("batata".to_string())
     }
 
     pub fn console_remote_connect_timeout_ms(&self) -> u64 {
         self.config
-            .get_int(NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS)
+            .get_int(CONSOLE_REMOTE_CONNECT_TIMEOUT_MS)
             .unwrap_or(5000) as u64
     }
 
     pub fn console_remote_read_timeout_ms(&self) -> u64 {
         self.config
-            .get_int(NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS)
+            .get_int(CONSOLE_REMOTE_READ_TIMEOUT_MS)
             .unwrap_or(30000) as u64
     }
 
@@ -436,7 +435,7 @@ impl Configuration {
     pub fn auth_system_type(&self) -> String {
         self.config
             .get_string("batata.core.auth.system.type")
-            .unwrap_or("nacos".to_string())
+            .unwrap_or("default".to_string())
     }
 
     pub fn auth_console_enabled(&self) -> bool {
@@ -447,7 +446,7 @@ impl Configuration {
 
     pub fn token_secret_key(&self) -> String {
         self.config
-            .get_string("batata.core.auth.plugin.nacos.token.secret.key")
+            .get_string("batata.core.auth.plugin.default.token.secret.key")
             .unwrap_or_default()
     }
 
@@ -664,9 +663,7 @@ impl Configuration {
     }
 
     pub fn plugin_datasource_log(&self) -> bool {
-        self.config
-            .get_bool(NACOS_PLUGIN_DATASOURCE_LOG)
-            .unwrap_or(false)
+        self.config.get_bool(PLUGIN_DATASOURCE_LOG).unwrap_or(false)
     }
 
     pub async fn database_connection(
@@ -1713,7 +1710,7 @@ impl Configuration {
     // ========================================================================
 
     /// Maximum number of gray versions per config (default: 10).
-    /// Matches Nacos nacos.config.gray.version.max.count property.
+    /// Matches batata.config.gray.version.max.count property.
     pub fn config_gray_max_version_count(&self) -> usize {
         self.config
             .get_int("batata.config.gray.version.max_count")

@@ -1,6 +1,6 @@
 //! V2 Health API handlers
 //!
-//! Implements the Nacos V2 health management API endpoints:
+//! Implements the Batata V2 health management API endpoints (Nacos-compatible):
 //! - PUT /nacos/v2/ns/health - Update instance health status
 //! - PUT /nacos/v2/ns/health/instance - Update instance health status (alternative path)
 //!

@@ -58,7 +58,7 @@ pub trait ClientAuthService: Send + Sync {
     }
 }
 
-/// JWT (username/password) auth provider — the default Nacos auth mechanism.
+/// JWT (username/password) auth provider — the default Batata auth mechanism.
 pub struct JwtAuthProvider {
     username: String,
     password: String,

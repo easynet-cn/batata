@@ -791,7 +791,7 @@ async fn export_config(
     };
 
     let filename = format!(
-        "nacos_config_export_{}.zip",
+        "batata_config_export_{}.zip",
         Utc::now().format("%Y%m%d%H%M%S")
     );
 
