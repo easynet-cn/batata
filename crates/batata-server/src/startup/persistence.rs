@@ -60,7 +60,12 @@ pub async fn init_persistence(
     );
 
     match (storage_backend, deploy_topology) {
-        (StorageBackend::ExternalDb, _) => init_external_db(configuration).await,
+        (StorageBackend::ExternalDb, DeployTopology::Standalone) => {
+            init_external_db_standalone(configuration).await
+        }
+        (StorageBackend::ExternalDb, DeployTopology::Cluster) => {
+            init_external_db_cluster(configuration, extra_cf_names).await
+        }
         (StorageBackend::Embedded, DeployTopology::Standalone) => {
             init_embedded_standalone(configuration).await
         }
@@ -70,7 +75,9 @@ pub async fn init_persistence(
     }
 }
 
-async fn init_external_db(
+/// ExternalDb + Standalone: all data goes directly to the shared database.
+/// No Raft, no RocksDB.
+async fn init_external_db_standalone(
     configuration: &Configuration,
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
     let db = configuration.database_connection().await?;
@@ -137,10 +144,56 @@ async fn init_embedded_standalone(
     })
 }
 
-async fn init_embedded_cluster(
+/// ExternalDb + Cluster: config/namespace/auth go directly to the shared
+/// database, but persistent instances and locks still need Raft consensus.
+/// This matches Nacos 3.x where CP protocol is always started in cluster
+/// mode regardless of the storage backend.
+async fn init_external_db_cluster(
     configuration: &Configuration,
     extra_cf_names: &[String],
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
+    // DB connection + migrations (same as standalone)
+    let db = configuration.database_connection().await?;
+
+    if configuration.db_migration_enabled() {
+        info!("Running database migrations...");
+        Migrator::up(&db, None).await?;
+        info!("Database migrations completed successfully");
+    }
+
+    // PersistenceService goes to DB for config/namespace/auth
+    let persist: Arc<dyn PersistenceService> = Arc::new(
+        batata_persistence::ExternalDbPersistService::new(db.clone()),
+    );
+
+    // Start RaftNode for persistent instances + locks
+    let (raft_node, rdb) = create_raft_node(configuration, extra_cf_names).await?;
+    let raft_node = Arc::new(raft_node);
+
+    // Start the distributed lock expire scanner
+    let _lock_expire_scanner =
+        raft_node.start_lock_expire_scanner(std::time::Duration::from_secs(5));
+
+    let core_config = configuration.to_core_config();
+    let smm = Arc::new(ServerMemberManager::new(&core_config));
+    let cm: Arc<dyn ClusterManager> = smm.clone();
+
+    Ok(PersistenceContext {
+        database_connection: Some(db),
+        server_member_manager: Some(smm),
+        cluster_manager: Some(cm),
+        persistence: Some(persist),
+        _rocks_db: Some(rdb),
+        raft_node: Some(raft_node),
+    })
+}
+
+/// Create a RaftNode + RocksDB instance. Shared by both embedded-cluster
+/// and external-db-cluster modes.
+async fn create_raft_node(
+    configuration: &Configuration,
+    extra_cf_names: &[String],
+) -> Result<(batata_consistency::RaftNode, Arc<rocksdb::DB>), Box<dyn std::error::Error>> {
     let rocksdb_dir = configuration.embedded_rocksdb_dir();
     let main_port = configuration.server_main_port();
 
@@ -168,7 +221,7 @@ async fn init_embedded_cluster(
 
     let node_id = batata_consistency::calculate_node_id(&node_addr);
     info!(
-        "Initializing distributed embedded storage: node_id={}, addr={}, rocksdb_dir={}",
+        "Initializing Raft node: node_id={}, addr={}, rocksdb_dir={}",
         node_id, node_addr, rocksdb_dir
     );
 
@@ -192,7 +245,7 @@ async fn init_embedded_cluster(
     let shared_cache = rocks_config.create_shared_block_cache();
     let (raft_node, rdb) = batata_consistency::RaftNode::new_with_full_options(
         node_id,
-        node_addr.clone(),
+        node_addr,
         raft_config,
         Some(rocks_config.to_db_options()),
         Some(rocks_config.to_cf_options_with_cache(&shared_cache)),
@@ -203,6 +256,14 @@ async fn init_embedded_cluster(
     .await
     .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;
 
+    Ok((raft_node, rdb))
+}
+
+async fn init_embedded_cluster(
+    configuration: &Configuration,
+    extra_cf_names: &[String],
+) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
+    let (raft_node, rdb) = create_raft_node(configuration, extra_cf_names).await?;
     let raft_node = Arc::new(raft_node);
 
     // Start the distributed lock expire scanner. Runs on every node but only
@@ -227,6 +288,8 @@ async fn init_embedded_cluster(
     // Initialize single-node cluster in standalone mode
     if configuration.is_standalone() {
         info!("Standalone distributed mode: initializing single-node Raft cluster");
+        let node_id = raft_node.node_id();
+        let node_addr = raft_node.addr().to_string();
         let mut members = std::collections::BTreeMap::new();
         members.insert(node_id, openraft::BasicNode { addr: node_addr });
         if let Err(e) = raft_node.initialize(members).await {

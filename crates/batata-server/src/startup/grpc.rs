@@ -854,12 +854,11 @@ pub fn start_grpc_servers(
         })
     };
 
-    // Start dedicated Raft gRPC server (only in distributed embedded mode)
-    // Pre-bind the TCP port synchronously so it is listening BEFORE this
-    // function returns. This prevents a race condition where
+    // Start dedicated Raft gRPC server (cluster mode — both embedded and
+    // external-db). Pre-bind the TCP port synchronously so it is listening
+    // BEFORE this function returns. This prevents a race condition where
     // `raft_node.initialize()` (called later in main.rs) triggers leader
     // election before peer Raft gRPC servers have bound their ports.
-    // Start Batata Raft gRPC server (only in distributed embedded mode)
     let raft_server_handle = if let Some(raft_node) = raft_node {
         let raft_port = app_state.configuration.raft_port();
         let grpc_raft_addr: std::net::SocketAddr = format!("0.0.0.0:{}", raft_port).parse()?;

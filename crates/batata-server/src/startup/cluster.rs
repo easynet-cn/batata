@@ -13,7 +13,7 @@ use tracing::{error, info};
 
 use super::GrpcServers;
 
-/// Start the cluster manager and initialize Raft if in distributed embedded mode.
+/// Start the cluster manager and initialize Raft if in cluster mode.
 ///
 /// This is a no-op if the server is in standalone mode.
 pub async fn init_cluster(
@@ -42,7 +42,8 @@ pub async fn init_cluster(
     }
     info!("Cluster management started successfully");
 
-    // Initialize Raft cluster with discovered members (distributed embedded mode)
+    // Initialize Raft cluster with discovered members (cluster mode — both
+    // embedded and external-db)
     if let Some(raft_node) = raft_node {
         init_raft_cluster(configuration, raft_node).await?;
     }
