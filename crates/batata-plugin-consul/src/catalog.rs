@@ -1203,8 +1203,11 @@ pub async fn list_services(
         crate::consul_meta::ConsistencyMode::Consistent
     ) {
         if let Err(e) = catalog.ensure_linearizable_read().await {
-            tracing::debug!("consistent catalog read rejected locally: {:?}", e);
-            return e.into_http_response();
+            tracing::debug!(
+                "consistent catalog read: not leader, serving from local state machine: {:?}",
+                e
+            );
+            // Fall through — serve from local Raft state machine.
         }
     }
 
@@ -1247,8 +1250,11 @@ pub async fn get_service(
         crate::consul_meta::ConsistencyMode::Consistent
     ) {
         if let Err(e) = catalog.ensure_linearizable_read().await {
-            tracing::debug!("consistent catalog read rejected locally: {:?}", e);
-            return e.into_http_response();
+            tracing::debug!(
+                "consistent catalog read: not leader, serving from local state machine: {:?}",
+                e
+            );
+            // Fall through — serve from local Raft state machine.
         }
     }
 

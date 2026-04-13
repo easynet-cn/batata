@@ -211,20 +211,28 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
     async fn remove_data(&self, key: &str) -> Result<(), String> {
         // Called by DistroProtocol::cleanup_non_responsible_keys when the
         // local node is no longer responsible for this service_key after a
-        // cluster membership change. We only drop ephemeral instances —
-        // persistent instances live in Raft and must not be touched by the
-        // Distro layer under any circumstance.
+        // cluster membership change. We only drop remotely-synced ephemeral
+        // instances — instances registered by local gRPC clients must be
+        // preserved (they are tracked by connection_instances and will be
+        // cleaned up when the client disconnects). Persistent instances
+        // live in Raft and must not be touched by the Distro layer.
+        //
+        // Use merge_remote_instances with an empty list: it only removes
+        // instances marked with `_distro_remote=true`, leaving locally-
+        // registered instances intact. This matches Nacos 3.x behavior
+        // where gRPC-registered instances are accepted at any node and
+        // never deleted by distro responsibility changes.
         let Some((namespace, group_name, service_name)) = Self::parse_service_key(key) else {
             return Err(format!("Invalid service key: {}", key));
         };
-        self.naming_service.replace_ephemeral_instances(
+        self.naming_service.merge_remote_instances(
             &namespace,
             &group_name,
             &service_name,
             Vec::new(),
         );
         debug!(
-            "Removed ephemeral instances for non-responsible key: {}",
+            "Removed remote ephemeral instances for non-responsible key: {}",
             key
         );
         Ok(())

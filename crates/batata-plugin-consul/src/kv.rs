@@ -1452,16 +1452,25 @@ pub async fn get_kv(
     // Honor ?consistent — wait for the local state machine to catch up to
     // the latest committed Raft log index so the following read returns
     // fully-linearizable state. On a standalone node this is a no-op.
-    // On a follower, returns a clean 503 with `X-Consul-Leader-Address`
-    // so clients can retry on the leader.
+    // On a follower, fall through and serve from the local state machine
+    // rather than returning a 503 error. The Raft-replicated data is
+    // sufficiently consistent for Consul API consumers (lock monitors,
+    // blocking queries, etc.) — rejecting with 503 breaks Go SDK lock
+    // monitor which uses RequireConsistent:true and treats errors as
+    // lock loss.
     let opts = crate::consul_meta::ConsulQueryOptions::from_request(&req);
     if matches!(
         opts.consistency,
         crate::consul_meta::ConsistencyMode::Consistent
     ) {
         if let Err(e) = kv_service.ensure_linearizable_read().await {
-            tracing::debug!("consistent KV read rejected locally: {:?}", e);
-            return e.into_http_response();
+            tracing::debug!(
+                "consistent KV read: not leader, serving from local state machine: {:?}",
+                e
+            );
+            // Fall through to read from local Raft state machine.
+            // This provides near-linearizable consistency since the
+            // local state is kept up-to-date by Raft replication.
         }
     }
 

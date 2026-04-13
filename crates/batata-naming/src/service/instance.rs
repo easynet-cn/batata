@@ -505,7 +505,23 @@ impl NamingService {
                 .insert("_distro_remote".to_string(), "true".to_string());
             let instance_key = build_instance_key(&instance);
             incoming_keys.insert(instance_key.clone());
-            entry.insert(instance_key, Arc::new(instance));
+            // Only insert if the key doesn't already exist as a locally-registered
+            // instance (without _distro_remote marker). This prevents distro sync
+            // from overwriting local gRPC-registered instances with remote-marked
+            // copies, which would cause cleanup_non_responsible_keys to delete them.
+            let should_insert = entry
+                .get(&instance_key)
+                .map(|existing| {
+                    existing
+                        .metadata
+                        .get("_distro_remote")
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true); // No existing entry → insert
+            if should_insert {
+                entry.insert(instance_key, Arc::new(instance));
+            }
         }
 
         // Remove ephemeral instances previously synced from remote that are

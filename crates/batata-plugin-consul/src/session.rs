@@ -466,9 +466,11 @@ impl ConsulSessionService {
         check_id: &str,
         kv: &crate::kv::ConsulKVService,
     ) -> Vec<Session> {
-        if !self.is_leader() {
-            return Vec::new();
-        }
+        // No leader gate here: in cluster mode the health check TTL update
+        // arrives at whichever Consul node received the HTTP request, which
+        // may or may not be the Raft leader. The downstream destroy_session()
+        // and KV release/delete operations are Raft-replicated, so they will
+        // be forwarded to the leader automatically.
         let linked = self.find_sessions_for_check(check_id);
         if linked.is_empty() {
             return Vec::new();
