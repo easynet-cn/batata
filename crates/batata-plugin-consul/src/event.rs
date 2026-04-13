@@ -220,23 +220,42 @@ impl ConsulEventService {
     }
 
     /// List events with optional filters.
-    /// Filters use regex matching (compatible with Consul's Go regexp).
+    /// Filters match against the event's filter fields (name, node_filter,
+    /// service_filter, tag_filter). Empty event filters match any query value.
     pub async fn list_events(
         &self,
         name: Option<&str>,
-        _node: Option<&str>,
-        _service: Option<&str>,
-        _tag: Option<&str>,
+        node: Option<&str>,
+        service: Option<&str>,
+        tag: Option<&str>,
     ) -> Vec<UserEvent> {
         let buf = self.buffer.read().await;
         buf.events()
             .into_iter()
             .filter(|e| {
-                // Filter by name (exact match, like Consul)
-                if let Some(n) = name
-                    && e.name != n
-                {
-                    return false;
+                // Filter by name (exact match)
+                if let Some(n) = name {
+                    if e.name != n {
+                        return false;
+                    }
+                }
+                // Filter by node: match if the event's NodeFilter matches the query
+                if let Some(n) = node {
+                    if !e.node_filter.is_empty() && e.node_filter != n {
+                        return false;
+                    }
+                }
+                // Filter by service
+                if let Some(s) = service {
+                    if !e.service_filter.is_empty() && e.service_filter != s {
+                        return false;
+                    }
+                }
+                // Filter by tag
+                if let Some(t) = tag {
+                    if !e.tag_filter.is_empty() && e.tag_filter != t {
+                        return false;
+                    }
                 }
                 true
             })

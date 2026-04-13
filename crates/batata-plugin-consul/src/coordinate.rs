@@ -46,6 +46,41 @@ impl Default for Coordinate {
     }
 }
 
+impl Coordinate {
+    /// Build a deterministic coordinate from a node identifier.
+    ///
+    /// A full Vivaldi implementation would learn coordinates from RTT
+    /// measurements between cluster members. In the absence of live
+    /// measurements, this produces stable, deterministic coordinates
+    /// derived from the node name hash — useful for UI visualization
+    /// even when real measurements are unavailable.
+    ///
+    /// Coordinates computed this way should NOT be used for latency-aware
+    /// routing decisions.
+    pub fn from_node_identifier(node: &str) -> Self {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut vec = vec![0.0f64; 8];
+        // Derive 8 dimensions from 8 different hash seeds
+        for (i, dim) in vec.iter_mut().enumerate() {
+            let mut hasher = DefaultHasher::new();
+            i.hash(&mut hasher);
+            node.hash(&mut hasher);
+            // Map to small [-1, 1] range; real Vivaldi values are typically
+            // on the order of tens of milliseconds.
+            let raw = hasher.finish();
+            *dim = ((raw as i64) as f64) / (i64::MAX as f64);
+        }
+        Self {
+            adjustment: 0.0,
+            error: 1.5,
+            height: 1.0e-05,
+            vec,
+        }
+    }
+}
+
 /// A node's coordinate entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -128,11 +163,11 @@ impl ConsulCoordinateService {
             raft_node: None,
         };
 
-        // Add self with default coordinate
+        // Add self with a stable coordinate derived from node name
         let entry = CoordinateEntry {
             node: node_name.clone(),
             segment: String::new(),
-            coord: Coordinate::default(),
+            coord: Coordinate::from_node_identifier(&node_name),
         };
         service.coordinates.insert(format!("{}:", node_name), entry);
 
@@ -147,7 +182,7 @@ impl ConsulCoordinateService {
             .iter()
             .filter(|r| {
                 let entry = r.value();
-                entry.segment.is_empty() && entry.coord.vec.iter().all(|v| *v == 0.0)
+                entry.segment.is_empty()
             })
             .map(|r| r.key().clone())
             .collect();
@@ -158,7 +193,7 @@ impl ConsulCoordinateService {
         let entry = CoordinateEntry {
             node: node_name.clone(),
             segment: String::new(),
-            coord: Coordinate::default(),
+            coord: Coordinate::from_node_identifier(&node_name),
         };
         self.coordinates.insert(format!("{}:", node_name), entry);
         self

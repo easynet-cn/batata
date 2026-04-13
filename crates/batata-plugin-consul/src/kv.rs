@@ -1196,8 +1196,27 @@ impl ConsulKVService {
         Some(stored.pair)
     }
 
+    /// Maximum number of operations allowed in a single transaction.
+    /// Matches Consul's `maxTxnOps` (agent/txn_endpoint.go:23).
+    const MAX_TXN_OPS: usize = 128;
+
     /// Execute a transaction with two-phase validation
     pub async fn transaction(&self, ops: Vec<TxnOp>) -> TxnResult {
+        // Enforce max operation count (Consul limits to 128 per transaction)
+        if ops.len() > Self::MAX_TXN_OPS {
+            return TxnResult {
+                results: None,
+                errors: Some(vec![TxnError {
+                    op_index: 0,
+                    what: format!(
+                        "Transaction contains {} operations, which is more than the maximum of {}",
+                        ops.len(),
+                        Self::MAX_TXN_OPS
+                    ),
+                }]),
+            };
+        }
+
         // Phase 1: Validate all operations and collect planned changes
         let mut errors: Vec<TxnError> = Vec::new();
 
@@ -1446,8 +1465,10 @@ pub async fn get_kv(
     // Check ACL authorization for key read
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, false);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("kv_get", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("kv_get", "success");
 
     // Honor ?consistent — wait for the local state machine to catch up to
     // the latest committed Raft log index so the following read returns
@@ -1582,8 +1603,10 @@ pub async fn put_kv(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("kv_put", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("kv_put", "success");
 
     let value = String::from_utf8_lossy(&body).to_string();
 
@@ -1642,8 +1665,10 @@ pub async fn delete_kv(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("kv_delete", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("kv_delete", "success");
 
     let recurse = query.recurse.unwrap_or(false);
 

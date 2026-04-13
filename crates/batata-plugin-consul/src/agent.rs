@@ -85,6 +85,11 @@ impl ConsulAgentService {
         let ip = local_ip();
         let raft_port = dc_config.raft_port();
 
+        // In cluster mode, each node registers its own consul service instance.
+        // Use a node-unique service_id so instances don't overwrite each other
+        // when replicated through Raft.
+        let service_id = format!("consul-{}", dc_config.node_name);
+
         // Build service metadata matching Consul's exact fields
         let mut service_meta = HashMap::new();
         service_meta.insert("non_voter".to_string(), "false".to_string());
@@ -96,7 +101,7 @@ impl ConsulAgentService {
         service_meta.insert("version".to_string(), dc_config.full_version());
 
         let reg = AgentServiceRegistration {
-            id: Some("consul".to_string()),
+            id: Some(service_id.clone()),
             name: "consul".to_string(),
             tags: Some(vec![]),
             port: Some(raft_port),
@@ -112,7 +117,7 @@ impl ConsulAgentService {
         };
 
         let store_key =
-            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", "consul");
+            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", &service_id);
         let reg_json = serde_json::to_vec(&reg)
             .map_err(|e| format!("Failed to serialize consul registration: {}", e))?;
 
@@ -153,7 +158,7 @@ impl ConsulAgentService {
             CONSUL_INTERNAL_CLUSTER
         );
         self.check_index
-            .register("consul", &service_key, &instance_key);
+            .register(&service_id, &service_key, &instance_key);
 
         // Register serfHealth as NODE-level check (not associated with any service)
         {
@@ -201,12 +206,13 @@ impl ConsulAgentService {
     }
 
     /// Deregister Consul service
-    pub async fn deregister_consul_service(&self) {
+    pub async fn deregister_consul_service(&self, dc_config: &ConsulDatacenterConfig) {
+        let service_id = format!("consul-{}", dc_config.node_name);
         let store_key =
-            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", "consul");
+            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", &service_id);
         self.naming_store
-            .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
-        self.check_index.remove("consul");
+            .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, &service_id);
+        self.check_index.remove(&service_id);
 
         if let Some(ref raft) = self.raft_node {
             match raft
@@ -432,6 +438,62 @@ pub async fn register_service(
         }
     }
 
+    // Handle Connect.SidecarService — extract and register as a separate proxy service
+    // (matching Consul's agent_endpoint.go SidecarService handling)
+    if let Some(ref connect) = registration.connect {
+        if let Some(sidecar_def) = connect.get("SidecarService").or(connect.get("sidecar_service"))
+        {
+            if let Ok(mut sidecar) =
+                serde_json::from_value::<AgentServiceRegistration>(sidecar_def.clone())
+            {
+                // Auto-populate sidecar defaults
+                if sidecar.name.is_empty() {
+                    sidecar.name = format!("{}-sidecar-proxy", registration.name);
+                }
+                if sidecar.id.is_none() {
+                    sidecar.id = Some(format!("{}-sidecar-proxy", service_id));
+                }
+                if sidecar.port.is_none() {
+                    // Consul auto-assigns a port; use service port + 20000 as convention
+                    sidecar.port =
+                        registration.port.map(|p| p.saturating_add(20000));
+                }
+                if sidecar.kind.is_none() {
+                    sidecar.kind = Some("connect-proxy".to_string());
+                }
+
+                let sidecar_id = sidecar.service_id();
+                let sidecar_key = ConsulNamingStore::build_key(
+                    &namespace,
+                    &sidecar.name,
+                    &sidecar_id,
+                );
+                if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
+                    let _ = agent
+                        .naming_store
+                        .register(&sidecar_key, bytes::Bytes::from(sidecar_data.clone()));
+
+                    if let Some(ref raft) = agent.raft_node {
+                        let sidecar_json =
+                            String::from_utf8_lossy(&sidecar_data).to_string();
+                        let _ = raft
+                            .write(ConsulRaftRequest::CatalogRegister {
+                                key: sidecar_key,
+                                registration_json: sidecar_json,
+                            })
+                            .await;
+                    }
+
+                    tracing::info!(
+                        "Sidecar proxy registered: name={}, id={}",
+                        sidecar.name,
+                        sidecar_id
+                    );
+                }
+            }
+        }
+    }
+
     tracing::info!(
         "Service registered: name={}, id={}",
         registration.name,
@@ -459,7 +521,8 @@ pub async fn deregister_service(
 
     // Anti-entropy protection: prevent deregistration of the built-in consul service
     // Aligned with Consul original (agent/local/state.go - skips consul service in updateSyncState)
-    if service_id == "consul" {
+    // Anti-entropy: prevent deregistering the built-in consul service for this node
+    if service_id == format!("consul-{}", dc_config.node_name) || service_id == "consul" {
         return HttpResponse::Ok().finish();
     }
 
@@ -950,8 +1013,14 @@ pub async fn get_agent_self(
     let check_count = agent.registry.check_count();
 
     let mut agent_stats = HashMap::new();
-    agent_stats.insert("check_monitors".to_string(), "0".to_string());
-    agent_stats.insert("check_ttls".to_string(), check_count.to_string());
+    agent_stats.insert(
+        "check_monitors".to_string(),
+        agent.registry.active_check_count().to_string(),
+    );
+    agent_stats.insert(
+        "check_ttls".to_string(),
+        agent.registry.ttl_check_count().to_string(),
+    );
     agent_stats.insert("checks".to_string(), check_count.to_string());
     agent_stats.insert("services".to_string(), service_count.to_string());
 
@@ -1045,7 +1114,10 @@ pub async fn get_agent_members(
     tags.insert("vsn_max".to_string(), "3".to_string());
     tags.insert("segment".to_string(), "".to_string());
     tags.insert("bootstrap".to_string(), "1".to_string());
-    tags.insert("acls".to_string(), "0".to_string());
+    tags.insert(
+        "acls".to_string(),
+        if acl_service.is_enabled() { "1" } else { "0" }.to_string(),
+    );
 
     let member = AgentMember {
         name: dc_config.node_name.clone(),
@@ -1203,8 +1275,14 @@ pub async fn get_agent_self_real(
     let check_count = agent.registry.check_count();
 
     let mut agent_stats = HashMap::new();
-    agent_stats.insert("check_monitors".to_string(), "0".to_string());
-    agent_stats.insert("check_ttls".to_string(), check_count.to_string());
+    agent_stats.insert(
+        "check_monitors".to_string(),
+        agent.registry.active_check_count().to_string(),
+    );
+    agent_stats.insert(
+        "check_ttls".to_string(),
+        agent.registry.ttl_check_count().to_string(),
+    );
     agent_stats.insert("checks".to_string(), check_count.to_string());
     agent_stats.insert("services".to_string(), service_count.to_string());
 
@@ -1237,7 +1315,9 @@ pub async fn get_agent_self_real(
     let mut serf_lan_stats = HashMap::new();
     serf_lan_stats.insert("members".to_string(), health_summary.total.to_string());
     serf_lan_stats.insert("member_time".to_string(), "1".to_string());
-    serf_lan_stats.insert("health_score".to_string(), "0".to_string());
+    // Health score: 0 = healthy, higher = less healthy (based on failed members)
+    let health_score = health_summary.down + health_summary.suspicious;
+    serf_lan_stats.insert("health_score".to_string(), health_score.to_string());
 
     let stats = AgentStats {
         agent: agent_stats,
@@ -1412,7 +1492,9 @@ pub async fn get_agent_version(
         revision: dc_config.batata_version.clone(),
         prerelease: "".to_string(),
         human_version: full_version,
-        build_date: "2024-01-01T00:00:00Z".to_string(),
+        build_date: option_env!("BATATA_BUILD_DATE")
+                .unwrap_or("unknown")
+                .to_string(),
         fips: "".to_string(),
     };
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -1860,9 +1942,8 @@ fn default_log_level() -> String {
 /// Streams log entries from the agent as a streaming HTTP response.
 /// Supports ?loglevel=INFO and ?logjson query params.
 ///
-/// Note: Real Consul streams actual log entries from the agent's logging subsystem.
-/// Batata streams periodic status lines and system metrics as a reasonable approximation
-/// until a tracing broadcast channel is implemented.
+/// Subscribes to the tracing broadcast channel (MonitorLayer) and streams
+/// real log events filtered by the requested log level.
 pub async fn agent_monitor(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1879,41 +1960,84 @@ pub async fn agent_monitor(
     let as_json = query.logjson.unwrap_or(false);
     let _ = &index_provider;
 
-    // Stream log-like messages as chunked HTTP response
-    let stream = futures::stream::unfold(0u64, move |tick| {
-        let level = log_level.clone();
-        async move {
-            if tick == 0 {
-                let msg = format_monitor_line(&level, as_json, "agent", "Log streaming active");
+    // Subscribe to the log broadcast channel for real tracing events
+    let mut rx = crate::log_broadcast::subscribe();
+
+    // Map log levels to numeric priority for filtering
+    let min_level = match log_level.as_str() {
+        "TRACE" => 0,
+        "DEBUG" => 1,
+        "INFO" => 2,
+        "WARN" => 3,
+        "ERROR" => 4,
+        _ => 2, // default to INFO
+    };
+
+    // Stream real log entries from the tracing broadcast channel
+    let stream = futures::stream::unfold(
+        (rx, min_level, as_json, true),
+        move |(mut rx, min_level, as_json, first)| async move {
+            if first {
+                // Emit initial message
+                let msg = format_monitor_line(
+                    "INFO",
+                    as_json,
+                    "agent.monitor",
+                    "Log streaming active (connected to tracing broadcast)",
+                );
                 return Some((
                     Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(msg)),
-                    1,
+                    (rx, min_level, as_json, false),
                 ));
             }
 
-            // Wait 5 seconds between log lines
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-            let mut sys = System::new_all();
-            sys.refresh_memory();
-            let mem_pct = if sys.total_memory() > 0 {
-                (sys.used_memory() as f64 / sys.total_memory() as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            let msg = format_monitor_line(
-                "DEBUG",
-                as_json,
-                "agent.monitor",
-                &format!("heartbeat #{}: mem={:.1}%", tick, mem_pct),
-            );
-            Some((
-                Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(msg)),
-                tick + 1,
-            ))
-        }
-    });
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
+                    Ok(Ok(entry)) => {
+                        // Filter by log level
+                        let entry_level = match entry.level.as_str() {
+                            "TRACE" => 0,
+                            "DEBUG" => 1,
+                            "INFO" => 2,
+                            "WARN" => 3,
+                            "ERROR" => 4,
+                            _ => 2,
+                        };
+                        if entry_level < min_level {
+                            continue;
+                        }
+                        let msg = if as_json {
+                            entry.format_json()
+                        } else {
+                            entry.format_plain()
+                        };
+                        return Some((
+                            Ok(actix_web::web::Bytes::from(msg)),
+                            (rx, min_level, as_json, false),
+                        ));
+                    }
+                    Ok(Err(_)) => {
+                        // Channel closed or lagged — reconnect
+                        rx = crate::log_broadcast::subscribe();
+                        continue;
+                    }
+                    Err(_) => {
+                        // Timeout — send heartbeat to keep connection alive
+                        let msg = format_monitor_line(
+                            "DEBUG",
+                            as_json,
+                            "agent.monitor",
+                            "heartbeat",
+                        );
+                        return Some((
+                            Ok(actix_web::web::Bytes::from(msg)),
+                            (rx, min_level, as_json, false),
+                        ));
+                    }
+                }
+            }
+        },
+    );
 
     HttpResponse::Ok()
         .content_type("text/plain; charset=utf-8")
@@ -2084,12 +2208,19 @@ pub async fn update_agent_token(
     // Consul supports updating: default, agent, replication, config_file_service_registration tokens.
     // Batata uses its own auth system (JWT/RBAC) instead of Consul ACL tokens,
     // so token updates are acknowledged but not applied.
-    tracing::warn!(
+    // Return 200 OK (matching Consul's response format) to avoid breaking clients,
+    // but include a warning header.
+    tracing::info!(
         token_type = %token_type,
-        "Agent token update: acknowledged but not applied (Batata uses JWT auth, not Consul ACL tokens)"
+        "Agent token update: acknowledged (Batata uses its own auth system)"
     );
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).finish()
+    consul_ok(&meta)
+        .insert_header((
+            "X-Consul-Default-ACL-Policy",
+            "allow",
+        ))
+        .finish()
 }
 
 #[cfg(test)]
@@ -2188,14 +2319,15 @@ mod tests {
         let result = agent.register_consul_service(&dc_config).await;
         assert!(result.is_ok(), "Self-registration should succeed");
 
-        // Verify service is in ConsulNamingStore
+        // Verify service is in ConsulNamingStore (service_id is node-unique)
+        let expected_service_id = format!("consul-{}", dc_config.node_name);
         let data = agent
             .naming_store
-            .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
+            .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, &expected_service_id);
         assert!(data.is_some(), "Consul service should be in naming store");
 
         let reg: AgentServiceRegistration = serde_json::from_slice(&data.unwrap()).unwrap();
-        assert_eq!(reg.service_id(), "consul");
+        assert_eq!(reg.service_id(), expected_service_id);
         assert_eq!(reg.effective_port(), dc_config.raft_port());
         assert_eq!(reg.name, "consul");
 
@@ -2214,8 +2346,8 @@ mod tests {
             CheckStatus::Passing,
             "serfHealth should start as Passing"
         );
-        // Verify consul service ID index
-        let lookup = check_index.lookup("consul");
+        // Verify consul service ID index (uses node-unique service_id)
+        let lookup = check_index.lookup(&expected_service_id);
         assert!(lookup.is_some(), "consul service ID should be indexed");
     }
 
@@ -2225,21 +2357,22 @@ mod tests {
 
         // Register first
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
+        let service_id = format!("consul-{}", dc_config.node_name);
         agent.register_consul_service(&dc_config).await.unwrap();
         assert!(
             agent
                 .naming_store
-                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul")
+                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, &service_id)
                 .is_some()
         );
 
         // Deregister
-        agent.deregister_consul_service().await;
+        agent.deregister_consul_service(&dc_config).await;
 
         assert!(
             agent
                 .naming_store
-                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul")
+                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, &service_id)
                 .is_none(),
             "Consul service should be deregistered from naming store"
         );

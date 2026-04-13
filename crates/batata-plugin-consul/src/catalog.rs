@@ -1186,8 +1186,10 @@ pub async fn list_services(
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("catalog_list_services", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("catalog_list_services", "success");
 
     let dc = dc_config.resolve_dc(&query.dc);
     let namespace = dc_config.resolve_ns(&query.ns);
@@ -1237,8 +1239,10 @@ pub async fn get_service(
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("catalog_get_service", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("catalog_get_service", "success");
 
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
@@ -1265,11 +1269,23 @@ pub async fn get_service(
         svc.datacenter = dc.clone();
     }
 
+    // Filter by node-meta
+    let node_meta_filters = crate::consul_meta::parse_multi_param(&req, "node-meta");
+    if !node_meta_filters.is_empty() {
+        services.retain(|svc| {
+            crate::consul_meta::matches_node_meta_filters(svc.node_meta.as_ref(), &node_meta_filters)
+        });
+    }
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     if services.is_empty() {
-        consul_ok(&meta).json(Vec::<CatalogService>::new())
+        consul_ok(&meta)
+            .insert_header(("X-Consul-Effective-Datacenter", dc))
+            .json(Vec::<CatalogService>::new())
     } else {
-        consul_ok(&meta).json(services)
+        consul_ok(&meta)
+            .insert_header(("X-Consul-Effective-Datacenter", dc))
+            .json(services)
     }
 }
 
@@ -1302,8 +1318,18 @@ pub async fn list_nodes(
         node.datacenter = dc.clone();
     }
 
+    // Filter by node-meta (supports multiple ?node-meta=key:value params)
+    let node_meta_filters = crate::consul_meta::parse_multi_param(&req, "node-meta");
+    if !node_meta_filters.is_empty() {
+        nodes.retain(|node| {
+            crate::consul_meta::matches_node_meta_filters(node.meta.as_ref(), &node_meta_filters)
+        });
+    }
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(nodes)
+    consul_ok(&meta)
+        .insert_header(("X-Consul-Effective-Datacenter", dc))
+        .json(nodes)
 }
 
 /// GET /v1/catalog/node/:node
@@ -1364,14 +1390,17 @@ pub async fn register(
         .unwrap_or("");
     let authz = acl_service.authorize_request(&req, ResourceType::Service, service_name, true);
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("catalog_register", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
     if catalog.register(&registration, &namespace) {
+        crate::api_metrics::incr_endpoint("catalog_register", "success");
         let idx = index_provider.increment(ConsulTable::Catalog);
         let meta = ConsulResponseMeta::new(idx);
         consul_ok(&meta).json(true)
     } else {
+        crate::api_metrics::incr_endpoint("catalog_register", "error");
         HttpResponse::InternalServerError().json(ConsulError::new("Registration failed"))
     }
 }

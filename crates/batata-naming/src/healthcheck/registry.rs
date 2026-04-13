@@ -546,6 +546,22 @@ impl InstanceCheckRegistry {
         self.configs.len()
     }
 
+    /// Get count of active (HTTP/TCP/gRPC) checks (check_monitors in Consul stats)
+    pub fn active_check_count(&self) -> usize {
+        self.configs
+            .iter()
+            .filter(|e| e.value().check_type.is_active())
+            .count()
+    }
+
+    /// Get count of TTL checks
+    pub fn ttl_check_count(&self) -> usize {
+        self.configs
+            .iter()
+            .filter(|e| matches!(e.value().check_type, super::CheckType::Ttl))
+            .count()
+    }
+
     /// Get all check keys for a given instance
     pub fn get_check_keys_for_instance(&self, instance_key: &str) -> Vec<String> {
         self.instance_checks

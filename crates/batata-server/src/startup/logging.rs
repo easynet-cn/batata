@@ -424,6 +424,12 @@ pub fn init_logging(
         _ => None,
     };
 
+    // --- Consul monitor broadcast layer ---
+    // Enables /v1/agent/monitor to stream real log events.
+    // Zero overhead when no monitor subscribers are connected.
+    #[cfg(feature = "consul")]
+    layers.push(Box::new(batata_plugin_consul::log_broadcast::MonitorLayer));
+
     // --- Initialize the global tracing subscriber ---
     // All filtering is per-layer (no global EnvFilter), so each layer
     // independently decides which events to process.

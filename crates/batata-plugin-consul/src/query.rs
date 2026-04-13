@@ -559,22 +559,78 @@ pub async fn execute_query(
     }
 
     // Handle failover: if no healthy nodes found and failover is configured,
-    // attempt to find instances from the failover datacenters.
-    // In single-DC mode, this checks if the service exists under alternative
-    // namespace/group mappings.
+    // try alternative namespaces that might have the same service.
+    // Cross-datacenter failover requires multi-DC support (not yet implemented).
     let failover_count = if nodes.is_empty() {
         if let Some(ref failover) = query.service.failover {
-            let mut attempted = 0;
-            if let Some(ref dcs) = failover.datacenters {
-                attempted = dcs.len() as i32;
-            } else if let Some(n) = failover.nearest_n {
-                attempted = n;
+            let mut attempted = 0i32;
+
+            // Try alternate namespaces in the same DC as a basic failover
+            // (Consul's failover.NearestN tries N nearest datacenters)
+            if let Some(n) = failover.nearest_n {
+                attempted += n;
             }
-            tracing::debug!(
-                "Prepared query '{}' returned 0 nodes, failover configured with {} targets",
-                query.name,
-                attempted
-            );
+            if let Some(ref dcs) = failover.datacenters {
+                attempted += dcs.len() as i32;
+                // In single-DC mode, try loading from alternate namespaces
+                // named after the datacenter (best-effort compatibility)
+                for alt_dc in dcs {
+                    let entries =
+                        naming_store.get_service_entries(alt_dc, &service_name);
+                    for entry_bytes in &entries {
+                        if let Ok(reg) =
+                            serde_json::from_slice::<AgentServiceRegistration>(entry_bytes)
+                        {
+                            let healthy = naming_store.is_healthy(
+                                &reg.effective_address(),
+                                reg.effective_port() as i32,
+                            );
+                            if healthy || !query.service.only_passing {
+                                let agent_service = AgentService::from(&reg);
+                                let ip = reg.effective_address();
+                                let node_name = format!("node-{}", ip.replace('.', "-"));
+                                nodes.push(ServiceHealth {
+                                    node: Node {
+                                        id: String::new(),
+                                        node: node_name,
+                                        address: ip,
+                                        datacenter: alt_dc.clone(),
+                                        tagged_addresses: None,
+                                        meta: None,
+                                        create_index: 1,
+                                        modify_index: 1,
+                                    },
+                                    service: agent_service,
+                                    checks: vec![HealthCheck {
+                                        node: String::new(),
+                                        check_id: "serfHealth".to_string(),
+                                        name: "Serf Health Status".to_string(),
+                                        status: if healthy { "passing" } else { "critical" }.to_string(),
+                                        ..Default::default()
+                                    }],
+                                });
+                            }
+                        }
+                    }
+                    if !nodes.is_empty() {
+                        tracing::info!(
+                            "Prepared query '{}' failover succeeded from dc '{}'",
+                            query.name,
+                            alt_dc
+                        );
+                        break;
+                    }
+                }
+            }
+
+            if nodes.is_empty() && attempted > 0 {
+                tracing::debug!(
+                    "Prepared query '{}' returned 0 nodes after {} failover attempts",
+                    query.name,
+                    attempted
+                );
+            }
+
             attempted
         } else {
             0

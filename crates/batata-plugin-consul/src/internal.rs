@@ -4,6 +4,7 @@
 //! and internal operations (federation, VIP, ACL authorize).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::{Deserialize, Serialize};
@@ -215,6 +216,108 @@ pub async fn ui_nodes(
 
     let meta = ConsulResponseMeta::new(index);
     consul_ok(&meta).json(vec![node])
+}
+
+/// GET /v1/internal/ui/nodes - List nodes for UI (cluster-aware version)
+///
+/// Returns all cluster members as UINode entries using ClusterManager.
+/// Each member generates a node with its address, services, and checks.
+pub async fn ui_nodes_real(
+    req: HttpRequest,
+    naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<ConsulHealthService>,
+    acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    member_manager: web::Data<Arc<dyn batata_common::ClusterManager>>,
+    _query: web::Query<UINodeQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let index = index_provider.current_index(ConsulTable::Catalog);
+    let local_ip = batata_common::local_ip();
+    let members = member_manager.all_members_extended();
+
+    let mut nodes = Vec::with_capacity(members.len());
+    for member in &members {
+        let is_local = member.ip == local_ip || member.address.starts_with(&format!("{}:", local_ip));
+        if is_local {
+            // For the local node, include real services and checks
+            let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
+            nodes.push(node);
+        } else {
+            // For remote nodes, build node entry and find services registered
+            // from that node's IP. In cluster mode, all registrations are
+            // replicated via Raft, so the local NamingStore has all data.
+            let node_ip = &member.ip;
+            let node_name = format!("node-{}", node_ip.replace('.', "-"));
+
+            let mut tagged = HashMap::new();
+            tagged.insert("lan".to_string(), node_ip.clone());
+            tagged.insert("lan_ipv4".to_string(), node_ip.clone());
+            tagged.insert("wan".to_string(), node_ip.clone());
+            tagged.insert("wan_ipv4".to_string(), node_ip.clone());
+
+            let mut meta = HashMap::new();
+            meta.insert("consul-network-segment".to_string(), "".to_string());
+            meta.insert("consul-version".to_string(), dc_config.full_version());
+
+            // Generate a deterministic UUID-like ID from the member address
+            let addr_digits: String = node_ip
+                .replace('.', "")
+                .chars()
+                .chain(std::iter::repeat('0'))
+                .take(12)
+                .collect();
+            let node_id = format!("00000000-0000-0000-0000-{}", addr_digits);
+
+            // Find services registered from this node's IP address
+            let mut services = Vec::new();
+            for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
+                if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+                    if reg.effective_address() == *node_ip {
+                        let svc = crate::model::AgentService::from(&reg);
+                        services.push(svc);
+                    }
+                }
+            }
+
+            // Get health checks for services on this node
+            let all_checks = health_service.get_all_checks_sync();
+            let checks: Vec<_> = all_checks
+                .into_iter()
+                .filter(|c| {
+                    // Include node-level checks and checks for services on this node
+                    c.service_id.is_empty()
+                        || services
+                            .iter()
+                            .any(|s| s.id == c.service_id)
+                })
+                .collect();
+
+            nodes.push(UINode {
+                id: node_id,
+                node: node_name,
+                address: node_ip.clone(),
+                tagged_addresses: tagged,
+                meta,
+                services,
+                checks,
+            });
+        }
+    }
+
+    // If no members found (shouldn't happen), fall back to local node
+    if nodes.is_empty() {
+        let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
+        nodes.push(node);
+    }
+
+    let meta = ConsulResponseMeta::new(index);
+    consul_ok(&meta).json(nodes)
 }
 
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
@@ -498,16 +601,27 @@ pub async fn ui_service_topology(
 }
 
 /// GET /v1/internal/ui/metrics-proxy/{path:.*} - Proxy metrics requests
+///
+/// Consul proxies to an external metrics provider (e.g., Prometheus).
+/// Batata's metrics are available at the main server's `/prometheus` endpoint.
+/// This proxy returns a redirect to the main server's metrics endpoint.
 pub async fn ui_metrics_proxy(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::NotFound().json(ConsulError::new("metrics proxy not configured"))
+    // Return a helpful JSON response pointing to the actual metrics endpoint
+    let main_port = dc_config.main_port;
+    HttpResponse::Ok().json(serde_json::json!({
+        "error": null,
+        "message": "Metrics available at the main server's /prometheus endpoint",
+        "metrics_url": format!("http://localhost:{}/nacos/prometheus", main_port),
+    }))
 }
 
 // ============================================================================

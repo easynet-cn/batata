@@ -352,6 +352,30 @@ pub fn parse_multi_param(req: &HttpRequest, param_name: &str) -> Vec<String> {
     values
 }
 
+/// Check if a HashMap matches a set of node-meta filter strings.
+///
+/// Each filter is in Consul's `key:value` format. All filters must match
+/// (AND semantics). An empty filter list matches any metadata.
+pub fn matches_node_meta_filters(
+    meta: Option<&std::collections::HashMap<String, String>>,
+    filters: &[String],
+) -> bool {
+    if filters.is_empty() {
+        return true;
+    }
+    filters.iter().all(|filter| {
+        let (key, expected) = match filter.split_once(':') {
+            Some((k, v)) => (k, Some(v)),
+            None => (filter.as_str(), None),
+        };
+        match (meta, expected) {
+            (None, _) => false,
+            (Some(m), Some(v)) => m.get(key).is_some_and(|mv| mv == v),
+            (Some(m), None) => m.contains_key(key),
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Go time.Duration compatible parsing
 // ---------------------------------------------------------------------------

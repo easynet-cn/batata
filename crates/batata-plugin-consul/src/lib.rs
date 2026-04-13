@@ -44,6 +44,8 @@ pub mod index_provider;
 pub mod internal;
 pub mod kv;
 pub mod lock;
+pub mod log_broadcast;
+pub mod api_metrics;
 pub mod model;
 pub mod namespace;
 pub mod naming_store;

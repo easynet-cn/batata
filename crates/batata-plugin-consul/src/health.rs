@@ -449,8 +449,10 @@ pub async fn get_service_health(
         false, // read access only
     );
     if !authz.allowed {
+        crate::api_metrics::incr_endpoint("health_service", "error");
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+    crate::api_metrics::incr_endpoint("health_service", "success");
 
     // Get service entries from ConsulNamingStore (Consul-native data)
     let entries = naming_store.get_service_entries(&namespace, &service_name);
@@ -554,29 +556,58 @@ pub async fn get_service_health(
     }
 
     // Apply filter expression if specified
-    let results = if let Some(ref filter) = query.filter {
+    let mut results = if let Some(ref filter) = query.filter {
         apply_service_health_filter(results, filter)
     } else {
         results
     };
 
+    // Filter by node-meta (supports multiple ?node-meta=key:value params)
+    let node_meta_filters = crate::consul_meta::parse_multi_param(&req, "node-meta");
+    if !node_meta_filters.is_empty() {
+        results.retain(|sh| {
+            crate::consul_meta::matches_node_meta_filters(sh.node.meta.as_ref(), &node_meta_filters)
+        });
+    }
+
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
+    let dc = dc_config.resolve_dc(&query.dc);
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(results)
+    consul_ok(&meta)
+        .insert_header(("X-Consul-Effective-Datacenter", dc))
+        .json(results)
 }
 
 /// Apply Consul filter expression to service health results.
-/// Supports basic expressions like:
+/// Supports common Consul filter patterns:
+///   Service == "name"
 ///   ServiceMeta.key == "value"
 ///   ServiceMeta["key"] == "value"
-///   Service == "name"
+///   Node.Meta.key == "value"
+///   "tag" in ServiceTags
+///   ServiceTags contains "tag"
 fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec<ServiceHealth> {
-    // Parse simple filter: field == "value" or field != "value"
-    // Also supports unquoted: field == value (Go SDK sends this)
     let filter = filter.trim();
 
+    // Try `"value" in FieldList` pattern
+    if let Some((value, field)) = parse_in_expression(filter) {
+        return results
+            .into_iter()
+            .filter(|entry| resolve_list_field(entry, &field).iter().any(|v| v == &value))
+            .collect();
+    }
+
+    // Try `FieldList contains "value"` pattern
+    if let Some((field, value)) = parse_contains_expression(filter) {
+        return results
+            .into_iter()
+            .filter(|entry| resolve_list_field(entry, &field).iter().any(|v| v == &value))
+            .collect();
+    }
+
+    // Try equality/inequality: field == "value" or field != "value"
     let (selector, op, expected) = if let Some(rest) = filter.strip_suffix('"') {
         // Quoted: `field == "value"`
         if let Some(pos) = rest.rfind('"') {
@@ -616,6 +647,35 @@ fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec
             }
         })
         .collect()
+}
+
+/// Parse `"value" in FieldPath` pattern. Returns (value, field).
+fn parse_in_expression(filter: &str) -> Option<(String, String)> {
+    // Find quoted value at the start
+    let rest = filter.strip_prefix('"')?;
+    let quote_end = rest.find('"')?;
+    let value = &rest[..quote_end];
+    let after = rest[quote_end + 1..].trim_start();
+    let field = after.strip_prefix("in ")?.trim();
+    Some((value.to_string(), field.to_string()))
+}
+
+/// Parse `FieldPath contains "value"` pattern. Returns (field, value).
+fn parse_contains_expression(filter: &str) -> Option<(String, String)> {
+    let idx = filter.find(" contains ")?;
+    let field = filter[..idx].trim();
+    let rest = filter[idx + " contains ".len()..].trim();
+    let rest = rest.strip_prefix('"')?;
+    let value = rest.strip_suffix('"')?;
+    Some((field.to_string(), value.to_string()))
+}
+
+/// Resolve a list-valued field selector (e.g., ServiceTags).
+fn resolve_list_field(entry: &ServiceHealth, selector: &str) -> Vec<String> {
+    match selector {
+        "ServiceTags" | "Service.Tags" => entry.service.tags.clone().unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// Resolve a field selector against a ServiceHealth entry.

@@ -117,6 +117,10 @@ pub struct ConsulPluginInner {
     /// group. `None` in standalone mode; `Some` in cluster mode. Used by
     /// `ConsulResultHandler` auto-deregister and other leader-gated cascades.
     pub raft_writer: Option<Arc<ConsulRaftWriter>>,
+    /// Cluster manager for real cluster mode. `None` in standalone mode.
+    /// Used to provide cluster-aware responses for agent/members, status/leader,
+    /// operator/raft, and internal/ui/nodes endpoints.
+    pub cluster_manager: Option<Arc<dyn batata_common::ClusterManager>>,
 }
 
 /// Consul compatibility protocol adapter plugin.
@@ -216,6 +220,7 @@ impl ConsulPlugin {
             dc_config: self.dc_config.clone(),
             registry,
             raft_writer: None,
+            cluster_manager: None,
         }
     }
 
@@ -310,6 +315,7 @@ impl ConsulPlugin {
             index_provider,
             registry,
             raft_writer: Some(consul_raft),
+            cluster_manager: None, // Set later via set_cluster_manager()
         }
     }
 
@@ -482,6 +488,11 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // Extract cluster context
         let is_cluster = ctx.get::<bool>("is_cluster").map(|v| *v).unwrap_or(false);
         let raft_node = ctx.get::<batata_consistency::RaftNode>("raft_node");
+        // ClusterManager is stored as Arc<Arc<dyn ClusterManager>> in the context;
+        // unwrap the outer Arc to get the inner Arc<dyn ClusterManager>.
+        let cluster_manager: Option<Arc<dyn batata_common::ClusterManager>> = ctx
+            .get::<Arc<dyn batata_common::ClusterManager>>("cluster_manager")
+            .map(|arc_arc| (*arc_arc).clone());
 
         // Create Consul naming store and result handler
         let consul_naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
@@ -494,13 +505,19 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             consul_result_handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>
         ));
 
-        let inner = if is_cluster {
+        let mut inner = if is_cluster {
             self.init_cluster(raft_node, consul_naming_store, consul_registry)
                 .await
         } else {
             tracing::info!("Consul services using in-memory storage (standalone/console mode)");
             self.build_inner_standalone(consul_naming_store, consul_registry)
         };
+
+        // Set cluster manager for cluster-aware Consul endpoints
+        if let Some(cm) = cluster_manager {
+            tracing::info!("Consul plugin using real ClusterManager for cluster-aware endpoints");
+            inner.cluster_manager = Some(cm);
+        }
 
         // Wire ConsulResultHandler to session/kv/check_index for:
         // - on_deregister: check_id → service_id → store_key chain
@@ -547,8 +564,15 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.operator.clone()))
             .app_data(actix_web::web::Data::new(inner.namespace_service.clone()))
             .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
-            .app_data(actix_web::web::Data::new(inner.index_provider.clone()))
-            .service(crate::route::routes());
+            .app_data(actix_web::web::Data::new(inner.index_provider.clone()));
+
+        // In cluster mode, inject ClusterManager and use real cluster routes
+        if let Some(ref cm) = inner.cluster_manager {
+            cfg.app_data(actix_web::web::Data::new(cm.clone()))
+                .service(crate::route::routes_real());
+        } else {
+            cfg.service(crate::route::routes());
+        }
     }
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {

@@ -373,7 +373,11 @@ async fn test_http_agent_version() {
 
     let body: serde_json::Value = test::read_body_json(resp).await;
     let version = body["HumanVersion"].as_str().unwrap();
-    assert!(version.contains("batata"));
+    // Version should be non-empty (Consul version like "1.22.5" or Batata fallback)
+    assert!(!version.is_empty());
+    // Revision field carries the Batata version for debugging
+    let revision = body["Revision"].as_str().unwrap();
+    assert!(!revision.is_empty());
 }
 
 #[actix_web::test]
@@ -1568,8 +1572,10 @@ async fn test_http_internal_ui_metrics_proxy() {
         .uri("/v1/internal/ui/metrics-proxy/test")
         .to_request();
     let resp = test::call_service(&app, req).await;
-    // Metrics proxy returns 404 (not implemented)
-    assert_eq!(resp.status(), 404);
+    // Metrics proxy returns 200 with metrics URL info
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(body.get("metrics_url").is_some(), "Response should include metrics_url");
 }
 
 #[actix_web::test]

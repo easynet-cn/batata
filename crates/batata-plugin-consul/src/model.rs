@@ -160,12 +160,16 @@ impl ConsulDatacenterConfig {
             .to_string()
     }
 
-    /// Full Consul-compatible version string (e.g., "1.22.5-batata-0.1.0")
+    /// Consul-compatible version string (e.g., "1.22.5").
+    ///
+    /// Returns only the Consul version to ensure client/SDK compatibility —
+    /// many Consul clients parse this field strictly as a semver.
+    /// The Batata version is available separately via `batata_version`.
     pub fn full_version(&self) -> String {
         if self.consul_version.is_empty() {
-            format!("batata-{}", self.batata_version)
+            self.batata_version.clone()
         } else {
-            format!("{}-batata-{}", self.consul_version, self.batata_version)
+            self.consul_version.clone()
         }
     }
 }
