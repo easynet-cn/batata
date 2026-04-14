@@ -1,7 +1,8 @@
 //! Consul Status API HTTP handlers
 //!
-//! Implements Consul-compatible status endpoints for Raft information.
-//! Supports both fixed (fallback) and real cluster information via ClusterManager.
+//! Implements Consul-compatible status endpoints for Raft information,
+//! backed by a `ClusterManager`. In standalone mode `ClusterManager` reports
+//! a single healthy member, so the same handlers serve both topologies.
 
 use std::sync::Arc;
 
@@ -11,57 +12,13 @@ use serde::Deserialize;
 use batata_common::ClusterManager;
 
 use crate::acl::{AclService, ResourceType};
-use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
-};
+use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 
 /// Query parameters for status endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StatusQueryParams {
     pub dc: Option<String>,
 }
-
-// ============================================================================
-// Fixed/Fallback Handlers (Original Implementation)
-// ============================================================================
-
-/// GET /v1/status/leader (Fixed fallback version)
-/// Returns the Raft leader address: "IP:raft_port"
-pub async fn get_leader(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    // Consul returns "IP:raft_port", NOT hostname
-    let local_ip = batata_common::local_ip();
-    let leader = format!("{}:{}", local_ip, dc_config.raft_port());
-    HttpResponse::Ok().json(leader)
-}
-
-/// GET /v1/status/peers (Fixed fallback version)
-/// Returns the local node as the only peer: "IP:raft_port"
-pub async fn get_peers(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    let local_ip = batata_common::local_ip();
-    let peers = vec![format!("{}:{}", local_ip, dc_config.raft_port())];
-    HttpResponse::Ok().json(peers)
-}
-
-// ============================================================================
-// Real Cluster Handlers (Using ClusterManager)
-// ============================================================================
 
 /// Convert Batata member address to Raft address format.
 fn to_raft_address(batata_address: &str, raft_port: u16) -> String {
@@ -73,9 +30,9 @@ fn to_raft_address(batata_address: &str, raft_port: u16) -> String {
     }
 }
 
-/// GET /v1/status/leader (Real cluster version)
+/// GET /v1/status/leader
 /// Returns the actual Raft leader address from ClusterManager
-pub async fn get_leader_real(
+pub async fn get_leader(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
@@ -95,9 +52,9 @@ pub async fn get_leader_real(
     HttpResponse::Ok().json(leader)
 }
 
-/// GET /v1/status/peers (Real cluster version)
+/// GET /v1/status/peers
 /// Returns the actual Raft peer addresses from ClusterManager
-pub async fn get_peers_real(
+pub async fn get_peers(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,

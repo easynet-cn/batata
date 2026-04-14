@@ -29,9 +29,18 @@ async fn get_agent_self(
     agent: web::Data<crate::agent::ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_agent_self(req, agent, acl_service, dc_config, index_provider).await
+    crate::agent::get_agent_self(
+        req,
+        agent,
+        acl_service,
+        dc_config,
+        member_manager,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/members")]
@@ -39,10 +48,19 @@ async fn get_agent_members(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     _query: web::Query<AgentMembersParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_agent_members(req, acl_service, dc_config, _query, index_provider).await
+    crate::agent::get_agent_members(
+        req,
+        acl_service,
+        dc_config,
+        member_manager,
+        _query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/host")]
@@ -115,21 +133,40 @@ async fn agent_maintenance(
 async fn get_agent_metrics(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    agent: web::Data<ConsulAgentService>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_agent_metrics(req, acl_service, index_provider).await
+    crate::agent::get_agent_metrics(
+        req,
+        acl_service,
+        dc_config,
+        agent,
+        member_manager,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/metrics/stream")]
 async fn agent_metrics_stream(
     req: HttpRequest,
     naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::agent_metrics_stream(req, naming_store, acl_service, dc_config, index_provider)
-        .await
+    crate::agent::agent_metrics_stream(
+        req,
+        naming_store,
+        member_manager,
+        acl_service,
+        dc_config,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/monitor")]
@@ -392,94 +429,10 @@ async fn agent_health_service_by_name(
 }
 
 // ============================================================================
-// Real cluster variant endpoints
-// ============================================================================
-
-#[get("/self")]
-async fn get_agent_self_real(
-    req: HttpRequest,
-    agent: web::Data<crate::agent::ConsulAgentService>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    crate::agent::get_agent_self_real(
-        req,
-        agent,
-        acl_service,
-        dc_config,
-        member_manager,
-        index_provider,
-    )
-    .await
-}
-
-#[get("/members")]
-async fn get_agent_members_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
-    _query: web::Query<AgentMembersParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    crate::agent::get_agent_members_real(
-        req,
-        acl_service,
-        dc_config,
-        member_manager,
-        _query,
-        index_provider,
-    )
-    .await
-}
-
-#[get("/metrics")]
-async fn get_agent_metrics_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    agent: web::Data<ConsulAgentService>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    crate::agent::get_agent_metrics_real(
-        req,
-        acl_service,
-        dc_config,
-        agent,
-        member_manager,
-        index_provider,
-    )
-    .await
-}
-
-#[get("/metrics/stream")]
-async fn agent_metrics_stream_real(
-    req: HttpRequest,
-    naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    crate::agent::agent_metrics_stream_real(
-        req,
-        naming_store,
-        member_manager,
-        acl_service,
-        dc_config,
-        index_provider,
-    )
-    .await
-}
-
-// ============================================================================
 // Route registration
 // ============================================================================
 
-/// In-memory agent routes
+/// Agent routes.
 pub fn routes() -> Scope {
     web::scope("/agent")
         // Agent core
@@ -494,44 +447,6 @@ pub fn routes() -> Scope {
         .service(agent_maintenance)
         .service(get_agent_metrics)
         .service(agent_metrics_stream)
-        .service(agent_monitor)
-        .service(update_agent_token)
-        // Service registration
-        .service(register_service)
-        .service(deregister_service)
-        .service(list_services)
-        .service(get_service)
-        .service(set_service_maintenance)
-        // Check endpoints
-        .service(register_check)
-        .service(deregister_check)
-        .service(pass_check)
-        .service(warn_check)
-        .service(fail_check)
-        .service(update_check)
-        .service(list_agent_checks)
-        // Agent health service endpoints
-        .service(agent_health_service_by_id)
-        .service(agent_health_service_by_name)
-        // Agent connect routes (leaf cert, authorize)
-        .service(crate::api::v1::connect_ca::agent_connect_routes())
-}
-
-/// Real cluster agent routes (uses ClusterManager for /self, /members, /metrics)
-pub fn routes_real() -> Scope {
-    web::scope("/agent")
-        // Agent core - real cluster variants
-        .service(get_agent_self_real)
-        .service(get_agent_members_real)
-        .service(get_agent_host)
-        .service(get_agent_version)
-        .service(agent_join)
-        .service(agent_leave)
-        .service(agent_force_leave)
-        .service(agent_reload)
-        .service(agent_maintenance)
-        .service(get_agent_metrics_real)
-        .service(agent_metrics_stream_real)
         .service(agent_monitor)
         .service(update_agent_token)
         // Service registration

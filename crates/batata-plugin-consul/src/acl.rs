@@ -17,8 +17,7 @@ use tracing::{error, info};
 use crate::acl_store::AclStore;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
-};
+use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ACL Token header name
@@ -1523,9 +1522,8 @@ pub async fn acl_login(
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
         Some(m) => m,
         None => {
-            return HttpResponse::NotFound().consul_error(format!(
-                "Auth method '{}' not found",
-                body.auth_method));
+            return HttpResponse::NotFound()
+                .consul_error(format!("Auth method '{}' not found", body.auth_method));
         }
     };
 
@@ -2409,9 +2407,8 @@ pub async fn preview_templated_policy(
                 .to_string()
         }
         _ => {
-            return HttpResponse::BadRequest().consul_error(format!(
-                "Unknown templated policy: {}",
-                template_name));
+            return HttpResponse::BadRequest()
+                .consul_error(format!("Unknown templated policy: {}", template_name));
         }
     };
 

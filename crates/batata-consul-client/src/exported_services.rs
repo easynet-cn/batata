@@ -17,10 +17,18 @@ pub struct ResolvedExportedService {
     #[serde(rename = "Service")]
     pub service: String,
     /// Partition of the exported service.
-    #[serde(rename = "Partition", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Partition",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub partition: String,
     /// Namespace of the exported service.
-    #[serde(rename = "Namespace", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Namespace",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub namespace: String,
     /// Consumers (peers / partitions) that can see this service.
     #[serde(rename = "Consumers", default)]

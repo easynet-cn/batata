@@ -1,4 +1,4 @@
-//! Operator extension tests: segment, license, utilization, audit-hash, area.
+//! Operator extension tests: segment, utilization, audit-hash, area.
 //!
 //! All endpoints are Consul Enterprise features; on OSS they return either
 //! a stub 200 response or an explicit 501. Tests assert SDK surface behavior:
@@ -15,34 +15,6 @@ async fn test_operator_segment_list() {
             for s in segments {
                 assert!(!s.is_empty() || s.is_empty()); // trivial
             }
-        }
-        Err(e) => {
-            let _ = e.status();
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_operator_license_get() {
-    let client = common::create_client();
-    match client.operator_license_get(&common::q()).await {
-        Ok((val, _)) => {
-            // Must be a JSON object
-            assert!(val.is_object());
-        }
-        Err(e) => {
-            let _ = e.status();
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_operator_license_get_signed_returns_string() {
-    let client = common::create_client();
-    match client.operator_license_get_signed(&common::q()).await {
-        Ok((s, _)) => {
-            // Some string (possibly empty) — just exercise deserialization.
-            let _ = s.len();
         }
         Err(e) => {
             let _ = e.status();

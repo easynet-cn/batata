@@ -22,8 +22,7 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
             .await;
     }
 }
-use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights, ConsulErrorBody,
-};
+use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, ConsulErrorBody, Weights};
 
 // ============================================================================
 // Catalog Models
@@ -1402,7 +1401,10 @@ pub async fn get_service(
     let node_meta_filters = crate::consul_meta::parse_multi_param(&req, "node-meta");
     if !node_meta_filters.is_empty() {
         services.retain(|svc| {
-            crate::consul_meta::matches_node_meta_filters(svc.node_meta.as_ref(), &node_meta_filters)
+            crate::consul_meta::matches_node_meta_filters(
+                svc.node_meta.as_ref(),
+                &node_meta_filters,
+            )
         });
     }
 
@@ -1415,10 +1417,8 @@ pub async fn get_service(
         query.dc.as_deref(),
     ) {
         for svc in &mut services {
-            svc.address = crate::consul_meta::translate_address(
-                &svc.address,
-                svc.tagged_addresses.as_ref(),
-            );
+            svc.address =
+                crate::consul_meta::translate_address(&svc.address, svc.tagged_addresses.as_ref());
         }
     }
 
@@ -1426,10 +1426,8 @@ pub async fn get_service(
     // config entries, and merge their fields into each service's ServiceProxy
     // field — matching Consul's agent/configentry.MergeServiceConfig() output.
     if query.merge_central_config.unwrap_or(false) {
-        let service_defaults = config_entry_service
-            .get_entry("service-defaults", &service_name);
-        let proxy_defaults = config_entry_service
-            .get_entry("proxy-defaults", "global");
+        let service_defaults = config_entry_service.get_entry("service-defaults", &service_name);
+        let proxy_defaults = config_entry_service.get_entry("proxy-defaults", "global");
 
         for svc in &mut services {
             apply_central_config(svc, service_defaults.as_ref(), proxy_defaults.as_ref());

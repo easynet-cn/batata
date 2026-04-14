@@ -17,8 +17,8 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
-use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use crate::model::ConsulErrorBody;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
 // CA Models

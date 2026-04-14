@@ -20,8 +20,7 @@ use tokio::sync::{Notify, RwLock};
 use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulError, EventFireParams, EventListParams, UserEvent, ConsulErrorBody,
-};
+use crate::model::{ConsulError, ConsulErrorBody, EventFireParams, EventListParams, UserEvent};
 
 /// Maximum events to store (matches Consul's hardcoded 256)
 const MAX_EVENTS: usize = 256;

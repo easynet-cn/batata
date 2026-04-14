@@ -166,7 +166,7 @@ func TestCompatInternalRPCMethods(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SDK-5: /v1/operator/segment and /v1/operator/license stubs
+// SDK-5: /v1/operator/segment stub
 // ---------------------------------------------------------------------------
 
 // TestCompatOperatorSegmentList validates the segment list endpoint returns
@@ -175,20 +175,6 @@ func TestCompatOperatorSegmentList(t *testing.T) {
 	resp, body := rawGET(t, "/v1/operator/segment")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "[]", strings.TrimSpace(body))
-}
-
-// TestCompatOperatorLicense validates the license endpoint returns a
-// well-formed stub license payload that Consul Go SDK unmarshals without
-// error. Inner License fields use snake_case (matching consul/api/
-// operator_license.go json tags); outer wrapper uses PascalCase.
-func TestCompatOperatorLicense(t *testing.T) {
-	client := getClient(t)
-	reply, err := client.Operator().LicenseGet(nil)
-	require.NoError(t, err)
-	require.NotNil(t, reply)
-	assert.True(t, reply.Valid, "Valid flag should be true")
-	require.NotNil(t, reply.License, "License struct must deserialize")
-	assert.NotEmpty(t, reply.License.LicenseID, "license_id must be populated")
 }
 
 // ---------------------------------------------------------------------------

@@ -669,9 +669,8 @@ pub async fn get_coordinate_node(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
             consul_ok(&meta).json(entries)
         }
-        None => {
-            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node)))
-        }
+        None => HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Node '{}' not found", node))),
     }
 }
 
@@ -760,9 +759,8 @@ pub async fn get_coordinate_node_persistent(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
             consul_ok(&meta).json(entries)
         }
-        None => {
-            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node)))
-        }
+        None => HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Node '{}' not found", node))),
     }
 }
 

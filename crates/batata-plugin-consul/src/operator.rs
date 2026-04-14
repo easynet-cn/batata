@@ -13,23 +13,17 @@
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
-use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{error, info, warn};
 
 use base64::Engine;
-
-use crate::constants::CF_CONSUL_OPERATOR;
-use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
-use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
-};
+use crate::model::{ConsulError, ConsulErrorBody};
 
 // ============================================================================
 // Models
@@ -196,454 +190,16 @@ pub struct OperatorQueryParams {
 }
 
 // ============================================================================
-// Operator Service (In-Memory)
+// Operator Service (ClusterManager-backed)
 // ============================================================================
 
-/// In-memory operator service
-#[derive(Clone)]
+/// Cluster operator service backed by a `ClusterManager`.
+///
+/// Surfaces Raft configuration, autopilot, and keyring endpoints derived from
+/// the live cluster membership reported by `ClusterManager`. In standalone
+/// mode the `ClusterManager` reports a single member, so the same code path
+/// works without any parallel in-memory variant.
 pub struct ConsulOperatorService {
-    /// Raft server list
-    pub(crate) servers: Arc<DashMap<String, RaftServer>>,
-    /// Autopilot configuration
-    autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
-    /// Keyring (key -> node count)
-    keyring: Arc<DashMap<String, i32>>,
-    /// Primary key
-    primary_key: Arc<tokio::sync::RwLock<Option<String>>>,
-    /// Current index
-    index: Arc<AtomicU64>,
-    /// Datacenter name
-    pub(crate) datacenter: String,
-    /// Optional RocksDB persistence
-    rocks_db: Option<Arc<DB>>,
-    /// Optional Raft writer for cluster mode
-    raft_node: Option<Arc<ConsulRaftWriter>>,
-}
-
-impl ConsulOperatorService {
-    pub fn new() -> Self {
-        Self::with_dc_config(&ConsulDatacenterConfig::default())
-    }
-
-    pub fn with_datacenter(datacenter: String) -> Self {
-        let dc_config = ConsulDatacenterConfig::new(datacenter);
-        Self::with_dc_config(&dc_config)
-    }
-
-    pub fn with_dc_config(dc_config: &ConsulDatacenterConfig) -> Self {
-        let local_ip = batata_common::local_ip();
-
-        let service = Self {
-            servers: Arc::new(DashMap::new()),
-            autopilot_config: Arc::new(tokio::sync::RwLock::new(AutopilotConfiguration::default())),
-            keyring: Arc::new(DashMap::new()),
-            primary_key: Arc::new(tokio::sync::RwLock::new(None)),
-            index: Arc::new(AtomicU64::new(1)),
-            datacenter: dc_config.datacenter.clone(),
-            rocks_db: None,
-            raft_node: None,
-        };
-
-        // Add self as default server
-        let server = RaftServer {
-            id: dc_config.node_id.clone(),
-            node: dc_config.node_name.clone(),
-            address: format!("{}:{}", local_ip, dc_config.raft_port()),
-            leader: true,
-            voter: true,
-            protocol_version: "3".to_string(),
-            last_index: 1,
-        };
-        service.servers.insert(server.id.clone(), server);
-
-        // Initialize keyring with a default primary key
-        let default_key =
-            base64::engine::general_purpose::STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
-        service.keyring.insert(default_key.clone(), 1);
-        // Set primary key synchronously via try_write
-        if let Ok(mut pk) = service.primary_key.try_write() {
-            *pk = Some(default_key);
-        }
-
-        service
-    }
-
-    pub fn with_rocks(db: Arc<DB>, dc_config: &ConsulDatacenterConfig) -> Self {
-        let servers = Arc::new(DashMap::new());
-        let keyring = Arc::new(DashMap::new());
-        let mut autopilot_config = AutopilotConfiguration::default();
-        let mut server_count = 0u64;
-        let mut keyring_count = 0u64;
-        let mut loaded_autopilot = false;
-
-        // Load from RocksDB
-        if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
-            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-
-            for item in iter.flatten() {
-                let (key_bytes, value_bytes) = item;
-                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                    if let Some(id) = key.strip_prefix("server:") {
-                        if let Ok(server) = serde_json::from_slice::<RaftServer>(&value_bytes) {
-                            servers.insert(id.to_string(), server);
-                            server_count += 1;
-                        } else {
-                            warn!("Failed to deserialize operator server: {}", key);
-                        }
-                    } else if let Some(k) = key.strip_prefix("keyring:") {
-                        if let Ok(count) = serde_json::from_slice::<i32>(&value_bytes) {
-                            keyring.insert(k.to_string(), count);
-                            keyring_count += 1;
-                        } else {
-                            warn!("Failed to deserialize operator keyring: {}", key);
-                        }
-                    } else if key == "autopilot_config" {
-                        if let Ok(config) =
-                            serde_json::from_slice::<AutopilotConfiguration>(&value_bytes)
-                        {
-                            autopilot_config = config;
-                            loaded_autopilot = true;
-                        } else {
-                            warn!("Failed to deserialize operator autopilot_config");
-                        }
-                    }
-                }
-            }
-            info!(
-                "Loaded operator data from RocksDB: {} servers, {} keyring entries, autopilot_config={}",
-                server_count, keyring_count, loaded_autopilot
-            );
-        }
-
-        let datacenter = dc_config.datacenter.clone();
-
-        // If no servers loaded, add self as default
-        if servers.is_empty() {
-            let local_ip = batata_common::local_ip();
-            let server = RaftServer {
-                id: dc_config.node_id.clone(),
-                node: dc_config.node_name.clone(),
-                address: format!("{}:{}", local_ip, dc_config.raft_port()),
-                leader: true,
-                voter: true,
-                protocol_version: "3".to_string(),
-                last_index: 1,
-            };
-            servers.insert(server.id.clone(), server);
-        }
-
-        // If no keyring loaded, add default
-        if keyring.is_empty() {
-            let default_key =
-                base64::engine::general_purpose::STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
-            keyring.insert(default_key, 1);
-        }
-
-        let primary_key = Arc::new(tokio::sync::RwLock::new(
-            keyring.iter().next().map(|r| r.key().clone()),
-        ));
-
-        let svc = Self {
-            servers,
-            autopilot_config: Arc::new(tokio::sync::RwLock::new(autopilot_config)),
-            keyring,
-            primary_key,
-            index: Arc::new(AtomicU64::new(1)),
-            datacenter,
-            rocks_db: Some(db),
-            raft_node: None,
-        };
-
-        // Persist defaults if not loaded
-        if server_count == 0 {
-            for entry in svc.servers.iter() {
-                svc.persist_to_rocks(&format!("server:{}", entry.key()), entry.value());
-            }
-        }
-        if keyring_count == 0 {
-            for entry in svc.keyring.iter() {
-                svc.persist_to_rocks(&format!("keyring:{}", entry.key()), entry.value());
-            }
-        }
-        if !loaded_autopilot && let Ok(guard) = svc.autopilot_config.try_read() {
-            svc.persist_to_rocks("autopilot_config", &*guard);
-        }
-
-        svc
-    }
-
-    /// Create an operator service with Raft-replicated storage (cluster mode).
-    pub fn with_raft(
-        db: Arc<DB>,
-        raft_node: Arc<ConsulRaftWriter>,
-        dc_config: &ConsulDatacenterConfig,
-    ) -> Self {
-        let mut svc = Self::with_rocks(db, dc_config);
-        svc.raft_node = Some(raft_node);
-        svc
-    }
-
-    pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
-        let servers: Vec<RaftServer> = self.servers.iter().map(|r| r.value().clone()).collect();
-        let index = self.index.load(Ordering::SeqCst);
-        RaftConfigurationResponse { servers, index }
-    }
-
-    pub async fn remove_peer(&self, id: Option<&str>, address: Option<&str>) -> Result<(), String> {
-        if let Some(id) = id {
-            if self.servers.remove(id).is_some() {
-                self.index.fetch_add(1, Ordering::SeqCst);
-                if let Some(ref raft) = self.raft_node {
-                    match raft
-                        .write(ConsulRaftRequest::OperatorRemovePeer {
-                            server_key: id.to_string(),
-                        })
-                        .await
-                    {
-                        Ok(r) if !r.success => {
-                            error!("Raft OperatorRemovePeer rejected: {:?}", r.message);
-                        }
-                        Err(e) => {
-                            error!("Raft OperatorRemovePeer failed: {}", e);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    self.delete_from_rocks(&format!("server:{}", id));
-                }
-                return Ok(());
-            }
-            return Err(format!("Peer with ID '{}' not found", id));
-        }
-        if let Some(address) = address {
-            let key_to_remove = self
-                .servers
-                .iter()
-                .find(|r| r.value().address == address)
-                .map(|r| r.key().clone());
-            if let Some(key) = key_to_remove {
-                self.servers.remove(&key);
-                self.index.fetch_add(1, Ordering::SeqCst);
-                if let Some(ref raft) = self.raft_node {
-                    match raft
-                        .write(ConsulRaftRequest::OperatorRemovePeer {
-                            server_key: key.clone(),
-                        })
-                        .await
-                    {
-                        Ok(r) if !r.success => {
-                            error!("Raft OperatorRemovePeer rejected: {:?}", r.message);
-                        }
-                        Err(e) => {
-                            error!("Raft OperatorRemovePeer failed: {}", e);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    self.delete_from_rocks(&format!("server:{}", key));
-                }
-                return Ok(());
-            }
-            return Err(format!("Peer with address '{}' not found", address));
-        }
-        Err("Must specify either id or address".to_string())
-    }
-
-    pub fn transfer_leader(&self, _target_id: Option<&str>) -> Result<(), String> {
-        // In single-node mode, transfer is a no-op
-        Ok(())
-    }
-
-    pub async fn get_autopilot_config(&self) -> AutopilotConfiguration {
-        self.autopilot_config.read().await.clone()
-    }
-
-    pub async fn set_autopilot_config(
-        &self,
-        config: AutopilotConfiguration,
-        cas: Option<u64>,
-    ) -> Result<bool, String> {
-        let mut current = self.autopilot_config.write().await;
-        if let Some(cas_index) = cas
-            && current.modify_index != cas_index
-        {
-            return Ok(false);
-        }
-        let new_index = self.index.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut new_config = config;
-        new_config.modify_index = new_index;
-        new_config.create_index = current.create_index;
-        *current = new_config.clone();
-        if let Some(ref raft) = self.raft_node {
-            let config_json = serde_json::to_string(&new_config).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::OperatorAutopilotUpdate { config_json })
-                .await
-            {
-                Ok(r) if !r.success => {
-                    error!("Raft OperatorAutopilotUpdate rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    error!("Raft OperatorAutopilotUpdate failed: {}", e);
-                }
-                _ => {}
-            }
-        } else {
-            self.persist_to_rocks("autopilot_config", &new_config);
-        }
-        Ok(true)
-    }
-
-    pub fn get_autopilot_health(&self) -> AutopilotHealthResponse {
-        let servers: Vec<AutopilotServerHealth> = self
-            .servers
-            .iter()
-            .map(|r| {
-                let s = r.value();
-                AutopilotServerHealth {
-                    id: s.id.clone(),
-                    name: s.node.clone(),
-                    address: s.address.clone(),
-                    serf_status: "alive".to_string(),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    leader: s.leader,
-                    last_contact: "0ms".to_string(),
-                    last_term: 1,
-                    last_index: s.last_index,
-                    healthy: true,
-                    voter: s.voter,
-                    stable_since: chrono::Utc::now().to_rfc3339(),
-                }
-            })
-            .collect();
-
-        let server_count = servers.len() as i32;
-        AutopilotHealthResponse {
-            healthy: true,
-            failure_tolerance: if server_count > 1 {
-                (server_count - 1) / 2
-            } else {
-                0
-            },
-            servers,
-        }
-    }
-
-    pub fn get_autopilot_state(&self) -> AutopilotStateResponse {
-        let health = self.get_autopilot_health();
-        let leader = health
-            .servers
-            .iter()
-            .find(|s| s.leader)
-            .map(|s| s.id.clone())
-            .unwrap_or_default();
-        let voters: Vec<String> = health
-            .servers
-            .iter()
-            .filter(|s| s.voter)
-            .map(|s| s.id.clone())
-            .collect();
-        let servers_map: HashMap<String, AutopilotServerHealth> = health
-            .servers
-            .into_iter()
-            .map(|s| (s.id.clone(), s))
-            .collect();
-
-        AutopilotStateResponse {
-            healthy: health.healthy,
-            failure_tolerance: health.failure_tolerance,
-            leader,
-            voters,
-            servers: servers_map,
-        }
-    }
-
-    pub fn list_keys(&self) -> Vec<KeyringResponse> {
-        let keys: HashMap<String, i32> = self
-            .keyring
-            .iter()
-            .map(|r| (r.key().clone(), *r.value()))
-            .collect();
-        let primary_keys = keys.clone();
-
-        vec![KeyringResponse {
-            wan: false,
-            datacenter: self.datacenter.clone(),
-            segment: "".to_string(),
-            messages: None,
-            keys,
-            primary_keys,
-            num_nodes: self.servers.len() as i32,
-        }]
-    }
-
-    pub fn install_key(&self, key: &str) {
-        let node_count = self.servers.len() as i32;
-        self.keyring.insert(key.to_string(), node_count);
-        self.persist_to_rocks(&format!("keyring:{}", key), &node_count);
-    }
-
-    pub async fn use_key(&self, key: &str) -> Result<(), String> {
-        if !self.keyring.contains_key(key) {
-            return Err(format!("Key '{}' not found", key));
-        }
-        let mut primary = self.primary_key.write().await;
-        *primary = Some(key.to_string());
-        Ok(())
-    }
-
-    pub async fn remove_key(&self, key: &str) -> Result<(), String> {
-        let primary = self.primary_key.read().await;
-        if primary.as_deref() == Some(key) {
-            return Err("Cannot remove the primary key".to_string());
-        }
-        drop(primary);
-        self.keyring.remove(key);
-        self.delete_from_rocks(&format!("keyring:{}", key));
-        Ok(())
-    }
-
-    /// Persist a value to RocksDB
-    fn persist_to_rocks<T: Serialize>(&self, key: &str, value: &T) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR)
-        {
-            match serde_json::to_vec(value) {
-                Ok(bytes) => {
-                    if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
-                        error!("Failed to persist operator '{}': {}", key, e);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to serialize operator '{}': {}", key, e);
-                }
-            }
-        }
-    }
-
-    /// Delete a key from RocksDB
-    fn delete_from_rocks(&self, key: &str) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR)
-            && let Err(e) = db.delete_cf(cf, key.as_bytes())
-        {
-            error!("Failed to delete operator '{}': {}", key, e);
-        }
-    }
-}
-
-impl Default for ConsulOperatorService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
-// Operator Service (Real Cluster)
-// ============================================================================
-
-/// Real cluster operator service using ClusterManager
-pub struct ConsulOperatorServiceReal {
     pub(crate) member_manager: Arc<dyn batata_common::ClusterManager>,
     autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
     keyring: Arc<DashMap<String, i32>>,
@@ -652,7 +208,7 @@ pub struct ConsulOperatorServiceReal {
     pub(crate) datacenter: String,
 }
 
-impl ConsulOperatorServiceReal {
+impl ConsulOperatorService {
     pub fn new(member_manager: Arc<dyn batata_common::ClusterManager>) -> Self {
         Self::with_datacenter(member_manager, "dc1".to_string())
     }
@@ -887,7 +443,7 @@ pub struct OperatorUsageResponse {
 }
 
 // ============================================================================
-// HTTP Handlers (In-Memory)
+// HTTP Handlers
 // ============================================================================
 
 /// GET /v1/operator/raft/configuration
@@ -908,6 +464,16 @@ pub async fn get_raft_configuration(
 }
 
 /// POST /v1/operator/raft/transfer-leader
+///
+/// Validates the optional target `id` parameter against the current cluster
+/// membership (matches Consul's "target not in peers" error contract).
+///
+/// NOTE: openraft 0.9 does not expose a transparent leadership transfer
+/// primitive (that arrived in 0.10+). For now we perform the validation
+/// step and return success; the actual Raft-level transfer becomes a
+/// no-op that relies on existing election mechanisms if the current
+/// leader steps down for other reasons. Upgrade openraft to 0.10 to
+/// implement full semantics.
 pub async fn transfer_leader(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -919,10 +485,34 @@ pub async fn transfer_leader(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    match operator_service.transfer_leader(query.id.as_deref()) {
-        Ok(()) => HttpResponse::Ok().json(TransferLeaderResponse { success: true }),
-        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
+    // Target validation: if a specific node id is requested, it must be a
+    // current voting member. Consul Go SDK treats an invalid target as
+    // a 5xx with "target not in peers" — we mirror that.
+    if let Some(ref target) = query.id {
+        if !target.is_empty() {
+            let members = operator_service.member_manager.all_members_extended();
+            let found = members
+                .iter()
+                .any(|m| m.address == *target || m.ip == *target);
+            if !found {
+                return HttpResponse::InternalServerError().consul_error(ConsulError::new(
+                    format!(
+                        "Leadership transfer target {} is not in the current Raft configuration",
+                        target
+                    ),
+                ));
+            }
+        }
     }
+
+    // Log the request for operator visibility. Actual openraft-level
+    // leader transfer requires 0.10+; this endpoint currently acts as a
+    // validator + acknowledger.
+    tracing::info!(
+        target = %query.id.as_deref().unwrap_or("<any eligible>"),
+        "Leader transfer requested (openraft 0.9: no-op acknowledge)"
+    );
+    HttpResponse::Ok().json(TransferLeaderResponse { success: true })
 }
 
 /// DELETE /v1/operator/raft/peer
@@ -947,13 +537,28 @@ pub async fn remove_raft_peer(
             .consul_error(ConsulError::new("Must specify either id or address"));
     }
 
-    match operator_service
-        .remove_peer(query.id.as_deref(), query.address.as_deref())
-        .await
-    {
-        Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
+    // Validate the peer actually exists before claiming success — matches
+    // Consul behavior (autopilot/Raft returns an error for unknown peers).
+    let members = operator_service.member_manager.all_members_extended();
+    let peer_found = match (&query.id, &query.address) {
+        (Some(id), _) => members.iter().any(|m| m.address == *id || m.ip == *id),
+        (_, Some(addr)) => members.iter().any(|m| m.address == *addr || m.ip == *addr),
+        _ => false,
+    };
+    if !peer_found {
+        let which = query
+            .id
+            .as_deref()
+            .or(query.address.as_deref())
+            .unwrap_or("?");
+        return HttpResponse::InternalServerError().consul_error(ConsulError::new(format!(
+            "Peer {} not found in the Raft configuration",
+            which
+        )));
     }
+
+    // Peer removal in Raft membership is a no-op in current implementation.
+    HttpResponse::Ok().finish()
 }
 
 /// GET /v1/operator/autopilot/configuration
@@ -1030,10 +635,7 @@ pub async fn get_autopilot_state(
     HttpResponse::Ok().json(state)
 }
 
-/// GET /v1/operator/keyring - List keys
-/// POST /v1/operator/keyring - Install key
-/// PUT /v1/operator/keyring - Use key (set primary)
-/// DELETE /v1/operator/keyring - Remove key
+/// GET /v1/operator/keyring
 pub async fn keyring_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1047,6 +649,7 @@ pub async fn keyring_list(
     HttpResponse::Ok().json(operator_service.list_keys())
 }
 
+/// POST /v1/operator/keyring
 pub async fn keyring_install(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1061,6 +664,7 @@ pub async fn keyring_install(
     HttpResponse::Ok().finish()
 }
 
+/// PUT /v1/operator/keyring
 pub async fn keyring_use(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1077,6 +681,7 @@ pub async fn keyring_use(
     }
 }
 
+/// DELETE /v1/operator/keyring
 pub async fn keyring_remove(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -1098,274 +703,6 @@ pub async fn get_operator_usage(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
-    catalog_service: web::Data<ConsulCatalogService>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let node_count = operator_service.servers.len() as i64;
-
-    // Get real service counts from catalog
-    let services = catalog_service.get_services("public");
-    let service_count = services.len() as i64;
-    let instance_count: i64 = services
-        .values()
-        .map(|tags| std::cmp::max(tags.len(), 1) as i64)
-        .sum();
-
-    let mut usage = HashMap::new();
-    usage.insert(
-        operator_service.datacenter.clone(),
-        ServiceUsage {
-            nodes: node_count,
-            services: service_count,
-            service_instances: instance_count,
-            connect_service_instances: HashMap::new(),
-        },
-    );
-
-    HttpResponse::Ok().json(OperatorUsageResponse { usage })
-}
-
-/// GET /v1/operator/utilization - Get cluster utilization (Enterprise stub)
-pub async fn get_operator_utilization(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    HttpResponse::Ok().json(serde_json::json!({
-        "message": "no utilization data available"
-    }))
-}
-
-// ============================================================================
-// HTTP Handlers (Real Cluster)
-// ============================================================================
-
-/// GET /v1/operator/raft/configuration (real cluster)
-pub async fn get_raft_configuration_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let config = operator_service.get_raft_configuration();
-    let meta = ConsulResponseMeta::new(config.index);
-    consul_ok(&meta).json(config)
-}
-
-/// POST /v1/operator/raft/transfer-leader (real cluster)
-pub async fn transfer_leader_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    _operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<TransferLeaderParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-    // In real cluster mode, leadership transfer is handled by Raft
-    HttpResponse::Ok().json(TransferLeaderResponse { success: true })
-}
-
-/// DELETE /v1/operator/raft/peer (real cluster)
-pub async fn remove_raft_peer_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    _operator_service: web::Data<ConsulOperatorServiceReal>,
-    query: web::Query<RaftPeerParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    if query.id.is_some() && query.address.is_some() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new(
-            "Must specify either id or address, not both",
-        ));
-    }
-    if query.id.is_none() && query.address.is_none() {
-        return HttpResponse::BadRequest()
-            .consul_error(ConsulError::new("Must specify either id or address"));
-    }
-
-    // Validate the peer actually exists before claiming success — matches
-    // Consul behavior (autopilot/Raft returns an error for unknown peers).
-    let members = _operator_service.member_manager.all_members_extended();
-    let peer_found = match (&query.id, &query.address) {
-        (Some(id), _) => members.iter().any(|m| m.address == *id || m.ip == *id),
-        (_, Some(addr)) => members.iter().any(|m| m.address == *addr || m.ip == *addr),
-        _ => false,
-    };
-    if !peer_found {
-        let which = query.id.as_deref().or(query.address.as_deref()).unwrap_or("?");
-        return HttpResponse::InternalServerError().consul_error(ConsulError::new(format!(
-            "Peer {} not found in the Raft configuration",
-            which
-        )));
-    }
-
-    // Peer removal in Raft membership is a no-op in current implementation.
-    HttpResponse::Ok().finish()
-}
-
-/// GET /v1/operator/autopilot/configuration (real cluster)
-pub async fn get_autopilot_configuration_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let config = operator_service.get_autopilot_config().await;
-    HttpResponse::Ok().json(config)
-}
-
-/// PUT /v1/operator/autopilot/configuration (real cluster)
-pub async fn set_autopilot_configuration_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    query: web::Query<AutopilotConfigParams>,
-    body: web::Json<AutopilotConfiguration>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    match operator_service
-        .set_autopilot_config(body.into_inner(), query.cas)
-        .await
-    {
-        Ok(success) => HttpResponse::Ok().json(success),
-        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
-    }
-}
-
-/// GET /v1/operator/autopilot/health (real cluster)
-pub async fn get_autopilot_health_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let health = operator_service.get_autopilot_health();
-    if health.healthy {
-        HttpResponse::Ok().json(health)
-    } else {
-        HttpResponse::TooManyRequests().json(health)
-    }
-}
-
-/// GET /v1/operator/autopilot/state (real cluster)
-pub async fn get_autopilot_state_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<OperatorQueryParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let state = operator_service.get_autopilot_state();
-    HttpResponse::Ok().json(state)
-}
-
-/// GET /v1/operator/keyring (real cluster)
-pub async fn keyring_list_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    _query: web::Query<KeyringParams>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-    HttpResponse::Ok().json(operator_service.list_keys())
-}
-
-/// POST /v1/operator/keyring (real cluster)
-pub async fn keyring_install_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    body: web::Json<KeyringRequest>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-    operator_service.install_key(&body.key);
-    HttpResponse::Ok().finish()
-}
-
-/// PUT /v1/operator/keyring (real cluster)
-pub async fn keyring_use_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    body: web::Json<KeyringRequest>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-    match operator_service.use_key(&body.key).await {
-        Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
-    }
-}
-
-/// DELETE /v1/operator/keyring (real cluster)
-pub async fn keyring_remove_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
-    body: web::Json<KeyringRequest>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-    match operator_service.remove_key(&body.key).await {
-        Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
-    }
-}
-
-/// GET /v1/operator/usage (real cluster)
-pub async fn get_operator_usage_real(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    operator_service: web::Data<ConsulOperatorServiceReal>,
     catalog_service: web::Data<ConsulCatalogService>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
@@ -1398,8 +735,8 @@ pub async fn get_operator_usage_real(
     HttpResponse::Ok().json(OperatorUsageResponse { usage })
 }
 
-/// GET /v1/operator/utilization (real cluster, Enterprise stub)
-pub async fn get_operator_utilization_real(
+/// GET /v1/operator/utilization - Get cluster utilization (Enterprise stub)
+pub async fn get_operator_utilization(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     _query: web::Query<OperatorQueryParams>,
@@ -1417,10 +754,83 @@ pub async fn get_operator_utilization_real(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo, MemberState};
+
+    /// Minimal in-test ClusterManager stub. Reports a single healthy member,
+    /// matching `ServerMemberManager::new()` in standalone mode.
+    struct TestClusterManager {
+        address: String,
+    }
+
+    impl TestClusterManager {
+        fn new() -> Self {
+            Self {
+                address: "127.0.0.1:8848".to_string(),
+            }
+        }
+        fn member(&self) -> ExtendedMemberInfo {
+            ExtendedMemberInfo {
+                ip: "127.0.0.1".to_string(),
+                port: 8848,
+                address: self.address.clone(),
+                state: MemberState::Up,
+                extend_info: std::collections::BTreeMap::new(),
+            }
+        }
+    }
+
+    impl ClusterManager for TestClusterManager {
+        fn is_standalone(&self) -> bool {
+            true
+        }
+        fn is_leader(&self) -> bool {
+            true
+        }
+        fn is_cluster_healthy(&self) -> bool {
+            true
+        }
+        fn leader_address(&self) -> Option<String> {
+            Some(self.address.clone())
+        }
+        fn local_address(&self) -> &str {
+            &self.address
+        }
+        fn member_count(&self) -> usize {
+            1
+        }
+        fn all_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            vec![self.member()]
+        }
+        fn healthy_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            vec![self.member()]
+        }
+        fn get_member(&self, address: &str) -> Option<ExtendedMemberInfo> {
+            (address == self.address).then(|| self.member())
+        }
+        fn get_self_member(&self) -> ExtendedMemberInfo {
+            self.member()
+        }
+        fn health_summary(&self) -> ClusterHealthSummary {
+            ClusterHealthSummary {
+                total: 1,
+                up: 1,
+                ..Default::default()
+            }
+        }
+        fn refresh_self(&self) {}
+        fn is_self(&self, address: &str) -> bool {
+            address == self.address
+        }
+    }
+
+    fn test_service() -> ConsulOperatorService {
+        let cm: Arc<dyn ClusterManager> = Arc::new(TestClusterManager::new());
+        ConsulOperatorService::new(cm)
+    }
 
     #[test]
     fn test_raft_configuration_default() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let config = service.get_raft_configuration();
         assert_eq!(config.servers.len(), 1);
         let server = &config.servers[0];
@@ -1436,36 +846,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_peer_by_id() {
-        let service = ConsulOperatorService::new();
-        let server_id = {
-            let first = service.servers.iter().next().unwrap();
-            first.key().clone()
-        };
-        assert!(service.remove_peer(Some(&server_id), None).await.is_ok());
-        assert_eq!(service.servers.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_remove_peer_not_found() {
-        let service = ConsulOperatorService::new();
-        assert!(
-            service
-                .remove_peer(Some("nonexistent"), None)
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_remove_peer_must_specify() {
-        let service = ConsulOperatorService::new();
-        assert!(service.remove_peer(None, None).await.is_err());
-    }
-
-    #[tokio::test]
     async fn test_autopilot_config_cas() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let config = service.get_autopilot_config().await;
         assert!(config.cleanup_dead_servers);
         assert!(!config.last_contact_threshold.is_empty());
@@ -1486,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_autopilot_health() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let health = service.get_autopilot_health();
         assert!(health.healthy);
         assert_eq!(health.servers.len(), 1);
@@ -1499,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_keyring_operations() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
 
         service.install_key("test-key-1");
         let keys = service.list_keys();
@@ -1511,7 +893,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_keyring_remove_primary_fails() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         service.install_key("primary-key");
         service.use_key("primary-key").await.unwrap();
         assert!(service.remove_key("primary-key").await.is_err());
@@ -1519,20 +901,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_keyring_use_nonexistent_fails() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         assert!(service.use_key("nonexistent").await.is_err());
     }
 
     #[test]
     fn test_autopilot_state() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let state = service.get_autopilot_state();
         assert!(state.healthy);
         assert_eq!(state.servers.len(), 1);
         assert!(!state.leader.is_empty());
         assert!(!state.voters.is_empty());
         assert!(state.failure_tolerance >= 0);
-        // Verify the server entry has valid data
         let server = state.servers.values().next().unwrap();
         assert!(server.healthy);
         assert!(!server.id.is_empty());
@@ -1540,13 +921,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_autopilot_config_update_without_cas() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let mut config = service.get_autopilot_config().await;
 
         config.cleanup_dead_servers = false;
         config.last_contact_threshold = "500ms".to_string();
 
-        // Without CAS (None) should always succeed
         let result = service.set_autopilot_config(config.clone(), None).await;
         assert!(result.unwrap());
 
@@ -1557,7 +937,7 @@ mod tests {
 
     #[test]
     fn test_keyring_install_multiple() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
 
         service.install_key("key-alpha");
         service.install_key("key-beta");
@@ -1572,7 +952,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_keyring_use_and_remove() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
 
         service.install_key("key-1");
         service.install_key("key-2");
@@ -1588,20 +968,9 @@ mod tests {
         assert!(!service.list_keys()[0].keys.contains_key("key-2"));
     }
 
-    #[tokio::test]
-    async fn test_remove_peer_by_address() {
-        let service = ConsulOperatorService::new();
-        let addr = {
-            let first = service.servers.iter().next().unwrap();
-            first.value().address.clone()
-        };
-        assert!(service.remove_peer(None, Some(&addr)).await.is_ok());
-        assert_eq!(service.servers.len(), 0);
-    }
-
     #[test]
     fn test_raft_configuration_has_valid_data() {
-        let service = ConsulOperatorService::new();
+        let service = test_service();
         let config = service.get_raft_configuration();
 
         let server = &config.servers[0];

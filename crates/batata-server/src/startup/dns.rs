@@ -261,11 +261,7 @@ impl DnsServer {
                 Some(s) if !s.is_empty() => s.to_string(),
                 _ => return None,
             };
-            return Some((
-                "public".to_string(),
-                "DEFAULT_GROUP".to_string(),
-                service,
-            ));
+            return Some(("public".to_string(), "DEFAULT_GROUP".to_string(), service));
         }
 
         // Consul node lookup: {nodename}.node.consul — map the node name as

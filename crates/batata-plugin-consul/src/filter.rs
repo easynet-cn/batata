@@ -239,7 +239,12 @@ impl<'a> Tokenizer<'a> {
                         other => tokens.push(Token::Ident(other.to_string())),
                     }
                 }
-                _ => return Err(format!("unexpected character '{}' at pos {}", c as char, self.pos)),
+                _ => {
+                    return Err(format!(
+                        "unexpected character '{}' at pos {}",
+                        c as char, self.pos
+                    ));
+                }
             }
         }
         Ok(tokens)
@@ -330,7 +335,10 @@ fn parse_primary(tokens: &mut Vec<Token>) -> Result<FilterExpr, String> {
                     let field = parse_field_path(tokens)?;
                     Ok(FilterExpr::In { value, field })
                 }
-                other => Err(format!("expected 'in' after string literal, got {:?}", other)),
+                other => Err(format!(
+                    "expected 'in' after string literal, got {:?}",
+                    other
+                )),
             }
         }
         _ => parse_field_clause(tokens),
@@ -540,8 +548,8 @@ mod tests {
 
     #[test]
     fn test_parens() {
-        let e = parse("(Service == \"web\" or Service == \"api\") and \"v1\" in ServiceTags")
-            .unwrap();
+        let e =
+            parse("(Service == \"web\" or Service == \"api\") and \"v1\" in ServiceTags").unwrap();
         assert!(evaluate(&e, &target()));
     }
 

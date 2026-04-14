@@ -21,8 +21,7 @@ pub enum ConsulError {
 impl ConsulError {
     /// Returns true when the error is a 404 (explicit or Api-status 404).
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::NotFound)
-            || matches!(self, Self::Api { status, .. } if *status == 404)
+        matches!(self, Self::NotFound) || matches!(self, Self::Api { status, .. } if *status == 404)
     }
 
     /// HTTP status code if this is an API-level error.

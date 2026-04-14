@@ -142,10 +142,7 @@ pub fn read_archive<R: Read>(input: R) -> std::io::Result<ParsedArchive> {
 
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
-        let name = entry
-            .path()?
-            .to_string_lossy()
-            .to_string();
+        let name = entry.path()?.to_string_lossy().to_string();
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf)?;
         match name.as_str() {
@@ -159,12 +156,10 @@ pub fn read_archive<R: Read>(input: R) -> std::io::Result<ParsedArchive> {
         }
     }
 
-    let meta_bytes = meta_bytes.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "missing meta.json")
-    })?;
-    let state_bytes = state_bytes.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "missing state.bin")
-    })?;
+    let meta_bytes = meta_bytes
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing meta.json"))?;
+    let state_bytes = state_bytes
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing state.bin"))?;
     let sums_bytes = sums_bytes.ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "missing SHA256SUMS")
     })?;
@@ -182,7 +177,10 @@ pub fn read_archive<R: Read>(input: R) -> std::io::Result<ParsedArchive> {
     };
 
     let sums_str = std::str::from_utf8(&sums_bytes).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("SHA256SUMS utf8: {}", e))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("SHA256SUMS utf8: {}", e),
+        )
     })?;
     let mut seen_meta = false;
     let mut seen_state = false;

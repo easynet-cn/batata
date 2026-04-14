@@ -17,7 +17,8 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::kv::ConsulKVService;
-use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse, ConsulErrorBody,
+use crate::model::{
+    ConsulError, ConsulErrorBody, Session, SessionCreateRequest, SessionCreateResponse,
 };
 
 /// Serializable session data stored in RocksDB.
@@ -875,7 +876,9 @@ pub async fn renew_session(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
     match session_service.renew_session(&session_id).await {
         Some(session) => consul_ok(&meta).json(vec![session]),
-        None => HttpResponse::NotFound().consul_error(ConsulError::new("Session not found or expired")),
+        None => {
+            HttpResponse::NotFound().consul_error(ConsulError::new("Session not found or expired"))
+        }
     }
 }
 

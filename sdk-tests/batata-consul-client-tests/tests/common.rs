@@ -3,6 +3,11 @@
 //! All tests require a running Batata server with Consul compatibility enabled.
 //! Start with: ./scripts/start-embedded.sh (with --batata.plugin.consul.enabled=true)
 
+// Each integration test file compiles common.rs as its own module, so Rust
+// warns about helpers that a given test happens not to use. Suppress those
+// false positives — the helpers ARE used across the test suite as a whole.
+#![allow(dead_code)]
+
 use batata_consul_client::{ConsulClient, ConsulClientConfig, QueryOptions, WriteOptions};
 
 pub const CONSUL_ADDR: &str = "http://127.0.0.1:8500";

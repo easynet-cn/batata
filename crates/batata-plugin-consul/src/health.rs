@@ -33,8 +33,8 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
     CONSUL_INTERNAL_NAMESPACE, CheckRegistration, CheckStatusUpdate, CheckUpdateParams,
-    ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth,
-    ServiceQueryParams, ConsulErrorBody,
+    ConsulDatacenterConfig, ConsulError, ConsulErrorBody, HealthCheck, HealthQueryParams, Node,
+    ServiceHealth, ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
 
@@ -707,9 +707,7 @@ impl crate::filter::Filterable for ServiceHealth {
     fn resolve_list(&self, path: &str) -> Vec<String> {
         match path {
             "ServiceTags" | "Service.Tags" => self.service.tags.clone().unwrap_or_default(),
-            "Checks" | "Checks.Status" => {
-                self.checks.iter().map(|c| c.status.clone()).collect()
-            }
+            "Checks" | "Checks.Status" => self.checks.iter().map(|c| c.status.clone()).collect(),
             "Checks.CheckID" => self.checks.iter().map(|c| c.check_id.clone()).collect(),
             "Checks.Name" => self.checks.iter().map(|c| c.name.clone()).collect(),
             _ => Vec::new(),
@@ -821,7 +819,11 @@ pub async fn get_checks_by_state(
     // Validate state. Consul accepts: passing, warning, critical, any.
     // Empty is treated as "any" to match Consul's router default.
     let valid_states = ["passing", "warning", "critical", "any"];
-    let effective_state = if state.is_empty() { "any" } else { state.as_str() };
+    let effective_state = if state.is_empty() {
+        "any"
+    } else {
+        state.as_str()
+    };
     if !valid_states.contains(&effective_state) {
         return HttpResponse::BadRequest()
             .consul_error(ConsulError::new(format!("Invalid state: {}", state)));

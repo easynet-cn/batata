@@ -88,11 +88,7 @@ impl TxnOp {
     }
 
     /// Build a KV `cas` op with expected ModifyIndex.
-    pub fn kv_cas(
-        key: impl Into<String>,
-        value_base64: impl Into<String>,
-        index: u64,
-    ) -> Self {
+    pub fn kv_cas(key: impl Into<String>, value_base64: impl Into<String>, index: u64) -> Self {
         Self {
             kv: Some(TxnKVOp {
                 verb: "cas".into(),

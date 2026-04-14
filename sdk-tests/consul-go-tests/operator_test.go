@@ -392,24 +392,6 @@ func TestOperatorAreaCreate(t *testing.T) {
 	assert.NoError(t, err, "Area delete should succeed for created area")
 }
 
-// ==================== Operator License Tests (Enterprise) ====================
-
-// TestOperatorLicenseGet tests getting license (Enterprise feature)
-func TestOperatorLicenseGet(t *testing.T) {
-	client := getTestClient(t)
-
-	operator := client.Operator()
-
-	license, err := operator.LicenseGet(nil)
-	if err != nil {
-		t.Skipf("License get not available (Enterprise feature): %v", err)
-	}
-
-	require.NotNil(t, license, "License should not be nil")
-	assert.NotEmpty(t, license.License.LicenseID, "License ID should not be empty")
-	t.Logf("License: Valid=%v, ID=%s", license.Valid, license.License.LicenseID)
-}
-
 // ==================== Leader Transfer Tests ====================
 
 // TestOperatorLeaderTransfer tests leader transfer operation

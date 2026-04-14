@@ -20,8 +20,9 @@ use crate::model::{
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
     AgentServiceWithChecks, AgentStats, AgentVersion, CONSUL_INTERNAL_CLUSTER,
     CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE, CheckRegistration, ConsulDatacenterConfig,
-    ConsulError, Coordinate, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo,
-    HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams, ConsulErrorBody,
+    ConsulError, ConsulErrorBody, Coordinate, CounterMetric, GaugeMetric, HealthCheck, HostCPU,
+    HostDisk, HostInfo, HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric,
+    ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
@@ -116,8 +117,11 @@ impl ConsulAgentService {
             ..Default::default()
         };
 
-        let store_key =
-            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", &service_id);
+        let store_key = ConsulNamingStore::build_key(
+            crate::namespace::DEFAULT_NAMESPACE,
+            "consul",
+            &service_id,
+        );
         let reg_json = serde_json::to_vec(&reg)
             .map_err(|e| format!("Failed to serialize consul registration: {}", e))?;
 
@@ -208,8 +212,11 @@ impl ConsulAgentService {
     /// Deregister Consul service
     pub async fn deregister_consul_service(&self, dc_config: &ConsulDatacenterConfig) {
         let service_id = format!("consul-{}", dc_config.node_name);
-        let store_key =
-            ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, "consul", &service_id);
+        let store_key = ConsulNamingStore::build_key(
+            crate::namespace::DEFAULT_NAMESPACE,
+            "consul",
+            &service_id,
+        );
         self.naming_store
             .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, &service_id);
         self.check_index.remove(&service_id);
@@ -441,7 +448,9 @@ pub async fn register_service(
     // Handle Connect.SidecarService — extract and register as a separate proxy service
     // (matching Consul's agent_endpoint.go SidecarService handling)
     if let Some(ref connect) = registration.connect {
-        if let Some(sidecar_def) = connect.get("SidecarService").or(connect.get("sidecar_service"))
+        if let Some(sidecar_def) = connect
+            .get("SidecarService")
+            .or(connect.get("sidecar_service"))
         {
             if let Ok(mut sidecar) =
                 serde_json::from_value::<AgentServiceRegistration>(sidecar_def.clone())
@@ -455,27 +464,22 @@ pub async fn register_service(
                 }
                 if sidecar.port.is_none() {
                     // Consul auto-assigns a port; use service port + 20000 as convention
-                    sidecar.port =
-                        registration.port.map(|p| p.saturating_add(20000));
+                    sidecar.port = registration.port.map(|p| p.saturating_add(20000));
                 }
                 if sidecar.kind.is_none() {
                     sidecar.kind = Some("connect-proxy".to_string());
                 }
 
                 let sidecar_id = sidecar.service_id();
-                let sidecar_key = ConsulNamingStore::build_key(
-                    &namespace,
-                    &sidecar.name,
-                    &sidecar_id,
-                );
+                let sidecar_key =
+                    ConsulNamingStore::build_key(&namespace, &sidecar.name, &sidecar_id);
                 if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
                     let _ = agent
                         .naming_store
                         .register(&sidecar_key, bytes::Bytes::from(sidecar_data.clone()));
 
                     if let Some(ref raft) = agent.raft_node {
-                        let sidecar_json =
-                            String::from_utf8_lossy(&sidecar_data).to_string();
+                        let sidecar_json = String::from_utf8_lossy(&sidecar_data).to_string();
                         let _ = raft
                             .write(ConsulRaftRequest::CatalogRegister {
                                 key: sidecar_key,
@@ -954,186 +958,8 @@ pub async fn set_service_maintenance(
 // Agent Core API Handlers
 // ============================================================================
 
-/// GET /v1/agent/self
-/// Returns the configuration and member information of the local agent.
-/// Config is from startup (dc_config), Member/Stats are computed per request.
-pub async fn get_agent_self(
-    req: HttpRequest,
-    agent: web::Data<ConsulAgentService>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    // Config from startup (like Consul's a.config)
-    let config = AgentConfig {
-        datacenter: dc_config.datacenter.clone(),
-        node_name: dc_config.node_name.clone(),
-        node_id: dc_config.node_id.clone(),
-        server: true,
-        revision: dc_config.batata_version.clone(),
-        version: dc_config.full_version(),
-        primary_datacenter: dc_config.primary_datacenter.clone(),
-    };
-
-    // Member from real network info (like Consul's a.delegate.AgentLocalMember())
-    let local_ip = batata_common::local_ip();
-    let serf_port = dc_config.consul_port.saturating_sub(199); // Serf LAN port
-
-    let mut tags = HashMap::new();
-    tags.insert("role".to_string(), "consul".to_string());
-    tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), dc_config.raft_port().to_string());
-    tags.insert(
-        "build".to_string(),
-        format!("{}:{}", dc_config.full_version(), dc_config.batata_version),
-    );
-    tags.insert("id".to_string(), dc_config.node_id.clone());
-    tags.insert("raft_vsn".to_string(), "3".to_string());
-    tags.insert("vsn".to_string(), "2".to_string());
-    tags.insert("vsn_min".to_string(), "2".to_string());
-    tags.insert("vsn_max".to_string(), "3".to_string());
-    tags.insert("segment".to_string(), "".to_string());
-
-    let member = AgentMember {
-        name: dc_config.node_name.clone(),
-        addr: local_ip,
-        port: serf_port,
-        tags,
-        status: 1, // alive
-        ..Default::default()
-    };
-
-    // Stats computed per request (like Consul's a.State.Stats())
-    let service_count = agent.naming_store.service_count();
-    let check_count = agent.registry.check_count();
-
-    let mut agent_stats = HashMap::new();
-    agent_stats.insert(
-        "check_monitors".to_string(),
-        agent.registry.active_check_count().to_string(),
-    );
-    agent_stats.insert(
-        "check_ttls".to_string(),
-        agent.registry.ttl_check_count().to_string(),
-    );
-    agent_stats.insert("checks".to_string(), check_count.to_string());
-    agent_stats.insert("services".to_string(), service_count.to_string());
-
-    let mut runtime_stats = HashMap::new();
-    runtime_stats.insert("arch".to_string(), std::env::consts::ARCH.to_string());
-    runtime_stats.insert("os".to_string(), std::env::consts::OS.to_string());
-    runtime_stats.insert("version".to_string(), "rust".to_string());
-
-    let mut build_stats = HashMap::new();
-    build_stats.insert("version".to_string(), dc_config.full_version());
-    build_stats.insert("revision".to_string(), dc_config.batata_version.clone());
-    build_stats.insert("prerelease".to_string(), String::new());
-
-    // Consul stats section (basic version without ClusterManager)
-    let mut consul_stats = HashMap::new();
-    consul_stats.insert("server".to_string(), "true".to_string());
-    consul_stats.insert("leader".to_string(), "true".to_string());
-    consul_stats.insert(
-        "leader_addr".to_string(),
-        format!("{}:{}", batata_common::local_ip(), dc_config.raft_port()),
-    );
-    consul_stats.insert("bootstrap".to_string(), "true".to_string());
-    consul_stats.insert("known_datacenters".to_string(), "1".to_string());
-
-    let stats = AgentStats {
-        agent: agent_stats,
-        runtime: runtime_stats,
-        build: Some(build_stats),
-        consul: Some(consul_stats),
-        raft: None,
-        serf_lan: None,
-    };
-
-    let mut meta = HashMap::new();
-    meta.insert("consul-network-segment".to_string(), "".to_string());
-    meta.insert("consul-version".to_string(), dc_config.full_version());
-
-    // Provide default network coordinate (8-dimensional Vivaldi, matching Consul's serf LAN)
-    let coord = Coordinate {
-        adjustment: 0.0,
-        error: 1.5,
-        height: 1e-05,
-        vec: vec![0.0; 8],
-    };
-
-    let response = AgentSelf {
-        config,
-        debug_config: None,
-        coord: Some(coord),
-        member,
-        meta,
-        stats,
-        xds: None,
-    };
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(response)
-}
-
-/// GET /v1/agent/members
-/// Returns the members the agent sees in the cluster gossip pool
-pub async fn get_agent_members(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    _query: web::Query<AgentMembersParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    // Check ACL authorization for agent read
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    // Build member with real data from dc_config (like Consul's delegate.LANMembers())
-    let local_ip = batata_common::local_ip();
-    let serf_port = dc_config.consul_port.saturating_sub(199);
-
-    let mut tags = HashMap::new();
-    tags.insert("role".to_string(), "consul".to_string());
-    tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), dc_config.raft_port().to_string());
-    tags.insert(
-        "build".to_string(),
-        format!("{}:{}", dc_config.full_version(), dc_config.batata_version),
-    );
-    tags.insert("id".to_string(), dc_config.node_id.clone());
-    tags.insert("raft_vsn".to_string(), "3".to_string());
-    tags.insert("vsn".to_string(), "2".to_string());
-    tags.insert("vsn_min".to_string(), "2".to_string());
-    tags.insert("vsn_max".to_string(), "3".to_string());
-    tags.insert("segment".to_string(), "".to_string());
-    tags.insert("bootstrap".to_string(), "1".to_string());
-    tags.insert(
-        "acls".to_string(),
-        if acl_service.is_enabled() { "1" } else { "0" }.to_string(),
-    );
-
-    let member = AgentMember {
-        name: dc_config.node_name.clone(),
-        addr: local_ip,
-        port: serf_port,
-        tags,
-        status: 1, // alive
-        ..Default::default()
-    };
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(vec![member])
-}
-
 // ============================================================================
-// Real Cluster Integration Handlers (Using ClusterManager)
+// Cluster Integration Handlers (Using ClusterManager)
 // ============================================================================
 
 /// Convert MemberState to Consul member status
@@ -1145,9 +971,9 @@ fn member_state_to_consul_status(state: &MemberState) -> i32 {
     }
 }
 
-/// GET /v1/agent/members (Real cluster version)
-/// Returns the actual cluster members from ClusterManager
-pub async fn get_agent_members_real(
+/// GET /v1/agent/members
+/// Returns the actual cluster members from ClusterManager.
+pub async fn get_agent_members(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -1207,9 +1033,9 @@ pub async fn get_agent_members_real(
     consul_ok(&meta).json(members)
 }
 
-/// GET /v1/agent/self (Real cluster version)
-/// Returns real cluster information from ClusterManager
-pub async fn get_agent_self_real(
+/// GET /v1/agent/self
+/// Returns real cluster information from ClusterManager.
+pub async fn get_agent_self(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
@@ -1493,8 +1319,8 @@ pub async fn get_agent_version(
         prerelease: "".to_string(),
         human_version: full_version,
         build_date: option_env!("BATATA_BUILD_DATE")
-                .unwrap_or("unknown")
-                .to_string(),
+            .unwrap_or("unknown")
+            .to_string(),
         fips: "".to_string(),
     };
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -1517,8 +1343,8 @@ pub async fn agent_join(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    // Standalone/in-memory mode: no real cluster to join.
-    // In real cluster mode, the _real route variant handles this via ClusterManager.
+    // Standalone/in-memory mode: no real cluster to join. In cluster mode the
+    // ClusterManager-backed handler takes over gossip-level join semantics.
     tracing::warn!(
         address = %address,
         "Agent join: not supported in standalone mode (no Serf gossip layer)"
@@ -1641,84 +1467,10 @@ pub async fn agent_maintenance(
 /// GET /v1/agent/metrics
 /// Returns metrics for the agent (Prometheus format compatible)
 #[allow(clippy::vec_init_then_push)]
-pub async fn get_agent_metrics(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    // Check ACL authorization for agent read
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    // Collect basic system metrics
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    let mut gauges = Vec::new();
-
-    // Runtime metrics
-    gauges.push(GaugeMetric::new(
-        "consul.runtime.num_goroutines",
-        std::thread::available_parallelism()
-            .map(|p| p.get() as f64)
-            .unwrap_or(1.0),
-    ));
-    gauges.push(GaugeMetric::new(
-        "consul.runtime.alloc_bytes",
-        sys.used_memory() as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "consul.runtime.sys_bytes",
-        sys.total_memory() as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "consul.runtime.heap_objects",
-        0.0, // Not directly available in Rust
-    ));
-
-    // CPU metrics
-    let cpu_usage = sys.global_cpu_usage();
-    gauges.push(GaugeMetric::new(
-        "batata.runtime.cpu_percent",
-        cpu_usage as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "batata.runtime.cpu_cores",
-        sys.cpus().len() as f64,
-    ));
-
-    // Memory metrics
-    gauges.push(GaugeMetric::new(
-        "batata.runtime.memory_total",
-        sys.total_memory() as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "batata.runtime.memory_used",
-        sys.used_memory() as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "batata.runtime.memory_available",
-        sys.available_memory() as f64,
-    ));
-
-    let response = MetricsResponse {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        gauges,
-        counters: Vec::new(),
-        samples: Vec::new(),
-        points: Vec::new(),
-    };
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta).json(response)
-}
-
-/// GET /v1/agent/metrics (Real version with service and cluster metrics)
-/// Returns comprehensive metrics including service counts and cluster health
+/// GET /v1/agent/metrics
+/// Returns comprehensive metrics including service counts and cluster health.
 #[allow(clippy::vec_init_then_push)]
-pub async fn get_agent_metrics_real(
+pub async fn get_agent_metrics(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -1960,8 +1712,9 @@ pub async fn agent_monitor(
     let as_json = query.logjson.unwrap_or(false);
     let _ = &index_provider;
 
-    // Subscribe to the log broadcast channel for real tracing events
-    let mut rx = crate::log_broadcast::subscribe();
+    // Subscribe to the log broadcast channel for real tracing events.
+    // Ownership moves into the stream closure, which mutates its own binding.
+    let rx = crate::log_broadcast::subscribe();
 
     // Map log levels to numeric priority for filtering
     let min_level = match log_level.as_str() {
@@ -2023,12 +1776,8 @@ pub async fn agent_monitor(
                     }
                     Err(_) => {
                         // Timeout — send heartbeat to keep connection alive
-                        let msg = format_monitor_line(
-                            "DEBUG",
-                            as_json,
-                            "agent.monitor",
-                            "heartbeat",
-                        );
+                        let msg =
+                            format_monitor_line("DEBUG", as_json, "agent.monitor", "heartbeat");
                         return Some((
                             Ok(actix_web::web::Bytes::from(msg)),
                             (rx, min_level, as_json, false),
@@ -2101,49 +1850,8 @@ fn collect_metrics_snapshot(
 }
 
 /// GET /v1/agent/metrics/stream
-/// Streams metrics from the agent with chunked transfer encoding.
-/// Emits a JSON metrics snapshot every 10 seconds until client disconnects.
-pub async fn agent_metrics_stream(
-    req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-
-    let store = naming_store.into_inner();
-    let dc = dc_config.into_inner();
-    let stream = futures::stream::unfold(0u64, move |tick| {
-        let store = store.clone();
-        let dc = dc.clone();
-        async move {
-            if tick > 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            }
-            let snapshot = collect_metrics_snapshot(&store, &dc);
-            let mut bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
-            bytes.push(b'\n');
-            Some((
-                Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(bytes)),
-                tick + 1,
-            ))
-        }
-    });
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-    consul_ok(&meta)
-        .insert_header(("Content-Type", "application/json"))
-        .insert_header(("Transfer-Encoding", "chunked"))
-        .streaming(stream)
-}
-
-/// GET /v1/agent/metrics/stream (real cluster variant)
 /// Streams metrics with cluster member data every 10 seconds.
-pub async fn agent_metrics_stream_real(
+pub async fn agent_metrics_stream(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
@@ -2216,10 +1924,7 @@ pub async fn update_agent_token(
     );
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta)
-        .insert_header((
-            "X-Consul-Default-ACL-Policy",
-            "allow",
-        ))
+        .insert_header(("X-Consul-Default-ACL-Policy", "allow"))
         .finish()
 }
 

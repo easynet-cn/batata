@@ -16,8 +16,8 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
-use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use crate::model::ConsulErrorBody;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
 // Models
@@ -549,7 +549,8 @@ pub async fn get_peering(
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest()
+            .consul_error(ConsulError::new("Peering name is required"));
     }
 
     match peering_service.get_peering(&name) {
@@ -557,9 +558,8 @@ pub async fn get_peering(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(peering)
         }
-        None => {
-            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
-        }
+        None => HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Peering '{}' not found", name))),
     }
 }
 
@@ -579,14 +579,16 @@ pub async fn delete_peering(
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest()
+            .consul_error(ConsulError::new("Peering name is required"));
     }
 
     if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
+        HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
     }
 }
 
@@ -671,7 +673,8 @@ pub async fn get_peering_persistent(
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest()
+            .consul_error(ConsulError::new("Peering name is required"));
     }
 
     match peering_service.get_peering(&name) {
@@ -679,9 +682,8 @@ pub async fn get_peering_persistent(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(peering)
         }
-        None => {
-            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
-        }
+        None => HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Peering '{}' not found", name))),
     }
 }
 
@@ -701,14 +703,16 @@ pub async fn delete_peering_persistent(
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest()
+            .consul_error(ConsulError::new("Peering name is required"));
     }
 
     if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
+        HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
     }
 }
 

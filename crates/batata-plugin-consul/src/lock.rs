@@ -15,8 +15,8 @@ use tokio::sync::RwLock;
 use crate::acl::{AclService, ResourceType};
 use crate::kv::ConsulKVService;
 use crate::model::ConsulError;
-use crate::session::ConsulSessionService;
 use crate::model::ConsulErrorBody;
+use crate::session::ConsulSessionService;
 
 // ============================================================================
 // Lock Models
@@ -663,7 +663,8 @@ pub async fn release_lock(
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest()
+                .consul_error(ConsulError::new("session parameter required"));
         }
     };
 
@@ -735,7 +736,8 @@ pub async fn renew_lock(
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest()
+                .consul_error(ConsulError::new("session parameter required"));
         }
     };
 
@@ -758,7 +760,8 @@ pub async fn acquire_semaphore(
 
     match semaphore_service.acquire(&body).await {
         Some(sem) => HttpResponse::Ok().json(sem),
-        None => HttpResponse::Conflict().consul_error(ConsulError::new("Failed to acquire semaphore slot")),
+        None => HttpResponse::Conflict()
+            .consul_error(ConsulError::new("Failed to acquire semaphore slot")),
     }
 }
 
@@ -781,7 +784,8 @@ pub async fn release_semaphore(
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest()
+                .consul_error(ConsulError::new("session parameter required"));
         }
     };
 

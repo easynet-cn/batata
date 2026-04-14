@@ -1304,11 +1304,7 @@ pub struct TxnOp {
     pub kv: Option<TxnKVOp>,
     #[serde(rename = "Node", default, skip_serializing_if = "Option::is_none")]
     pub node: Option<TxnNodeOp>,
-    #[serde(
-        rename = "Service",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "Service", default, skip_serializing_if = "Option::is_none")]
     pub service: Option<TxnServiceOp>,
     #[serde(rename = "Check", default, skip_serializing_if = "Option::is_none")]
     pub check: Option<TxnCheckOp>,
@@ -1351,7 +1347,11 @@ pub struct TxnNode {
     pub node: String,
     #[serde(rename = "Address", default)]
     pub address: String,
-    #[serde(rename = "Datacenter", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "Datacenter",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub datacenter: Option<String>,
     #[serde(
         rename = "TaggedAddresses",

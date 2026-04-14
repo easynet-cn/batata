@@ -16,7 +16,11 @@ pub struct Namespace {
     #[serde(rename = "Name")]
     pub name: String,
     /// Free-form description.
-    #[serde(rename = "Description", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Description",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub description: String,
     /// ACL defaults for tokens scoped to this namespace.
     #[serde(rename = "ACLs", default, skip_serializing_if = "Option::is_none")]
@@ -36,7 +40,11 @@ pub struct Namespace {
     )]
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Admin partition this namespace belongs to (Enterprise).
-    #[serde(rename = "Partition", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Partition",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub partition: String,
     /// Raft creation index.
     #[serde(rename = "CreateIndex", default)]
@@ -49,17 +57,9 @@ pub struct Namespace {
 /// Namespace-scoped ACL defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NamespaceACLConfig {
-    #[serde(
-        rename = "PolicyDefaults",
-        alias = "policy_defaults",
-        default
-    )]
+    #[serde(rename = "PolicyDefaults", alias = "policy_defaults", default)]
     pub policy_defaults: Vec<ACLLink>,
-    #[serde(
-        rename = "RoleDefaults",
-        alias = "role_defaults",
-        default
-    )]
+    #[serde(rename = "RoleDefaults", alias = "role_defaults", default)]
     pub role_defaults: Vec<ACLLink>,
 }
 
@@ -99,21 +99,14 @@ impl ConsulClient {
     }
 
     /// Delete a namespace by name. Returns WriteMeta on success.
-    pub async fn namespace_delete(
-        &self,
-        name: &str,
-        opts: &WriteOptions,
-    ) -> Result<WriteMeta> {
+    pub async fn namespace_delete(&self, name: &str, opts: &WriteOptions) -> Result<WriteMeta> {
         let path = format!("/v1/namespace/{}", name);
         let (_ok, meta) = self.delete(&path, opts, &[]).await?;
         Ok(meta)
     }
 
     /// List all namespaces visible to the current token.
-    pub async fn namespace_list(
-        &self,
-        opts: &QueryOptions,
-    ) -> Result<(Vec<Namespace>, QueryMeta)> {
+    pub async fn namespace_list(&self, opts: &QueryOptions) -> Result<(Vec<Namespace>, QueryMeta)> {
         self.get("/v1/namespaces", opts).await
     }
 }
