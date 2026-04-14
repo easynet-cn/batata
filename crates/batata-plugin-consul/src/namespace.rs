@@ -13,9 +13,9 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use tracing::error;
-use crate::model::ConsulErrorBody;
 
 /// Default namespace name (always exists, cannot be deleted)
 pub const DEFAULT_NAMESPACE: &str = "default";

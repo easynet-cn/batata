@@ -32,7 +32,6 @@ use crate::kv::ConsulKVService;
 use crate::lock::{ConsulLockService, ConsulSemaphoreService};
 use crate::model::{ConsulDatacenterConfig, ConsulPluginConfig};
 use crate::naming_store::ConsulNamingStore;
-use crate::operator::ConsulOperatorService;
 use crate::peering::ConsulPeeringService;
 use crate::query::ConsulQueryService;
 use crate::raft::ConsulRaftWriter;
@@ -108,7 +107,6 @@ pub struct ConsulPluginInner {
     pub connect_ca: ConsulConnectCAService,
     pub coordinate: ConsulCoordinateService,
     pub snapshot: ConsulSnapshotService,
-    pub operator: ConsulOperatorService,
     pub namespace_service: crate::namespace::ConsulNamespaceService,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
@@ -216,7 +214,6 @@ impl ConsulPlugin {
             coordinate: ConsulCoordinateService::new()
                 .with_node_name(self.dc_config.node_name.clone()),
             snapshot: ConsulSnapshotService::new(),
-            operator: ConsulOperatorService::with_dc_config(&self.dc_config),
             dc_config: self.dc_config.clone(),
             registry,
             raft_writer: None,
@@ -306,7 +303,6 @@ impl ConsulPlugin {
             )
             .with_node_name(self.dc_config.node_name.clone()),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
-            operator: ConsulOperatorService::with_raft(db, consul_raft.clone(), &self.dc_config),
             namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
                 consul_raft.clone(),
                 index_provider.clone(),
@@ -544,6 +540,18 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
     fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
         let inner = self.inner();
+        let cm = inner
+            .cluster_manager
+            .clone()
+            .expect("ConsulPlugin::init() must inject cluster_manager before configure()");
+
+        // ConsulOperatorService is ClusterManager-backed; construct fresh per
+        // configure() call so each actix worker gets its own Data instance.
+        let operator = crate::operator::ConsulOperatorService::with_datacenter(
+            cm.clone(),
+            inner.dc_config.datacenter.clone(),
+        );
+
         cfg.app_data(actix_web::web::Data::from(inner.naming_store.clone()))
             .app_data(actix_web::web::Data::new(inner.agent.clone()))
             .app_data(actix_web::web::Data::new(inner.health.clone()))
@@ -561,28 +569,12 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.connect_ca.clone()))
             .app_data(actix_web::web::Data::new(inner.coordinate.clone()))
             .app_data(actix_web::web::Data::new(inner.snapshot.clone()))
-            .app_data(actix_web::web::Data::new(inner.operator.clone()))
+            .app_data(actix_web::web::Data::new(operator))
             .app_data(actix_web::web::Data::new(inner.namespace_service.clone()))
             .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
-            .app_data(actix_web::web::Data::new(inner.index_provider.clone()));
-
-        // In cluster mode, inject ClusterManager + construct the `_Real`
-        // service wrappers required by `routes_real()` handlers.
-        if let Some(ref cm) = inner.cluster_manager {
-            cfg.app_data(actix_web::web::Data::new(cm.clone()));
-
-            // ConsulOperatorServiceReal wraps the ClusterManager and backs
-            // `/v1/operator/raft/*`, `/v1/operator/autopilot/*`, etc.
-            let operator_real = crate::operator::ConsulOperatorServiceReal::with_datacenter(
-                cm.clone(),
-                inner.dc_config.datacenter.clone(),
-            );
-            cfg.app_data(actix_web::web::Data::new(operator_real));
-
-            cfg.service(crate::route::routes_real());
-        } else {
-            cfg.service(crate::route::routes());
-        }
+            .app_data(actix_web::web::Data::new(inner.index_provider.clone()))
+            .app_data(actix_web::web::Data::new(cm))
+            .service(crate::route::routes());
     }
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {
@@ -649,10 +641,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                         let rtt = start.elapsed();
                         if matches!(res, Ok(Ok(_))) {
                             // Use remote node's last known coord (default for new peers)
-                            let remote_node = format!(
-                                "node-{}",
-                                member.ip.replace('.', "-")
-                            );
+                            let remote_node = format!("node-{}", member.ip.replace('.', "-"));
                             let remote_coord = coord_svc
                                 .coordinates_arc()
                                 .get(&format!("{}:", remote_node))

@@ -16,13 +16,25 @@ pub struct ImportedService {
     #[serde(rename = "Service")]
     pub service: String,
     /// Partition this service appears under in the local cluster.
-    #[serde(rename = "Partition", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Partition",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub partition: String,
     /// Namespace in the local cluster.
-    #[serde(rename = "Namespace", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Namespace",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub namespace: String,
     /// Peer from which this service was imported.
-    #[serde(rename = "SourcePeer", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "SourcePeer",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub source_peer: String,
     /// Partition of the source peer.
     #[serde(

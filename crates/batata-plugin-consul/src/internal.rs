@@ -17,7 +17,8 @@ use crate::connect_ca::ConsulConnectCAService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+use crate::model::{
+    AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
 };
 use crate::naming_store::ConsulNamingStore;
 
@@ -198,32 +199,13 @@ fn build_node_from_store(
 }
 
 /// GET /v1/internal/ui/nodes - List nodes for UI
-pub async fn ui_nodes(
-    req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
-    health_service: web::Data<ConsulHealthService>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    _query: web::Query<UINodeQueryParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
-    }
-
-    let index = index_provider.current_index(ConsulTable::Catalog);
-    let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
-
-    let meta = ConsulResponseMeta::new(index);
-    consul_ok(&meta).json(vec![node])
-}
-
-/// GET /v1/internal/ui/nodes - List nodes for UI (cluster-aware version)
 ///
 /// Returns all cluster members as UINode entries using ClusterManager.
 /// Each member generates a node with its address, services, and checks.
-pub async fn ui_nodes_real(
+/// In standalone mode `ClusterManager` reports only the local node, so the
+/// result degrades gracefully to a single-entry list.
+#[allow(clippy::too_many_arguments)]
+pub async fn ui_nodes(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
@@ -244,7 +226,8 @@ pub async fn ui_nodes_real(
 
     let mut nodes = Vec::with_capacity(members.len());
     for member in &members {
-        let is_local = member.ip == local_ip || member.address.starts_with(&format!("{}:", local_ip));
+        let is_local =
+            member.ip == local_ip || member.address.starts_with(&format!("{}:", local_ip));
         if is_local {
             // For the local node, include real services and checks
             let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
@@ -292,10 +275,7 @@ pub async fn ui_nodes_real(
                 .into_iter()
                 .filter(|c| {
                     // Include node-level checks and checks for services on this node
-                    c.service_id.is_empty()
-                        || services
-                            .iter()
-                            .any(|s| s.id == c.service_id)
+                    c.service_id.is_empty() || services.iter().any(|s| s.id == c.service_id)
                 })
                 .collect();
 
@@ -358,7 +338,8 @@ pub async fn ui_node_info(
         return consul_ok(&meta).json(node);
     }
 
-    HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node_name)))
+    HttpResponse::NotFound()
+        .consul_error(ConsulError::new(format!("Node '{}' not found", node_name)))
 }
 
 /// GET /v1/internal/ui/exported-services - List exported services for UI

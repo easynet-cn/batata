@@ -181,45 +181,6 @@ impl ConsulClient {
     }
 
     // -----------------------------------------------------------------
-    // operator_license.go — Enterprise license
-    // -----------------------------------------------------------------
-
-    /// Get the current license info.
-    pub async fn operator_license_get(
-        &self,
-        opts: &QueryOptions,
-    ) -> Result<(serde_json::Value, QueryMeta)> {
-        self.get("/v1/operator/license", opts).await
-    }
-
-    /// Get the raw signed license file bytes.
-    pub async fn operator_license_get_signed(
-        &self,
-        opts: &QueryOptions,
-    ) -> Result<(String, QueryMeta)> {
-        self.get_raw("/v1/operator/license/signed", opts).await
-    }
-
-    /// Reset the license (revert to built-in).
-    pub async fn operator_license_reset(
-        &self,
-        opts: &WriteOptions,
-    ) -> Result<(serde_json::Value, WriteMeta)> {
-        self.put::<_, ()>("/v1/operator/license/reset", None, opts, &[])
-            .await
-    }
-
-    /// Install a new license (body = raw signed-license string).
-    pub async fn operator_license_put(
-        &self,
-        license: &str,
-        opts: &WriteOptions,
-    ) -> Result<(serde_json::Value, WriteMeta)> {
-        let body = license.to_string();
-        self.put("/v1/operator/license", Some(&body), opts, &[]).await
-    }
-
-    // -----------------------------------------------------------------
     // operator_audit.go — audit hash
     // -----------------------------------------------------------------
 

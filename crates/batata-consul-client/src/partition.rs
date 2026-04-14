@@ -14,7 +14,11 @@ use crate::model::{QueryMeta, QueryOptions, WriteMeta, WriteOptions};
 pub struct Partition {
     #[serde(rename = "Name")]
     pub name: String,
-    #[serde(rename = "Description", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "Description",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub description: String,
     #[serde(
         rename = "DeletedAt",
@@ -71,10 +75,7 @@ impl ConsulClient {
     }
 
     /// List all admin partitions visible to the token.
-    pub async fn partition_list(
-        &self,
-        opts: &QueryOptions,
-    ) -> Result<(Vec<Partition>, QueryMeta)> {
+    pub async fn partition_list(&self, opts: &QueryOptions) -> Result<(Vec<Partition>, QueryMeta)> {
         self.get("/v1/partitions", opts).await
     }
 }

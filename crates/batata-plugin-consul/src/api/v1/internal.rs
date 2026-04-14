@@ -48,6 +48,7 @@ async fn ui_nodes(
     health_service: web::Data<crate::health::ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -57,6 +58,7 @@ async fn ui_nodes(
         health_service,
         acl_service,
         dc_config,
+        member_manager,
         query,
         index_provider,
     )
@@ -347,59 +349,10 @@ async fn internal_rpc_methods() -> HttpResponse {
     HttpResponse::Ok().json(methods)
 }
 
-
 pub fn routes() -> Scope {
     web::scope("/internal")
         .service(ui_services)
         .service(ui_nodes)
-        .service(ui_node_info)
-        .service(ui_exported_services)
-        .service(ui_catalog_overview)
-        .service(ui_gateway_services_nodes)
-        .service(ui_gateway_intentions)
-        .service(ui_service_topology)
-        .service(ui_metrics_proxy)
-        .service(federation_state_list)
-        .service(federation_state_mesh_gateways)
-        .service(federation_state_get)
-        .service(assign_service_virtual_ip)
-        .service(acl_authorize)
-        .service(internal_rpc_methods)
-}
-
-// ============================================================================
-// Real cluster handlers (using ClusterManager)
-// ============================================================================
-
-#[get("/ui/nodes")]
-async fn ui_nodes_real(
-    req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
-    health_service: web::Data<crate::health::ConsulHealthService>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
-    query: web::Query<UINodeQueryParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    crate::internal::ui_nodes_real(
-        req,
-        naming_store,
-        health_service,
-        acl_service,
-        dc_config,
-        member_manager,
-        query,
-        index_provider,
-    )
-    .await
-}
-
-/// Real cluster internal routes (using ClusterManager for ui/nodes)
-pub fn routes_real() -> Scope {
-    web::scope("/internal")
-        .service(ui_services)
-        .service(ui_nodes_real)
         .service(ui_node_info)
         .service(ui_exported_services)
         .service(ui_catalog_overview)

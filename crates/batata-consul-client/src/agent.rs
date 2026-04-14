@@ -634,7 +634,10 @@ impl ConsulClient {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
-            return Err(ConsulError::Api { status, message: body });
+            return Err(ConsulError::Api {
+                status,
+                message: body,
+            });
         }
 
         let (tx, rx) = mpsc::channel(64);
@@ -732,7 +735,8 @@ impl ConsulClient {
         token: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        self.agent_update_token_of_type("agent_recovery", token, opts).await
+        self.agent_update_token_of_type("agent_recovery", token, opts)
+            .await
     }
 
     /// Generic helper: update an ACL token of the specified type.

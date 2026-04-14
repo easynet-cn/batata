@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use actix_web::{App, test, web};
 
+use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo, MemberState};
 use batata_naming::service::NamingService;
 
 use crate::acl::AclService;
@@ -14,9 +15,80 @@ use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
 use crate::kv::ConsulKVService;
 use crate::lock::{ConsulLockService, ConsulSemaphoreService};
+use crate::operator::ConsulOperatorService;
 use crate::query::ConsulQueryService;
 use crate::session::ConsulSessionService;
 use crate::snapshot::ConsulSnapshotService;
+
+/// Minimal standalone-shaped ClusterManager for HTTP route tests.
+///
+/// Reports a single local member so the cluster-aware Consul handlers
+/// (e.g. `/v1/agent/members`, `/v1/status/leader`) behave like a
+/// standalone deployment.
+struct TestClusterManager {
+    address: String,
+}
+
+impl TestClusterManager {
+    fn new() -> Self {
+        Self {
+            address: "127.0.0.1:8848".to_string(),
+        }
+    }
+    fn member(&self) -> ExtendedMemberInfo {
+        ExtendedMemberInfo {
+            ip: "127.0.0.1".to_string(),
+            port: 8848,
+            address: self.address.clone(),
+            state: MemberState::Up,
+            extend_info: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl ClusterManager for TestClusterManager {
+    fn is_standalone(&self) -> bool {
+        true
+    }
+    fn is_leader(&self) -> bool {
+        true
+    }
+    fn is_cluster_healthy(&self) -> bool {
+        true
+    }
+    fn leader_address(&self) -> Option<String> {
+        Some(self.address.clone())
+    }
+    fn local_address(&self) -> &str {
+        &self.address
+    }
+    fn member_count(&self) -> usize {
+        1
+    }
+    fn all_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+        vec![self.member()]
+    }
+    fn healthy_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+        vec![self.member()]
+    }
+    fn get_member(&self, address: &str) -> Option<ExtendedMemberInfo> {
+        (address == self.address).then(|| self.member())
+    }
+    fn get_self_member(&self) -> ExtendedMemberInfo {
+        self.member()
+    }
+    fn health_summary(&self) -> ClusterHealthSummary {
+        ClusterHealthSummary {
+            total: 1,
+            up: 1,
+            ..Default::default()
+        }
+    }
+    fn refresh_self(&self) {}
+    fn is_self(&self, address: &str) -> bool {
+        address == self.address
+    }
+}
 
 /// Create a test app with all in-memory services configured.
 /// Uses `crate::api::v1::routes()` for route registration.
@@ -48,6 +120,9 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     let config_entry_service = ConsulConfigEntryService::new();
     let connect_service = ConsulConnectService::new();
     let connect_ca_service = ConsulConnectCAService::new();
+    let cluster_manager: Arc<dyn ClusterManager> = Arc::new(TestClusterManager::new());
+    let operator_service =
+        ConsulOperatorService::with_datacenter(cluster_manager.clone(), "dc1".to_string());
 
     test::init_service(
         App::new()
@@ -65,6 +140,8 @@ async fn create_test_app() -> impl actix_web::dev::Service<
             .app_data(web::Data::new(config_entry_service))
             .app_data(web::Data::new(connect_service))
             .app_data(web::Data::new(connect_ca_service))
+            .app_data(web::Data::new(operator_service))
+            .app_data(web::Data::new(cluster_manager))
             .app_data(web::Data::from(naming_store))
             .app_data(web::Data::new(
                 crate::model::ConsulDatacenterConfig::default(),
@@ -1575,7 +1652,10 @@ async fn test_http_internal_ui_metrics_proxy() {
     // Metrics proxy returns 200 with metrics URL info
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.get("metrics_url").is_some(), "Response should include metrics_url");
+    assert!(
+        body.get("metrics_url").is_some(),
+        "Response should include metrics_url"
+    );
 }
 
 #[actix_web::test]

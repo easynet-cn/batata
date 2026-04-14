@@ -447,10 +447,9 @@ pub fn check_remote_dc(local_dc: &str, requested_dc: Option<&str>) -> Option<Str
 
 /// Build a Consul-compatible `No path to datacenter` error response.
 pub fn no_path_to_dc(dc: &str) -> actix_web::HttpResponse {
-    use actix_web::HttpResponse;
     use crate::model::ConsulErrorBody;
-    HttpResponse::InternalServerError()
-        .consul_error(format!("No path to datacenter ({})", dc))
+    use actix_web::HttpResponse;
+    HttpResponse::InternalServerError().consul_error(format!("No path to datacenter ({})", dc))
 }
 
 /// Determine if address translation should be applied for this request.
@@ -473,7 +472,10 @@ pub fn should_translate_wan(
     }
     // Explicit WAN header set by clients/routers
     if let Some(h) = req.headers().get("X-Consul-WAN") {
-        if h.to_str().map(|s| s.eq_ignore_ascii_case("true")).unwrap_or(false) {
+        if h.to_str()
+            .map(|s| s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
             return true;
         }
     }

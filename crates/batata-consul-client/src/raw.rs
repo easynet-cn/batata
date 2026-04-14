@@ -40,11 +40,7 @@ impl ConsulClient {
     }
 
     /// Issue a raw `DELETE` request.
-    pub async fn raw_delete(
-        &self,
-        endpoint: &str,
-        opts: &WriteOptions,
-    ) -> Result<WriteMeta> {
+    pub async fn raw_delete(&self, endpoint: &str, opts: &WriteOptions) -> Result<WriteMeta> {
         let (_ok, meta) = self.delete(endpoint, opts, &[]).await?;
         Ok(meta)
     }

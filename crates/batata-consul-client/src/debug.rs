@@ -34,11 +34,7 @@ impl ConsulClient {
     /// Fetch an arbitrary pprof profile by name with optional `seconds`
     /// query parameter. Accepts any profile name Consul supports
     /// (e.g., "allocs", "block", "mutex").
-    pub async fn debug_pprof_bytes(
-        &self,
-        name: &str,
-        seconds: Option<u32>,
-    ) -> Result<Vec<u8>> {
+    pub async fn debug_pprof_bytes(&self, name: &str, seconds: Option<u32>) -> Result<Vec<u8>> {
         let path = format!("/debug/pprof/{}", name);
         let url = self.url(&path);
         let mut req = self.client.get(&url);
@@ -53,7 +49,10 @@ impl ConsulClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ConsulError::Api { status, message: body });
+            return Err(ConsulError::Api {
+                status,
+                message: body,
+            });
         }
         let bytes = resp.bytes().await.map_err(ConsulError::Http)?;
         Ok(bytes.to_vec())

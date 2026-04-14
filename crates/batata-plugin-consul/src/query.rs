@@ -22,9 +22,10 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
-    AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
-    PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
-    PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth, ConsulErrorBody,
+    AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+    HealthCheck, Node, PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse,
+    PreparedQueryDNS, PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams,
+    ServiceHealth,
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::ConsulRaftWriter;
@@ -575,16 +576,13 @@ pub async fn execute_query(
                 // In single-DC mode, try loading from alternate namespaces
                 // named after the datacenter (best-effort compatibility)
                 for alt_dc in dcs {
-                    let entries =
-                        naming_store.get_service_entries(alt_dc, &service_name);
+                    let entries = naming_store.get_service_entries(alt_dc, &service_name);
                     for entry_bytes in &entries {
                         if let Ok(reg) =
                             serde_json::from_slice::<AgentServiceRegistration>(entry_bytes)
                         {
-                            let healthy = naming_store.is_healthy(
-                                &reg.effective_address(),
-                                reg.effective_port() as i32,
-                            );
+                            let healthy = naming_store
+                                .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
                             if healthy || !query.service.only_passing {
                                 let agent_service = AgentService::from(&reg);
                                 let ip = reg.effective_address();
@@ -605,7 +603,8 @@ pub async fn execute_query(
                                         node: String::new(),
                                         check_id: "serfHealth".to_string(),
                                         name: "Serf Health Status".to_string(),
-                                        status: if healthy { "passing" } else { "critical" }.to_string(),
+                                        status: if healthy { "passing" } else { "critical" }
+                                            .to_string(),
                                         ..Default::default()
                                     }],
                                 });
