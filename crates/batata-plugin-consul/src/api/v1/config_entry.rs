@@ -13,6 +13,7 @@ use crate::config_entry::{
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // In-memory handlers
@@ -28,19 +29,19 @@ async fn apply_config_entry(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let entry_req: ConfigEntryRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
             return HttpResponse::BadRequest()
-                .json(ConsulError::new(format!("Invalid request body: {}", e)));
+                .consul_error(ConsulError::new(format!("Invalid request body: {}", e)));
         }
     };
 
     if !SUPPORTED_KINDS.contains(&entry_req.kind.as_str()) {
-        return HttpResponse::BadRequest().json(ConsulError::new(format!(
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
             "Unsupported config entry kind: {}",
             entry_req.kind
         )));
@@ -63,7 +64,7 @@ async fn apply_config_entry(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             consul_ok(&meta).json(success)
         }
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -78,7 +79,7 @@ async fn get_config_entry(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let (kind, name) = path.into_inner();
@@ -88,7 +89,7 @@ async fn get_config_entry(
             let meta = ConsulResponseMeta::new(entry.modify_index);
             consul_ok(&meta).json(entry)
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Config entry not found")),
     }
 }
 
@@ -103,7 +104,7 @@ async fn delete_config_entry(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let (kind, name) = path.into_inner();
@@ -117,7 +118,7 @@ async fn delete_config_entry(
                 consul_ok(&meta).json(serde_json::json!({}))
             }
         }
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -132,12 +133,12 @@ async fn list_config_entries(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let kind = path.into_inner();
     if !SUPPORTED_KINDS.contains(&kind.as_str()) {
-        return HttpResponse::BadRequest().json(ConsulError::new(format!(
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
             "Unsupported config entry kind: {}",
             kind
         )));

@@ -16,6 +16,7 @@ use crate::acl::{AclService, ResourceType};
 use crate::kv::ConsulKVService;
 use crate::model::ConsulError;
 use crate::session::ConsulSessionService;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // Lock Models
@@ -636,7 +637,7 @@ pub async fn acquire_lock(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &body.key, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let result = lock_service.lock(&body).await;
@@ -656,13 +657,13 @@ pub async fn release_lock(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
         }
     };
 
@@ -687,7 +688,7 @@ pub async fn destroy_lock(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let success = lock_service.destroy(&key).await;
@@ -706,12 +707,12 @@ pub async fn get_lock(
     // Check ACL authorization for key read
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match lock_service.get_lock_info(&key) {
         Some(lock) => HttpResponse::Ok().json(lock),
-        None => HttpResponse::NotFound().json(ConsulError::new("Lock not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Lock not found")),
     }
 }
 
@@ -728,13 +729,13 @@ pub async fn renew_lock(
     // Check ACL authorization for session write
     let authz = acl_service.authorize_request(&req, ResourceType::Session, &key, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
         }
     };
 
@@ -752,12 +753,12 @@ pub async fn acquire_semaphore(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &body.prefix, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match semaphore_service.acquire(&body).await {
         Some(sem) => HttpResponse::Ok().json(sem),
-        None => HttpResponse::Conflict().json(ConsulError::new("Failed to acquire semaphore slot")),
+        None => HttpResponse::Conflict().consul_error(ConsulError::new("Failed to acquire semaphore slot")),
     }
 }
 
@@ -774,13 +775,13 @@ pub async fn release_semaphore(
     // Check ACL authorization for key write
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &prefix, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
         None => {
-            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+            return HttpResponse::BadRequest().consul_error(ConsulError::new("session parameter required"));
         }
     };
 
@@ -800,12 +801,12 @@ pub async fn get_semaphore(
     // Check ACL authorization for key read
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &prefix, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match semaphore_service.get_info(&prefix) {
         Some(sem) => HttpResponse::Ok().json(sem),
-        None => HttpResponse::NotFound().json(ConsulError::new("Semaphore not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Semaphore not found")),
     }
 }
 

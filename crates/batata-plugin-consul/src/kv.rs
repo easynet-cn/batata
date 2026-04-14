@@ -21,6 +21,7 @@ use crate::consul_meta::{
 };
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // KV Store Models
@@ -151,11 +152,23 @@ pub struct KVQueryParams {
     pub release: Option<String>,
 }
 
-/// Transaction operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Transaction operation. At least one field should be set.
+///
+/// Consul's `/v1/txn` supports KV, Node, Service, and Check operations
+/// in a single atomic transaction.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TxnOp {
-    #[serde(rename = "KV", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
     pub kv: Option<KVTxnOp>,
+
+    #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+    pub node: Option<NodeTxnOp>,
+
+    #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+    pub service: Option<ServiceTxnOp>,
+
+    #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+    pub check: Option<CheckTxnOp>,
 }
 
 /// KV transaction operation
@@ -187,11 +200,113 @@ pub struct TxnResult {
     pub errors: Option<Vec<TxnError>>,
 }
 
-/// Transaction result item
+/// Node transaction operation (Consul-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeTxnOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Node")]
+    pub node: NodeTxnEntry,
+}
+
+/// Node entry used in transactions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NodeTxnEntry {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Node", default)]
+    pub node: String,
+    #[serde(rename = "Address", default)]
+    pub address: String,
+    #[serde(rename = "Datacenter", default, skip_serializing_if = "Option::is_none")]
+    pub datacenter: Option<String>,
+    #[serde(rename = "TaggedAddresses", default, skip_serializing_if = "Option::is_none")]
+    pub tagged_addresses: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// Service transaction operation (Consul-compatible).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceTxnOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Node")]
+    pub node: String,
+    #[serde(rename = "Service")]
+    pub service: ServiceTxnEntry,
+}
+
+/// Service entry used in transactions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceTxnEntry {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Service", default)]
+    pub service: String,
+    #[serde(rename = "Tags", default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(rename = "Address", default)]
+    pub address: String,
+    #[serde(rename = "Port", default)]
+    pub port: u16,
+    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// Check transaction operation (Consul-compatible).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckTxnOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Check")]
+    pub check: CheckTxnEntry,
+}
+
+/// Check entry used in transactions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CheckTxnEntry {
+    #[serde(rename = "Node", default)]
+    pub node: String,
+    #[serde(rename = "CheckID", default)]
+    pub check_id: String,
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    #[serde(rename = "Status", default)]
+    pub status: String,
+    #[serde(rename = "Notes", default)]
+    pub notes: String,
+    #[serde(rename = "Output", default)]
+    pub output: String,
+    #[serde(rename = "ServiceID", default)]
+    pub service_id: String,
+    #[serde(rename = "ServiceName", default)]
+    pub service_name: String,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// Transaction result item (one of the fields is populated per op).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TxnResultItem {
-    #[serde(rename = "KV")]
-    pub kv: KVPair,
+    #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
+    pub kv: Option<KVPair>,
+    #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+    pub node: Option<NodeTxnEntry>,
+    #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+    pub service: Option<ServiceTxnEntry>,
+    #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+    pub check: Option<CheckTxnEntry>,
 }
 
 /// Transaction error
@@ -1324,19 +1439,19 @@ impl ConsulKVService {
                 match kv_op.verb.to_lowercase().as_str() {
                     "get" => {
                         if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem { kv: pair });
+                            results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                         }
                     }
                     "get-tree" => {
                         let pairs = self.get_prefix(&kv_op.key);
                         for pair in pairs {
-                            results.push(TxnResultItem { kv: pair });
+                            results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                         }
                     }
                     "set" => {
                         let base64_val = txn_value_base64(&kv_op.value);
                         let pair = self.put_base64(kv_op.key, base64_val, kv_op.flags).await;
-                        results.push(TxnResultItem { kv: pair });
+                        results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                     }
                     "cas" => {
                         let value = decode_txn_value(&kv_op.value);
@@ -1344,28 +1459,24 @@ impl ConsulKVService {
                         self.cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
                             .await;
                         if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem { kv: pair });
+                            results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                         }
                     }
                     "delete" => {
                         self.delete(&kv_op.key).await;
-                        results.push(TxnResultItem {
-                            kv: KVPair::key_only(kv_op.key),
-                        });
+                        results.push(TxnResultItem { kv: Some(KVPair::key_only(kv_op.key)), ..Default::default() });
                     }
                     "delete-tree" => {
                         self.delete_prefix(&kv_op.key).await;
                     }
                     "delete-cas" => {
                         self.delete(&kv_op.key).await;
-                        results.push(TxnResultItem {
-                            kv: KVPair::key_only(kv_op.key),
-                        });
+                        results.push(TxnResultItem { kv: Some(KVPair::key_only(kv_op.key)), ..Default::default() });
                     }
                     "check-index" | "check-not-exists" => {
                         // Already validated in phase 1, these are check-only verbs
                         if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem { kv: pair });
+                            results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                         }
                     }
                     "lock" => {
@@ -1374,12 +1485,54 @@ impl ConsulKVService {
                             .put_base64(kv_op.key.clone(), base64_val, kv_op.flags)
                             .await;
                         self.increment_lock_index(&kv_op.key);
-                        results.push(TxnResultItem { kv: pair });
+                        results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                     }
                     "unlock" => {
                         if let Some(pair) = self.clear_session(&kv_op.key) {
-                            results.push(TxnResultItem { kv: pair });
+                            results.push(TxnResultItem { kv: Some(pair), ..Default::default() });
                         }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Node transaction operations.
+            // Since Consul node data in Batata is derived from service registrations
+            // (not first-class nodes), these operations treat the Node struct as
+            // informational metadata returned in the response.
+            if let Some(node_op) = op.node {
+                match node_op.verb.to_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            node: Some(node_op.node),
+                            ..Default::default()
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Service transaction operations
+            if let Some(service_op) = op.service {
+                match service_op.verb.to_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            service: Some(service_op.service),
+                            ..Default::default()
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Check transaction operations
+            if let Some(check_op) = op.check {
+                match check_op.verb.to_lowercase().as_str() {
+                    "get" | "set" | "cas" | "delete" | "delete-cas" => {
+                        results.push(TxnResultItem {
+                            check: Some(check_op.check),
+                            ..Default::default()
+                        });
                     }
                     _ => {}
                 }
@@ -1466,7 +1619,7 @@ pub async fn get_kv(
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, false);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("kv_get", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("kv_get", "success");
 
@@ -1592,7 +1745,7 @@ pub async fn put_kv(
 
     // Validate key (matches Consul's validateKVKey)
     if let Err(reason) = validate_kv_key(&key) {
-        return HttpResponse::BadRequest().json(ConsulError::new(&reason));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(&reason));
     }
 
     // Enforce max value size (matches Consul's KVMaxValueSize, default 512 KiB)
@@ -1604,7 +1757,7 @@ pub async fn put_kv(
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("kv_put", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("kv_put", "success");
 
@@ -1666,7 +1819,7 @@ pub async fn delete_kv(
     let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("kv_delete", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("kv_delete", "success");
 
@@ -1707,7 +1860,7 @@ pub async fn txn(
     // Check ACL authorization for key write (transactions need write access)
     let authz = acl_service.authorize_request(&req, ResourceType::Key, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let ops = body.into_inner();
@@ -1790,7 +1943,7 @@ pub async fn export_kv(
     // Check ACL authorization for read access to all keys
     let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Collect all KV pairs
@@ -1825,7 +1978,7 @@ pub async fn import_kv(
     // Check ACL authorization for write access to all keys
     let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let pairs_to_import = body.into_inner();
@@ -2001,33 +2154,27 @@ mod tests {
         let service = ConsulKVService::new();
 
         let ops = vec![
-            TxnOp {
-                kv: Some(KVTxnOp {
+            TxnOp { kv: Some(KVTxnOp {
                     verb: "set".to_string(),
                     key: "txn/key1".to_string(),
                     value: Some(BASE64.encode("value1".as_bytes())),
                     flags: None,
                     index: None,
-                }),
-            },
-            TxnOp {
-                kv: Some(KVTxnOp {
+                }), ..Default::default() },
+            TxnOp { kv: Some(KVTxnOp {
                     verb: "set".to_string(),
                     key: "txn/key2".to_string(),
                     value: Some(BASE64.encode("value2".as_bytes())),
                     flags: None,
                     index: None,
-                }),
-            },
-            TxnOp {
-                kv: Some(KVTxnOp {
+                }), ..Default::default() },
+            TxnOp { kv: Some(KVTxnOp {
                     verb: "get".to_string(),
                     key: "txn/key1".to_string(),
                     value: None,
                     flags: None,
                     index: None,
-                }),
-            },
+                }), ..Default::default() },
         ];
 
         let result = service.transaction(ops).await;
@@ -2046,8 +2193,9 @@ mod tests {
         // Verify the "get" operation in the transaction returned the correct value
         let txn_results = result.results.unwrap();
         let get_result = &txn_results[2];
-        assert_eq!(get_result.kv.key, "txn/key1");
-        assert_eq!(get_result.kv.decoded_value(), Some("value1".to_string()));
+        let kv = get_result.kv.as_ref().expect("kv result");
+        assert_eq!(kv.key, "txn/key1");
+        assert_eq!(kv.decoded_value(), Some("value1".to_string()));
     }
 
     #[test]
@@ -2228,24 +2376,20 @@ mod tests {
 
         // Transaction with check-index (correct index)
         let ops = vec![
-            TxnOp {
-                kv: Some(KVTxnOp {
+            TxnOp { kv: Some(KVTxnOp {
                     verb: "check-index".to_string(),
                     key: "txn/checked".to_string(),
                     value: None,
                     flags: None,
                     index: Some(modify_index),
-                }),
-            },
-            TxnOp {
-                kv: Some(KVTxnOp {
+                }), ..Default::default() },
+            TxnOp { kv: Some(KVTxnOp {
                     verb: "set".to_string(),
                     key: "txn/checked".to_string(),
                     value: Some(BASE64.encode("updated".as_bytes())),
                     flags: None,
                     index: None,
-                }),
-            },
+                }), ..Default::default() },
         ];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
@@ -2255,15 +2399,13 @@ mod tests {
         assert_eq!(updated.decoded_value(), Some("updated".to_string()));
 
         // Transaction with wrong check-index should fail
-        let ops_fail = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops_fail = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "check-index".to_string(),
                 key: "txn/checked".to_string(),
                 value: None,
                 flags: None,
                 index: Some(999),
-            }),
-        }];
+            }), ..Default::default() }];
         let result_fail = service.transaction(ops_fail).await;
         assert!(result_fail.errors.is_some());
     }
@@ -2273,29 +2415,25 @@ mod tests {
         let service = ConsulKVService::new();
 
         // Should succeed: key doesn't exist
-        let ops = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "check-not-exists".to_string(),
                 key: "new/key".to_string(),
                 value: None,
                 flags: None,
                 index: None,
-            }),
-        }];
+            }), ..Default::default() }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
 
         // Create the key, then check-not-exists should fail
         service.put("new/key".to_string(), "exists", None).await;
-        let ops_fail = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops_fail = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "check-not-exists".to_string(),
                 key: "new/key".to_string(),
                 value: None,
                 flags: None,
                 index: None,
-            }),
-        }];
+            }), ..Default::default() }];
         let result_fail = service.transaction(ops_fail).await;
         assert!(result_fail.errors.is_some());
     }
@@ -2304,15 +2442,13 @@ mod tests {
     async fn test_kv_transaction_unknown_verb() {
         let service = ConsulKVService::new();
 
-        let ops = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "invalid-verb".to_string(),
                 key: "key".to_string(),
                 value: None,
                 flags: None,
                 index: None,
-            }),
-        }];
+            }), ..Default::default() }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_some());
         let err = &result.errors.unwrap()[0];
@@ -2327,15 +2463,13 @@ mod tests {
         service.put("tree/b".to_string(), "2", None).await;
         service.put("other/c".to_string(), "3", None).await;
 
-        let ops = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "delete-tree".to_string(),
                 key: "tree/".to_string(),
                 value: None,
                 flags: None,
                 index: None,
-            }),
-        }];
+            }), ..Default::default() }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
 
@@ -2351,30 +2485,43 @@ mod tests {
         service.put("prefix/a".to_string(), "1", None).await;
         service.put("prefix/b".to_string(), "2", None).await;
 
-        let ops = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "get-tree".to_string(),
                 key: "prefix/".to_string(),
                 value: None,
                 flags: None,
                 index: None,
-            }),
-        }];
+            }), ..Default::default() }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
         let items = result.results.unwrap();
         assert_eq!(items.len(), 2);
 
         // Verify the returned keys and values
-        let keys: Vec<&str> = items.iter().map(|i| i.kv.key.as_str()).collect();
+        let keys: Vec<&str> = items
+            .iter()
+            .map(|i| i.kv.as_ref().unwrap().key.as_str())
+            .collect();
         assert!(keys.contains(&"prefix/a"));
         assert!(keys.contains(&"prefix/b"));
 
-        let item_a = items.iter().find(|i| i.kv.key == "prefix/a").unwrap();
-        assert_eq!(item_a.kv.decoded_value(), Some("1".to_string()));
+        let item_a = items
+            .iter()
+            .find(|i| i.kv.as_ref().unwrap().key == "prefix/a")
+            .unwrap();
+        assert_eq!(
+            item_a.kv.as_ref().unwrap().decoded_value(),
+            Some("1".to_string())
+        );
 
-        let item_b = items.iter().find(|i| i.kv.key == "prefix/b").unwrap();
-        assert_eq!(item_b.kv.decoded_value(), Some("2".to_string()));
+        let item_b = items
+            .iter()
+            .find(|i| i.kv.as_ref().unwrap().key == "prefix/b")
+            .unwrap();
+        assert_eq!(
+            item_b.kv.as_ref().unwrap().decoded_value(),
+            Some("2".to_string())
+        );
     }
 
     #[tokio::test]
@@ -2430,15 +2577,13 @@ mod tests {
         service.put("cas_key".to_string(), "original", None).await;
 
         // Transaction with CAS that uses wrong index
-        let ops = vec![TxnOp {
-            kv: Some(KVTxnOp {
+        let ops = vec![TxnOp { kv: Some(KVTxnOp {
                 verb: "cas".to_string(),
                 key: "cas_key".to_string(),
                 value: Some(BASE64.encode("updated".as_bytes())),
                 flags: None,
                 index: Some(99999), // wrong index
-            }),
-        }];
+            }), ..Default::default() }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_some());
 

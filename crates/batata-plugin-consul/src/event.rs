@@ -20,7 +20,8 @@ use tokio::sync::{Notify, RwLock};
 use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulError, EventFireParams, EventListParams, UserEvent};
+use crate::model::{ConsulError, EventFireParams, EventListParams, UserEvent, ConsulErrorBody,
+};
 
 /// Maximum events to store (matches Consul's hardcoded 256)
 const MAX_EVENTS: usize = 256;
@@ -296,12 +297,12 @@ pub async fn fire_event(
     // Check ACL authorization for event write
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &name, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Consul enforces max 300 byte event payload (agent/event_endpoint.go:53-60)
     if body.len() > 300 {
-        return HttpResponse::PayloadTooLarge().json(ConsulError::new(
+        return HttpResponse::PayloadTooLarge().consul_error(ConsulError::new(
             "Payload exceeds maximum size of 300 bytes",
         ));
     }
@@ -337,7 +338,7 @@ pub async fn list_events(
     // Check ACL authorization for event read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Support blocking queries

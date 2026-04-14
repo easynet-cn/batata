@@ -18,6 +18,7 @@ use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // CA Models
@@ -1031,7 +1032,7 @@ pub async fn get_ca_roots(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     // Support blocking queries (Watch API)
@@ -1077,7 +1078,7 @@ pub async fn get_ca_configuration(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1094,7 +1095,7 @@ pub async fn set_ca_configuration(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match ca_service.set_ca_config(body.into_inner()).await {
@@ -1103,7 +1104,7 @@ pub async fn set_ca_configuration(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).finish()
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1118,7 +1119,7 @@ pub async fn get_leaf_cert(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     // Support blocking queries (Watch API)
@@ -1147,7 +1148,7 @@ pub async fn list_intentions(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1164,7 +1165,7 @@ pub async fn create_intention(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let intention = ca_service.create_intention(body.into_inner()).await;
@@ -1182,7 +1183,7 @@ pub async fn get_intention(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1192,7 +1193,7 @@ pub async fn get_intention(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(intention)
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1207,7 +1208,7 @@ pub async fn update_intention(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1217,7 +1218,7 @@ pub async fn update_intention(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(serde_json::json!({ "ID": id }))
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1231,7 +1232,7 @@ pub async fn delete_intention(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1239,7 +1240,7 @@ pub async fn delete_intention(
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+        HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found"))
     }
 }
 
@@ -1253,7 +1254,7 @@ pub async fn check_intention(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1273,7 +1274,7 @@ pub async fn match_intentions(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let matched = ca_service.match_intentions(&query.by, &query.name);
@@ -1293,7 +1294,7 @@ pub async fn connect_authorize(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let auth_req = body.into_inner();
@@ -1312,7 +1313,7 @@ pub async fn get_intention_exact(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1323,7 +1324,7 @@ pub async fn get_intention_exact(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(intention)
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1337,7 +1338,7 @@ pub async fn upsert_intention_exact(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let intention = ca_service.upsert_intention_exact(body.into_inner()).await;
@@ -1355,7 +1356,7 @@ pub async fn delete_intention_exact(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1364,7 +1365,7 @@ pub async fn delete_intention_exact(
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+        HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found"))
     }
 }
 
@@ -1382,7 +1383,7 @@ pub async fn get_ca_roots_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     // Support blocking queries (Watch API)
@@ -1427,7 +1428,7 @@ pub async fn get_ca_configuration_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1444,7 +1445,7 @@ pub async fn set_ca_configuration_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match ca_service.set_ca_config(body.into_inner()).await {
@@ -1453,7 +1454,7 @@ pub async fn set_ca_configuration_persistent(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).finish()
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1468,7 +1469,7 @@ pub async fn get_leaf_cert_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     // Support blocking queries (Watch API)
@@ -1497,7 +1498,7 @@ pub async fn list_intentions_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1514,7 +1515,7 @@ pub async fn create_intention_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let intention = ca_service.create_intention(body.into_inner()).await;
@@ -1532,7 +1533,7 @@ pub async fn get_intention_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1542,7 +1543,7 @@ pub async fn get_intention_persistent(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(intention)
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1557,7 +1558,7 @@ pub async fn update_intention_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1567,7 +1568,7 @@ pub async fn update_intention_persistent(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(serde_json::json!({ "ID": id }))
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1581,7 +1582,7 @@ pub async fn delete_intention_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let id = path.into_inner();
@@ -1589,7 +1590,7 @@ pub async fn delete_intention_persistent(
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+        HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found"))
     }
 }
 
@@ -1603,7 +1604,7 @@ pub async fn check_intention_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1623,7 +1624,7 @@ pub async fn match_intentions_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let matched = ca_service.match_intentions(&query.by, &query.name);
@@ -1643,7 +1644,7 @@ pub async fn connect_authorize_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let auth_req = body.into_inner();
@@ -1662,7 +1663,7 @@ pub async fn get_intention_exact_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1673,7 +1674,7 @@ pub async fn get_intention_exact_persistent(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
             consul_ok(&meta).json(intention)
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found")),
     }
 }
 
@@ -1687,7 +1688,7 @@ pub async fn upsert_intention_exact_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let intention = ca_service.upsert_intention_exact(body.into_inner()).await;
@@ -1705,7 +1706,7 @@ pub async fn delete_intention_exact_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let source = query.source.as_deref().unwrap_or("*");
@@ -1714,7 +1715,7 @@ pub async fn delete_intention_exact_persistent(
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+        HttpResponse::NotFound().consul_error(ConsulError::new("Intention not found"))
     }
 }
 

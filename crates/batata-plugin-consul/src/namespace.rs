@@ -15,6 +15,7 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use tracing::error;
+use crate::model::ConsulErrorBody;
 
 /// Default namespace name (always exists, cannot be deleted)
 pub const DEFAULT_NAMESPACE: &str = "default";
@@ -212,7 +213,7 @@ pub async fn list_namespaces(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
@@ -229,7 +230,7 @@ pub async fn read_namespace(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let name = path.into_inner();
@@ -240,7 +241,7 @@ pub async fn read_namespace(
             consul_ok(&meta).json(ns)
         }
         None => HttpResponse::NotFound()
-            .json(ConsulError::new(format!("Namespace '{}' not found", name))),
+            .consul_error(ConsulError::new(format!("Namespace '{}' not found", name))),
     }
 }
 
@@ -254,12 +255,12 @@ pub async fn create_namespace(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let ns = body.into_inner();
     if ns.name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new(
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "Must specify a Name for Namespace creation",
         ));
     }
@@ -280,7 +281,7 @@ pub async fn update_namespace(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let name = path.into_inner();
@@ -302,7 +303,7 @@ pub async fn delete_namespace(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let name = path.into_inner();
@@ -312,7 +313,7 @@ pub async fn delete_namespace(
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
             consul_ok(&meta).finish()
         }
-        Err(msg) => HttpResponse::BadRequest().json(ConsulError::new(msg)),
+        Err(msg) => HttpResponse::BadRequest().consul_error(ConsulError::new(msg)),
     }
 }
 

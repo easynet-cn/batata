@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // Snapshot Service (In-Memory)
@@ -100,14 +101,58 @@ impl ConsulSnapshotService {
             version: "1".to_string(),
             data,
         };
-        serde_json::to_vec(&snapshot).unwrap_or_default()
+        let state_bin = serde_json::to_vec(&snapshot).unwrap_or_default();
+
+        // Wrap in Consul-compatible archive (tar with meta.json + state.bin + SHA256SUMS)
+        let idx = snapshot.index;
+        let meta = crate::snapshot_archive::SnapshotMeta {
+            version: 1,
+            id: format!("0-{}-batata", idx),
+            index: idx,
+            term: 1, // Batata single-plugin archive has no Raft term exposed
+            configuration: serde_json::json!({"Servers": []}),
+            configuration_index: 0,
+            size: state_bin.len() as i64,
+            peers: None,
+        };
+        let mut out = Vec::new();
+        match crate::snapshot_archive::write_archive(&mut out, meta, &state_bin) {
+            Ok(_) => out,
+            Err(e) => {
+                tracing::error!("Failed to write snapshot archive: {}", e);
+                // Fall back to raw JSON on archive failure (readable by restore_snapshot below)
+                state_bin
+            }
+        }
     }
 
     /// Restore state from a snapshot.
-    /// When RocksDB is available, writes data back to all column families.
+    /// Accepts both the Consul-compatible archive format (tar with meta.json
+    /// + state.bin + SHA256SUMS) and the legacy raw-JSON format for
+    /// backward compatibility.
     pub async fn restore_snapshot(&self, data: &[u8]) -> Result<(), String> {
-        let snapshot: SnapshotData =
-            serde_json::from_slice(data).map_err(|e| format!("Invalid snapshot data: {}", e))?;
+        // Try archive format first
+        let state_bin: Vec<u8> = match crate::snapshot_archive::read_archive(data) {
+            Ok(parsed) => {
+                tracing::info!(
+                    "Restoring Consul-format snapshot (index={}, term={}, id={})",
+                    parsed.meta.index,
+                    parsed.meta.term,
+                    parsed.meta.id
+                );
+                parsed.state
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "Snapshot is not a Consul archive ({}); trying legacy JSON format",
+                    e
+                );
+                data.to_vec()
+            }
+        };
+
+        let snapshot: SnapshotData = serde_json::from_slice(&state_bin)
+            .map_err(|e| format!("Invalid snapshot data: {}", e))?;
 
         if let Some(ref db) = self.rocks_db {
             let cf_names = [
@@ -254,7 +299,7 @@ pub async fn save_snapshot(
     // ACL check - requires operator:read at minimum
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let data = snapshot_service.save_snapshot().await;
@@ -277,12 +322,12 @@ pub async fn restore_snapshot(
     // ACL check - requires operator:write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match snapshot_service.restore_snapshot(&body).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -299,7 +344,7 @@ pub async fn save_snapshot_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let data = snapshot_service.save_snapshot().await;
@@ -321,12 +366,12 @@ pub async fn restore_snapshot_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match snapshot_service.restore_snapshot(&body).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -340,8 +385,9 @@ mod tests {
         let data = service.save_snapshot().await;
         assert!(!data.is_empty());
 
-        // Should be valid JSON
-        let parsed: SnapshotData = serde_json::from_slice(&data).unwrap();
+        // Should be a valid Consul archive
+        let archive = crate::snapshot_archive::read_archive(&data[..]).unwrap();
+        let parsed: SnapshotData = serde_json::from_slice(&archive.state).unwrap();
         assert_eq!(parsed.version, "1");
         assert!(parsed.index > 0);
     }
@@ -375,9 +421,13 @@ mod tests {
     async fn test_snapshot_contains_valid_json() {
         let service = ConsulSnapshotService::new();
         let data = service.save_snapshot().await;
-        let snapshot: SnapshotData = serde_json::from_slice(&data).unwrap();
+        // Snapshot is a Consul-compatible archive; state.bin contains the JSON
+        let parsed = crate::snapshot_archive::read_archive(&data[..]).unwrap();
+        let snapshot: SnapshotData = serde_json::from_slice(&parsed.state).unwrap();
         assert!(!snapshot.timestamp.is_empty());
         assert!(snapshot.index > 0);
+        // Archive meta must also be present and match
+        assert_eq!(parsed.meta.index, snapshot.index);
     }
 
     #[tokio::test]
@@ -408,7 +458,9 @@ mod tests {
     async fn test_snapshot_without_rocks_has_empty_data() {
         let service = ConsulSnapshotService::new();
         let data = service.save_snapshot().await;
-        let snapshot: SnapshotData = serde_json::from_slice(&data).unwrap();
+        // Unwrap archive to get the inner state.bin
+        let parsed = crate::snapshot_archive::read_archive(&data[..]).unwrap();
+        let snapshot: SnapshotData = serde_json::from_slice(&parsed.state).unwrap();
         // Without RocksDB, data should be empty
         assert!(snapshot.data.is_empty());
     }

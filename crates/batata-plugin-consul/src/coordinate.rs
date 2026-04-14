@@ -16,6 +16,7 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // Models
@@ -47,36 +48,33 @@ impl Default for Coordinate {
 }
 
 impl Coordinate {
-    /// Build a deterministic coordinate from a node identifier.
+    /// Build a fresh Vivaldi-initial coordinate for a new node.
     ///
-    /// A full Vivaldi implementation would learn coordinates from RTT
-    /// measurements between cluster members. In the absence of live
-    /// measurements, this produces stable, deterministic coordinates
-    /// derived from the node name hash — useful for UI visualization
-    /// even when real measurements are unavailable.
-    ///
-    /// Coordinates computed this way should NOT be used for latency-aware
-    /// routing decisions.
-    pub fn from_node_identifier(node: &str) -> Self {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    /// Returns the origin coordinate with maximum initial error estimate,
+    /// matching Consul's initial state. Coordinates converge toward real
+    /// positions through RTT measurements (see [`crate::vivaldi`]).
+    pub fn from_node_identifier(_node: &str) -> Self {
+        let v = crate::vivaldi::VivaldiCoord::default();
+        Self::from_vivaldi(&v)
+    }
 
-        let mut vec = vec![0.0f64; 8];
-        // Derive 8 dimensions from 8 different hash seeds
-        for (i, dim) in vec.iter_mut().enumerate() {
-            let mut hasher = DefaultHasher::new();
-            i.hash(&mut hasher);
-            node.hash(&mut hasher);
-            // Map to small [-1, 1] range; real Vivaldi values are typically
-            // on the order of tens of milliseconds.
-            let raw = hasher.finish();
-            *dim = ((raw as i64) as f64) / (i64::MAX as f64);
-        }
+    /// Convert from Vivaldi algorithm coordinate to API coordinate.
+    pub fn from_vivaldi(v: &crate::vivaldi::VivaldiCoord) -> Self {
         Self {
-            adjustment: 0.0,
-            error: 1.5,
-            height: 1.0e-05,
-            vec,
+            adjustment: v.adjustment,
+            error: v.error,
+            height: v.height,
+            vec: v.vec.clone(),
+        }
+    }
+
+    /// Convert API coordinate to Vivaldi algorithm coordinate.
+    pub fn to_vivaldi(&self) -> crate::vivaldi::VivaldiCoord {
+        crate::vivaldi::VivaldiCoord {
+            adjustment: self.adjustment,
+            error: self.error,
+            height: self.height,
+            vec: self.vec.clone(),
         }
     }
 }
@@ -143,6 +141,8 @@ pub struct ConsulCoordinateService {
     rocks_db: Option<Arc<DB>>,
     /// Optional Raft writer for cluster mode
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Vivaldi adjustment-sample buffer (last N residuals for this node)
+    adjustment_samples: Arc<std::sync::Mutex<Vec<f64>>>,
 }
 
 impl ConsulCoordinateService {
@@ -161,6 +161,7 @@ impl ConsulCoordinateService {
             datacenter,
             rocks_db: None,
             raft_node: None,
+            adjustment_samples: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
 
         // Add self with a stable coordinate derived from node name
@@ -245,6 +246,7 @@ impl ConsulCoordinateService {
             datacenter,
             rocks_db: Some(db),
             raft_node: None,
+            adjustment_samples: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -253,6 +255,63 @@ impl ConsulCoordinateService {
         let mut svc = Self::with_rocks(db, datacenter);
         svc.raft_node = Some(raft_node);
         svc
+    }
+
+    /// Apply one Vivaldi update step from a measured RTT to a remote node.
+    ///
+    /// This is the core online learning path: each time we measure the real
+    /// RTT to a remote node (via periodic ping), we call this with
+    /// `self_node` (the local node name), `remote_node` (the peer), and
+    /// `rtt` (duration of the ping). The local coordinate is updated
+    /// according to the Vivaldi update rule.
+    pub fn apply_rtt_measurement(
+        &self,
+        self_node: &str,
+        remote_node: &str,
+        remote_coord: &Coordinate,
+        rtt: std::time::Duration,
+    ) {
+        let self_key = format!("{}:", self_node);
+        let remote_key = format!("{}:", remote_node);
+
+        // Persist the remote coordinate so subsequent updates and queries see it.
+        let remote_entry = CoordinateEntry {
+            node: remote_node.to_string(),
+            segment: String::new(),
+            coord: remote_coord.clone(),
+        };
+        self.coordinates.insert(remote_key, remote_entry);
+
+        // Fetch or initialize self's coordinate
+        let current = self
+            .coordinates
+            .get(&self_key)
+            .map(|r| r.value().coord.clone())
+            .unwrap_or_else(Coordinate::default);
+
+        // Run Vivaldi update
+        let own_v = current.to_vivaldi();
+        let other_v = remote_coord.to_vivaldi();
+        let mut samples = self.adjustment_samples.lock().unwrap().clone();
+        let new_v = crate::vivaldi::update(&own_v, &other_v, rtt.as_secs_f64(), &mut samples);
+        *self.adjustment_samples.lock().unwrap() = samples;
+
+        // Write back
+        let new_coord = Coordinate::from_vivaldi(&new_v);
+        let entry = CoordinateEntry {
+            node: self_node.to_string(),
+            segment: String::new(),
+            coord: new_coord,
+        };
+        self.coordinates.insert(self_key, entry);
+    }
+
+    /// Get the local node's current coordinate (for ping-response payload).
+    pub fn get_local_coord(&self, self_node: &str) -> Coordinate {
+        self.coordinates
+            .get(&format!("{}:", self_node))
+            .map(|r| r.value().coord.clone())
+            .unwrap_or_else(Coordinate::default)
     }
 
     /// Get the shared coordinates DashMap for the plugin handler.
@@ -581,7 +640,7 @@ pub async fn get_coordinate_nodes(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
@@ -600,7 +659,7 @@ pub async fn get_coordinate_node(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let node = path.into_inner();
@@ -611,7 +670,7 @@ pub async fn get_coordinate_node(
             consul_ok(&meta).json(entries)
         }
         None => {
-            HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
+            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node)))
         }
     }
 }
@@ -625,12 +684,12 @@ pub async fn update_coordinate(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match coord_service.update_coordinate(body.into_inner()).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -672,7 +731,7 @@ pub async fn get_coordinate_nodes_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
@@ -691,7 +750,7 @@ pub async fn get_coordinate_node_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let node = path.into_inner();
@@ -702,7 +761,7 @@ pub async fn get_coordinate_node_persistent(
             consul_ok(&meta).json(entries)
         }
         None => {
-            HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
+            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node)))
         }
     }
 }
@@ -716,12 +775,12 @@ pub async fn update_coordinate_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match coord_service.update_coordinate(body.into_inner()) {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 

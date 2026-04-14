@@ -17,7 +17,8 @@ use tracing::{error, info};
 use crate::acl_store::AclStore;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulDatacenterConfig, ConsulError};
+use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ACL Token header name
@@ -1322,7 +1323,7 @@ pub async fn get_token(
                 consul_ok(&meta).json(t)
             }
         }
-        None => HttpResponse::NotFound().json(AclError::new("ACL not found")),
+        None => HttpResponse::NotFound().consul_error("ACL not found"),
     }
 }
 
@@ -1417,7 +1418,7 @@ pub async fn delete_token(
     if acl_service.delete_token(&accessor_id).await {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Token not found"))
+        HttpResponse::NotFound().consul_error("Token not found")
     }
 }
 
@@ -1430,13 +1431,13 @@ pub async fn get_token_self(
 ) -> HttpResponse {
     let secret_id = match AclService::extract_token(&req) {
         Some(t) => t,
-        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+        None => return HttpResponse::Forbidden().consul_error("ACL token required"),
     };
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_token(&secret_id) {
         Some(token) => consul_ok(&meta).json(token),
-        None => HttpResponse::Forbidden().json(AclError::new("ACL token not found or invalid")),
+        None => HttpResponse::Forbidden().consul_error("ACL token not found or invalid"),
     }
 }
 
@@ -1471,7 +1472,7 @@ pub async fn clone_token(
                 .await;
             consul_ok(&meta).json(new_token)
         }
-        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+        None => HttpResponse::NotFound().consul_error("Token not found"),
     }
 }
 
@@ -1507,7 +1508,7 @@ pub async fn acl_bootstrap(
         };
         consul_ok(&meta).json(response)
     } else {
-        HttpResponse::InternalServerError().json(AclError::new("Failed to bootstrap ACL"))
+        HttpResponse::InternalServerError().consul_error("Failed to bootstrap ACL")
     }
 }
 
@@ -1522,10 +1523,9 @@ pub async fn acl_login(
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
         Some(m) => m,
         None => {
-            return HttpResponse::NotFound().json(AclError::new(format!(
+            return HttpResponse::NotFound().consul_error(format!(
                 "Auth method '{}' not found",
-                body.auth_method
-            )));
+                body.auth_method));
         }
     };
 
@@ -1583,14 +1583,14 @@ pub async fn acl_logout(
 ) -> HttpResponse {
     let secret_id = match AclService::extract_token(&req) {
         Some(t) => t,
-        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+        None => return HttpResponse::Forbidden().consul_error("ACL token required"),
     };
 
     // Don't allow logging out the bootstrap token
     if let Some(token) = acl_service.get_token(&secret_id)
         && token.accessor_id == BOOTSTRAP_ACCESSOR_ID
     {
-        return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
+        return HttpResponse::Forbidden().consul_error("Cannot logout bootstrap token");
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
@@ -1601,7 +1601,7 @@ pub async fn acl_logout(
     {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Token not found"))
+        HttpResponse::NotFound().consul_error("Token not found")
     }
 }
 
@@ -1673,7 +1673,7 @@ pub async fn get_policy(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_policy(&id) {
         Some(policy) => consul_ok(&meta).json(policy),
-        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+        None => HttpResponse::NotFound().consul_error("Policy not found"),
     }
 }
 
@@ -1689,7 +1689,7 @@ pub async fn delete_policy(
     if acl_service.delete_policy(&id).await {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Policy not found"))
+        HttpResponse::NotFound().consul_error("Policy not found")
     }
 }
 
@@ -1723,7 +1723,7 @@ pub async fn create_policy(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
             consul_ok(&meta).json(policy)
         }
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(&e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(&e)),
     }
 }
 
@@ -1800,7 +1800,7 @@ pub async fn get_role(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_role(&id) {
         Some(role) => consul_ok(&meta).json(role),
-        None => HttpResponse::NotFound().json(AclError::new("Role not found")),
+        None => HttpResponse::NotFound().consul_error("Role not found"),
     }
 }
 
@@ -1825,7 +1825,7 @@ pub async fn update_role(
         .await
     {
         Some(role) => consul_ok(&meta).json(role),
-        None => HttpResponse::NotFound().json(AclError::new("Role not found")),
+        None => HttpResponse::NotFound().consul_error("Role not found"),
     }
 }
 
@@ -1842,7 +1842,7 @@ pub async fn delete_role(
     if acl_service.delete_role(&id).await {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Role not found"))
+        HttpResponse::NotFound().consul_error("Role not found")
     }
 }
 
@@ -1910,7 +1910,7 @@ pub async fn get_auth_method(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_auth_method(&name) {
         Some(method) => consul_ok(&meta).json(method),
-        None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
+        None => HttpResponse::NotFound().consul_error("Auth method not found"),
     }
 }
 
@@ -1940,7 +1940,7 @@ pub async fn update_auth_method(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
             consul_ok(&meta).json(method)
         }
-        None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
+        None => HttpResponse::NotFound().consul_error("Auth method not found"),
     }
 }
 
@@ -1957,7 +1957,7 @@ pub async fn delete_auth_method(
     if acl_service.delete_auth_method(&name).await {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Auth method not found"))
+        HttpResponse::NotFound().consul_error("Auth method not found")
     }
 }
 
@@ -2183,7 +2183,7 @@ pub async fn update_token(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.update_token(&accessor_id, body.into_inner()) {
         Some(token) => consul_ok(&meta).json(token),
-        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+        None => HttpResponse::NotFound().consul_error("Token not found"),
     }
 }
 
@@ -2198,7 +2198,7 @@ pub async fn update_policy(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.update_policy(&id, body.into_inner()) {
         Some(policy) => consul_ok(&meta).json(policy),
-        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+        None => HttpResponse::NotFound().consul_error("Policy not found"),
     }
 }
 
@@ -2212,7 +2212,7 @@ pub async fn get_policy_by_name(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_policy(&name) {
         Some(policy) => consul_ok(&meta).json(policy),
-        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+        None => HttpResponse::NotFound().consul_error("Policy not found"),
     }
 }
 
@@ -2226,7 +2226,7 @@ pub async fn get_role_by_name(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_role(&name) {
         Some(role) => consul_ok(&meta).json(role),
-        None => HttpResponse::NotFound().json(AclError::new("Role not found")),
+        None => HttpResponse::NotFound().consul_error("Role not found"),
     }
 }
 
@@ -2280,7 +2280,7 @@ pub async fn get_binding_rule(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.get_binding_rule(&id) {
         Some(rule) => consul_ok(&meta).json(rule),
-        None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
+        None => HttpResponse::NotFound().consul_error("Binding rule not found"),
     }
 }
 
@@ -2295,7 +2295,7 @@ pub async fn update_binding_rule(
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service.update_binding_rule(&id, body.into_inner()) {
         Some(rule) => consul_ok(&meta).json(rule),
-        None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
+        None => HttpResponse::NotFound().consul_error("Binding rule not found"),
     }
 }
 
@@ -2310,7 +2310,7 @@ pub async fn delete_binding_rule(
     if acl_service.delete_binding_rule(&id) {
         consul_ok(&meta).json(true)
     } else {
-        HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
+        HttpResponse::NotFound().consul_error("Binding rule not found")
     }
 }
 
@@ -2385,7 +2385,7 @@ pub async fn get_templated_policy(
             template: Some(r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#.to_string()),
             description: Some("Gives the token or role permissions for the DNS catalog".to_string()),
         }),
-        _ => HttpResponse::BadRequest().json(AclError::new(format!("Unknown templated policy: {}", name))),
+        _ => HttpResponse::BadRequest().consul_error(format!("Unknown templated policy: {}", name)),
     }
 }
 
@@ -2409,10 +2409,9 @@ pub async fn preview_templated_policy(
                 .to_string()
         }
         _ => {
-            return HttpResponse::BadRequest().json(AclError::new(format!(
+            return HttpResponse::BadRequest().consul_error(format!(
                 "Unknown templated policy: {}",
-                template_name
-            )));
+                template_name));
         }
     };
 

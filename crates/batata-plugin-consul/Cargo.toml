@@ -37,6 +37,10 @@ tracing-subscriber = { workspace = true }
 # Metrics
 metrics = { workspace = true }
 
+# Snapshot archive format
+tar = { workspace = true }
+sha2 = { workspace = true }
+
 # Error handling
 anyhow = { workspace = true }
 

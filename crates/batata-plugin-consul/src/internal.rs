@@ -17,7 +17,8 @@ use crate::connect_ca::ConsulConnectCAService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError};
+use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 use crate::naming_store::ConsulNamingStore;
 
 // ============================================================================
@@ -208,7 +209,7 @@ pub async fn ui_nodes(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let index = index_provider.current_index(ConsulTable::Catalog);
@@ -234,7 +235,7 @@ pub async fn ui_nodes_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let index = index_provider.current_index(ConsulTable::Catalog);
@@ -332,7 +333,7 @@ pub async fn ui_node_info(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let node_name = path.into_inner();
@@ -357,7 +358,7 @@ pub async fn ui_node_info(
         return consul_ok(&meta).json(node);
     }
 
-    HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node_name)))
+    HttpResponse::NotFound().consul_error(ConsulError::new(format!("Node '{}' not found", node_name)))
 }
 
 /// GET /v1/internal/ui/exported-services - List exported services for UI
@@ -370,7 +371,7 @@ pub async fn ui_exported_services(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -389,7 +390,7 @@ pub async fn ui_catalog_overview(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_names = naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
@@ -461,7 +462,7 @@ pub async fn ui_gateway_services_nodes(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let gateway_name = path.into_inner();
@@ -482,7 +483,7 @@ pub async fn ui_gateway_intentions(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let gateway = path.into_inner();
@@ -505,7 +506,7 @@ pub async fn ui_service_topology(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_name = path.into_inner();
@@ -612,7 +613,7 @@ pub async fn ui_metrics_proxy(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     // Return a helpful JSON response pointing to the actual metrics endpoint
@@ -680,7 +681,7 @@ pub async fn federation_state_list(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let mesh_gateways = collect_mesh_gateways(&naming_store, &dc_config.datacenter);
@@ -706,7 +707,7 @@ pub async fn federation_state_mesh_gateways(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
@@ -740,7 +741,7 @@ pub async fn federation_state_get(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let dc = path.into_inner();
@@ -775,7 +776,7 @@ pub async fn assign_service_virtual_ip(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let request = body.into_inner();

@@ -218,6 +218,14 @@ pub struct ConsulResponseMeta {
     pub query_backend: &'static str,
     /// Whether results were filtered by ACLs.
     pub filtered_by_acls: bool,
+    /// Effective datacenter used for the response (for `X-Consul-Effective-Datacenter`).
+    pub effective_datacenter: Option<String>,
+    /// Whether WAN address translation was applied to this response.
+    /// Set `X-Consul-Translate-Addresses: true` when true.
+    pub translate_addresses: bool,
+    /// Default ACL policy ("allow" or "deny") for the cluster.
+    /// Set via `X-Consul-Default-ACL-Policy` header when present.
+    pub default_acl_policy: Option<&'static str>,
 }
 
 impl ConsulResponseMeta {
@@ -231,7 +239,28 @@ impl ConsulResponseMeta {
             consistency: ConsistencyMode::Default,
             query_backend: "blocking-query",
             filtered_by_acls: false,
+            effective_datacenter: None,
+            translate_addresses: false,
+            default_acl_policy: None,
         }
+    }
+
+    /// Set the effective datacenter (populates `X-Consul-Effective-Datacenter`).
+    pub fn with_datacenter(mut self, dc: impl Into<String>) -> Self {
+        self.effective_datacenter = Some(dc.into());
+        self
+    }
+
+    /// Mark that WAN address translation was applied.
+    pub fn with_translate_addresses(mut self, enabled: bool) -> Self {
+        self.translate_addresses = enabled;
+        self
+    }
+
+    /// Set the default ACL policy header.
+    pub fn with_default_acl_policy(mut self, policy: &'static str) -> Self {
+        self.default_acl_policy = Some(policy);
+        self
     }
 
     /// Create response metadata with the given index and consistency from the request.
@@ -245,6 +274,9 @@ impl ConsulResponseMeta {
             consistency: opts.consistency,
             query_backend: "blocking-query",
             filtered_by_acls: false,
+            effective_datacenter: None,
+            translate_addresses: false,
+            default_acl_policy: None,
         }
     }
 
@@ -283,6 +315,15 @@ impl ConsulResponseMeta {
         builder.insert_header(("X-Consul-Query-Backend", self.query_backend));
         if self.filtered_by_acls {
             builder.insert_header(("X-Consul-Results-Filtered-By-ACLs", "true"));
+        }
+        if let Some(ref dc) = self.effective_datacenter {
+            builder.insert_header(("X-Consul-Effective-Datacenter", dc.as_str()));
+        }
+        if self.translate_addresses {
+            builder.insert_header(("X-Consul-Translate-Addresses", "true"));
+        }
+        if let Some(policy) = self.default_acl_policy {
+            builder.insert_header(("X-Consul-Default-ACL-Policy", policy));
         }
     }
 }
@@ -335,6 +376,12 @@ pub fn apply_kv_raw_security_headers(builder: &mut HttpResponseBuilder) {
 /// Standard serde deserialization only captures the last value for repeated params.
 /// Consul allows multiple `?tag=` params with AND semantics.
 pub fn parse_multi_param(req: &HttpRequest, param_name: &str) -> Vec<String> {
+    // Consul's Go SDK sends query params using dash separators (`node-meta`),
+    // while some clients and tests use underscore (`node_meta`). Accept both.
+    let alt_name: String = param_name
+        .chars()
+        .map(|c| if c == '-' { '_' } else { c })
+        .collect();
     let qs = req.query_string();
     let mut values = Vec::new();
     for part in qs.split('&') {
@@ -345,11 +392,110 @@ pub fn parse_multi_param(req: &HttpRequest, param_name: &str) -> Vec<String> {
             Some(pos) => (&part[..pos], &part[pos + 1..]),
             None => (part, ""),
         };
-        if key == param_name && !value.is_empty() {
-            values.push(value.to_string());
+        if (key == param_name || key == alt_name.as_str()) && !value.is_empty() {
+            // URL-decode simple percent-encoded values (e.g., "a%3Ab" -> "a:b")
+            values.push(simple_url_decode(value));
         }
     }
     values
+}
+
+/// Minimal percent-decode for common cases (%3A, %2F, etc.)
+fn simple_url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(b' ');
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn from_hex(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Check whether a request targets a remote datacenter (via `?dc=`).
+///
+/// Returns the target DC if it differs from the local DC, `None` otherwise.
+/// Use this in read handlers to short-circuit with an error body matching
+/// Consul's `"No path to datacenter"` message, which the SDK parses to
+/// detect forwarding failures.
+pub fn check_remote_dc(local_dc: &str, requested_dc: Option<&str>) -> Option<String> {
+    match requested_dc {
+        Some(dc) if !dc.is_empty() && dc != local_dc => Some(dc.to_string()),
+        _ => None,
+    }
+}
+
+/// Build a Consul-compatible `No path to datacenter` error response.
+pub fn no_path_to_dc(dc: &str) -> actix_web::HttpResponse {
+    use actix_web::HttpResponse;
+    use crate::model::ConsulErrorBody;
+    HttpResponse::InternalServerError()
+        .consul_error(format!("No path to datacenter ({})", dc))
+}
+
+/// Determine if address translation should be applied for this request.
+///
+/// Returns true when both:
+/// 1. `translate_wan_addrs` is enabled on the server
+/// 2. The request is marked as coming from a WAN source (via `?dc=` different
+///    from the local DC, or explicit client tag)
+///
+/// Consul's logic inspects the source DC's coordinates, but for compatibility
+/// we use a simpler heuristic: explicit DC mismatch or `X-Consul-WAN: true` header.
+pub fn should_translate_wan(
+    req: &HttpRequest,
+    enabled: bool,
+    local_dc: &str,
+    requested_dc: Option<&str>,
+) -> bool {
+    if !enabled {
+        return false;
+    }
+    // Explicit WAN header set by clients/routers
+    if let Some(h) = req.headers().get("X-Consul-WAN") {
+        if h.to_str().map(|s| s.eq_ignore_ascii_case("true")).unwrap_or(false) {
+            return true;
+        }
+    }
+    // Different DC requested (forwarded query)
+    if let Some(dc) = requested_dc {
+        if !dc.is_empty() && dc != local_dc {
+            return true;
+        }
+    }
+    false
+}
+
+/// Translate a LAN address to a WAN address by looking up TaggedAddresses["wan"].
+/// Falls back to the original address if no wan entry exists.
+pub fn translate_address(
+    lan: &str,
+    tagged_addresses: Option<&std::collections::HashMap<String, String>>,
+) -> String {
+    tagged_addresses
+        .and_then(|m| m.get("wan").or_else(|| m.get("wan_ipv4")))
+        .cloned()
+        .unwrap_or_else(|| lan.to_string())
 }
 
 /// Check if a HashMap matches a set of node-meta filter strings.

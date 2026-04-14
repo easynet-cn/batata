@@ -13,6 +13,7 @@ use crate::config_entry::ConsulConfigEntryService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // Discovery Chain Models
@@ -664,7 +665,7 @@ pub async fn get_discovery_chain(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_name = path.into_inner();
@@ -682,7 +683,7 @@ pub async fn list_exported_services(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -699,7 +700,7 @@ pub async fn list_imported_services(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -718,7 +719,7 @@ pub async fn post_discovery_chain(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_name = path.into_inner();
@@ -742,7 +743,7 @@ pub async fn get_discovery_chain_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_name = path.into_inner();
@@ -762,7 +763,7 @@ pub async fn post_discovery_chain_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let service_name = path.into_inner();
@@ -781,7 +782,7 @@ pub async fn list_exported_services_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -798,7 +799,7 @@ pub async fn list_imported_services_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));

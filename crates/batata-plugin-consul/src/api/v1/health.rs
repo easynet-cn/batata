@@ -22,6 +22,7 @@ async fn get_service_health(
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
 ) -> HttpResponse {
     crate::health::get_service_health(
         req,
@@ -32,6 +33,7 @@ async fn get_service_health(
         path,
         query,
         index_provider,
+        config_entry_service,
     )
     .await
 }

@@ -28,7 +28,8 @@ use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
-use crate::model::{ConsulDatacenterConfig, ConsulError};
+use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 
 // ============================================================================
 // Models
@@ -889,7 +890,7 @@ pub async fn get_raft_configuration(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let config = operator_service.get_raft_configuration();
@@ -906,12 +907,12 @@ pub async fn transfer_leader(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match operator_service.transfer_leader(query.id.as_deref()) {
         Ok(()) => HttpResponse::Ok().json(TransferLeaderResponse { success: true }),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -924,17 +925,17 @@ pub async fn remove_raft_peer(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     if query.id.is_some() && query.address.is_some() {
-        return HttpResponse::BadRequest().json(ConsulError::new(
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "Must specify either id or address, not both",
         ));
     }
     if query.id.is_none() && query.address.is_none() {
         return HttpResponse::BadRequest()
-            .json(ConsulError::new("Must specify either id or address"));
+            .consul_error(ConsulError::new("Must specify either id or address"));
     }
 
     match operator_service
@@ -942,7 +943,7 @@ pub async fn remove_raft_peer(
         .await
     {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -955,7 +956,7 @@ pub async fn get_autopilot_configuration(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let config = operator_service.get_autopilot_config().await;
@@ -972,7 +973,7 @@ pub async fn set_autopilot_configuration(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match operator_service
@@ -980,7 +981,7 @@ pub async fn set_autopilot_configuration(
         .await
     {
         Ok(success) => HttpResponse::Ok().json(success),
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -993,7 +994,7 @@ pub async fn get_autopilot_health(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let health = operator_service.get_autopilot_health();
@@ -1013,7 +1014,7 @@ pub async fn get_autopilot_state(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let state = operator_service.get_autopilot_state();
@@ -1032,7 +1033,7 @@ pub async fn keyring_list(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     HttpResponse::Ok().json(operator_service.list_keys())
 }
@@ -1045,7 +1046,7 @@ pub async fn keyring_install(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     operator_service.install_key(&body.key);
     HttpResponse::Ok().finish()
@@ -1059,11 +1060,11 @@ pub async fn keyring_use(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     match operator_service.use_key(&body.key).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1075,11 +1076,11 @@ pub async fn keyring_remove(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     match operator_service.remove_key(&body.key).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1093,7 +1094,7 @@ pub async fn get_operator_usage(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let node_count = operator_service.servers.len() as i64;
@@ -1128,7 +1129,7 @@ pub async fn get_operator_utilization(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     HttpResponse::Ok().json(serde_json::json!({
@@ -1149,7 +1150,7 @@ pub async fn get_raft_configuration_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let config = operator_service.get_raft_configuration();
@@ -1166,7 +1167,7 @@ pub async fn transfer_leader_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     // In real cluster mode, leadership transfer is handled by Raft
     HttpResponse::Ok().json(TransferLeaderResponse { success: true })
@@ -1181,17 +1182,17 @@ pub async fn remove_raft_peer_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     if query.id.is_some() && query.address.is_some() {
-        return HttpResponse::BadRequest().json(ConsulError::new(
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "Must specify either id or address, not both",
         ));
     }
     if query.id.is_none() && query.address.is_none() {
         return HttpResponse::BadRequest()
-            .json(ConsulError::new("Must specify either id or address"));
+            .consul_error(ConsulError::new("Must specify either id or address"));
     }
 
     // In real cluster mode, peer removal is handled through Raft membership changes
@@ -1207,7 +1208,7 @@ pub async fn get_autopilot_configuration_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let config = operator_service.get_autopilot_config().await;
@@ -1224,7 +1225,7 @@ pub async fn set_autopilot_configuration_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match operator_service
@@ -1232,7 +1233,7 @@ pub async fn set_autopilot_configuration_real(
         .await
     {
         Ok(success) => HttpResponse::Ok().json(success),
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1245,7 +1246,7 @@ pub async fn get_autopilot_health_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let health = operator_service.get_autopilot_health();
@@ -1265,7 +1266,7 @@ pub async fn get_autopilot_state_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let state = operator_service.get_autopilot_state();
@@ -1281,7 +1282,7 @@ pub async fn keyring_list_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     HttpResponse::Ok().json(operator_service.list_keys())
 }
@@ -1295,7 +1296,7 @@ pub async fn keyring_install_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     operator_service.install_key(&body.key);
     HttpResponse::Ok().finish()
@@ -1310,11 +1311,11 @@ pub async fn keyring_use_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     match operator_service.use_key(&body.key).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1327,11 +1328,11 @@ pub async fn keyring_remove_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
     match operator_service.remove_key(&body.key).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1345,7 +1346,7 @@ pub async fn get_operator_usage_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let members = operator_service.member_manager.all_members_extended();
@@ -1380,7 +1381,7 @@ pub async fn get_operator_utilization_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     HttpResponse::Ok().json(serde_json::json!({

@@ -273,6 +273,81 @@ async fn acl_authorize(
     crate::acl::acl_authorize(req, acl_service, body, index_provider).await
 }
 
+/// GET /v1/internal/rpc-methods - Lists RPC method names exposed by this agent.
+///
+/// Used by gRPC-capable Consul clients to discover available RPC methods.
+/// We advertise the stable subset Batata implements via its Consul plugin.
+#[get("/rpc-methods")]
+async fn internal_rpc_methods() -> HttpResponse {
+    // Match the shape of Consul's response: a JSON array of strings.
+    let methods: &[&str] = &[
+        "ACL.TokenSet",
+        "ACL.TokenRead",
+        "ACL.TokenDelete",
+        "ACL.TokenList",
+        "ACL.PolicySet",
+        "ACL.PolicyRead",
+        "ACL.PolicyDelete",
+        "ACL.PolicyList",
+        "ACL.RoleSet",
+        "ACL.RoleRead",
+        "ACL.RoleDelete",
+        "ACL.RoleList",
+        "Catalog.Register",
+        "Catalog.Deregister",
+        "Catalog.ListServices",
+        "Catalog.ListNodes",
+        "Catalog.ServiceNodes",
+        "Catalog.NodeServices",
+        "ConfigEntry.Apply",
+        "ConfigEntry.Get",
+        "ConfigEntry.List",
+        "ConfigEntry.Delete",
+        "ConnectCA.Roots",
+        "ConnectCA.ConfigurationGet",
+        "ConnectCA.ConfigurationSet",
+        "Coordinate.Update",
+        "Coordinate.ListDatacenters",
+        "Coordinate.ListNodes",
+        "Health.ChecksInState",
+        "Health.NodeChecks",
+        "Health.ServiceChecks",
+        "Health.ServiceNodes",
+        "Intention.Apply",
+        "Intention.Get",
+        "Intention.List",
+        "Intention.Match",
+        "Internal.NodeDump",
+        "Internal.NodeInfo",
+        "Internal.ServiceTopology",
+        "KVS.Apply",
+        "KVS.Get",
+        "KVS.List",
+        "KVS.ListKeys",
+        "Namespace.Apply",
+        "Namespace.Get",
+        "Namespace.List",
+        "Namespace.Delete",
+        "Operator.RaftGetConfiguration",
+        "Operator.RaftRemovePeerByID",
+        "Operator.AutopilotGetConfiguration",
+        "Operator.AutopilotSetConfiguration",
+        "Operator.ServerHealth",
+        "PreparedQuery.Apply",
+        "PreparedQuery.Get",
+        "PreparedQuery.List",
+        "PreparedQuery.Execute",
+        "Session.Apply",
+        "Session.Get",
+        "Session.List",
+        "Session.Renew",
+        "Txn.Apply",
+        "Txn.Read",
+    ];
+    HttpResponse::Ok().json(methods)
+}
+
+
 pub fn routes() -> Scope {
     web::scope("/internal")
         .service(ui_services)
@@ -289,6 +364,7 @@ pub fn routes() -> Scope {
         .service(federation_state_get)
         .service(assign_service_virtual_ip)
         .service(acl_authorize)
+        .service(internal_rpc_methods)
 }
 
 // ============================================================================
@@ -336,4 +412,5 @@ pub fn routes_real() -> Scope {
         .service(federation_state_get)
         .service(assign_service_virtual_ip)
         .service(acl_authorize)
+        .service(internal_rpc_methods)
 }

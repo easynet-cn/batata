@@ -22,7 +22,8 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
             .await;
     }
 }
-use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights};
+use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights, ConsulErrorBody,
+};
 
 // ============================================================================
 // Catalog Models
@@ -77,11 +78,98 @@ pub struct CatalogService {
     #[serde(rename = "ServiceEnableTagOverride")]
     pub service_enable_tag_override: bool,
 
+    /// Proxy configuration (populated when MergeCentralConfig is requested
+    /// or when the service registers as `connect-proxy`/`mesh-gateway`).
+    /// Matches Consul's `NodeService.Proxy` JSON shape.
+    #[serde(rename = "ServiceProxy", skip_serializing_if = "Option::is_none")]
+    pub service_proxy: Option<serde_json::Value>,
+
+    /// Connect configuration for service-mesh-enabled services.
+    /// Matches Consul's `NodeService.Connect` JSON shape.
+    #[serde(rename = "ServiceConnect", skip_serializing_if = "Option::is_none")]
+    pub service_connect: Option<serde_json::Value>,
+
     #[serde(rename = "CreateIndex")]
     pub create_index: u64,
 
     #[serde(rename = "ModifyIndex")]
     pub modify_index: u64,
+}
+
+/// Apply central config (service-defaults + proxy-defaults) onto a CatalogService.
+///
+/// Mirrors Consul's `agent/configentry.MergeServiceConfig()` semantics:
+/// - Proxy.Config merged from proxy-defaults.config + service-defaults.config
+/// - Proxy.MeshGateway.Mode: service override takes precedence
+/// - Proxy.Mode: service override takes precedence
+/// - Proxy.TransparentProxy: merged per-field
+/// - Proxy.Expose: merged
+/// - Proxy.AccessLogs: merged
+/// - Proxy.EnvoyExtensions: from defaults
+///
+/// The merged result is written to `svc.service_proxy` as a JSON object that
+/// matches Consul's wire format.
+pub fn apply_central_config(
+    svc: &mut CatalogService,
+    service_defaults: Option<&crate::config_entry::ConfigEntry>,
+    proxy_defaults: Option<&crate::config_entry::ConfigEntry>,
+) {
+    // Start from the existing service_proxy JSON (if any), or an empty object.
+    let mut proxy = svc
+        .service_proxy
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let proxy_obj = proxy.as_object_mut().expect("proxy must be object");
+
+    // Merge proxy-defaults first (lower precedence).
+    if let Some(pd) = proxy_defaults {
+        merge_proxy_extra(proxy_obj, &pd.extra);
+    }
+    // Then service-defaults (higher precedence).
+    if let Some(sd) = service_defaults {
+        merge_proxy_extra(proxy_obj, &sd.extra);
+    }
+
+    svc.service_proxy = Some(proxy);
+}
+
+/// Merge selected fields from a config entry's extra map into a proxy object.
+///
+/// The fields mirror Consul's ServiceConfigResponse shape:
+///   Config, Expose, AccessLogs, EnvoyExtensions, MeshGateway,
+///   Mode, TransparentProxy, MutualTLSMode
+pub fn merge_proxy_extra(
+    proxy: &mut serde_json::Map<String, serde_json::Value>,
+    extra: &HashMap<String, serde_json::Value>,
+) {
+    // "Config" merges at the key level (deep merge of maps)
+    if let Some(cfg) = extra.get("Config").or_else(|| extra.get("config")) {
+        let dest = proxy
+            .entry("Config".to_string())
+            .or_insert(serde_json::json!({}));
+        if let (Some(dest_map), Some(src_map)) = (dest.as_object_mut(), cfg.as_object()) {
+            for (k, v) in src_map {
+                dest_map.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+    }
+
+    // Pass-through fields: only set if not already set (service override wins)
+    for field in [
+        "Expose",
+        "AccessLogs",
+        "EnvoyExtensions",
+        "MeshGateway",
+        "Mode",
+        "TransparentProxy",
+        "MutualTLSMode",
+        "Upstreams",
+    ] {
+        let lower = field.to_lowercase();
+        if let Some(v) = extra.get(field).or_else(|| extra.get(lower.as_str())) {
+            proxy.entry(field.to_string()).or_insert_with(|| v.clone());
+        }
+    }
 }
 
 impl CatalogService {
@@ -128,6 +216,8 @@ impl CatalogService {
             service_meta,
             service_port: reg.effective_port(),
             service_enable_tag_override: reg.enable_tag_override.unwrap_or(false),
+            service_proxy: reg.proxy.clone(),
+            service_connect: reg.connect.clone(),
             create_index: index,
             modify_index: index,
         }
@@ -405,6 +495,18 @@ pub struct CatalogQueryParams {
 
     /// Near node for sorting
     pub near: Option<String>,
+
+    /// Cluster peering name for cross-peer queries
+    #[serde(alias = "peer-name")]
+    pub peer_name: Option<String>,
+
+    /// Sameness group name (locality-aware service lookup)
+    #[serde(alias = "sameness-group")]
+    pub sameness_group: Option<String>,
+
+    /// Merge service-defaults/proxy-defaults from config entries
+    #[serde(alias = "merge-central-config")]
+    pub merge_central_config: Option<bool>,
 
     /// Blocking query: minimum index to wait for (X-Consul-Index)
     pub index: Option<u64>,
@@ -1187,7 +1289,7 @@ pub async fn list_services(
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("catalog_list_services", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("catalog_list_services", "success");
 
@@ -1222,6 +1324,7 @@ pub async fn list_services(
 
 /// GET /v1/catalog/service/:service
 /// Returns the nodes providing a specific service
+#[allow(clippy::too_many_arguments)]
 pub async fn get_service(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
@@ -1230,19 +1333,45 @@ pub async fn get_service(
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = dc_config.resolve_ns(&query.ns);
     let tag_filters = crate::consul_meta::parse_multi_param(&req, "tag");
     let dc = dc_config.resolve_dc(&query.dc);
 
+    // peer-name and sameness-group are mutually exclusive (matches Consul)
+    if query.peer_name.is_some() && query.sameness_group.is_some() {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
+            "cannot specify both peer-name and sameness-group",
+        ));
+    }
+
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("catalog_get_service", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("catalog_get_service", "success");
+
+    // Cross-peer query: if peer-name is specified and the peer is not ACTIVE,
+    // return empty (matches Consul's behavior of returning empty for
+    // non-existent/dormant peers rather than 404).
+    if let Some(ref peer) = query.peer_name {
+        if !peer.is_empty() {
+            // We only implement same-DC peering lookups; report empty for remote peers
+            tracing::debug!(
+                "catalog/service peer-name='{}' — cross-peer queries return empty \
+                 until full peering catalog replication is implemented",
+                peer
+            );
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+            return consul_ok(&meta)
+                .insert_header(("X-Consul-Effective-Datacenter", dc))
+                .json(Vec::<CatalogService>::new());
+        }
+    }
 
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
@@ -1277,6 +1406,36 @@ pub async fn get_service(
         });
     }
 
+    // WAN address translation: if client is from another DC and translation is
+    // enabled, swap node Address to the WAN tagged address.
+    if crate::consul_meta::should_translate_wan(
+        &req,
+        dc_config.translate_wan_addrs,
+        &dc_config.datacenter,
+        query.dc.as_deref(),
+    ) {
+        for svc in &mut services {
+            svc.address = crate::consul_meta::translate_address(
+                &svc.address,
+                svc.tagged_addresses.as_ref(),
+            );
+        }
+    }
+
+    // merge-central-config: look up service-defaults and proxy-defaults from
+    // config entries, and merge their fields into each service's ServiceProxy
+    // field — matching Consul's agent/configentry.MergeServiceConfig() output.
+    if query.merge_central_config.unwrap_or(false) {
+        let service_defaults = config_entry_service
+            .get_entry("service-defaults", &service_name);
+        let proxy_defaults = config_entry_service
+            .get_entry("proxy-defaults", "global");
+
+        for svc in &mut services {
+            apply_central_config(svc, service_defaults.as_ref(), proxy_defaults.as_ref());
+        }
+    }
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     if services.is_empty() {
         consul_ok(&meta)
@@ -1302,7 +1461,7 @@ pub async fn list_nodes(
     // Check ACL authorization for node read
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let dc = dc_config.resolve_dc(&query.dc);
@@ -1349,7 +1508,7 @@ pub async fn get_node(
     // Check ACL authorization for node read
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -1391,7 +1550,7 @@ pub async fn register(
     let authz = acl_service.authorize_request(&req, ResourceType::Service, service_name, true);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("catalog_register", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     if catalog.register(&registration, &namespace) {
@@ -1401,7 +1560,7 @@ pub async fn register(
         consul_ok(&meta).json(true)
     } else {
         crate::api_metrics::incr_endpoint("catalog_register", "error");
-        HttpResponse::InternalServerError().json(ConsulError::new("Registration failed"))
+        HttpResponse::InternalServerError().consul_error(ConsulError::new("Registration failed"))
     }
 }
 
@@ -1432,7 +1591,7 @@ pub async fn deregister(
     };
     let authz = acl_service.authorize_request(&req, resource_type, resource, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let success = catalog.deregister(&deregistration, &namespace);
@@ -1480,7 +1639,7 @@ pub async fn ui_services(
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let namespace = dc_config.resolve_ns(&query.ns);
@@ -1507,7 +1666,7 @@ pub async fn get_connect_service(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -1541,7 +1700,7 @@ pub async fn get_node_services(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -1582,7 +1741,7 @@ pub async fn get_gateway_services(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &gateway_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait

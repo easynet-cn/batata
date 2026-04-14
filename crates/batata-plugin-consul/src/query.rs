@@ -24,7 +24,7 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
     PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
-    PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth,
+    PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth, ConsulErrorBody,
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::ConsulRaftWriter;
@@ -347,7 +347,7 @@ pub async fn create_query(
     // Check ACL authorization for query write
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let query = query_service.create_query(body.into_inner()).await;
@@ -367,7 +367,7 @@ pub async fn list_queries(
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let queries = query_service.list_queries();
@@ -390,7 +390,7 @@ pub async fn get_query(
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match query_service.get_query(&id) {
@@ -398,7 +398,7 @@ pub async fn get_query(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
             consul_ok(&meta).json(vec![query])
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Query not found")),
     }
 }
 
@@ -417,7 +417,7 @@ pub async fn update_query(
     // Check ACL authorization for query write
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match query_service.update_query(&id, body.into_inner()).await {
@@ -425,7 +425,7 @@ pub async fn update_query(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
             consul_ok(&meta).finish()
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Query not found")),
     }
 }
 
@@ -443,14 +443,14 @@ pub async fn delete_query(
     // Check ACL authorization for query write
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     if query_service.delete_query(&id).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().json(ConsulError::new("Query not found"))
+        HttpResponse::NotFound().consul_error(ConsulError::new("Query not found"))
     }
 }
 
@@ -473,12 +473,12 @@ pub async fn execute_query(
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let query = match query_service.get_query(&id) {
         Some(q) => q,
-        None => return HttpResponse::NotFound().json(ConsulError::new("Query not found")),
+        None => return HttpResponse::NotFound().consul_error(ConsulError::new("Query not found")),
     };
 
     // Execute the query by fetching service instances from ConsulNamingStore
@@ -665,7 +665,7 @@ pub async fn explain_query(
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match query_service.get_query(&id) {
@@ -673,7 +673,7 @@ pub async fn explain_query(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
             consul_ok(&meta).json(PreparedQueryExplainResult { query })
         }
-        None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Query not found")),
     }
 }
 

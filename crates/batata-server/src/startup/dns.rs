@@ -239,29 +239,65 @@ impl DnsServer {
         Some((name.to_lowercase(), pos))
     }
 
-    /// Parse service name from DNS query
-    /// Format: {service}.{group}.{namespace}.svc.batata.local
+    /// Parse service name from DNS query.
+    ///
+    /// Supports two naming schemes:
+    /// 1. Batata-native:  `{service}.{group}.{namespace}.svc.batata.local`
+    /// 2. Consul-native:  `{service}.service.consul`, `{tag}.{service}.service.consul`
+    ///    and `{nodename}.node.consul`
+    ///
+    /// Returns (namespace, group, service) — for Consul queries,
+    /// namespace defaults to `"public"` and group to `"DEFAULT_GROUP"`.
     fn parse_service_name(qname: &str, suffix: &str) -> Option<(String, String, String)> {
+        let qname = qname.trim_end_matches('.').to_lowercase();
+
+        // Consul service lookup: [tag.]service.service.consul
+        if let Some(prefix) = qname.strip_suffix(".service.consul") {
+            let parts: Vec<&str> = prefix.split('.').collect();
+            // Right-most segment is the service name; anything before is a tag filter.
+            // Tags aren't forwarded into the naming store at this layer; they're
+            // used for DNS-level SRV filtering in future work.
+            let service = match parts.last() {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => return None,
+            };
+            return Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                service,
+            ));
+        }
+
+        // Consul node lookup: {nodename}.node.consul — map the node name as
+        // a "service" so resolution works via the same naming store.
+        if let Some(prefix) = qname.strip_suffix(".node.consul") {
+            if prefix.is_empty() || prefix.contains('.') {
+                return None;
+            }
+            return Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                prefix.to_string(),
+            ));
+        }
+
+        // Batata-native format
         let suffix_lower = suffix.to_lowercase();
         if !qname.ends_with(&suffix_lower) {
             return None;
         }
-
-        let prefix = &qname[..qname.len() - suffix_lower.len() - 1]; // Remove .suffix
+        let prefix = &qname[..qname.len() - suffix_lower.len() - 1];
         let parts: Vec<&str> = prefix.split('.').collect();
-
         if parts.len() >= 3 {
             let service = parts[0].to_string();
             let group = parts[1].to_string();
             let namespace = parts[2].to_string();
             Some((namespace, group, service))
         } else if parts.len() == 2 {
-            // Default namespace
             let service = parts[0].to_string();
             let group = parts[1].to_string();
             Some(("public".to_string(), group, service))
         } else if parts.len() == 1 {
-            // Default namespace and group
             let service = parts[0].to_string();
             Some(("public".to_string(), "DEFAULT_GROUP".to_string(), service))
         } else {
@@ -434,6 +470,63 @@ mod tests {
 
         // Wrong suffix
         let result = DnsServer::parse_service_name("api-service.other.domain", suffix);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_consul_service_suffix() {
+        let suffix = "svc.batata.local";
+
+        // web.service.consul -> service=web, namespace=public, group=DEFAULT_GROUP
+        let result = DnsServer::parse_service_name("web.service.consul", suffix);
+        assert_eq!(
+            result,
+            Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                "web".to_string()
+            ))
+        );
+
+        // Tagged: v1.web.service.consul -> service=web (tag v1 is ignored here)
+        let result = DnsServer::parse_service_name("v1.web.service.consul", suffix);
+        assert_eq!(
+            result,
+            Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                "web".to_string()
+            ))
+        );
+
+        // node lookup: node1.node.consul
+        let result = DnsServer::parse_service_name("node1.node.consul", suffix);
+        assert_eq!(
+            result,
+            Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                "node1".to_string()
+            ))
+        );
+
+        // Trailing dot tolerated (as RFC 1035 full-qualified names)
+        let result = DnsServer::parse_service_name("web.service.consul.", suffix);
+        assert!(result.is_some());
+
+        // Case-insensitive
+        let result = DnsServer::parse_service_name("WEB.Service.Consul", suffix);
+        assert_eq!(
+            result,
+            Some((
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                "web".to_string()
+            ))
+        );
+
+        // Multi-dot node names are rejected (Consul uses single label for node)
+        let result = DnsServer::parse_service_name("a.b.node.consul", suffix);
         assert_eq!(result, None);
     }
 

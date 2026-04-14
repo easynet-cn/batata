@@ -17,6 +17,7 @@ use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
+use crate::model::ConsulErrorBody;
 
 // ============================================================================
 // Models
@@ -498,7 +499,7 @@ pub async fn generate_peering_token(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match peering_service.generate_token(body.into_inner()).await {
@@ -506,7 +507,7 @@ pub async fn generate_peering_token(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(resp)
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -520,7 +521,7 @@ pub async fn establish_peering(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match peering_service.establish(body.into_inner()).await {
@@ -528,7 +529,7 @@ pub async fn establish_peering(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(serde_json::json!({}))
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -543,12 +544,12 @@ pub async fn get_peering(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
     }
 
     match peering_service.get_peering(&name) {
@@ -557,7 +558,7 @@ pub async fn get_peering(
             consul_ok(&meta).json(peering)
         }
         None => {
-            HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
+            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
         }
     }
 }
@@ -573,19 +574,19 @@ pub async fn delete_peering(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
     }
 
     if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
+        HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
     }
 }
 
@@ -599,7 +600,7 @@ pub async fn list_peerings(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
@@ -620,7 +621,7 @@ pub async fn generate_peering_token_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match peering_service.generate_token(body.into_inner()).await {
@@ -628,7 +629,7 @@ pub async fn generate_peering_token_persistent(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(resp)
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -642,7 +643,7 @@ pub async fn establish_peering_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     match peering_service.establish(body.into_inner()).await {
@@ -650,7 +651,7 @@ pub async fn establish_peering_persistent(
             let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(serde_json::json!({}))
         }
-        Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -665,12 +666,12 @@ pub async fn get_peering_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
     }
 
     match peering_service.get_peering(&name) {
@@ -679,7 +680,7 @@ pub async fn get_peering_persistent(
             consul_ok(&meta).json(peering)
         }
         None => {
-            HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
+            HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
         }
     }
 }
@@ -695,19 +696,19 @@ pub async fn delete_peering_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let name = path.into_inner();
     if name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Peering name is required"));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new("Peering name is required"));
     }
 
     if peering_service.delete_peering(&name).await {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
+        HttpResponse::NotFound().consul_error(ConsulError::new(format!("Peering '{}' not found", name)))
     }
 }
 
@@ -721,7 +722,7 @@ pub async fn list_peerings_persistent(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));

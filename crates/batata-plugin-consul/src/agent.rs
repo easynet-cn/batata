@@ -21,7 +21,7 @@ use crate::model::{
     AgentServiceWithChecks, AgentStats, AgentVersion, CONSUL_INTERNAL_CLUSTER,
     CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE, CheckRegistration, ConsulDatacenterConfig,
     ConsulError, Coordinate, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo,
-    HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
+    HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams, ConsulErrorBody,
 };
 use crate::naming_store::ConsulNamingStore;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
@@ -256,19 +256,19 @@ pub async fn register_service(
         true, // write access required
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Validate service name
     if registration.name.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Missing service name"));
+        return HttpResponse::BadRequest().consul_error(ConsulError::new("Missing service name"));
     }
 
     // Validate service registration (address, weights, metadata)
     let mut registration = registration;
     if let Err(e) = registration.validate() {
         return HttpResponse::BadRequest()
-            .json(ConsulError::new(format!("Invalid service: {}", e)));
+            .consul_error(ConsulError::new(format!("Invalid service: {}", e)));
     }
 
     // Auto-populate tagged addresses from service address (like Consul)
@@ -279,7 +279,7 @@ pub async fn register_service(
         Ok(checks) => checks,
         Err(e) => {
             return HttpResponse::BadRequest()
-                .json(ConsulError::new(format!("Validation failed: {}", e)));
+                .consul_error(ConsulError::new(format!("Validation failed: {}", e)));
         }
     };
 
@@ -342,7 +342,7 @@ pub async fn register_service(
         Err(e) => {
             tracing::error!("Failed to serialize service registration: {}", e);
             return HttpResponse::InternalServerError()
-                .json(ConsulError::new("Failed to register service"));
+                .consul_error(ConsulError::new("Failed to register service"));
         }
     };
 
@@ -353,7 +353,7 @@ pub async fn register_service(
     {
         tracing::error!("Failed to store service in ConsulNamingStore: {}", e);
         return HttpResponse::InternalServerError()
-            .json(ConsulError::new("Failed to register service"));
+            .consul_error(ConsulError::new("Failed to register service"));
     }
 
     // Replicate through Raft in cluster mode
@@ -536,7 +536,7 @@ pub async fn deregister_service(
         true, // write access required
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Find the store key before removal (needed for Raft replication)
@@ -597,7 +597,7 @@ pub async fn deregister_service(
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
         consul_ok(&meta).finish()
     } else {
-        HttpResponse::NotFound().json(ConsulError::new(format!(
+        HttpResponse::NotFound().consul_error(ConsulError::new(format!(
             "Service not found: {}",
             service_id
         )))
@@ -624,7 +624,7 @@ pub async fn list_services(
         false, // read access only
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Get all service entries from ConsulNamingStore
@@ -665,7 +665,7 @@ pub async fn get_service(
         false, // read access only
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Find the service by ID from ConsulNamingStore
@@ -687,7 +687,7 @@ pub async fn get_service(
         return consul_ok(&meta).json(response);
     }
 
-    HttpResponse::NotFound().json(ConsulError::new(format!(
+    HttpResponse::NotFound().consul_error(ConsulError::new(format!(
         "Service not found: {}",
         service_id
     )))
@@ -762,7 +762,7 @@ pub async fn agent_health_service_by_id(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_id, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Search for the service instance by ID from ConsulNamingStore
@@ -808,7 +808,7 @@ pub async fn agent_health_service_by_id(
         };
     }
 
-    HttpResponse::NotFound().json(ConsulError::new(format!(
+    HttpResponse::NotFound().consul_error(ConsulError::new(format!(
         "Service ID '{}' not found",
         service_id
     )))
@@ -832,7 +832,7 @@ pub async fn agent_health_service_by_name(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let entries = agent
@@ -840,7 +840,7 @@ pub async fn agent_health_service_by_name(
         .get_service_entries(&namespace, &service_name);
 
     if entries.is_empty() {
-        return HttpResponse::NotFound().json(ConsulError::new(format!(
+        return HttpResponse::NotFound().consul_error(ConsulError::new(format!(
             "Service '{}' not found",
             service_name
         )));
@@ -925,7 +925,7 @@ pub async fn set_service_maintenance(
         true, // write access required
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let check_id = format!("_service_maintenance:{}", service_id);
@@ -966,7 +966,7 @@ pub async fn get_agent_self(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Config from startup (like Consul's a.config)
@@ -1092,7 +1092,7 @@ pub async fn get_agent_members(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Build member with real data from dc_config (like Consul's delegate.LANMembers())
@@ -1158,7 +1158,7 @@ pub async fn get_agent_members_real(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Get all members from ClusterManager
@@ -1220,7 +1220,7 @@ pub async fn get_agent_self_real(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let self_member = member_manager.get_self_member();
@@ -1394,7 +1394,7 @@ pub async fn get_agent_host(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let mut sys = System::new_all();
@@ -1514,7 +1514,7 @@ pub async fn agent_join(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Standalone/in-memory mode: no real cluster to join.
@@ -1537,7 +1537,7 @@ pub async fn agent_leave(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     tracing::warn!("Agent leave: not supported in standalone mode (no Serf gossip layer)");
@@ -1558,7 +1558,7 @@ pub async fn agent_force_leave(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     tracing::warn!(
@@ -1579,7 +1579,7 @@ pub async fn agent_reload(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Batata reads config at startup; runtime reload is not yet supported.
@@ -1601,7 +1601,7 @@ pub async fn agent_maintenance(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let enable = query.enable;
@@ -1649,7 +1649,7 @@ pub async fn get_agent_metrics(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Collect basic system metrics
@@ -1729,7 +1729,7 @@ pub async fn get_agent_metrics_real(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Collect system metrics
@@ -1953,7 +1953,7 @@ pub async fn agent_monitor(
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let log_level = query.loglevel.to_uppercase();
@@ -2112,7 +2112,7 @@ pub async fn agent_metrics_stream(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let store = naming_store.into_inner();
@@ -2153,7 +2153,7 @@ pub async fn agent_metrics_stream_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let store = naming_store.into_inner();
@@ -2202,7 +2202,7 @@ pub async fn update_agent_token(
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Consul supports updating: default, agent, replication, config_file_service_registration tokens.

@@ -605,6 +605,61 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             deregister_monitor.start().await;
         });
 
+        // Vivaldi coordinate refresh task (cluster mode only).
+        //
+        // Every 60 seconds, ping each cluster member over TCP (to consul_port)
+        // to measure RTT, then feed the RTT into the Vivaldi algorithm.
+        // This populates real coordinates over time so `/v1/coordinate/nodes`
+        // returns latency-aware data.
+        if let Some(ref cm) = inner.cluster_manager {
+            tracing::info!("Starting Consul Vivaldi coordinate task...");
+            let coord_svc = Arc::new(inner.coordinate.clone());
+            let cm_clone = cm.clone();
+            let dc_config = self.dc_config.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                interval.tick().await; // skip initial firing
+                let self_node = dc_config.node_name.clone();
+                let port = dc_config.consul_port;
+                loop {
+                    interval.tick().await;
+                    let members = cm_clone.all_members_extended();
+                    for member in &members {
+                        if cm_clone.is_self(&member.address) {
+                            continue;
+                        }
+                        let addr = format!("{}:{}", member.ip, port);
+                        // Measure TCP connect RTT (reasonable proxy for path latency)
+                        let start = std::time::Instant::now();
+                        let res = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            tokio::net::TcpStream::connect(&addr),
+                        )
+                        .await;
+                        let rtt = start.elapsed();
+                        if matches!(res, Ok(Ok(_))) {
+                            // Use remote node's last known coord (default for new peers)
+                            let remote_node = format!(
+                                "node-{}",
+                                member.ip.replace('.', "-")
+                            );
+                            let remote_coord = coord_svc
+                                .coordinates_arc()
+                                .get(&format!("{}:", remote_node))
+                                .map(|r| r.value().coord.clone())
+                                .unwrap_or_default();
+                            coord_svc.apply_rtt_measurement(
+                                &self_node,
+                                &remote_node,
+                                &remote_coord,
+                                rtt,
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         // Active health check execution (HTTP/TCP/gRPC/MySQL).
         // Creates a reactor for the Consul registry. When checks are registered
         // with HTTP/TCP/gRPC type, the reactor periodically executes them.

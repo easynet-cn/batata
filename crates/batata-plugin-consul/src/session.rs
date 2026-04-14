@@ -17,7 +17,8 @@ use crate::acl::{AclService, ResourceType};
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::kv::ConsulKVService;
-use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
+use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse, ConsulErrorBody,
+};
 
 /// Serializable session data stored in RocksDB.
 /// Uses unix timestamps (survives restarts correctly).
@@ -734,7 +735,7 @@ pub async fn create_session(
     // Check ACL authorization for session write
     let authz = acl_service.authorize_request(&req, ResourceType::Session, "", true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let session = session_service.create_session(body.into_inner()).await;
@@ -761,7 +762,7 @@ pub async fn destroy_session(
     // Check ACL authorization for session write
     let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Get session behavior before destroying (needed to handle KV keys correctly)
@@ -800,7 +801,7 @@ pub async fn get_session_info(
     // Check ACL authorization for session read
     let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
@@ -821,7 +822,7 @@ pub async fn list_sessions(
     // Check ACL authorization for session read
     let authz = acl_service.authorize_request(&req, ResourceType::Session, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Clean up expired sessions first
@@ -846,7 +847,7 @@ pub async fn list_node_sessions(
     // Check ACL authorization for session read
     let authz = acl_service.authorize_request(&req, ResourceType::Session, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let sessions = session_service.list_node_sessions(&node);
@@ -868,13 +869,13 @@ pub async fn renew_session(
     // Check ACL authorization for session write
     let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
     match session_service.renew_session(&session_id).await {
         Some(session) => consul_ok(&meta).json(vec![session]),
-        None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
+        None => HttpResponse::NotFound().consul_error(ConsulError::new("Session not found or expired")),
     }
 }
 

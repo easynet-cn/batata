@@ -34,7 +34,7 @@ use crate::model::{
     AgentService, AgentServiceRegistration, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
     CONSUL_INTERNAL_NAMESPACE, CheckRegistration, CheckStatusUpdate, CheckUpdateParams,
     ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth,
-    ServiceQueryParams,
+    ServiceQueryParams, ConsulErrorBody,
 };
 use crate::naming_store::ConsulNamingStore;
 
@@ -427,6 +427,7 @@ impl ConsulHealthService {
 /// GET /v1/health/service/:service
 /// Returns the health information for a service
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_service_health(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
@@ -436,10 +437,19 @@ pub async fn get_service_health(
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let passing_only = query.passing.unwrap_or(false);
     let namespace = dc_config.resolve_ns(&query.ns);
+
+    // peer-name and sameness-group are mutually exclusive
+    if query.peer_name.is_some() && query.sameness_group.is_some() {
+        crate::api_metrics::incr_endpoint("health_service", "error");
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
+            "cannot specify both peer-name and sameness-group",
+        ));
+    }
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -450,9 +460,24 @@ pub async fn get_service_health(
     );
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("health_service", "error");
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
     crate::api_metrics::incr_endpoint("health_service", "success");
+
+    // Cross-peer health query: same-DC peering not yet replicated, return empty
+    if let Some(ref peer) = query.peer_name {
+        if !peer.is_empty() {
+            tracing::debug!(
+                "health/service peer-name='{}' — cross-peer queries return empty",
+                peer
+            );
+            let dc = dc_config.resolve_dc(&query.dc);
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+            return consul_ok(&meta)
+                .insert_header(("X-Consul-Effective-Datacenter", dc))
+                .json(Vec::<ServiceHealth>::new());
+        }
+    }
 
     // Get service entries from ConsulNamingStore (Consul-native data)
     let entries = naming_store.get_service_entries(&namespace, &service_name);
@@ -574,6 +599,44 @@ pub async fn get_service_health(
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     let dc = dc_config.resolve_dc(&query.dc);
+
+    // WAN address translation
+    if crate::consul_meta::should_translate_wan(
+        &req,
+        dc_config.translate_wan_addrs,
+        &dc_config.datacenter,
+        query.dc.as_deref(),
+    ) {
+        for sh in &mut results {
+            sh.node.address = crate::consul_meta::translate_address(
+                &sh.node.address,
+                sh.node.tagged_addresses.as_ref(),
+            );
+        }
+    }
+
+    // merge-central-config: populate Proxy field with merged central config
+    if query.merge_central_config.unwrap_or(false) {
+        let service_defaults = config_entry_service.get_entry("service-defaults", &service_name);
+        let proxy_defaults = config_entry_service.get_entry("proxy-defaults", "global");
+        for sh in &mut results {
+            let mut proxy = sh
+                .service
+                .proxy
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({}));
+            if let Some(obj) = proxy.as_object_mut() {
+                if let Some(ref pd) = proxy_defaults {
+                    crate::catalog::merge_proxy_extra(obj, &pd.extra);
+                }
+                if let Some(ref sd) = service_defaults {
+                    crate::catalog::merge_proxy_extra(obj, &sd.extra);
+                }
+            }
+            sh.service.proxy = Some(proxy);
+        }
+    }
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta)
         .insert_header(("X-Consul-Effective-Datacenter", dc))
@@ -581,134 +644,85 @@ pub async fn get_service_health(
 }
 
 /// Apply Consul filter expression to service health results.
-/// Supports common Consul filter patterns:
-///   Service == "name"
-///   ServiceMeta.key == "value"
-///   ServiceMeta["key"] == "value"
-///   Node.Meta.key == "value"
-///   "tag" in ServiceTags
-///   ServiceTags contains "tag"
+///
+/// Uses the full filter parser in `crate::filter`, which supports:
+/// - Comparisons: `==`, `!=`, `=~`, `!~`
+/// - Membership: `"v" in Field`
+/// - Substring: `Field contains "v"`
+/// - Logical: `and`, `or`, `not`
+/// - Grouping: `(expr)`
+/// - Field paths: dotted, bracketed
 fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec<ServiceHealth> {
     let filter = filter.trim();
-
-    // Try `"value" in FieldList` pattern
-    if let Some((value, field)) = parse_in_expression(filter) {
-        return results
-            .into_iter()
-            .filter(|entry| resolve_list_field(entry, &field).iter().any(|v| v == &value))
-            .collect();
+    if filter.is_empty() {
+        return results;
     }
-
-    // Try `FieldList contains "value"` pattern
-    if let Some((field, value)) = parse_contains_expression(filter) {
-        return results
-            .into_iter()
-            .filter(|entry| resolve_list_field(entry, &field).iter().any(|v| v == &value))
-            .collect();
-    }
-
-    // Try equality/inequality: field == "value" or field != "value"
-    let (selector, op, expected) = if let Some(rest) = filter.strip_suffix('"') {
-        // Quoted: `field == "value"`
-        if let Some(pos) = rest.rfind('"') {
-            let expected = &rest[pos + 1..];
-            let before = rest[..pos].trim();
-            if let Some(selector) = before.strip_suffix("==") {
-                (selector.trim(), "==", expected)
-            } else if let Some(selector) = before.strip_suffix("!=") {
-                (selector.trim(), "!=", expected)
-            } else {
-                return results;
-            }
-        } else {
+    let expr = match crate::filter::parse(filter) {
+        Ok(e) => e,
+        Err(err) => {
+            tracing::debug!("filter parse error '{}': {}", filter, err);
             return results;
         }
-    } else if let Some(eq_pos) = filter.find("==") {
-        // Unquoted: `field == value`
-        let selector = filter[..eq_pos].trim();
-        let expected = filter[eq_pos + 2..].trim();
-        (selector, "==", expected)
-    } else if let Some(ne_pos) = filter.find("!=") {
-        let selector = filter[..ne_pos].trim();
-        let expected = filter[ne_pos + 2..].trim();
-        (selector, "!=", expected)
-    } else {
-        return results;
     };
-
     results
         .into_iter()
-        .filter(|entry| {
-            let actual = resolve_service_health_field(entry, selector);
-            match op {
-                "==" => actual.as_deref() == Some(expected),
-                "!=" => actual.as_deref() != Some(expected),
-                _ => true,
-            }
-        })
+        .filter(|sh| crate::filter::evaluate(&expr, sh))
         .collect()
 }
 
-/// Parse `"value" in FieldPath` pattern. Returns (value, field).
-fn parse_in_expression(filter: &str) -> Option<(String, String)> {
-    // Find quoted value at the start
-    let rest = filter.strip_prefix('"')?;
-    let quote_end = rest.find('"')?;
-    let value = &rest[..quote_end];
-    let after = rest[quote_end + 1..].trim_start();
-    let field = after.strip_prefix("in ")?.trim();
-    Some((value.to_string(), field.to_string()))
-}
+impl crate::filter::Filterable for ServiceHealth {
+    fn resolve_field(&self, path: &str) -> Option<String> {
+        // Top-level scalar fields
+        match path {
+            "Service" | "Service.Service" => return Some(self.service.service.clone()),
+            "ServiceID" | "Service.ID" => return Some(self.service.id.clone()),
+            "ServicePort" | "Service.Port" => return Some(self.service.port.to_string()),
+            "ServiceAddress" | "Service.Address" => return Some(self.service.address.clone()),
+            "ServiceKind" | "Service.Kind" => {
+                return self.service.kind.clone();
+            }
+            "Node" | "Node.Node" => return Some(self.node.node.clone()),
+            "Node.ID" => return Some(self.node.id.clone()),
+            "Node.Address" => return Some(self.node.address.clone()),
+            "Node.Datacenter" => return Some(self.node.datacenter.clone()),
+            _ => {}
+        }
+        // Try dotted map access: e.g., ServiceMeta.env, Node.Meta.env
+        if let Some(key) = path.strip_prefix("ServiceMeta.") {
+            return self.service.meta.as_ref()?.get(key).cloned();
+        }
+        if let Some(key) = path.strip_prefix("Service.Meta.") {
+            return self.service.meta.as_ref()?.get(key).cloned();
+        }
+        if let Some(key) = path.strip_prefix("Node.Meta.") {
+            return self.node.meta.as_ref()?.get(key).cloned();
+        }
+        // Check field access: Checks.Status matches any check status
+        if path == "Checks.Status" && !self.checks.is_empty() {
+            return Some(self.checks[0].status.clone());
+        }
+        None
+    }
 
-/// Parse `FieldPath contains "value"` pattern. Returns (field, value).
-fn parse_contains_expression(filter: &str) -> Option<(String, String)> {
-    let idx = filter.find(" contains ")?;
-    let field = filter[..idx].trim();
-    let rest = filter[idx + " contains ".len()..].trim();
-    let rest = rest.strip_prefix('"')?;
-    let value = rest.strip_suffix('"')?;
-    Some((field.to_string(), value.to_string()))
-}
+    fn resolve_list(&self, path: &str) -> Vec<String> {
+        match path {
+            "ServiceTags" | "Service.Tags" => self.service.tags.clone().unwrap_or_default(),
+            "Checks" | "Checks.Status" => {
+                self.checks.iter().map(|c| c.status.clone()).collect()
+            }
+            "Checks.CheckID" => self.checks.iter().map(|c| c.check_id.clone()).collect(),
+            "Checks.Name" => self.checks.iter().map(|c| c.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
 
-/// Resolve a list-valued field selector (e.g., ServiceTags).
-fn resolve_list_field(entry: &ServiceHealth, selector: &str) -> Vec<String> {
-    match selector {
-        "ServiceTags" | "Service.Tags" => entry.service.tags.clone().unwrap_or_default(),
-        _ => Vec::new(),
+    fn resolve_map(&self, path: &str) -> Option<&std::collections::HashMap<String, String>> {
+        match path {
+            "ServiceMeta" | "Service.Meta" => self.service.meta.as_ref(),
+            "Node.Meta" => self.node.meta.as_ref(),
+            _ => None,
+        }
     }
-}
-
-/// Resolve a field selector against a ServiceHealth entry.
-fn resolve_service_health_field(entry: &ServiceHealth, selector: &str) -> Option<String> {
-    // ServiceMeta.key or ServiceMeta["key"]
-    if let Some(key) = selector.strip_prefix("ServiceMeta.") {
-        return entry.service.meta.as_ref()?.get(key).cloned();
-    }
-    if let Some(rest) = selector.strip_prefix("ServiceMeta[\"") {
-        let key = rest.strip_suffix("\"]")?;
-        return entry.service.meta.as_ref()?.get(key).cloned();
-    }
-    // Node.Meta.key
-    if let Some(key) = selector.strip_prefix("Node.Meta.") {
-        return entry.node.meta.as_ref()?.get(key).cloned();
-    }
-    // Service
-    if selector == "Service" {
-        return Some(entry.service.service.clone());
-    }
-    // ServiceID
-    if selector == "ServiceID" {
-        return Some(entry.service.id.clone());
-    }
-    // ServicePort
-    if selector == "ServicePort" {
-        return Some(entry.service.port.to_string());
-    }
-    // ServiceAddress
-    if selector == "ServiceAddress" {
-        return Some(entry.service.address.clone());
-    }
-    None
 }
 
 /// GET /v1/health/checks/:service
@@ -735,7 +749,7 @@ pub async fn get_service_checks(
         false, // read access only
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -798,23 +812,25 @@ pub async fn get_checks_by_state(
         false,
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
-    // Validate state
+    // Validate state. Consul accepts: passing, warning, critical, any.
+    // Empty is treated as "any" to match Consul's router default.
     let valid_states = ["passing", "warning", "critical", "any"];
-    if !valid_states.contains(&state.as_str()) {
+    let effective_state = if state.is_empty() { "any" } else { state.as_str() };
+    if !valid_states.contains(&effective_state) {
         return HttpResponse::BadRequest()
-            .json(ConsulError::new(format!("Invalid state: {}", state)));
+            .consul_error(ConsulError::new(format!("Invalid state: {}", state)));
     }
 
-    let mut checks = if state == "any" {
+    let mut checks = if effective_state == "any" {
         health_service.get_all_checks().await
     } else {
-        health_service.get_checks_by_status(&state).await
+        health_service.get_checks_by_status(effective_state).await
     };
 
     // Apply filter expression if provided
@@ -841,7 +857,7 @@ pub async fn get_node_checks(
     // Check ACL authorization for node read
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -883,12 +899,12 @@ pub async fn register_check(
         true, // write access required
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match health_service.register_check(registration).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::InternalServerError().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -910,12 +926,12 @@ pub async fn deregister_check(
         true, // write access required
     );
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match health_service.deregister_check(&check_id).await {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -934,7 +950,7 @@ pub async fn pass_check(
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &check_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match health_service
@@ -942,7 +958,7 @@ pub async fn pass_check(
         .await
     {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -961,7 +977,7 @@ pub async fn warn_check(
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &check_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match health_service
@@ -969,7 +985,7 @@ pub async fn warn_check(
         .await
     {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -988,7 +1004,7 @@ pub async fn fail_check(
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &check_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     match health_service
@@ -996,7 +1012,7 @@ pub async fn fail_check(
         .await
     {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1015,7 +1031,7 @@ pub async fn update_check(
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &check_id, true);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let status = update.status.unwrap_or_else(|| "passing".to_string());
@@ -1025,7 +1041,7 @@ pub async fn update_check(
         .await
     {
         Ok(()) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
+        Err(e) => HttpResponse::NotFound().consul_error(ConsulError::new(e)),
     }
 }
 
@@ -1041,7 +1057,7 @@ pub async fn list_agent_checks(
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let checks = health_service.get_all_checks().await;
@@ -1075,7 +1091,7 @@ pub async fn get_connect_health(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait
@@ -1166,7 +1182,7 @@ pub async fn get_ingress_health(
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Handle blocking query wait

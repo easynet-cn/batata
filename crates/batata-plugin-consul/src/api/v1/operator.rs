@@ -303,6 +303,37 @@ async fn get_operator_utilization_real(
 // Route registration
 // ============================================================================
 
+/// GET /v1/operator/segment - Network segment list.
+/// Enterprise-only feature; OSS/Batata returns an empty array to match
+/// Consul OSS behavior rather than 404, so clients can detect feature absence.
+#[get("/segment")]
+async fn operator_segment_list() -> HttpResponse {
+    HttpResponse::Ok().json(Vec::<String>::new())
+}
+
+/// GET /v1/operator/license - Enterprise license info (stub).
+/// Returns a valid-looking payload with no features enabled so enterprise
+/// clients don't error out on the license check.
+#[get("/license")]
+async fn operator_license() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({
+        "Valid": true,
+        "License": {
+            "LicenseID": "",
+            "CustomerID": "",
+            "InstallationID": "*",
+            "IssueTime": "1970-01-01T00:00:00Z",
+            "StartTime": "1970-01-01T00:00:00Z",
+            "ExpirationTime": "2099-12-31T23:59:59Z",
+            "TerminationTime": "2099-12-31T23:59:59Z",
+            "Product": "consul",
+            "Flags": {},
+            "Features": [],
+        },
+        "Warnings": [],
+    }))
+}
+
 pub fn routes() -> Scope {
     web::scope("/operator")
         .service(get_raft_configuration)
@@ -318,6 +349,8 @@ pub fn routes() -> Scope {
         .service(keyring_remove)
         .service(get_operator_usage)
         .service(get_operator_utilization)
+        .service(operator_segment_list)
+        .service(operator_license)
 }
 
 pub fn routes_real() -> Scope {
@@ -335,4 +368,6 @@ pub fn routes_real() -> Scope {
         .service(keyring_remove_real)
         .service(get_operator_usage_real)
         .service(get_operator_utilization_real)
+        .service(operator_segment_list)
+        .service(operator_license)
 }

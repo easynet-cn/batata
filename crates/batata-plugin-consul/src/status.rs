@@ -11,7 +11,8 @@ use serde::Deserialize;
 use batata_common::ClusterManager;
 
 use crate::acl::{AclService, ResourceType};
-use crate::model::{ConsulDatacenterConfig, ConsulError};
+use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 
 /// Query parameters for status endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -32,7 +33,7 @@ pub async fn get_leader(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     // Consul returns "IP:raft_port", NOT hostname
@@ -50,7 +51,7 @@ pub async fn get_peers(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let local_ip = batata_common::local_ip();
@@ -82,7 +83,7 @@ pub async fn get_leader_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let raft_port = dc_config.raft_port();
@@ -104,7 +105,7 @@ pub async fn get_peers_real(
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
     let raft_port = dc_config.raft_port();

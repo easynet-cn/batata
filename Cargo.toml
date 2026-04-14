@@ -135,6 +135,7 @@ hmac = "0.12"
 toml = "0.8"
 sha2 = "0.10"
 aes-gcm = "0.10"
+tar = "0.4"
 
 # Telemetry
 opentelemetry = { version = "0.31", features = ["trace", "metrics"] }

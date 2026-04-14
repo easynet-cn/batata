@@ -78,6 +78,10 @@ pub struct ConsulDatacenterConfig {
     pub node_id: String,
     /// Node name (hostname, resolved once at startup like Consul)
     pub node_name: String,
+    /// If true, API responses replace LAN addresses with WAN addresses from
+    /// TaggedAddresses when the client appears to be coming from a remote DC.
+    /// Matches Consul's `translate_wan_addrs` config option.
+    pub translate_wan_addrs: bool,
 }
 
 impl ConsulDatacenterConfig {
@@ -94,7 +98,14 @@ impl ConsulDatacenterConfig {
             main_port: 8848,
             node_id: uuid::Uuid::new_v4().to_string(),
             node_name,
+            translate_wan_addrs: false,
         }
+    }
+
+    /// Set whether WAN address translation is enabled.
+    pub fn with_translate_wan_addrs(mut self, enabled: bool) -> Self {
+        self.translate_wan_addrs = enabled;
+        self
     }
 
     pub fn with_primary(mut self, primary: String) -> Self {
@@ -251,6 +262,9 @@ impl ConsulPluginConfig {
             .get_string("batata.plugin.consul.version")
             .unwrap_or_default();
         let consul_port = config.get_int("batata.plugin.consul.port").unwrap_or(8500) as u16;
+        let translate_wan_addrs = config
+            .get_bool("batata.plugin.consul.translate_wan_addrs")
+            .unwrap_or(false);
         let node_name_override = config
             .get_string("batata.plugin.consul.node_name")
             .ok()
@@ -271,6 +285,7 @@ impl ConsulPluginConfig {
             .with_batata_version(batata_version)
             .with_consul_port(consul_port)
             .with_main_port(main_port)
+            .with_translate_wan_addrs(translate_wan_addrs)
             .with_data_dir(&data_dir);
 
         if let Some(name) = node_name_override {
@@ -1048,7 +1063,12 @@ pub struct ConsulResponse<T> {
     pub data: T,
 }
 
-/// Consul API error response
+/// Consul API error response.
+///
+/// On the wire, Consul writes errors as **plain text** bodies (see
+/// `agent/http.go:909`). Batata follows the same convention: when rendered
+/// as text via `Display`, the output is just the error message, matching
+/// what the Consul Go SDK expects.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConsulError {
     pub error: String,
@@ -1059,6 +1079,26 @@ impl ConsulError {
         Self {
             error: message.into(),
         }
+    }
+}
+
+impl std::fmt::Display for ConsulError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.error)
+    }
+}
+
+/// Trait extension for HttpResponseBuilder to produce plain-text error bodies
+/// matching Consul's `fmt.Fprint(resp, err)` behavior.
+pub trait ConsulErrorBody {
+    /// Return the error as `text/plain; charset=utf-8`, matching Consul.
+    fn consul_error(self, err: impl std::fmt::Display) -> actix_web::HttpResponse;
+}
+
+impl ConsulErrorBody for actix_web::HttpResponseBuilder {
+    fn consul_error(mut self, err: impl std::fmt::Display) -> actix_web::HttpResponse {
+        self.insert_header(("Content-Type", "text/plain; charset=utf-8"))
+            .body(err.to_string())
     }
 }
 
@@ -1469,6 +1509,18 @@ pub struct HealthQueryParams {
 
     /// Filter expression
     pub filter: Option<String>,
+
+    /// Cluster peering name for cross-peer queries
+    #[serde(alias = "peer-name")]
+    pub peer_name: Option<String>,
+
+    /// Sameness group name (locality-aware service lookup)
+    #[serde(alias = "sameness-group")]
+    pub sameness_group: Option<String>,
+
+    /// Merge service-defaults/proxy-defaults from config entries
+    #[serde(alias = "merge-central-config")]
+    pub merge_central_config: Option<bool>,
 
     /// Blocking query: minimum index to wait for (X-Consul-Index)
     pub index: Option<u64>,
