@@ -74,7 +74,7 @@ impl ConsulClient {
     }
 
     /// Build the full URL for a given path using the current server address
-    pub(crate) fn url(&self, path: &str) -> String {
+    pub fn url(&self, path: &str) -> String {
         let addr = self.current_address();
         format!("{}{}", addr.trim_end_matches('/'), path)
     }
@@ -103,7 +103,7 @@ impl ConsulClient {
     }
 
     /// Get the effective token (request-level override > token_file > client default)
-    pub(crate) fn effective_token<'a>(&'a self, override_token: &'a str) -> String {
+    pub fn effective_token<'a>(&'a self, override_token: &'a str) -> String {
         if !override_token.is_empty() {
             override_token.to_string()
         } else {
@@ -412,6 +412,54 @@ impl ConsulClient {
         }
         if !response.status().is_success() {
             let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ConsulError::Api {
+                status,
+                message: body,
+            });
+        }
+
+        let result = response.json::<T>().await.map_err(ConsulError::Http)?;
+        let meta = WriteMeta {
+            request_time: start.elapsed(),
+        };
+        Ok((result, meta))
+    }
+
+    /// PUT request that also accepts `409 Conflict` as a body-returning
+    /// response. Used for `/v1/txn` where per-op errors are returned with
+    /// HTTP 409 + a body describing which ops failed — matching Consul
+    /// Go SDK's `api/txn.go::txn()` behavior.
+    pub async fn put_accepting_conflict<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: Option<&B>,
+        opts: &WriteOptions,
+        extra_params: &[(&'static str, String)],
+    ) -> Result<(T, WriteMeta)> {
+        let start = std::time::Instant::now();
+        let mut params = Vec::new();
+        self.apply_write_options(&mut params, opts);
+        params.extend(extra_params.iter().map(|(k, v)| (*k, v.clone())));
+
+        let token = self.effective_token(&opts.token);
+        let url = self.url(path);
+
+        let mut req = self.client.put(&url);
+        if !token.is_empty() {
+            req = req.header(HEADER_CONSUL_TOKEN, token);
+        }
+        if !params.is_empty() {
+            req = req.query(&params);
+        }
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+
+        let response = req.send().await.map_err(ConsulError::Http)?;
+        let status = response.status();
+        if status != StatusCode::OK && status != StatusCode::CONFLICT {
+            let status = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             return Err(ConsulError::Api {
                 status,

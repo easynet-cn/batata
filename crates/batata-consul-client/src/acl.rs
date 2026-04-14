@@ -447,4 +447,75 @@ impl ConsulClient {
         let body = serde_json::json!({ "BootstrapSecret": bootstrap_secret });
         self.put("/v1/acl/bootstrap", Some(&body), opts, &[]).await
     }
+
+    // -----------------------------------------------------------------
+    // Legacy v1 ACL API (deprecated in Consul 1.4, retained for SDK parity)
+    // -----------------------------------------------------------------
+
+    /// Legacy: create an ACL. Returns the new ACL ID.
+    ///
+    /// Maps to Go SDK's `ACL.Create`. Prefer `acl_token_create` on modern
+    /// Consul. Consul may return `501 Not Implemented` if legacy ACL is
+    /// disabled.
+    pub async fn acl_legacy_create(
+        &self,
+        entry: &crate::model::ACLEntry,
+        opts: &WriteOptions,
+    ) -> Result<(String, WriteMeta)> {
+        let (resp, meta): (crate::model::LegacyACLCreateResp, WriteMeta) =
+            self.put("/v1/acl/create", Some(entry), opts, &[]).await?;
+        Ok((resp.id, meta))
+    }
+
+    /// Legacy: update an existing ACL.
+    pub async fn acl_legacy_update(
+        &self,
+        entry: &crate::model::ACLEntry,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        // The update endpoint accepts the entry body; discard the returned JSON.
+        let (_resp, meta): (serde_json::Value, WriteMeta) =
+            self.put("/v1/acl/update", Some(entry), opts, &[]).await?;
+        Ok(meta)
+    }
+
+    /// Legacy: destroy an ACL by ID.
+    pub async fn acl_legacy_destroy(&self, id: &str, opts: &WriteOptions) -> Result<WriteMeta> {
+        let path = format!("/v1/acl/destroy/{}", id);
+        self.put_no_response(&path, opts, &[]).await
+    }
+
+    /// Legacy: clone an ACL by ID, returns the new ACL ID.
+    pub async fn acl_legacy_clone(
+        &self,
+        id: &str,
+        opts: &WriteOptions,
+    ) -> Result<(String, WriteMeta)> {
+        let path = format!("/v1/acl/clone/{}", id);
+        let (resp, meta): (crate::model::LegacyACLCreateResp, WriteMeta) =
+            self.put::<_, ()>(&path, None, opts, &[]).await?;
+        Ok((resp.id, meta))
+    }
+
+    /// Legacy: get ACL info by ID.
+    pub async fn acl_legacy_info(
+        &self,
+        id: &str,
+        opts: &QueryOptions,
+    ) -> Result<(Option<crate::model::ACLEntry>, QueryMeta)> {
+        let path = format!("/v1/acl/info/{}", id);
+        match self.get::<Vec<crate::model::ACLEntry>>(&path, opts).await {
+            Ok((entries, meta)) => Ok((entries.into_iter().next(), meta)),
+            Err(e) if e.is_not_found() => Ok((None, QueryMeta::default())),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Legacy: list all ACLs.
+    pub async fn acl_legacy_list(
+        &self,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<crate::model::ACLEntry>, QueryMeta)> {
+        self.get("/v1/acl/list", opts).await
+    }
 }

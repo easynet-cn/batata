@@ -111,10 +111,35 @@ impl ConsulClient {
         self.put_no_response("/v1/agent/leave", opts, &[]).await
     }
 
-    /// Force remove a node from the cluster
+    /// Force remove a node from the cluster.
     pub async fn agent_force_leave(&self, node: &str, opts: &WriteOptions) -> Result<WriteMeta> {
         let path = format!("/v1/agent/force-leave/{}", node);
         self.put_no_response(&path, opts, &[]).await
+    }
+
+    /// Force remove a node with additional options (`prune` = fully remove
+    /// vs. mark-as-leaving). Matches Go SDK `ForceLeaveOptions`.
+    pub async fn agent_force_leave_options(
+        &self,
+        node: &str,
+        prune: bool,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let path = format!("/v1/agent/force-leave/{}", node);
+        let mut extra = Vec::new();
+        if prune {
+            extra.push(("prune", String::new()));
+        }
+        self.put_no_response(&path, opts, &extra).await
+    }
+
+    /// Convenience: force-leave with `prune=true` (Go SDK `ForceLeavePrune`).
+    pub async fn agent_force_leave_prune(
+        &self,
+        node: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        self.agent_force_leave_options(node, true, opts).await
     }
 
     /// Enable or disable maintenance mode on the agent
@@ -580,5 +605,149 @@ impl ConsulClient {
         Ok(WriteMeta {
             request_time: start.elapsed(),
         })
+    }
+
+    /// Stream agent logs as JSON lines (Go SDK `Agent.MonitorJSON`).
+    /// Identical to `agent_monitor` but requests `logjson=true`.
+    pub async fn agent_monitor_json(
+        &self,
+        log_level: &str,
+        opts: &QueryOptions,
+    ) -> Result<(mpsc::Receiver<String>, tokio::task::JoinHandle<()>)> {
+        let mut params = Vec::new();
+        self.apply_query_options(&mut params, opts);
+        if !log_level.is_empty() {
+            params.push(("loglevel", log_level.to_string()));
+        }
+        params.push(("logjson", "true".to_string()));
+
+        let token = self.effective_token(&opts.token);
+        let url = self.url("/v1/agent/monitor");
+        let mut req = self.client.get(&url);
+        if !token.is_empty() {
+            req = req.header("X-Consul-Token", token);
+        }
+        if !params.is_empty() {
+            req = req.query(&params);
+        }
+        let response = req.send().await.map_err(ConsulError::Http)?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ConsulError::Api { status, message: body });
+        }
+
+        let (tx, rx) = mpsc::channel(64);
+        let handle = tokio::spawn(async move {
+            use futures::StreamExt;
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            buffer.push_str(&text);
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim_end().to_string();
+                                buffer.drain(..=pos);
+                                if !line.is_empty() && tx.send(line).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            if !buffer.is_empty() {
+                let _ = tx.send(buffer).await;
+            }
+        });
+        Ok((rx, handle))
+    }
+
+    /// Check health of a service by service ID on the local agent, returning
+    /// the AgentServiceChecksInfo struct (Go SDK `AgentHealthServiceByID`).
+    ///
+    /// Returns a tuple `(status, info)` where `status` is "passing", "warning",
+    /// "critical", or "" (unknown). `info` is None when the service doesn't
+    /// exist on this agent.
+    pub async fn agent_health_service_by_id_opts(
+        &self,
+        service_id: &str,
+        opts: &QueryOptions,
+    ) -> Result<(String, Option<serde_json::Value>)> {
+        let path = format!("/v1/agent/health/service/id/{}", service_id);
+        match self.get::<serde_json::Value>(&path, opts).await {
+            Ok((v, _meta)) => {
+                let status = v
+                    .get("AggregatedStatus")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok((status, Some(v)))
+            }
+            Err(e) if e.is_not_found() => Ok((String::new(), None)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Check health of all services with a given name on the local agent,
+    /// Go SDK `AgentHealthServiceByName`.
+    pub async fn agent_health_service_by_name_opts(
+        &self,
+        service_name: &str,
+        opts: &QueryOptions,
+    ) -> Result<(String, Vec<serde_json::Value>)> {
+        let path = format!("/v1/agent/health/service/name/{}", service_name);
+        match self.get::<Vec<serde_json::Value>>(&path, opts).await {
+            Ok((infos, _meta)) => {
+                // Aggregate status across instances: critical > warning > passing
+                let mut status = "";
+                for info in &infos {
+                    if let Some(s) = info.get("AggregatedStatus").and_then(|s| s.as_str()) {
+                        if s == "critical" {
+                            status = "critical";
+                            break;
+                        }
+                        if s == "warning" && status != "critical" {
+                            status = "warning";
+                        } else if s == "passing" && status.is_empty() {
+                            status = "passing";
+                        }
+                    }
+                }
+                Ok((status.to_string(), infos))
+            }
+            Err(e) if e.is_not_found() => Ok((String::new(), Vec::new())),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Update the agent's "agent recovery" ACL token.
+    ///
+    /// Maps to Go SDK `Agent.UpdateAgentRecoveryACLToken` (post 1.11 rename).
+    pub async fn agent_update_agent_recovery_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        self.agent_update_token_of_type("agent_recovery", token, opts).await
+    }
+
+    /// Generic helper: update an ACL token of the specified type.
+    /// Token types: "default", "agent", "agent_recovery", "replication",
+    /// "config_file_service_registration", "dns".
+    pub async fn agent_update_token_of_type(
+        &self,
+        token_type: &str,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let path = format!("/v1/agent/token/{}", token_type);
+        let body = serde_json::json!({ "Token": token });
+        let (_resp, meta): (serde_json::Value, WriteMeta) =
+            self.put(&path, Some(&body), opts, &[]).await?;
+        Ok(meta)
     }
 }

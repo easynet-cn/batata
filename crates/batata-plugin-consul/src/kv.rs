@@ -1373,24 +1373,33 @@ impl ConsulKVService {
                         }
                     }
                     "cas" => {
+                        // Consul semantic (kvsSetCASTxn in state/kvs.go):
+                        //   index == 0 + key exists    → FAIL (set-if-not-exists)
+                        //   index == 0 + key missing   → OK (create)
+                        //   index > 0  + key missing   → FAIL (key must exist)
+                        //   index > 0  + key.mi != idx → FAIL (stale)
                         let cas_index = kv_op.index.unwrap_or(0);
-                        if cas_index > 0 {
-                            match self.get(&kv_op.key) {
-                                Some(pair) => {
-                                    if pair.modify_index != cas_index {
-                                        errors.push(TxnError {
-                                            op_index: idx as u32,
-                                            what: "CAS failed: index mismatch".to_string(),
-                                        });
-                                    }
-                                }
-                                None => {
-                                    errors.push(TxnError {
-                                        op_index: idx as u32,
-                                        what: format!("key '{}' not found", kv_op.key),
-                                    });
-                                }
+                        let existing = self.get(&kv_op.key);
+                        match (cas_index, existing) {
+                            (0, Some(_)) => errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: format!(
+                                    "CAS failed: key '{}' already exists",
+                                    kv_op.key
+                                ),
+                            }),
+                            (0, None) => { /* OK — will create in phase 2 */ }
+                            (_, None) => errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: format!("key '{}' not found", kv_op.key),
+                            }),
+                            (idx_val, Some(pair)) if pair.modify_index != idx_val => {
+                                errors.push(TxnError {
+                                    op_index: idx as u32,
+                                    what: "CAS failed: index mismatch".to_string(),
+                                });
                             }
+                            _ => {}
                         }
                     }
                     "delete-cas" => {

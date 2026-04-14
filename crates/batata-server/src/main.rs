@@ -384,8 +384,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref raft) = app_state.raft_node {
         plugin_ctx.insert("raft_node", raft.clone());
     }
-    if let Some(ref cm) = persistence_ctx.cluster_manager {
-        plugin_ctx.insert("cluster_manager", Arc::new(cm.clone()));
+    // Only inject cluster_manager in actual cluster mode. In standalone the
+    // ServerMemberManager exists but the plugin must stay on the non-cluster
+    // routes() path, which only registers the single-node service types.
+    if is_cluster {
+        if let Some(ref cm) = persistence_ctx.cluster_manager {
+            plugin_ctx.insert("cluster_manager", Arc::new(cm.clone()));
+        }
     }
 
     // Initialize all plugins

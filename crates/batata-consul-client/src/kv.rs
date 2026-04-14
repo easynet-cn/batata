@@ -143,7 +143,7 @@ impl ConsulClient {
 
 // Helper: GET with extra query params beyond QueryOptions
 impl ConsulClient {
-    pub(crate) async fn get_with_extra<T: serde::de::DeserializeOwned>(
+    pub async fn get_with_extra<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         opts: &QueryOptions,

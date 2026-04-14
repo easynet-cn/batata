@@ -316,19 +316,24 @@ async fn operator_segment_list() -> HttpResponse {
 /// clients don't error out on the license check.
 #[get("/license")]
 async fn operator_license() -> HttpResponse {
+    // Stub license payload: keep IDs non-empty so Consul Enterprise clients
+    // that validate the response shape don't reject Batata as unlicensed.
+    // Stub license payload. Field names match Consul's `api.License` JSON
+    // tags which are snake_case (see api/operator_license.go) — using
+    // PascalCase here breaks Go SDK's LicenseGet unmarshalling.
     HttpResponse::Ok().json(serde_json::json!({
         "Valid": true,
         "License": {
-            "LicenseID": "",
-            "CustomerID": "",
-            "InstallationID": "*",
-            "IssueTime": "1970-01-01T00:00:00Z",
-            "StartTime": "1970-01-01T00:00:00Z",
-            "ExpirationTime": "2099-12-31T23:59:59Z",
-            "TerminationTime": "2099-12-31T23:59:59Z",
-            "Product": "consul",
-            "Flags": {},
-            "Features": [],
+            "license_id": "batata-oss",
+            "customer_id": "batata-oss",
+            "installation_id": "*",
+            "issue_time": "1970-01-01T00:00:00Z",
+            "start_time": "1970-01-01T00:00:00Z",
+            "expiration_time": "2099-12-31T23:59:59Z",
+            "termination_time": "2099-12-31T23:59:59Z",
+            "product": "consul",
+            "flags": {},
+            "features": [],
         },
         "Warnings": [],
     }))

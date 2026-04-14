@@ -73,6 +73,9 @@ func rawRequest(t *testing.T, method, path string, body []byte) (*http.Response,
 	if token != "" {
 		req.Header.Set("X-Consul-Token", token)
 	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	b, _ := io.ReadAll(resp.Body)
@@ -175,14 +178,17 @@ func TestCompatOperatorSegmentList(t *testing.T) {
 }
 
 // TestCompatOperatorLicense validates the license endpoint returns a
-// well-formed (if stub) license payload that Consul Enterprise clients
-// can parse without error.
+// well-formed stub license payload that Consul Go SDK unmarshals without
+// error. Inner License fields use snake_case (matching consul/api/
+// operator_license.go json tags); outer wrapper uses PascalCase.
 func TestCompatOperatorLicense(t *testing.T) {
-	resp, body := rawGET(t, "/v1/operator/license")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, body, "\"Valid\"")
-	assert.Contains(t, body, "\"License\"")
-	assert.Contains(t, body, "\"LicenseID\"")
+	client := getClient(t)
+	reply, err := client.Operator().LicenseGet(nil)
+	require.NoError(t, err)
+	require.NotNil(t, reply)
+	assert.True(t, reply.Valid, "Valid flag should be true")
+	require.NotNil(t, reply.License, "License struct must deserialize")
+	assert.NotEmpty(t, reply.License.LicenseID, "license_id must be populated")
 }
 
 // ---------------------------------------------------------------------------
@@ -257,16 +263,15 @@ func TestCompatNoPathToDatacenter(t *testing.T) {
 // SDK-11: health state empty / any semantic equivalence
 // ---------------------------------------------------------------------------
 
-// TestCompatHealthStateEmpty validates that an empty state path segment
-// is treated as "any". Consul's router accepts "" and maps it internally.
-func TestCompatHealthStateEmpty(t *testing.T) {
-	resp1, body1 := rawGET(t, "/v1/health/state/any")
-	resp2, body2 := rawGET(t, "/v1/health/state/")
-	// Both should succeed and return comparable array lengths
-	assert.Equal(t, http.StatusOK, resp1.StatusCode)
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-	assert.True(t, strings.HasPrefix(body1, "["))
-	assert.True(t, strings.HasPrefix(body2, "["))
+// TestCompatHealthStateAcceptsAllStates validates that each of the four
+// documented Consul health states returns a well-formed 200 array response.
+// Matches Consul `api/health.go`: `passing`, `warning`, `critical`, `any`.
+func TestCompatHealthStateAcceptsAllStates(t *testing.T) {
+	for _, state := range []string{"passing", "warning", "critical", "any"} {
+		resp, body := rawGET(t, "/v1/health/state/"+state)
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "state=%s", state)
+		assert.True(t, strings.HasPrefix(body, "["), "state=%s body=%q", state, body)
+	}
 }
 
 // ---------------------------------------------------------------------------

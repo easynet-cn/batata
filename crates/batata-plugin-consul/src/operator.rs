@@ -661,11 +661,20 @@ impl ConsulOperatorServiceReal {
         member_manager: Arc<dyn batata_common::ClusterManager>,
         datacenter: String,
     ) -> Self {
+        // Seed a default gossip key so `keyring_list` never returns empty.
+        // Matches Consul which always reports at least the primary gossip
+        // encryption key (or a placeholder in dev mode).
+        let keyring = Arc::new(DashMap::new());
+        let member_count = member_manager.member_count() as i32;
+        let default_key =
+            base64::engine::general_purpose::STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
+        keyring.insert(default_key.clone(), member_count.max(1));
+
         Self {
             member_manager,
             autopilot_config: Arc::new(tokio::sync::RwLock::new(AutopilotConfiguration::default())),
-            keyring: Arc::new(DashMap::new()),
-            primary_key: Arc::new(tokio::sync::RwLock::new(None)),
+            keyring,
+            primary_key: Arc::new(tokio::sync::RwLock::new(Some(default_key))),
             index: Arc::new(AtomicU64::new(1)),
             datacenter,
         }
@@ -1195,7 +1204,23 @@ pub async fn remove_raft_peer_real(
             .consul_error(ConsulError::new("Must specify either id or address"));
     }
 
-    // In real cluster mode, peer removal is handled through Raft membership changes
+    // Validate the peer actually exists before claiming success — matches
+    // Consul behavior (autopilot/Raft returns an error for unknown peers).
+    let members = _operator_service.member_manager.all_members_extended();
+    let peer_found = match (&query.id, &query.address) {
+        (Some(id), _) => members.iter().any(|m| m.address == *id || m.ip == *id),
+        (_, Some(addr)) => members.iter().any(|m| m.address == *addr || m.ip == *addr),
+        _ => false,
+    };
+    if !peer_found {
+        let which = query.id.as_deref().or(query.address.as_deref()).unwrap_or("?");
+        return HttpResponse::InternalServerError().consul_error(ConsulError::new(format!(
+            "Peer {} not found in the Raft configuration",
+            which
+        )));
+    }
+
+    // Peer removal in Raft membership is a no-op in current implementation.
     HttpResponse::Ok().finish()
 }
 

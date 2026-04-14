@@ -566,10 +566,20 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
             .app_data(actix_web::web::Data::new(inner.index_provider.clone()));
 
-        // In cluster mode, inject ClusterManager and use real cluster routes
+        // In cluster mode, inject ClusterManager + construct the `_Real`
+        // service wrappers required by `routes_real()` handlers.
         if let Some(ref cm) = inner.cluster_manager {
-            cfg.app_data(actix_web::web::Data::new(cm.clone()))
-                .service(crate::route::routes_real());
+            cfg.app_data(actix_web::web::Data::new(cm.clone()));
+
+            // ConsulOperatorServiceReal wraps the ClusterManager and backs
+            // `/v1/operator/raft/*`, `/v1/operator/autopilot/*`, etc.
+            let operator_real = crate::operator::ConsulOperatorServiceReal::with_datacenter(
+                cm.clone(),
+                inner.dc_config.datacenter.clone(),
+            );
+            cfg.app_data(actix_web::web::Data::new(operator_real));
+
+            cfg.service(crate::route::routes_real());
         } else {
             cfg.service(crate::route::routes());
         }

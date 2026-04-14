@@ -664,6 +664,43 @@ pub struct ACLTokenRoleLink {
     pub name: String,
 }
 
+/// Generic ACL link used by Namespace/Partition ACL defaults.
+/// Matches Consul's `api.ACLLink`.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct ACLLink {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Name", default)]
+    pub name: String,
+}
+
+/// Legacy v1 ACL entry (Consul &lt; 1.4). Retained for backward compatibility.
+///
+/// Matches Consul's `api.ACLEntry`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ACLEntry {
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    /// Legacy type: "client" or "management".
+    #[serde(rename = "Type", default)]
+    pub acl_type: String,
+    #[serde(rename = "Rules", default)]
+    pub rules: String,
+}
+
+/// Wire envelope for legacy ACL create response `{"ID": "xxx"}`.
+#[derive(Deserialize)]
+pub(crate) struct LegacyACLCreateResp {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+}
+
 /// Service identity for ACL
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ACLServiceIdentity {
@@ -1257,11 +1294,24 @@ pub struct IntentionCheck {
 
 // === Transaction Types ===
 
-/// A single transaction operation
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A single transaction operation. At least one of the fields should be set.
+///
+/// Wire-compatible with Consul Go SDK's `api.TxnOp`, which supports KV,
+/// Node, Service, and Check operations in a single atomic transaction.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TxnOp {
-    #[serde(rename = "KV", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "KV", default, skip_serializing_if = "Option::is_none")]
     pub kv: Option<TxnKVOp>,
+    #[serde(rename = "Node", default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<TxnNodeOp>,
+    #[serde(
+        rename = "Service",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub service: Option<TxnServiceOp>,
+    #[serde(rename = "Check", default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<TxnCheckOp>,
 }
 
 /// A KV operation within a transaction
@@ -1273,10 +1323,120 @@ pub struct TxnKVOp {
     pub key: String,
     #[serde(rename = "Value", default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(rename = "Flags", default)]
+    pub flags: u64,
     #[serde(rename = "Index", default)]
     pub index: u64,
     #[serde(rename = "Session", default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+}
+
+/// A Node operation within a transaction.
+///
+/// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnNodeOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Node")]
+    pub node: TxnNode,
+}
+
+/// Node entry used in Txn Node operations. Matches Consul `api.Node`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TxnNode {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Node", default)]
+    pub node: String,
+    #[serde(rename = "Address", default)]
+    pub address: String,
+    #[serde(rename = "Datacenter", default, skip_serializing_if = "Option::is_none")]
+    pub datacenter: Option<String>,
+    #[serde(
+        rename = "TaggedAddresses",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tagged_addresses: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// A Service operation within a transaction.
+///
+/// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnServiceOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    /// Node on which the service runs.
+    #[serde(rename = "Node")]
+    pub node: String,
+    #[serde(rename = "Service")]
+    pub service: TxnService,
+}
+
+/// Service entry used in Txn Service operations. Matches Consul
+/// `api.AgentService` minus agent-only fields.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TxnService {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Service", default)]
+    pub service: String,
+    #[serde(rename = "Tags", default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(rename = "Address", default)]
+    pub address: String,
+    #[serde(rename = "Port", default)]
+    pub port: u16,
+    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// A Check operation within a transaction.
+///
+/// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnCheckOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Check")]
+    pub check: TxnCheck,
+}
+
+/// Health check entry used in Txn Check operations.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TxnCheck {
+    #[serde(rename = "Node", default)]
+    pub node: String,
+    #[serde(rename = "CheckID", default)]
+    pub check_id: String,
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    #[serde(rename = "Status", default)]
+    pub status: String,
+    #[serde(rename = "Notes", default)]
+    pub notes: String,
+    #[serde(rename = "Output", default)]
+    pub output: String,
+    #[serde(rename = "ServiceID", default)]
+    pub service_id: String,
+    #[serde(rename = "ServiceName", default)]
+    pub service_name: String,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
 }
 
 /// Response from a transaction execution
@@ -1288,11 +1448,18 @@ pub struct TxnResponse {
     pub errors: Vec<TxnError>,
 }
 
-/// A single result entry from a transaction
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A single result entry from a transaction. Exactly one of the fields
+/// will be populated per original op.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TxnResult {
-    #[serde(rename = "KV", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "KV", default, skip_serializing_if = "Option::is_none")]
     pub kv: Option<KVPair>,
+    #[serde(rename = "Node", default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<TxnNode>,
+    #[serde(rename = "Service", default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<TxnService>,
+    #[serde(rename = "Check", default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<TxnCheck>,
 }
 
 /// A single error entry from a transaction

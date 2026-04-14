@@ -56,6 +56,48 @@ path = "tests/watch_test.rs"
 name = "client_test"
 path = "tests/client_test.rs"
 
+# -- Round-7 additions: tests for new SDK modules / methods --
+
+[[test]]
+name = "txn_test"
+path = "tests/txn_test.rs"
+
+[[test]]
+name = "namespace_test"
+path = "tests/namespace_test.rs"
+
+[[test]]
+name = "partition_test"
+path = "tests/partition_test.rs"
+
+[[test]]
+name = "raw_test"
+path = "tests/raw_test.rs"
+
+[[test]]
+name = "mesh_test"
+path = "tests/mesh_test.rs"
+
+[[test]]
+name = "debug_test"
+path = "tests/debug_test.rs"
+
+[[test]]
+name = "acl_legacy_test"
+path = "tests/acl_legacy_test.rs"
+
+[[test]]
+name = "agent_extensions_test"
+path = "tests/agent_extensions_test.rs"
+
+[[test]]
+name = "operator_ext_test"
+path = "tests/operator_ext_test.rs"
+
+[[test]]
+name = "internal_test"
+path = "tests/internal_test.rs"
+
 [dev-dependencies]
 batata-consul-client = { path = "../../crates/batata-consul-client" }
 tokio = { version = "1", features = ["full"] }

@@ -18,6 +18,7 @@ futures = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
