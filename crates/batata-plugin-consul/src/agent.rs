@@ -962,6 +962,36 @@ pub async fn set_service_maintenance(
 // Cluster Integration Handlers (Using ClusterManager)
 // ============================================================================
 
+/// Extend-info keys that may carry a datacenter label on `ExtendedMemberInfo`.
+/// Checked in order. Matches the metadata emitted by the cluster datacenter
+/// plumbing (see `batata-core` member metadata population).
+const DC_METADATA_KEYS: [&str; 2] = ["dc", "datacenter"];
+
+/// Compute the number of distinct datacenters the cluster currently knows
+/// about.
+///
+/// The count always includes the local datacenter (`self_dc`). Any member
+/// whose `extend_info` carries a non-empty `dc`/`datacenter` entry contributes
+/// its DC name to the set. When no peer metadata is present the result
+/// degenerates to 1, matching Consul OSS single-DC behavior.
+fn count_known_datacenters(cluster_manager: &dyn ClusterManager, self_dc: &str) -> usize {
+    let mut dcs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    dcs.insert(self_dc.to_string());
+    for member in cluster_manager.all_members_extended() {
+        for key in DC_METADATA_KEYS {
+            if let Some(value) = member.extend_info.get(key) {
+                if let Some(name) = value.as_str() {
+                    if !name.is_empty() {
+                        dcs.insert(name.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    dcs.len()
+}
+
 /// Convert MemberState to Consul member status
 fn member_state_to_consul_status(state: &MemberState) -> i32 {
     match state {
@@ -1135,7 +1165,15 @@ pub async fn get_agent_self(
         "bootstrap".to_string(),
         member_manager.is_standalone().to_string(),
     );
-    consul_stats.insert("known_datacenters".to_string(), "1".to_string()); // TODO: count from peering DCs
+    // Count distinct datacenters: always includes self; picks up additional
+    // names from member metadata (e.g. federated peer DCs propagated through
+    // `ExtendedMemberInfo::extend_info`).
+    let cm_arc: &Arc<dyn ClusterManager> = member_manager.as_ref();
+    let known_datacenters = count_known_datacenters(cm_arc.as_ref(), &dc_config.datacenter);
+    consul_stats.insert(
+        "known_datacenters".to_string(),
+        known_datacenters.to_string(),
+    );
 
     // Serf LAN stats from cluster health
     let mut serf_lan_stats = HashMap::new();
@@ -2089,5 +2127,141 @@ mod tests {
         assert_eq!(CONSUL_INTERNAL_NAMESPACE, "consul");
         assert_eq!(CONSUL_INTERNAL_GROUP, "CONSUL_GROUP");
         assert_eq!(CONSUL_INTERNAL_CLUSTER, "DEFAULT");
+    }
+
+    // -----------------------------------------------------------------
+    // count_known_datacenters tests (Gap 1)
+    // -----------------------------------------------------------------
+
+    use batata_common::{ClusterHealthSummary, ExtendedMemberInfo};
+
+    struct DcTestClusterManager {
+        members: Vec<ExtendedMemberInfo>,
+    }
+
+    impl ClusterManager for DcTestClusterManager {
+        fn is_standalone(&self) -> bool {
+            false
+        }
+        fn is_leader(&self) -> bool {
+            true
+        }
+        fn is_cluster_healthy(&self) -> bool {
+            true
+        }
+        fn leader_address(&self) -> Option<String> {
+            Some("127.0.0.1:8848".to_string())
+        }
+        fn local_address(&self) -> &str {
+            "127.0.0.1:8848"
+        }
+        fn member_count(&self) -> usize {
+            self.members.len()
+        }
+        fn all_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            self.members.clone()
+        }
+        fn healthy_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            self.members.clone()
+        }
+        fn get_member(&self, _address: &str) -> Option<ExtendedMemberInfo> {
+            self.members.first().cloned()
+        }
+        fn get_self_member(&self) -> ExtendedMemberInfo {
+            self.members
+                .first()
+                .cloned()
+                .unwrap_or_else(|| member_with_dc("127.0.0.1:8848", None))
+        }
+        fn health_summary(&self) -> ClusterHealthSummary {
+            ClusterHealthSummary {
+                total: self.members.len(),
+                up: self.members.len(),
+                ..Default::default()
+            }
+        }
+        fn refresh_self(&self) {}
+        fn is_self(&self, address: &str) -> bool {
+            address == self.local_address()
+        }
+        fn update_member_state(&self, _a: &str, _s: &str) -> Result<String, String> {
+            Ok("UP".to_string())
+        }
+    }
+
+    fn member_with_dc(address: &str, dc: Option<&str>) -> ExtendedMemberInfo {
+        let mut extend_info = std::collections::BTreeMap::new();
+        if let Some(name) = dc {
+            extend_info.insert("dc".to_string(), serde_json::json!(name));
+        }
+        ExtendedMemberInfo {
+            ip: address.split(':').next().unwrap_or("").to_string(),
+            port: 8848,
+            address: address.to_string(),
+            state: MemberState::Up,
+            extend_info,
+        }
+    }
+
+    #[test]
+    fn test_count_known_datacenters_single_dc() {
+        let cm = DcTestClusterManager {
+            members: vec![member_with_dc("10.0.0.1:8848", None)],
+        };
+        assert_eq!(count_known_datacenters(&cm, "dc1"), 1);
+    }
+
+    #[test]
+    fn test_count_known_datacenters_self_only_when_no_members() {
+        let cm = DcTestClusterManager { members: vec![] };
+        assert_eq!(count_known_datacenters(&cm, "dc-primary"), 1);
+    }
+
+    #[test]
+    fn test_count_known_datacenters_multi_dc() {
+        let cm = DcTestClusterManager {
+            members: vec![
+                member_with_dc("10.0.0.1:8848", Some("dc1")),
+                member_with_dc("10.0.0.2:8848", Some("dc2")),
+                member_with_dc("10.0.0.3:8848", Some("dc2")), // duplicate
+                member_with_dc("10.0.0.4:8848", Some("dc3")),
+            ],
+        };
+        // dc1 (self) + dc2 + dc3 = 3 unique (self happens to equal member DC)
+        assert_eq!(count_known_datacenters(&cm, "dc1"), 3);
+    }
+
+    #[test]
+    fn test_count_known_datacenters_self_dc_not_in_members() {
+        let cm = DcTestClusterManager {
+            members: vec![member_with_dc("10.0.0.1:8848", Some("peer-dc"))],
+        };
+        // self ("dc1") not advertised by any member, but always counted.
+        assert_eq!(count_known_datacenters(&cm, "dc1"), 2);
+    }
+
+    #[test]
+    fn test_count_known_datacenters_ignores_empty_dc_value() {
+        let cm = DcTestClusterManager {
+            members: vec![member_with_dc("10.0.0.1:8848", Some(""))],
+        };
+        assert_eq!(count_known_datacenters(&cm, "dc1"), 1);
+    }
+
+    #[test]
+    fn test_count_known_datacenters_accepts_datacenter_key_alias() {
+        let mut extend_info = std::collections::BTreeMap::new();
+        extend_info.insert("datacenter".to_string(), serde_json::json!("aliased-dc"));
+        let member = ExtendedMemberInfo {
+            ip: "10.0.0.1".to_string(),
+            port: 8848,
+            address: "10.0.0.1:8848".to_string(),
+            state: MemberState::Up,
+            extend_info,
+        };
+        let cm = DcTestClusterManager {
+            members: vec![member],
+        };
+        assert_eq!(count_known_datacenters(&cm, "dc1"), 2);
     }
 }

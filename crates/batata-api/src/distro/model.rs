@@ -280,6 +280,68 @@ impl From<&Payload> for DistroDataSnapshotRequest {
     }
 }
 
+/// Request to bulk-sync many distro data items in a single RPC.
+///
+/// Mirrors the semantics of Nacos `DistroProtocol.syncToTarget` issuing a
+/// `DataOperation.SYNC` with a batched payload — preferred over per-key
+/// `DistroDataSyncRequest` when a node joins the cluster or when a verify
+/// round detects many divergent keys for the same target. Reduces O(N) RPCs
+/// to ceil(N / DISTRO_BATCH_SIZE).
+///
+/// The receiver applies each item as if it had arrived via a single-item
+/// `DistroDataSyncRequest`, so handlers do not need a separate code path
+/// for batch vs single-item ingestion.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DistroDataBatchSyncRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+    /// The distro data items to sync. Items in the same batch may belong to
+    /// different data types (the receiver routes per-item using each item's
+    /// `data_type`).
+    pub items: Vec<DistroDataItem>,
+}
+
+impl DistroDataBatchSyncRequest {
+    pub fn new() -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            items: Vec::new(),
+        }
+    }
+
+    pub fn with_items(items: Vec<DistroDataItem>) -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            items,
+        }
+    }
+}
+
+impl RequestTrait for DistroDataBatchSyncRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.internal_request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "DistroDataBatchSyncRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.internal_request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.internal_request.request_id()
+    }
+}
+
+impl From<&Payload> for DistroDataBatchSyncRequest {
+    fn from(value: &Payload) -> Self {
+        DistroDataBatchSyncRequest::from_payload(value)
+    }
+}
+
 /// Response for distro data sync
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -330,6 +392,72 @@ impl ResponseTrait for DistroDataSyncResponse {
 
 impl From<DistroDataSyncResponse> for Any {
     fn from(val: DistroDataSyncResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// Response for distro data batch sync.
+///
+/// `failed_keys` lists keys the receiver could not apply (e.g., handler
+/// missing for the data type, deserialization error). An empty list means
+/// every item was applied. Result code is success if at least one item
+/// applied; the overall request never returns hard-fail unless the entire
+/// batch is unprocessable, so partial application is the norm.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DistroDataBatchSyncResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub failed_keys: Vec<String>,
+}
+
+impl DistroDataBatchSyncResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            failed_keys: Vec::new(),
+        }
+    }
+
+    pub fn success(failed_keys: Vec<String>) -> Self {
+        Self {
+            response: Response::new(),
+            failed_keys,
+        }
+    }
+
+    pub fn fail(message: &str) -> Self {
+        let mut response = Response::new();
+        response.success = false;
+        response.result_code = 500;
+        response.message = message.to_string();
+        Self {
+            response,
+            failed_keys: Vec::new(),
+        }
+    }
+}
+
+impl ResponseTrait for DistroDataBatchSyncResponse {
+    fn response_type(&self) -> &'static str {
+        "DistroDataBatchSyncResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<DistroDataBatchSyncResponse> for Any {
+    fn from(val: DistroDataBatchSyncResponse) -> Self {
         val.to_any()
     }
 }
@@ -498,5 +626,47 @@ mod tests {
 
         let fail_resp = DistroDataSyncResponse::fail("error");
         assert!(!fail_resp.response.success);
+    }
+
+    #[test]
+    fn test_distro_batch_sync_request_round_trip() {
+        let items = vec![
+            DistroDataItem::new(
+                DistroDataType::NamingInstance,
+                "ns@@grp@@svc-a".to_string(),
+                "{\"a\":1}".to_string(),
+                "10.0.0.1:8848".to_string(),
+            ),
+            DistroDataItem::new(
+                DistroDataType::NamingInstance,
+                "ns@@grp@@svc-b".to_string(),
+                "{\"b\":2}".to_string(),
+                "10.0.0.1:8848".to_string(),
+            ),
+        ];
+        let req = DistroDataBatchSyncRequest::with_items(items.clone());
+        assert_eq!(req.request_type(), "DistroDataBatchSyncRequest");
+        assert_eq!(req.items.len(), 2);
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"items\""));
+        assert!(json.contains("svc-a"));
+
+        let de: DistroDataBatchSyncRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.items.len(), 2);
+        assert_eq!(de.items[0].key, "ns@@grp@@svc-a");
+        assert_eq!(de.items[1].key, "ns@@grp@@svc-b");
+    }
+
+    #[test]
+    fn test_distro_batch_sync_response() {
+        let ok = DistroDataBatchSyncResponse::success(vec!["k1".to_string()]);
+        assert!(ok.response.success);
+        assert_eq!(ok.failed_keys, vec!["k1".to_string()]);
+
+        let bad = DistroDataBatchSyncResponse::fail("boom");
+        assert!(!bad.response.success);
+        assert_eq!(bad.response.result_code, 500);
+        assert_eq!(bad.response.message, "boom");
     }
 }

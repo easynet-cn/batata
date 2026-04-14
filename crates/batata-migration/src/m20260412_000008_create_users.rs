@@ -14,6 +14,7 @@ impl MigrationTrait for Migration {
                     .col(string_len(Users::Username, 50).primary_key())
                     .col(string_len(Users::Password, 500).not_null())
                     .col(boolean(Users::Enabled).not_null())
+                    .col(string_len_null(Users::Source, 20))
                     .to_owned(),
             )
             .await
@@ -32,4 +33,5 @@ enum Users {
     Username,
     Password,
     Enabled,
+    Source,
 }

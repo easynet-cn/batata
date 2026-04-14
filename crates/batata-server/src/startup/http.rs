@@ -11,6 +11,7 @@ use actix_web::{
 #[cfg(feature = "consul")]
 use batata_plugin::ProtocolAdapterPlugin;
 
+use batata_core::service::cluster_client::ClusterClientManager;
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 
@@ -405,6 +406,7 @@ pub fn main_server(
     address: String,
     port: u16,
     server_registry: Option<Arc<batata_core::ServerRegistry>>,
+    cluster_client_manager: Option<Arc<ClusterClientManager>>,
 ) -> Result<Server, std::io::Error> {
     // Create Cloud services
     let cloud_services = CloudServices::new();
@@ -469,6 +471,13 @@ pub fn main_server(
         // Server registry for per-server health aggregation (optional)
         if let Some(ref reg) = server_registry {
             app = app.app_data(web::Data::new(reg.clone()));
+        }
+
+        // Cluster client manager for inter-node gRPC requests (cluster mode only).
+        // Consumed by admin endpoints that need peer metrics, e.g. loader.rs
+        // fetching `ServerLoaderInfoRequest` from every cluster member.
+        if let Some(ref ccm) = cluster_client_manager {
+            app = app.app_data(web::Data::new(ccm.clone()));
         }
 
         // AI services: always provide trait objects (config-backed or registry fallback)

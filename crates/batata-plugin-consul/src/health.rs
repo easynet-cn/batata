@@ -119,8 +119,16 @@ impl ConsulHealthService {
         Ok(())
     }
 
-    /// Register a health check via the unified registry
+    /// Register a health check via the unified registry.
+    ///
+    /// Script / Docker / Alias registrations are rejected here with the same
+    /// error text Consul emits, so clients don't silently see their check
+    /// downgraded to a TTL check.
     pub async fn register_check(&self, registration: CheckRegistration) -> Result<(), String> {
+        if let Err(rej) = registration.validate_supported() {
+            return Err(rej.message().to_string());
+        }
+
         let check_id = registration.effective_check_id();
         let check_type_str = registration.check_type();
 
@@ -2042,6 +2050,97 @@ mod tests {
         assert_eq!(check_type_from_consul("ttl"), RegistryCheckType::Ttl);
         assert_eq!(check_type_from_consul("grpc"), RegistryCheckType::Grpc);
         assert_eq!(check_type_from_consul("unknown"), RegistryCheckType::None);
+    }
+
+    #[tokio::test]
+    async fn test_register_check_rejects_script() {
+        let (service, _registry) = create_test_health_service_with_registry();
+        let reg = CheckRegistration {
+            name: "script-check".to_string(),
+            check_id: Some("svc:script-1".to_string()),
+            script: Some("/bin/check.sh".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        let err = service.register_check(reg).await.unwrap_err();
+        assert!(
+            err.contains("Scripts are disabled"),
+            "expected Consul script-disabled error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_check_rejects_args_script() {
+        let (service, _registry) = create_test_health_service_with_registry();
+        let reg = CheckRegistration {
+            name: "args-check".to_string(),
+            check_id: Some("svc:args-1".to_string()),
+            args: Some(vec!["/bin/ping".into(), "-c".into(), "1".into()]),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .register_check(reg)
+                .await
+                .unwrap_err()
+                .contains("Scripts are disabled")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_check_rejects_docker() {
+        let (service, _registry) = create_test_health_service_with_registry();
+        let reg = CheckRegistration {
+            name: "docker-check".to_string(),
+            check_id: Some("svc:docker-1".to_string()),
+            docker_container_id: Some("abc123".to_string()),
+            args: Some(vec!["/health.sh".into()]),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .register_check(reg)
+                .await
+                .unwrap_err()
+                .contains("Scripts are disabled")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_check_rejects_alias() {
+        let (service, _registry) = create_test_health_service_with_registry();
+        let reg = CheckRegistration {
+            name: "alias-check".to_string(),
+            check_id: Some("svc:alias-1".to_string()),
+            alias_service: Some("web".to_string()),
+            ..Default::default()
+        };
+        let err = service.register_check(reg).await.unwrap_err();
+        assert!(
+            err.contains("Alias checks are not yet supported"),
+            "expected alias-unsupported error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_check_accepts_regular_http() {
+        let (service, registry) = create_test_health_service_with_registry();
+        let reg = CheckRegistration {
+            name: "http-ok".to_string(),
+            check_id: Some("svc:http-1".to_string()),
+            http: Some("http://127.0.0.1:8080/health".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        service.register_check(reg).await.unwrap();
+        assert!(
+            registry.has_check("svc:http-1"),
+            "registry should contain accepted HTTP check"
+        );
     }
 
     #[test]

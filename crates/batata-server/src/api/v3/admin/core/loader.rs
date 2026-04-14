@@ -5,16 +5,26 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 
+use batata_api::remote::model::{ServerLoaderInfoRequest, ServerLoaderInfoResponse};
 use batata_core::ClientConnectionManager;
+use batata_core::service::cluster_client::ClusterClientManager;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
     model::response::Result, secured,
 };
+
+/// Timeout for a single peer `ServerLoaderInfoRequest`.
+///
+/// Kept short so a slow or unreachable peer cannot block the admin endpoint;
+/// on timeout the peer is reported with zeroed metrics and the failure is
+/// logged. Expressed as a named constant per project rules (no magic numbers).
+const PEER_LOADER_INFO_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Per-node loader metric
 #[derive(Debug, Clone, Serialize)]
@@ -96,6 +106,96 @@ fn get_self_loader_metric(
         con_count: sdk_con_count,
         load: format!("{:.2}", load_avg),
         cpu: format!("{:.1}", cpu_usage),
+    }
+}
+
+/// Query a single peer for its `ServerLoaderInfoResponse` and map it to a
+/// `ServerLoaderMetric`. On error (circuit breaker open, connect failure,
+/// timeout, decode error) returns a zeroed metric and logs the failure so
+/// the UI still sees the peer but can tell it did not report.
+///
+/// This is the Rust equivalent of Nacos
+/// `ServerLoaderController.getAllServerLoaders()` issuing a
+/// `ServerLoaderInfoRequest` per remote member.
+async fn fetch_peer_loader_metric(
+    ccm: &ClusterClientManager,
+    peer_address: &str,
+) -> ServerLoaderMetric {
+    let request = ServerLoaderInfoRequest::new();
+    let result = tokio::time::timeout(
+        PEER_LOADER_INFO_TIMEOUT,
+        ccm.send_request(peer_address, request),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(payload)) => {
+            // `ResponseTrait` does not expose a `from_payload` helper, so
+            // decode the JSON body directly. Body bytes are borrowed from
+            // the payload and deserialized into the typed response.
+            let bytes: &[u8] = payload
+                .body
+                .as_ref()
+                .map(|b| b.value.as_slice())
+                .unwrap_or(&[]);
+            let response: ServerLoaderInfoResponse =
+                serde_json::from_slice(bytes).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        peer = peer_address,
+                        error = %e,
+                        "Failed to decode peer ServerLoaderInfoResponse — reporting zeros"
+                    );
+                    ServerLoaderInfoResponse::new()
+                });
+            let metrics = &response.loader_metrics;
+            let sdk_con_count: usize = metrics
+                .get("sdkConCount")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let load = metrics
+                .get("load")
+                .cloned()
+                .unwrap_or_else(|| "0.00".to_string());
+            let cpu = metrics
+                .get("cpu")
+                .cloned()
+                .unwrap_or_else(|| "0.0".to_string());
+            ServerLoaderMetric {
+                address: peer_address.to_string(),
+                sdk_con_count,
+                con_count: sdk_con_count,
+                load,
+                cpu,
+            }
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                peer = peer_address,
+                error = %e,
+                "Failed to fetch peer loader metrics — reporting zeros"
+            );
+            ServerLoaderMetric {
+                address: peer_address.to_string(),
+                sdk_con_count: 0,
+                con_count: 0,
+                load: "0.00".to_string(),
+                cpu: "0.0".to_string(),
+            }
+        }
+        Err(_) => {
+            tracing::warn!(
+                peer = peer_address,
+                timeout_ms = PEER_LOADER_INFO_TIMEOUT.as_millis() as u64,
+                "Timed out fetching peer loader metrics — reporting zeros"
+            );
+            ServerLoaderMetric {
+                address: peer_address.to_string(),
+                sdk_con_count: 0,
+                con_count: 0,
+                load: "0.00".to_string(),
+                cpu: "0.0".to_string(),
+            }
+        }
     }
 }
 
@@ -207,6 +307,7 @@ async fn smart_reload(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
+    cluster_client: Option<web::Data<Arc<ClusterClientManager>>>,
     params: web::Query<SmartReloadParam>,
 ) -> impl Responder {
     let resource = "*:*:*";
@@ -235,21 +336,31 @@ async fn smart_reload(
     let self_metric =
         get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
     let all_members = data.cluster_manager().all_members_extended();
-    // In standalone mode, only self metrics available
-    // Build metrics with just self (cluster mode would gather from all nodes via gRPC)
     let mut details = vec![self_metric.clone()];
 
-    // For other cluster members, we report 0 connections (in a real cluster,
-    // we'd query via gRPC ServerLoaderInfoRequest, same as Nacos does for compatibility)
+    // For every remote cluster member, fetch the real metrics via gRPC
+    // `ServerLoaderInfoRequest`. Matches Nacos ServerLoaderController
+    // behavior. Without a cluster client (standalone mode) peers are
+    // reported with zeroed metrics — but `all_members` is typically just
+    // self in that case.
     for member in &all_members {
-        if member.address != self_member.address {
-            details.push(ServerLoaderMetric {
-                address: member.address.clone(),
-                sdk_con_count: 0,
-                con_count: 0,
-                load: "0.00".to_string(),
-                cpu: "0.0".to_string(),
-            });
+        if member.address == self_member.address {
+            continue;
+        }
+        match cluster_client.as_ref() {
+            Some(ccm) => {
+                let metric = fetch_peer_loader_metric(ccm.as_ref().as_ref(), &member.address).await;
+                details.push(metric);
+            }
+            None => {
+                details.push(ServerLoaderMetric {
+                    address: member.address.clone(),
+                    sdk_con_count: 0,
+                    con_count: 0,
+                    load: "0.00".to_string(),
+                    cpu: "0.0".to_string(),
+                });
+            }
         }
     }
 
@@ -357,6 +468,7 @@ async fn get_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
+    cluster_client: Option<web::Data<Arc<ClusterClientManager>>>,
 ) -> impl Responder {
     let resource = "*:*:*";
     secured!(
@@ -377,17 +489,27 @@ async fn get_cluster(
 
     let mut details = vec![self_metric];
 
-    // For other cluster members, we'd ideally query via gRPC.
-    // In standalone mode, only self is available.
+    // Fetch real metrics for every remote member via gRPC
+    // `ServerLoaderInfoRequest` (matches Nacos ServerLoaderController).
+    // Fallback to zeros only when no cluster client is wired (standalone).
     for member in &all_members {
-        if member.address != self_member.address {
-            details.push(ServerLoaderMetric {
-                address: member.address.clone(),
-                sdk_con_count: 0,
-                con_count: 0,
-                load: "0.00".to_string(),
-                cpu: "0.0".to_string(),
-            });
+        if member.address == self_member.address {
+            continue;
+        }
+        match cluster_client.as_ref() {
+            Some(ccm) => {
+                let metric = fetch_peer_loader_metric(ccm.as_ref().as_ref(), &member.address).await;
+                details.push(metric);
+            }
+            None => {
+                details.push(ServerLoaderMetric {
+                    address: member.address.clone(),
+                    sdk_con_count: 0,
+                    con_count: 0,
+                    load: "0.00".to_string(),
+                    cpu: "0.0".to_string(),
+                });
+            }
         }
     }
 
@@ -404,4 +526,122 @@ pub fn routes() -> actix_web::Scope {
         .service(smart_reload)
         .service(reload_client)
         .service(get_cluster)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use batata_common::ConnectionInfo;
+    use batata_core::ClientConnectionManager;
+
+    /// Stub connection manager with a configurable connection count. Used to
+    /// prove that `get_self_loader_metric` pulls the real value from the
+    /// connection manager instead of returning a hardcoded zero (the pre-fix
+    /// peer behavior).
+    struct StubConnManager {
+        count: usize,
+    }
+
+    #[async_trait]
+    impl ClientConnectionManager for StubConnManager {
+        fn connection_count(&self) -> usize {
+            self.count
+        }
+        fn has_connection(&self, _id: &str) -> bool {
+            false
+        }
+        fn get_all_connection_ids(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn get_connection_info(&self, _id: &str) -> Option<ConnectionInfo> {
+            None
+        }
+        fn get_all_connection_infos(&self) -> Vec<ConnectionInfo> {
+            Vec::new()
+        }
+        fn connections_for_ip(&self, _ip: &str) -> usize {
+            0
+        }
+        async fn push_message(&self, _id: &str, _payload: batata_api::grpc::Payload) -> bool {
+            false
+        }
+        async fn push_message_to_many(
+            &self,
+            _ids: &[String],
+            _payload: batata_api::grpc::Payload,
+        ) -> usize {
+            0
+        }
+        async fn load_single(&self, _id: &str, _redirect: Option<&str>) -> bool {
+            false
+        }
+        async fn load_count(&self, _target: usize, _redirect: Option<&str>) -> usize {
+            0
+        }
+        fn touch_connection(&self, _id: &str) {}
+    }
+
+    #[test]
+    fn self_loader_metric_reflects_real_connection_count() {
+        let stub = StubConnManager { count: 7 };
+        let metric = get_self_loader_metric("10.0.0.1:8848", &stub);
+
+        assert_eq!(metric.address, "10.0.0.1:8848");
+        assert_eq!(
+            metric.sdk_con_count, 7,
+            "sdk_con_count must come from the connection manager, not a hardcoded value"
+        );
+        assert_eq!(metric.con_count, 7, "con_count must mirror sdk_con_count");
+
+        // Load and CPU are real system-derived values; they must be
+        // well-formed floats (not the faked "0.00" / "0.0" peer placeholders
+        // except by coincidence). We assert parseability rather than exact
+        // content to keep the test environment-independent.
+        assert!(
+            metric.load.parse::<f32>().is_ok(),
+            "load must be a parseable float, got '{}'",
+            metric.load
+        );
+        assert!(
+            metric.cpu.parse::<f32>().is_ok(),
+            "cpu must be a parseable float, got '{}'",
+            metric.cpu
+        );
+    }
+
+    #[test]
+    fn build_cluster_metrics_aggregates_correctly() {
+        let details = vec![
+            ServerLoaderMetric {
+                address: "a:8848".to_string(),
+                sdk_con_count: 10,
+                con_count: 10,
+                load: "0.50".to_string(),
+                cpu: "15.0".to_string(),
+            },
+            ServerLoaderMetric {
+                address: "b:8848".to_string(),
+                sdk_con_count: 20,
+                con_count: 20,
+                load: "1.00".to_string(),
+                cpu: "30.0".to_string(),
+            },
+        ];
+        let agg = build_cluster_metrics(details, 2);
+        assert_eq!(agg.member_count, 2);
+        assert_eq!(agg.metrics_count, 2);
+        assert!(
+            agg.completed,
+            "completed must be true when metrics match members"
+        );
+        assert_eq!(agg.max, 20);
+        assert_eq!(agg.min, 10);
+        assert_eq!(agg.avg, 15);
+        assert_eq!(agg.total, 30);
+        assert_eq!(
+            agg.threshold, "16.5",
+            "threshold is avg * 1.1 formatted to one decimal"
+        );
+    }
 }

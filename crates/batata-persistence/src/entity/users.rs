@@ -10,6 +10,9 @@ pub struct Model {
     pub username: String,
     pub password: String,
     pub enabled: bool,
+    /// Identity source: "local" (password), "oauth", or "ldap".
+    /// Nullable for backwards compatibility with pre-existing rows.
+    pub source: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -3,6 +3,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default value for `RaftRequest::UserCreate::source`, used when
+/// deserializing log entries written before the `source` field existed.
+pub(crate) fn default_user_source() -> String {
+    "local".to_string()
+}
+
 /// Config delete history metadata embedded in ConfigRemove for atomic delete+history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigDeleteHistoryInfo {
@@ -170,6 +176,11 @@ pub enum RaftRequest {
         username: String,
         password_hash: String,
         enabled: bool,
+        /// Identity provider for this account: "local", "oauth", or "ldap".
+        /// Defaults to "local" when deserializing legacy log entries that
+        /// predate this field.
+        #[serde(default = "crate::raft::request::default_user_source")]
+        source: String,
     },
 
     /// Update user information

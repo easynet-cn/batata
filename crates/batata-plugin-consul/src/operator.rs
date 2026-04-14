@@ -51,12 +51,31 @@ pub struct RaftConfigurationResponse {
     pub index: u64,
 }
 
-/// Transfer leader response
+/// Transfer leader response.
+///
+/// Consul's upstream response is `{"Success": bool}`. Batata additionally
+/// carries a `Warning` field when the underlying Raft implementation cannot
+/// perform a real leadership transfer — see `transfer_leader` handler for
+/// the openraft 0.10 upgrade path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TransferLeaderResponse {
     pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
+
+/// Warning text attached to transfer-leader responses while the underlying
+/// Raft implementation (openraft 0.9) lacks a transparent transfer primitive.
+/// Tracked in the project memory under `project_consul_plugin_audit`.
+///
+/// TODO(openraft-0.10): remove this warning once `trigger().transfer_leader()`
+/// is available and the handler performs an actual transfer. Clean-up steps:
+///   1. Bump `openraft` dependency to 0.10+.
+///   2. Call `raft.trigger().transfer_leader(target)` from this handler.
+///   3. Drop the `warning` field from `TransferLeaderResponse`.
+pub const TRANSFER_LEADER_OPENRAFT09_WARNING: &str =
+    "leader transfer acknowledged; actual transfer requires openraft 0.10";
 
 /// Query parameters for raft peer removal
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -512,7 +531,10 @@ pub async fn transfer_leader(
         target = %query.id.as_deref().unwrap_or("<any eligible>"),
         "Leader transfer requested (openraft 0.9: no-op acknowledge)"
     );
-    HttpResponse::Ok().json(TransferLeaderResponse { success: true })
+    HttpResponse::Ok().json(TransferLeaderResponse {
+        success: true,
+        warning: Some(TRANSFER_LEADER_OPENRAFT09_WARNING.to_string()),
+    })
 }
 
 /// DELETE /v1/operator/raft/peer
@@ -735,7 +757,18 @@ pub async fn get_operator_usage(
     HttpResponse::Ok().json(OperatorUsageResponse { usage })
 }
 
-/// GET /v1/operator/utilization - Get cluster utilization (Enterprise stub)
+/// Error body returned for Enterprise-only operator endpoints.
+///
+/// Consul OSS surfaces the utilization endpoint with HTTP 501 and this exact
+/// body so SDK callers can do `strings.Contains(err.Error(), "Enterprise")`.
+pub const UTILIZATION_ENTERPRISE_BODY: &str =
+    "utilization endpoint is only available in Consul Enterprise";
+
+/// GET /v1/operator/utilization - Enterprise-only endpoint.
+///
+/// Matches Consul OSS behavior: returns 501 Not Implemented with an explicit
+/// "Enterprise" body. The Consul Go SDK's `Operator().Utilization()` call will
+/// propagate the body so callers can branch on the Enterprise marker.
 pub async fn get_operator_utilization(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -746,9 +779,9 @@ pub async fn get_operator_utilization(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(serde_json::json!({
-        "message": "no utilization data available"
-    }))
+    HttpResponse::NotImplemented()
+        .content_type("text/plain; charset=utf-8")
+        .body(UTILIZATION_ENTERPRISE_BODY)
 }
 
 #[cfg(test)]
@@ -820,6 +853,9 @@ mod tests {
         fn refresh_self(&self) {}
         fn is_self(&self, address: &str) -> bool {
             address == self.address
+        }
+        fn update_member_state(&self, _address: &str, _state: &str) -> Result<String, String> {
+            Ok("UP".to_string())
         }
     }
 
@@ -966,6 +1002,75 @@ mod tests {
         // key-1 should remain
         assert!(service.list_keys()[0].keys.contains_key("key-1"));
         assert!(!service.list_keys()[0].keys.contains_key("key-2"));
+    }
+
+    #[actix_web::test]
+    async fn test_transfer_leader_response_includes_openraft_warning() {
+        use actix_web::{App, test};
+
+        let cm: Arc<dyn ClusterManager> = Arc::new(TestClusterManager::new());
+        let operator_service = web::Data::new(ConsulOperatorService::new(cm));
+        let acl_service = web::Data::new(AclService::disabled());
+
+        let app = test::init_service(
+            App::new()
+                .app_data(operator_service.clone())
+                .app_data(acl_service.clone())
+                .route(
+                    "/v1/operator/raft/transfer-leader",
+                    web::post().to(transfer_leader),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/v1/operator/raft/transfer-leader")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: TransferLeaderResponse = test::read_body_json(resp).await;
+        assert!(body.success, "transfer-leader should report success");
+        let warning = body
+            .warning
+            .as_deref()
+            .expect("warning field must be present while on openraft 0.9");
+        assert_eq!(warning, TRANSFER_LEADER_OPENRAFT09_WARNING);
+        assert!(
+            warning.contains("openraft 0.10"),
+            "warning must reference the openraft-0.10 upgrade path",
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_operator_utilization_returns_501_enterprise_body() {
+        use actix_web::{App, test};
+
+        let acl_service = web::Data::new(AclService::disabled());
+
+        let app = test::init_service(App::new().app_data(acl_service.clone()).route(
+            "/v1/operator/utilization",
+            web::put().to(get_operator_utilization),
+        ))
+        .await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/operator/utilization")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status().as_u16(),
+            501,
+            "utilization must return HTTP 501 Not Implemented on OSS"
+        );
+
+        let body_bytes = test::read_body(resp).await;
+        let body_str = std::str::from_utf8(&body_bytes).expect("utf-8 body");
+        assert_eq!(body_str, UTILIZATION_ENTERPRISE_BODY);
+        assert!(
+            body_str.contains("Enterprise"),
+            "body must contain the Enterprise marker for SDK branching",
+        );
     }
 
     #[test]

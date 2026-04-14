@@ -9,6 +9,10 @@ use batata_common::{AuthCheckResult, AuthPermission, AuthPlugin, IdentityContext
 use batata_persistence::PersistenceService;
 use tracing::{debug, warn};
 
+use crate::model::{
+    NON_LOCAL_PASSWORD_SENTINEL, USER_SOURCE_LDAP, normalize_user_source,
+    source_allows_password_login,
+};
 use crate::service::auth::{decode_jwt_token_cached, encode_jwt_token, unblacklist_user};
 use crate::service::ldap::LdapAuthService;
 
@@ -68,7 +72,13 @@ impl DefaultAuthPlugin {
             .unwrap_or(false)
     }
 
-    /// Verify password against stored hash
+    /// Verify password against stored hash.
+    ///
+    /// Returns `Err` (rather than `Ok(false)`) when the user exists but is
+    /// owned by an external identity provider (OAuth, LDAP) — those users
+    /// cannot authenticate with a local password and the caller should
+    /// surface a specific error message rather than the generic "invalid
+    /// credentials" produced by failed bcrypt comparison.
     async fn verify_credentials(&self, username: &str, password: &str) -> Result<bool, String> {
         let user = self
             .persistence
@@ -78,6 +88,13 @@ impl DefaultAuthPlugin {
 
         match user {
             Some(user) => {
+                let source = normalize_user_source(Some(&user.source));
+                if !source_allows_password_login(&source) {
+                    return Err(format!(
+                        "user '{}' is managed by '{}' and cannot log in with a password",
+                        username, source
+                    ));
+                }
                 let valid = bcrypt::verify(password, &user.password).unwrap_or(false);
                 Ok(valid)
             }
@@ -266,13 +283,17 @@ impl AuthPlugin for LdapAuthPlugin {
                 .is_some();
 
             if !user_exists {
-                // Auto-create LDAP user in local DB with unusable password
-                let placeholder_hash =
-                    bcrypt::hash("LDAP_USER_NO_LOCAL_PASSWORD", 10).unwrap_or_default();
+                // Auto-create the LDAP-backed user with the non-local sentinel
+                // and an explicit source marker so password login is rejected.
                 let _ = self
                     .default_plugin
                     .persistence
-                    .user_create(username, &placeholder_hash, true)
+                    .user_create_with_source(
+                        username,
+                        NON_LOCAL_PASSWORD_SENTINEL,
+                        true,
+                        USER_SOURCE_LDAP,
+                    )
                     .await;
                 debug!(username, "auto-created local user for LDAP user");
             }
@@ -293,5 +314,169 @@ impl AuthPlugin for LdapAuthPlugin {
             debug!(username, "LDAP auth failed, trying local fallback");
             self.default_plugin.login(username, password).await
         }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use batata_consistency::RocksStateMachine;
+    use batata_persistence::{AuthPersistence, EmbeddedPersistService};
+    use tempfile::TempDir;
+
+    /// Bcrypt cost used for fast test hashing. The library minimum is 4;
+    /// we use that everywhere in tests to keep the suite snappy.
+    const TEST_BCRYPT_COST: u32 = 4;
+    const TEST_JWT_SECRET: &str = "dGVzdC1zZWNyZXQta2V5LWZvci11bml0LXRlc3RzLW9ubHk=";
+    const TEST_TOKEN_TTL_SECS: i64 = 3600;
+
+    async fn build_plugin() -> (DefaultAuthPlugin, Arc<EmbeddedPersistService>, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let sm = RocksStateMachine::new(tmp.path()).await.unwrap();
+        let svc = Arc::new(EmbeddedPersistService::from_state_machine(&sm));
+        let plugin = DefaultAuthPlugin::new(
+            TEST_JWT_SECRET.to_string(),
+            TEST_TOKEN_TTL_SECS,
+            svc.clone() as Arc<dyn PersistenceService>,
+        );
+        (plugin, svc, tmp)
+    }
+
+    #[tokio::test]
+    async fn local_user_can_log_in_with_password() {
+        let (plugin, svc, _tmp) = build_plugin().await;
+
+        let password = "correct horse battery staple";
+        let hash = bcrypt::hash(password, TEST_BCRYPT_COST).unwrap();
+        svc.user_create_with_source("alice", &hash, true, "local")
+            .await
+            .unwrap();
+
+        let result = plugin.login("alice", password).await;
+        assert!(result.is_ok(), "local login should succeed: {:?}", result);
+        let login = result.unwrap();
+        assert_eq!(login.username, "alice");
+        assert!(!login.token.is_empty(), "JWT token must be issued");
+    }
+
+    #[tokio::test]
+    async fn local_user_with_wrong_password_is_rejected() {
+        let (plugin, svc, _tmp) = build_plugin().await;
+
+        let hash = bcrypt::hash("right", TEST_BCRYPT_COST).unwrap();
+        svc.user_create_with_source("alice", &hash, true, "local")
+            .await
+            .unwrap();
+
+        let err = plugin.login("alice", "wrong").await.unwrap_err();
+        assert_eq!(
+            err, "invalid credentials",
+            "wrong password must return generic 'invalid credentials'"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_user_cannot_log_in_with_password() {
+        let (plugin, svc, _tmp) = build_plugin().await;
+
+        // Simulate what the OAuth handler does: store the sentinel, not a
+        // bcrypt of a random UUID, and tag source = "oauth".
+        svc.user_create_with_source(
+            "oauth_github_123",
+            crate::model::NON_LOCAL_PASSWORD_SENTINEL,
+            true,
+            "oauth",
+        )
+        .await
+        .unwrap();
+
+        let err = plugin
+            .login("oauth_github_123", "anything")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("oauth") && err.contains("cannot log in with a password"),
+            "oauth user login must be rejected with a source-specific error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn ldap_user_cannot_log_in_with_password() {
+        let (plugin, svc, _tmp) = build_plugin().await;
+
+        svc.user_create_with_source(
+            "ldap_user",
+            crate::model::NON_LOCAL_PASSWORD_SENTINEL,
+            true,
+            "ldap",
+        )
+        .await
+        .unwrap();
+
+        let err = plugin.login("ldap_user", "password").await.unwrap_err();
+        assert!(
+            err.contains("ldap"),
+            "ldap user must get an ldap-specific rejection, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn user_list_response_exposes_source_for_both_types() {
+        let (_plugin, svc, _tmp) = build_plugin().await;
+
+        let hash = bcrypt::hash("pw", TEST_BCRYPT_COST).unwrap();
+        svc.user_create_with_source("alice", &hash, true, "local")
+            .await
+            .unwrap();
+        svc.user_create_with_source(
+            "oauth_user",
+            crate::model::NON_LOCAL_PASSWORD_SENTINEL,
+            true,
+            "oauth",
+        )
+        .await
+        .unwrap();
+
+        let page = svc.user_find_page("", 1, 10, false).await.unwrap();
+        assert_eq!(page.total_count, 2);
+
+        let alice = page
+            .page_items
+            .iter()
+            .find(|u| u.username == "alice")
+            .expect("alice present");
+        assert_eq!(alice.source, "local");
+
+        let oauth = page
+            .page_items
+            .iter()
+            .find(|u| u.username == "oauth_user")
+            .expect("oauth user present");
+        assert_eq!(oauth.source, "oauth");
+        assert_eq!(
+            oauth.password,
+            crate::model::NON_LOCAL_PASSWORD_SENTINEL,
+            "oauth user's password must be the unmatchable sentinel, not a bcrypt hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn sentinel_never_matches_any_password_via_bcrypt() {
+        // Defensive regression: even if someone accidentally feeds the
+        // sentinel through bcrypt::verify, it must never succeed.
+        let matched = bcrypt::verify("", crate::model::NON_LOCAL_PASSWORD_SENTINEL)
+            .ok()
+            .unwrap_or(false);
+        assert!(
+            !matched,
+            "sentinel must be a non-bcrypt string so verify() never returns true"
+        );
     }
 }

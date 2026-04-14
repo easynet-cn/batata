@@ -139,6 +139,18 @@ async fn get_operator_usage(
         .await
 }
 
+// Consul OSS registers `/v1/operator/utilization` as a PUT endpoint;
+// the Consul Go SDK calls it via PUT. We accept PUT (and GET for
+// backwards-tolerant clients); both surface the Enterprise-only 501.
+#[actix_web::put("/utilization")]
+async fn put_operator_utilization(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    _query: web::Query<OperatorQueryParams>,
+) -> HttpResponse {
+    crate::operator::get_operator_utilization(req, acl_service, _query).await
+}
+
 #[get("/utilization")]
 async fn get_operator_utilization(
     req: HttpRequest,
@@ -175,5 +187,6 @@ pub fn routes() -> Scope {
         .service(keyring_remove)
         .service(get_operator_usage)
         .service(get_operator_utilization)
+        .service(put_operator_utilization)
         .service(operator_segment_list)
 }

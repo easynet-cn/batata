@@ -42,7 +42,8 @@ use crate::{
             ConfigQueryHandler, ConfigRemoveHandler,
         },
         distro_handler::{
-            DistroDataSnapshotHandler, DistroDataSyncHandler, DistroDataVerifyHandler,
+            DistroDataBatchSyncHandler, DistroDataSnapshotHandler, DistroDataSyncHandler,
+            DistroDataVerifyHandler,
         },
         handler::{
             ClientDetectionHandler, ConnectResetHandler, ConnectionSetupHandler,
@@ -282,6 +283,9 @@ fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc
         distro_protocol: distro_protocol.clone(),
     }));
     registry.register_handler(Arc::new(DistroDataVerifyHandler {
+        distro_protocol: distro_protocol.clone(),
+    }));
+    registry.register_handler(Arc::new(DistroDataBatchSyncHandler {
         distro_protocol: distro_protocol.clone(),
     }));
     registry.register_handler(Arc::new(DistroDataSnapshotHandler { distro_protocol }));
@@ -681,6 +685,30 @@ pub fn start_grpc_servers(
         raft_node.clone(),
         client_op_proxy,
     );
+
+    // Register the naming disconnect listener on the core ConnectionManager.
+    //
+    // Equivalent to Nacos `ClientConnectionEventListener.clientDisconnected()`:
+    // whenever a client's connection is torn down (stale ejection, push
+    // circuit breaker, explicit unregister), every ephemeral instance that
+    // client published is deregistered and affected subscribers are notified.
+    //
+    // Note: the bi-stream close path already runs `deregister_all_by_connection`
+    // via `ConnectionCleanupHandler` before calling `unregister()`. The listener
+    // is idempotent (deregister_all_by_connection on an already-cleared
+    // connection is a cheap no-op) and covers all the *other* unregister paths
+    // that don't go through the bi-stream close.
+    {
+        let pusher = Arc::new(batata_naming::service::ConnectionManagerPusher::new(
+            connection_manager.clone(),
+        ));
+        let listener = Arc::new(batata_naming::service::NamingDisconnectListener::new(
+            naming_service.clone(),
+            pusher,
+            distro_for_naming.clone(),
+        ));
+        connection_manager.add_listener(listener);
+    }
 
     // Register distro handlers
     register_distro_handlers(&mut handler_registry, distro_protocol.clone());

@@ -76,6 +76,13 @@ pub trait ClusterManager: Send + Sync {
 
     /// Check if a given address is the local node
     fn is_self(&self, address: &str) -> bool;
+
+    /// Update a member's state.
+    ///
+    /// `state` is a case-insensitive state name (`UP`, `DOWN`, `SUSPICIOUS`,
+    /// `STARTING`, `ISOLATION`). Returns the previous state string on success,
+    /// `Err` if the state name is invalid or the address is not a known member.
+    fn update_member_state(&self, address: &str, state: &str) -> Result<String, String>;
 }
 
 #[cfg(test)]

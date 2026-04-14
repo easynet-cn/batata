@@ -81,6 +81,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Register the default trace subscriber into the process-wide registry
+    // so call sites firing TraceEvents produce logs out of the box.
+    batata_plugin::global_trace_registry()
+        .register(Arc::new(batata_plugin::LoggingTraceSubscriber::new()));
+
     // ====================================================================
     // Phase 2.5: Register protocol adapter plugins (lightweight, config only)
     // ====================================================================
@@ -392,6 +397,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref cm) = persistence_ctx.cluster_manager {
         plugin_ctx.insert("cluster_manager", Arc::new(cm.clone()));
     }
+    // Distro protocol is needed by plugins that run their own
+    // HealthCheckReactor (e.g. batata-plugin-consul) so they can gate active
+    // probing to the responsible cluster node instead of having every node
+    // re-probe every Raft-replicated check.
+    if is_cluster {
+        plugin_ctx.insert("distro_protocol", grpc_servers.distro_protocol().clone());
+    }
 
     // Initialize all plugins
     plugin_manager.init_protocol_adapters(&plugin_ctx).await?;
@@ -549,25 +561,53 @@ async fn init_control_plugin(
 fn init_encryption_service(
     configuration: &model::common::Configuration,
 ) -> Arc<batata_config::service::encryption::ConfigEncryptionService> {
+    use batata_config::service::encryption::{ConfigEncryptionService, EncryptionPattern};
+
+    // Register the always-available "none" backend so `algorithm: none` in
+    // configuration resolves to a real plugin instead of a disabled fallback.
+    let registry = batata_plugin::global_encryption_registry();
+    registry.register(Arc::new(batata_plugin::NoopEncryptionPlugin::new()));
+
+    // Register the AES-GCM plugin when an encryption key is supplied.
     if configuration.encryption_enabled() {
         match configuration.encryption_key() {
-            Some(key) => {
-                match batata_config::service::encryption::ConfigEncryptionService::new(&key) {
-                    Ok(svc) => {
-                        info!("Config encryption enabled");
-                        return Arc::new(svc);
+            Some(key) if !key.is_empty() => {
+                match batata_common::crypto::AesGcmEncryptionPlugin::new(&key) {
+                    Ok(plugin) => {
+                        registry.register(Arc::new(plugin));
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to create encryption service: {}", e);
+                        tracing::warn!("Failed to build AES-GCM encryption plugin: {}", e);
                     }
                 }
             }
-            None => {
+            _ => {
                 tracing::warn!("Encryption enabled but no key configured");
             }
         }
     }
-    Arc::new(batata_config::service::encryption::ConfigEncryptionService::disabled())
+
+    let default_patterns = vec![EncryptionPattern::Prefix("cipher-".to_string())];
+
+    // Resolve the configured algorithm name ("aes-gcm" by default).
+    let plugin_name = configuration.encryption_plugin_type();
+    if let Some(plugin) = registry.find(&plugin_name) {
+        if plugin.is_enabled() {
+            info!("Config encryption enabled via plugin '{}'", plugin.name());
+        } else {
+            info!("Config encryption plugin '{}' is disabled", plugin.name());
+        }
+        return Arc::new(ConfigEncryptionService::from_plugin(
+            plugin,
+            default_patterns,
+        ));
+    }
+
+    tracing::warn!(
+        "Encryption plugin '{}' not found in registry; disabling encryption",
+        plugin_name
+    );
+    Arc::new(ConfigEncryptionService::disabled())
 }
 
 /// Start health check background tasks.
@@ -803,6 +843,7 @@ async fn run_http_servers(
                 server_address.clone(),
                 server_main_port,
                 Some(server_registry.clone()),
+                grpc_servers.cluster_client_manager().clone(),
             )?;
             main_http_state.set_running();
             server_registry.register(
@@ -886,6 +927,7 @@ async fn run_http_servers(
                 server_address.clone(),
                 server_main_port,
                 Some(server_registry.clone()),
+                grpc_servers.cluster_client_manager().clone(),
             )?;
             main_http_state.set_running();
             server_registry.register(

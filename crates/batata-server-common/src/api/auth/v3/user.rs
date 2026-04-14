@@ -74,6 +74,7 @@ async fn search_page(
                 .map(|u| User {
                     username: u.username,
                     password: u.password,
+                    source: u.source,
                 })
                 .collect();
             Page {

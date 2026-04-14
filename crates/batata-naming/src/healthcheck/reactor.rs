@@ -164,10 +164,32 @@ impl HealthCheckReactor {
                                 handle.abort();
                             }
 
+                            // Clone the chain handle so the spawned task reads
+                            // the latest cluster/standalone chain every tick —
+                            // members can join/leave while the task loops.
+                            let chain_lock = interceptor_chain_lock.clone();
+
                             let handle = tokio::spawn(async move {
                                 let task = RegistryCheckTask::new(check_key, reg_clone);
                                 loop {
-                                    task.execute().await;
+                                    // Cluster responsibility gate. The `responsible_id`
+                                    // is the instance key (`ip:port`) so that probing
+                                    // of the same backend lands on the same node across
+                                    // all reactors, matching how `DistroMapper` routes
+                                    // keys in the naming plane. Without this gate every
+                                    // cluster node would repeatedly probe every check
+                                    // it has in its Raft-replicated registry, causing
+                                    // N-fold traffic and racey `update_check_result`
+                                    // writes.
+                                    let responsible_id = task.responsible_id();
+                                    let should_run = {
+                                        let chain = chain_lock.read().clone();
+                                        chain.should_execute(&responsible_id)
+                                    };
+
+                                    if should_run {
+                                        task.execute().await;
+                                    }
 
                                     match task.interval() {
                                         Some(interval) => {
@@ -487,6 +509,100 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // No crash = success
+    }
+
+    /// Cluster-mode gate: when the interceptor chain reports this node is
+    /// NOT responsible for the check's `ip:port`, the reactor must NOT probe
+    /// even though the check is in the registry. Without this gate, every
+    /// node in the cluster would probe every Raft-replicated check, causing
+    /// N-fold probe traffic and racey status writes.
+    #[tokio::test]
+    async fn test_reactor_registry_check_respects_cluster_gate() {
+        use crate::healthcheck::interceptor::HealthCheckInterceptorChain;
+        use crate::healthcheck::registry::*;
+        use batata_core::service::distro::DistroMapper;
+
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config.clone());
+
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
+
+        let check_config = InstanceCheckConfig {
+            check_id: "cluster-gate-test".to_string(),
+            name: "Cluster gate test".to_string(),
+            check_type: CheckType::Tcp,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "svc".to_string(),
+            ip: "10.10.10.10".to_string(),
+            port: 12345,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            // Use 127.0.0.1:19 so if the probe WERE to run it would fail,
+            // letting us detect a probe by observing a status change. We
+            // assert below that no such change occurs because the gate
+            // blocks execution.
+            tcp_addr: Some("127.0.0.1:19".to_string()),
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_millis(100),
+            timeout: Duration::from_millis(200),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            initial_status: CheckStatus::Passing,
+            notes: String::new(),
+            service_tags: vec![],
+        };
+        registry.register_check(check_config);
+        reactor.set_registry(registry.clone());
+
+        // Build a cluster chain where the local address is NOT the node
+        // responsible for "10.10.10.10:12345".
+        let mapper = Arc::new(DistroMapper::new());
+        let members = vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+            "10.0.0.3:8848".to_string(),
+        ];
+        mapper.update_members(members.clone());
+        let responsible = mapper
+            .responsible_node("10.10.10.10:12345")
+            .expect("mapper must pick a responsible node");
+        let non_responsible = members
+            .iter()
+            .find(|m| *m != &responsible)
+            .cloned()
+            .expect("must find a non-responsible member");
+
+        let chain = Arc::new(HealthCheckInterceptorChain::cluster(
+            config,
+            mapper,
+            non_responsible,
+        ));
+        reactor.set_interceptor_chain(chain);
+
+        reactor.schedule_registry_check("cluster-gate-test");
+
+        // Let the loop tick several times — if the gate works the probe
+        // never executes and the initial Passing status is retained.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let (_, status) = registry
+            .get_check("cluster-gate-test")
+            .expect("check must still exist");
+        assert_eq!(
+            status.status,
+            CheckStatus::Passing,
+            "Non-responsible node must not probe; status must retain initial Passing"
+        );
+        assert!(
+            status.output.is_empty(),
+            "No probe ran, so no output should have been recorded: {:?}",
+            status.output
+        );
     }
 
     #[tokio::test]

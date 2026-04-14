@@ -191,7 +191,8 @@ COMMENT ON TABLE tenant_info IS 'Tenant/Namespace information table';
 CREATE TABLE users (
     username VARCHAR(50) NOT NULL PRIMARY KEY,
     password VARCHAR(500) NOT NULL,
-    enabled BOOLEAN NOT NULL
+    enabled BOOLEAN NOT NULL,
+    source VARCHAR(20) NULL DEFAULT 'local'
 );
 
 COMMENT ON TABLE users IS 'User account table';

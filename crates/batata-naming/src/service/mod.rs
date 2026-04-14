@@ -10,11 +10,16 @@
 
 mod client_op;
 mod cluster;
+mod disconnect_listener;
 mod fuzzy_watch;
 mod instance;
 mod metadata;
 mod provider;
 mod subscription;
+
+pub use disconnect_listener::{
+    ConnectionManagerPusher, NamingDisconnectListener, SubscriberPusher,
+};
 
 pub use client_op::{
     ClientOperationService, ClientOperationServiceProxy, EphemeralClientOperationService,

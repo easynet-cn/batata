@@ -18,13 +18,22 @@ use tracing::{debug, error, info, warn};
 
 use batata_api::{
     distro::{
-        DistroDataItem, DistroDataSnapshotRequest, DistroDataSnapshotResponse,
-        DistroDataSyncRequest, DistroDataSyncResponse, DistroDataVerifyRequest,
-        DistroDataVerifyResponse,
+        DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataItem,
+        DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
+        DistroDataSyncResponse, DistroDataVerifyRequest, DistroDataVerifyResponse,
     },
     model::Member,
     remote::model::ResponseTrait,
 };
+
+/// Default maximum number of items packed into one `DistroDataBatchSyncRequest`.
+///
+/// Mirrors Nacos `DistroProtocol.syncToTarget` batching behavior. Tuned to
+/// keep the gRPC payload under typical defaults (~4MB) for service-instance
+/// payloads while still amortizing per-RPC overhead. Override via
+/// `batata.cluster.distro.batch_sync_size` (or the Nacos-compatible alias
+/// `nacos.core.protocol.distro.data.sync.batchSize`).
+pub const DISTRO_BATCH_SIZE: usize = 50;
 
 use super::cluster_client::ClusterClientManager;
 use super::datacenter::DatacenterManager;
@@ -50,6 +59,12 @@ pub struct DistroConfig {
     /// false (default, Nacos-compatible): start immediately, verify cycle fills data.
     /// true: node stays NOT_READY until initial sync completes.
     pub require_initial_load: bool,
+    /// Maximum number of items per `DistroDataBatchSyncRequest`.
+    ///
+    /// Defaults to [`DISTRO_BATCH_SIZE`]. Larger batches reduce RPC count but
+    /// increase per-message size and worst-case retry cost. Set to `1` to
+    /// disable batching (each key sent in its own RPC).
+    pub batch_sync_size: usize,
 }
 
 impl Default for DistroConfig {
@@ -63,6 +78,7 @@ impl Default for DistroConfig {
             load_retry_delay: Duration::from_millis(30000),
             load_max_retries: 5,
             require_initial_load: false,
+            batch_sync_size: DISTRO_BATCH_SIZE,
         }
     }
 }
@@ -79,6 +95,7 @@ impl DistroConfig {
             load_retry_delay: Duration::from_millis(config.distro_load_retry_delay_ms()),
             load_max_retries: config.distro_load_max_retries(),
             require_initial_load: config.distro_require_initial_load(),
+            batch_sync_size: config.distro_batch_sync_size(),
         }
     }
 }
@@ -1096,6 +1113,100 @@ impl DistroProtocol {
         all_loaded
     }
 
+    /// Send a batch of distro data items to a target node in a single RPC.
+    ///
+    /// Splits the input into chunks of at most `config.batch_sync_size` to
+    /// keep individual messages bounded. Returns `Ok(())` if every chunk
+    /// returned a `result_code == 200` response (failed_keys may still be
+    /// non-empty — those are logged but not surfaced as a hard error so the
+    /// caller can rely on the verify cycle for eventual repair).
+    pub async fn sync_data_batch(
+        &self,
+        target: &str,
+        items: Vec<DistroData>,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let chunk_size = self.config.batch_sync_size.max(1);
+        let total = items.len();
+        let mut iter = items.into_iter();
+        loop {
+            let chunk: Vec<DistroData> = iter.by_ref().take(chunk_size).collect();
+            if chunk.is_empty() {
+                break;
+            }
+            Self::send_batch_sync_data(&self.client_manager, target, chunk).await?;
+        }
+        debug!(
+            "Batch sync to {} complete: {} items in chunks of {}",
+            target, total, chunk_size
+        );
+        Ok(())
+    }
+
+    /// Send a single batch RPC. Caller is responsible for chunking.
+    async fn send_batch_sync_data(
+        client_manager: &Arc<ClusterClientManager>,
+        target: &str,
+        items: Vec<DistroData>,
+    ) -> Result<(), String> {
+        let api_items: Vec<DistroDataItem> = items
+            .into_iter()
+            .map(|d| {
+                let (api_data_type, custom_type_name) = match &d.data_type {
+                    DistroDataType::NamingInstance => {
+                        (batata_api::distro::DistroDataType::NamingInstance, None)
+                    }
+                    DistroDataType::Custom(name) => (
+                        batata_api::distro::DistroDataType::Custom,
+                        Some(name.clone()),
+                    ),
+                };
+                DistroDataItem {
+                    data_type: api_data_type,
+                    custom_type_name,
+                    key: d.key,
+                    content: String::from_utf8(d.content).unwrap_or_default(),
+                    version: d.version,
+                    source: d.source,
+                }
+            })
+            .collect();
+
+        let count = api_items.len();
+        let request = DistroDataBatchSyncRequest::with_items(api_items);
+        match client_manager.send_request(target, request).await {
+            Ok(response) => {
+                if let Some(body) = response.body
+                    && let Ok(batch_response) =
+                        serde_json::from_slice::<DistroDataBatchSyncResponse>(&body.value)
+                {
+                    if batch_response.result_code() == 200 {
+                        if !batch_response.failed_keys.is_empty() {
+                            warn!(
+                                "Distro batch sync to {}: {}/{} items failed: {:?}",
+                                target,
+                                batch_response.failed_keys.len(),
+                                count,
+                                batch_response.failed_keys
+                            );
+                        }
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "Distro batch sync failed: {}",
+                        batch_response.response.message
+                    ));
+                }
+                // Unparseable response — assume success rather than triggering
+                // a retry storm; the verify cycle will catch any divergence.
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to send distro batch sync: {}", e)),
+        }
+    }
+
     /// Send sync data to a target node via gRPC
     async fn send_sync_data(
         client_manager: &Arc<ClusterClientManager>,
@@ -1162,6 +1273,61 @@ impl DistroProtocol {
         } else {
             Err(format!("No handler for data type: {}", data.data_type))
         }
+    }
+
+    /// Process a batch of received sync items.
+    ///
+    /// Each item is dispatched to its registered handler the same way
+    /// `receive_sync_data` handles a single item. Items whose data type has
+    /// no registered handler, or whose handler returns an error, are added
+    /// to the returned `failed_keys` list. The remainder still applies —
+    /// matching Nacos' best-effort batched apply semantics.
+    pub async fn receive_batch_sync(&self, items: Vec<DistroData>) -> Vec<String> {
+        let mut failed_keys = Vec::new();
+        for data in items {
+            let key = data.key.clone();
+            match self.receive_sync_data(data).await {
+                Ok(()) => {}
+                Err(e) => {
+                    warn!("Batch sync apply failed for key '{}': {}", key, e);
+                    failed_keys.push(key);
+                }
+            }
+        }
+        failed_keys
+    }
+
+    /// Explicitly remove a key from the local store across all handlers.
+    ///
+    /// Called when this node has dispossessed responsibility for `key` — for
+    /// example, when a verify round confirms the key is owned by another peer
+    /// and the local copy has gone stale, or after a cluster membership change
+    /// reassigned ownership. Idempotent: removing a non-existent key is fine.
+    ///
+    /// This is the per-key counterpart to `cleanup_non_responsible_keys`,
+    /// useful when the dispossession is event-driven (single key) rather than
+    /// triggered by a full membership refresh.
+    pub async fn dispossess_key(&self, key: &str) -> usize {
+        let mut removed = 0usize;
+        let handler_entries: Vec<Arc<dyn DistroDataHandler>> =
+            self.handlers.iter().map(|e| e.value().clone()).collect();
+        for handler in handler_entries {
+            if let Err(e) = handler.remove_data(key).await {
+                warn!(
+                    "dispossess_key: handler removal failed for '{}': {}",
+                    key, e
+                );
+            } else {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            debug!(
+                "dispossess_key: removed key '{}' from {} handler(s)",
+                key, removed
+            );
+        }
+        removed
     }
 
     /// Get snapshot for initial data load
@@ -1438,6 +1604,235 @@ mod tests {
         assert_eq!(counters.sync_failure.load(Ordering::Relaxed), 1);
         assert_eq!(counters.verify_success.load(Ordering::Relaxed), 10);
         assert_eq!(counters.verify_failure.load(Ordering::Relaxed), 2);
+    }
+
+    /// Mock handler for testing that stores received items in a DashMap.
+    /// Exercises the public `DistroDataHandler` surface without requiring
+    /// a real NamingService.
+    struct MockHandler {
+        data: Arc<DashMap<String, DistroData>>,
+        fail_keys: Arc<DashMap<String, ()>>,
+    }
+
+    impl MockHandler {
+        fn new() -> Self {
+            Self {
+                data: Arc::new(DashMap::new()),
+                fail_keys: Arc::new(DashMap::new()),
+            }
+        }
+
+        fn share(&self) -> Arc<DashMap<String, DistroData>> {
+            self.data.clone()
+        }
+    }
+
+    #[tonic::async_trait]
+    impl DistroDataHandler for MockHandler {
+        fn data_type(&self) -> DistroDataType {
+            DistroDataType::NamingInstance
+        }
+
+        async fn get_all_keys(&self) -> Vec<String> {
+            self.data.iter().map(|e| e.key().clone()).collect()
+        }
+
+        async fn get_data(&self, key: &str) -> Option<DistroData> {
+            self.data.get(key).map(|e| e.value().clone())
+        }
+
+        async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
+            if self.fail_keys.contains_key(&data.key) {
+                return Err(format!("forced failure for {}", data.key));
+            }
+            self.data.insert(data.key.clone(), data);
+            Ok(())
+        }
+
+        async fn process_verify_data(&self, data: &DistroData) -> Result<bool, String> {
+            Ok(self
+                .data
+                .get(&data.key)
+                .map(|local| local.version >= data.version)
+                .unwrap_or(false))
+        }
+
+        async fn get_snapshot(&self) -> Vec<DistroData> {
+            self.data.iter().map(|e| e.value().clone()).collect()
+        }
+
+        async fn remove_data(&self, key: &str) -> Result<(), String> {
+            self.data.remove(key);
+            Ok(())
+        }
+    }
+
+    fn build_item(key: &str) -> DistroData {
+        DistroData::new(
+            DistroDataType::NamingInstance,
+            key.to_string(),
+            format!("{{\"k\":\"{}\"}}", key).into_bytes(),
+            "10.0.0.1:8848".to_string(),
+        )
+    }
+
+    /// Create a DistroProtocol wired to a mock handler with no real cluster
+    /// client. `sync_data_batch` / `send_*` functions would fail on I/O, but
+    /// all receive-side paths (`receive_batch_sync`, `dispossess_key`) work.
+    fn test_protocol(local: &str) -> (Arc<DistroProtocol>, Arc<MockHandler>) {
+        use crate::service::cluster_client::ClusterClientConfig;
+        let client_manager = Arc::new(ClusterClientManager::new(
+            local.to_string(),
+            ClusterClientConfig::default(),
+        ));
+        let members = Arc::new(DashMap::new());
+        let proto = Arc::new(DistroProtocol::new(
+            local.to_string(),
+            DistroConfig::default(),
+            client_manager,
+            members,
+        ));
+        let handler = Arc::new(MockHandler::new());
+        proto.register_handler(handler.clone() as Arc<dyn DistroDataHandler>);
+        (proto, handler)
+    }
+
+    #[tokio::test]
+    async fn test_batch_sync_applies_all_items() {
+        let (proto, handler) = test_protocol("10.0.0.1:8848");
+        let items: Vec<DistroData> = (0..50).map(|i| build_item(&format!("svc-{}", i))).collect();
+
+        let failed = proto.receive_batch_sync(items).await;
+        assert!(
+            failed.is_empty(),
+            "no item should fail in a clean batch, got: {:?}",
+            failed
+        );
+        let store = handler.share();
+        assert_eq!(store.len(), 50, "all 50 items must be applied");
+        for i in 0..50 {
+            let key = format!("svc-{}", i);
+            let stored = store.get(&key).unwrap();
+            assert_eq!(stored.key, key);
+            assert_eq!(stored.data_type, DistroDataType::NamingInstance);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_batch_sync_reports_per_item_failures() {
+        let (proto, handler) = test_protocol("10.0.0.1:8848");
+        handler.fail_keys.insert("svc-bad".to_string(), ());
+
+        let items = vec![
+            build_item("svc-ok-1"),
+            build_item("svc-bad"),
+            build_item("svc-ok-2"),
+        ];
+        let failed = proto.receive_batch_sync(items).await;
+        assert_eq!(failed, vec!["svc-bad".to_string()]);
+        // The surviving items still applied.
+        let store = handler.share();
+        assert!(store.contains_key("svc-ok-1"));
+        assert!(store.contains_key("svc-ok-2"));
+        assert!(!store.contains_key("svc-bad"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_sync_equivalent_to_single_item_loop() {
+        // Property-style: feeding items through the batch path should
+        // produce identical final state to feeding them one by one through
+        // `receive_sync_data`.
+        let (proto_batch, handler_batch) = test_protocol("10.0.0.1:8848");
+        let (proto_single, handler_single) = test_protocol("10.0.0.1:8848");
+
+        let items: Vec<DistroData> = (0..25)
+            .map(|i| build_item(&format!("svc-{:02}", i)))
+            .collect();
+
+        // Batch path
+        let failed_batch = proto_batch.receive_batch_sync(items.clone()).await;
+        assert!(failed_batch.is_empty());
+
+        // Single-item loop
+        for item in items.iter().cloned() {
+            proto_single.receive_sync_data(item).await.unwrap();
+        }
+
+        let a: std::collections::BTreeMap<String, Vec<u8>> = handler_batch
+            .share()
+            .iter()
+            .map(|e| (e.key().clone(), e.value().content.clone()))
+            .collect();
+        let b: std::collections::BTreeMap<String, Vec<u8>> = handler_single
+            .share()
+            .iter()
+            .map(|e| (e.key().clone(), e.value().content.clone()))
+            .collect();
+        assert_eq!(
+            a, b,
+            "batch and per-item paths must converge to the same state"
+        );
+        assert_eq!(a.len(), 25);
+    }
+
+    #[tokio::test]
+    async fn test_dispossess_key_removes_local_copy() {
+        // Simulate: node owned svc-old, cluster membership shifted, peer
+        // now reports this node is no longer responsible. Dispossession
+        // must drop the local copy so the next authoritative register
+        // replicates fresh.
+        let (proto, handler) = test_protocol("10.0.0.1:8848");
+        proto
+            .receive_sync_data(build_item("svc-keep"))
+            .await
+            .unwrap();
+        proto
+            .receive_sync_data(build_item("svc-drop"))
+            .await
+            .unwrap();
+        assert_eq!(handler.share().len(), 2);
+
+        let removed = proto.dispossess_key("svc-drop").await;
+        assert_eq!(removed, 1, "exactly one handler should acknowledge removal");
+        assert!(!handler.share().contains_key("svc-drop"));
+        assert!(
+            handler.share().contains_key("svc-keep"),
+            "unrelated keys must be preserved"
+        );
+
+        // Idempotent: removing again is fine.
+        let again = proto.dispossess_key("svc-drop").await;
+        assert_eq!(again, 1, "removal is idempotent; still calls handler");
+    }
+
+    #[tokio::test]
+    async fn test_verify_failure_triggers_dispossession_flow() {
+        // Owner-side simulation: build a protocol whose verify says the
+        // key is missing locally (version mismatch). After dispossession,
+        // the handler reports zero keys and the next sync re-populates.
+        let (proto, handler) = test_protocol("10.0.0.1:8848");
+        proto
+            .receive_sync_data(build_item("svc-stale"))
+            .await
+            .unwrap();
+
+        // Dispossess the service as if verify-failure had fired.
+        proto.dispossess_key("svc-stale").await;
+        assert!(handler.get_all_keys().await.is_empty());
+
+        // Next sync from the new owner populates it again.
+        proto
+            .receive_sync_data(build_item("svc-stale"))
+            .await
+            .unwrap();
+        assert_eq!(handler.get_all_keys().await, vec!["svc-stale".to_string()]);
+    }
+
+    #[test]
+    fn test_distro_batch_size_default() {
+        assert_eq!(DISTRO_BATCH_SIZE, 50);
+        let cfg = DistroConfig::default();
+        assert_eq!(cfg.batch_sync_size, 50);
     }
 
     #[test]

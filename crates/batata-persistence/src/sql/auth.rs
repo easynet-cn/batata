@@ -20,6 +20,7 @@ impl AuthPersistence for ExternalDbPersistService {
                 username: m.username,
                 password: m.password,
                 enabled: m.enabled,
+                source: m.source.unwrap_or_else(|| "local".to_string()),
             });
 
         Ok(user)
@@ -68,22 +69,25 @@ impl AuthPersistence for ExternalDbPersistService {
                 username: m.username,
                 password: m.password,
                 enabled: m.enabled,
+                source: m.source.unwrap_or_else(|| "local".to_string()),
             })
             .collect();
 
         Ok(Page::new(total_count, page_no, page_size, items))
     }
 
-    async fn user_create(
+    async fn user_create_with_source(
         &self,
         username: &str,
         password_hash: &str,
         _enabled: bool,
+        source: &str,
     ) -> anyhow::Result<()> {
         let entity = users::ActiveModel {
             username: Set(username.to_string()),
             password: Set(password_hash.to_string()),
             enabled: Set(true),
+            source: Set(Some(source.to_string())),
         };
 
         users::Entity::insert(entity).exec(&self.db).await?;

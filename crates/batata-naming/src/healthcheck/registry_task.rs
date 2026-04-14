@@ -91,6 +91,17 @@ impl RegistryCheckTask {
     pub fn check_key(&self) -> &str {
         &self.check_key
     }
+
+    /// Responsibility id for cluster gating. Uses the check's `ip:port` so
+    /// the same backend is always probed from the same node (matches how
+    /// `DistroMapper` hashes instance keys in the naming plane). Falls back
+    /// to the check_key itself when the config has been removed.
+    pub fn responsible_id(&self) -> String {
+        match self.registry.get_check_config(&self.check_key) {
+            Some(cfg) => format!("{}:{}", cfg.ip, cfg.port),
+            None => self.check_key.clone(),
+        }
+    }
 }
 
 /// Execute a TCP health check

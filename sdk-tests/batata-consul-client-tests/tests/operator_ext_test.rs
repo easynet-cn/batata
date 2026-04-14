@@ -25,9 +25,18 @@ async fn test_operator_segment_list() {
 #[tokio::test]
 async fn test_operator_utilization_smoke() {
     let client = common::create_client();
-    let _ = client
+    // Batata mirrors Consul OSS: utilization is Enterprise-only, so the
+    // endpoint must surface a 501 with a body containing "Enterprise" so
+    // that SDK callers can branch on the feature marker.
+    let result = client
         .operator_utilization(false, true, &common::w())
-        .await; // tolerate any outcome
+        .await;
+    let err = result.expect_err("utilization must error on OSS/Batata (Enterprise-only)");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("Enterprise"),
+        "error should mention Enterprise, got: {msg}",
+    );
 }
 
 #[tokio::test]

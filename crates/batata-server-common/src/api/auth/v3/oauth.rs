@@ -6,7 +6,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, web};
 use serde::{Deserialize, Serialize};
 
 use crate::api::auth::{
-    model::{AUTHORIZATION_HEADER, TOKEN_PREFIX},
+    model::{AUTHORIZATION_HEADER, NON_LOCAL_PASSWORD_SENTINEL, TOKEN_PREFIX, USER_SOURCE_OAUTH},
     service::auth::encode_jwt_token,
 };
 use crate::model::AppState;
@@ -196,23 +196,18 @@ pub async fn oauth_callback(
         }
     };
 
-    // Create user if not exists
+    // Create user if not exists. OAuth users authenticate via the external
+    // provider only — store an unmatchable sentinel as the password and tag
+    // the row with source = "oauth" so password login is rejected at the
+    // auth-plugin layer.
     if local_user.is_none() {
-        let placeholder_password = format!("OAUTH_{}", uuid::Uuid::new_v4());
-        let hashed_password = match bcrypt::hash(&placeholder_password, 10u32) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::error!("Failed to hash placeholder password: {}", e);
-                return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "code": 500,
-                    "message": "Failed to create OAuth user",
-                    "data": null
-                }));
-            }
-        };
-
         if let Err(e) = persistence
-            .user_create(&username, &hashed_password, true)
+            .user_create_with_source(
+                &username,
+                NON_LOCAL_PASSWORD_SENTINEL,
+                true,
+                USER_SOURCE_OAUTH,
+            )
             .await
         {
             tracing::error!("Failed to create OAuth user '{}': {}", username, e);

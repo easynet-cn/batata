@@ -29,7 +29,6 @@ use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTableIndex};
 use crate::kv::ConsulKVService;
-use crate::lock::{ConsulLockService, ConsulSemaphoreService};
 use crate::model::{ConsulDatacenterConfig, ConsulPluginConfig};
 use crate::naming_store::ConsulNamingStore;
 use crate::peering::ConsulPeeringService;
@@ -99,8 +98,6 @@ pub struct ConsulPluginInner {
     pub session: ConsulSessionService,
     pub event: ConsulEventService,
     pub query: ConsulQueryService,
-    pub lock: ConsulLockService,
-    pub semaphore: ConsulSemaphoreService,
     pub peering: Arc<ConsulPeeringService>,
     pub config_entry: ConsulConfigEntryService,
     pub connect: ConsulConnectService,
@@ -119,6 +116,12 @@ pub struct ConsulPluginInner {
     /// Used to provide cluster-aware responses for agent/members, status/leader,
     /// operator/raft, and internal/ui/nodes endpoints.
     pub cluster_manager: Option<Arc<dyn batata_common::ClusterManager>>,
+    /// DistroProtocol for cluster-mode responsibility gating of the Consul
+    /// health check reactor. `None` in standalone mode. When present,
+    /// `start_background_tasks` swaps the reactor's interceptor chain from
+    /// standalone to cluster so only the node responsible for a given
+    /// instance actually probes it.
+    pub distro_protocol: Option<Arc<batata_core::service::distro::DistroProtocol>>,
 }
 
 /// Consul compatibility protocol adapter plugin.
@@ -172,10 +175,6 @@ impl ConsulPlugin {
         let index_provider = ConsulIndexProvider::new();
         let session = ConsulSessionService::new().with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::new();
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
         ConsulPluginInner {
@@ -205,8 +204,6 @@ impl ConsulPlugin {
             },
             session,
             query: ConsulQueryService::new(),
-            lock,
-            semaphore,
             peering: Arc::new(ConsulPeeringService::new()),
             config_entry: ConsulConfigEntryService::new(),
             connect: ConsulConnectService::new(),
@@ -218,6 +215,7 @@ impl ConsulPlugin {
             registry,
             raft_writer: None,
             cluster_manager: None,
+            distro_protocol: None,
         }
     }
 
@@ -234,10 +232,6 @@ impl ConsulPlugin {
         let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone())
             .with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::with_raft(db.clone(), consul_raft.clone());
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
         // Restore persisted health check configs from RocksDB
@@ -285,8 +279,6 @@ impl ConsulPlugin {
             session,
             event: ConsulEventService::new(index_provider.clone()),
             query: ConsulQueryService::with_raft(db.clone(), consul_raft.clone()),
-            lock,
-            semaphore,
             peering: Arc::new(ConsulPeeringService::with_raft(
                 db.clone(),
                 consul_raft.clone(),
@@ -312,6 +304,7 @@ impl ConsulPlugin {
             registry,
             raft_writer: Some(consul_raft),
             cluster_manager: None, // Set later via set_cluster_manager()
+            distro_protocol: None, // Set later in ConsulPlugin::init() from PluginContext
         }
     }
 
@@ -515,6 +508,17 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             inner.cluster_manager = Some(cm);
         }
 
+        // Pick up the DistroProtocol so `start_background_tasks` can gate the
+        // health check reactor to the responsible node in cluster mode. We
+        // thread this via `ConsulPluginInner` rather than constructing the
+        // chain here because the reactor itself is created later inside
+        // `start_background_tasks`.
+        if let Some(distro) =
+            ctx.get::<batata_core::service::distro::DistroProtocol>("distro_protocol")
+        {
+            inner.distro_protocol = Some(distro.clone());
+        }
+
         // Wire ConsulResultHandler to session/kv/check_index for:
         // - on_deregister: check_id → service_id → store_key chain
         // - on_check_critical: session invalidation + KV lock release
@@ -561,8 +565,6 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.session.clone()))
             .app_data(actix_web::web::Data::new(inner.event.clone()))
             .app_data(actix_web::web::Data::new(inner.query.clone()))
-            .app_data(actix_web::web::Data::new(inner.lock.clone()))
-            .app_data(actix_web::web::Data::new(inner.semaphore.clone()))
             .app_data(actix_web::web::Data::from(inner.peering.clone()))
             .app_data(actix_web::web::Data::new(inner.config_entry.clone()))
             .app_data(actix_web::web::Data::new(inner.connect.clone()))
@@ -664,10 +666,33 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // with HTTP/TCP/gRPC type, the reactor periodically executes them.
         {
             let naming_service = Arc::new(batata_naming::NamingService::new());
-            let config = Arc::new(batata_naming::healthcheck::HealthCheckConfig::default());
-            let reactor =
-                batata_naming::healthcheck::HealthCheckReactor::new(naming_service, config);
+            let hc_config = Arc::new(batata_naming::healthcheck::HealthCheckConfig::default());
+            let reactor = batata_naming::healthcheck::HealthCheckReactor::new(
+                naming_service,
+                hc_config.clone(),
+            );
             reactor.set_registry(inner.registry.clone());
+
+            // Cluster-mode responsibility gate: when running in a cluster,
+            // swap the standalone interceptor chain for a cluster chain so
+            // the reactor only probes checks whose `ip:port` hashes to this
+            // node via DistroMapper. Without this, every cluster node runs
+            // the Raft-replicated check registry independently and probes
+            // every check N times.
+            if let Some(ref distro) = inner.distro_protocol {
+                let cluster_chain = Arc::new(
+                    batata_naming::healthcheck::interceptor::HealthCheckInterceptorChain::cluster(
+                        hc_config,
+                        distro.mapper().clone(),
+                        distro.local_address().to_string(),
+                    ),
+                );
+                reactor.set_interceptor_chain(cluster_chain);
+                tracing::info!(
+                    "Consul reactor switched to cluster interceptor chain (local={})",
+                    distro.local_address()
+                );
+            }
 
             // Wire the check scheduler so new active check registrations are auto-scheduled
             let reactor_ref = Arc::new(reactor);

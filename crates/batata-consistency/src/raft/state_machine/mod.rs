@@ -475,7 +475,8 @@ impl RocksStateMachine {
                 username,
                 password_hash,
                 enabled,
-            } => self.apply_user_create(&username, &password_hash, enabled),
+                source,
+            } => self.apply_user_create(&username, &password_hash, enabled, &source),
 
             RaftRequest::UserUpdate {
                 username,
@@ -839,6 +840,7 @@ impl RocksStateMachine {
         username: &str,
         password_hash: &str,
         enabled: bool,
+        source: &str,
     ) -> RaftResponse {
         let key = Self::user_key(username);
         let now = chrono::Utc::now().timestamp_millis();
@@ -848,6 +850,7 @@ impl RocksStateMachine {
             enabled,
             created_time: now,
             modified_time: now,
+            source: source.to_string(),
         };
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,

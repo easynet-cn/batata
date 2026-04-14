@@ -14,8 +14,9 @@ use tonic::Status;
 use crate::{
     api::{
         distro::{
-            DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
-            DistroDataSyncResponse, DistroDataVerifyRequest, DistroDataVerifyResponse,
+            DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataSnapshotRequest,
+            DistroDataSnapshotResponse, DistroDataSyncRequest, DistroDataSyncResponse,
+            DistroDataVerifyRequest, DistroDataVerifyResponse,
         },
         grpc::Payload,
         remote::model::{RequestTrait, ResponseTrait},
@@ -70,6 +71,64 @@ impl PayloadHandler for DistroDataSyncHandler {
 
     fn can_handle(&self) -> &'static str {
         "DistroDataSyncRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
+    }
+}
+
+/// Handler for DistroDataBatchSyncRequest - receives batched sync data from peers.
+///
+/// Applies each item the same way `DistroDataSyncHandler` applies a single item,
+/// then returns a per-item failure list. Idempotent — re-applying the same item
+/// is safe because each handler's `process_sync_data` is itself idempotent.
+#[derive(Clone)]
+pub struct DistroDataBatchSyncHandler {
+    pub distro_protocol: Arc<DistroProtocol>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for DistroDataBatchSyncHandler {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let request = DistroDataBatchSyncRequest::from(payload);
+        let request_id = request.request_id();
+
+        let datas: Vec<DistroData> = request
+            .items
+            .into_iter()
+            .map(|item| {
+                let data_type = match item.data_type {
+                    crate::api::distro::DistroDataType::NamingInstance => {
+                        DistroDataType::NamingInstance
+                    }
+                    crate::api::distro::DistroDataType::Custom => {
+                        let type_name = item
+                            .custom_type_name
+                            .clone()
+                            .unwrap_or_else(|| "CUSTOM".to_string());
+                        DistroDataType::Custom(type_name)
+                    }
+                };
+                DistroData {
+                    data_type,
+                    key: item.key,
+                    content: item.content.into_bytes(),
+                    version: item.version,
+                    source: item.source,
+                }
+            })
+            .collect();
+
+        let failed_keys = self.distro_protocol.receive_batch_sync(datas).await;
+
+        let mut response = DistroDataBatchSyncResponse::success(failed_keys);
+        response.request_id(request_id);
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "DistroDataBatchSyncRequest"
     }
 
     fn auth_requirement(&self) -> AuthRequirement {

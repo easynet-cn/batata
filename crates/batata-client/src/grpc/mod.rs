@@ -105,6 +105,12 @@ pub struct GrpcClientConfig {
     pub health_check_max_failures: u32,
     /// Health check interval in seconds. Default: 5.
     pub health_check_interval_secs: u64,
+    /// Base delay between failover connection attempts (ms). Default: 500.
+    pub reconnect_backoff_base_ms: u64,
+    /// Maximum delay between failover connection attempts (ms). Default: 5000.
+    pub reconnect_backoff_max_ms: u64,
+    /// Random jitter added to each failover delay (ms). Default: 250.
+    pub reconnect_backoff_jitter_ms: u64,
 }
 
 impl GrpcClientConfig {
@@ -146,6 +152,9 @@ impl Default for GrpcClientConfig {
             connection_setup_delay_ms: 100,
             health_check_max_failures: 3,
             health_check_interval_secs: 5,
+            reconnect_backoff_base_ms: 500,
+            reconnect_backoff_max_ms: 5_000,
+            reconnect_backoff_jitter_ms: 250,
         }
     }
 }
@@ -181,7 +190,7 @@ pub struct GrpcClient {
     connection: Arc<RwLock<Option<GrpcConnection>>>,
     auth_provider: AuthProvider,
     push_handlers: Arc<DashMap<String, Box<dyn ServerPushHandler>>>,
-    current_server_index: std::sync::atomic::AtomicUsize,
+    current_server_index: Arc<std::sync::atomic::AtomicUsize>,
     /// Connection state (lock-free query)
     state: Arc<std::sync::atomic::AtomicU8>,
     /// Shutdown signal for background tasks
@@ -239,7 +248,7 @@ impl GrpcClient {
             connection: Arc::new(RwLock::new(None)),
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
-            current_server_index: std::sync::atomic::AtomicUsize::new(0),
+            current_server_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             state: Arc::new(std::sync::atomic::AtomicU8::new(
                 ConnectionState::Starting as u8,
             )),
@@ -280,7 +289,7 @@ impl GrpcClient {
             connection: Arc::new(RwLock::new(None)),
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
-            current_server_index: std::sync::atomic::AtomicUsize::new(0),
+            current_server_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             state: Arc::new(std::sync::atomic::AtomicU8::new(
                 ConnectionState::Starting as u8,
             )),
@@ -293,27 +302,27 @@ impl GrpcClient {
     }
 
     /// Connect to the server. Must be called before making requests.
+    ///
+    /// Tries every server in `server_addrs` in order, starting from the
+    /// current index, with bounded exponential backoff between attempts.
+    /// Once a server accepts the connection we stay on that index — sticky
+    /// session, no rotation mid-session — until disconnection.
     pub async fn connect(&self) -> Result<()> {
         // Authenticate first if needed
         let token = self.auth_provider.get_token().await?;
 
-        let server_addr = self.current_server_addr();
-
-        let (conn, push_rx) = GrpcConnection::connect(
-            &server_addr,
-            &self.config.module,
-            self.config.labels.clone(),
-            &self.config.tenant,
-            token.as_deref(),
-            self.config.push_channel_capacity,
-        )
-        .await?;
+        let start_index = self.current_server_index();
+        let (conn, push_rx, connected_index, server_addr) =
+            Self::connect_with_failover(&self.config, start_index, token.as_deref()).await?;
 
         info!(
             "Connected to server {}, connection_id={}",
             server_addr,
             conn.connection_id()
         );
+
+        self.current_server_index
+            .store(connected_index, std::sync::atomic::Ordering::Relaxed);
 
         let mut guard = self.connection.write().await;
         *guard = Some(conn);
@@ -548,17 +557,65 @@ impl GrpcClient {
         }
     }
 
-    /// Get the current server address.
-    fn current_server_addr(&self) -> String {
+    /// Get the address of the server we're currently connected to (or
+    /// targeting, if a reconnect is in progress).
+    ///
+    /// Useful for tests and observability — lets callers learn which node in a
+    /// multi-server deployment a client is talking to. Wraps the index modulo
+    /// the configured server list length.
+    pub fn current_server_addr(&self) -> String {
         let index = self
             .current_server_index
             .load(std::sync::atomic::Ordering::Relaxed);
         self.config.server_addrs[index % self.config.server_addrs.len()].clone()
     }
 
+    /// Get the current server index (modulo server list length).
+    pub fn current_server_index(&self) -> usize {
+        let index = self
+            .current_server_index
+            .load(std::sync::atomic::Ordering::Relaxed);
+        index % self.config.server_addrs.len()
+    }
+
     /// Signal the reconnection loop to attempt a reconnect.
     pub fn signal_reconnect(&self) {
         self.reconnect_notify.notify_one();
+    }
+
+    /// Try to connect to each server in `config.server_addrs`, starting from
+    /// `start_index` and wrapping around. Returns the established connection,
+    /// push receiver, the absolute index of the server that accepted, and its
+    /// address. Fails if every server in the list rejected within one full
+    /// pass.
+    ///
+    /// Backoff: between failed attempts we sleep for
+    /// `min(base * 2^attempt, max) + random(0..jitter)` ms.
+    async fn connect_with_failover(
+        config: &GrpcClientConfig,
+        start_index: usize,
+        token: Option<&str>,
+    ) -> Result<(GrpcConnection, mpsc::Receiver<Payload>, usize, String)> {
+        try_failover(config, start_index, |addr| {
+            let module = config.module.clone();
+            let labels = config.labels.clone();
+            let tenant = config.tenant.clone();
+            let push_capacity = config.push_channel_capacity;
+            let token = token.map(|s| s.to_string());
+            let addr = addr.to_string();
+            async move {
+                GrpcConnection::connect(
+                    &addr,
+                    &module,
+                    labels,
+                    &tenant,
+                    token.as_deref(),
+                    push_capacity,
+                )
+                .await
+            }
+        })
+        .await
     }
 
     /// Start the background health check and auto-reconnection loop.
@@ -578,12 +635,9 @@ impl GrpcClient {
         let metrics = self.metrics.clone();
 
         // Clone what we need for reconnection
-        let server_addrs = self.config.server_addrs.clone();
-        let module = self.config.module.clone();
-        let labels = self.config.labels.clone();
-        let tenant = self.config.tenant.clone();
+        let config = self.config.clone();
         let push_handlers = self.push_handlers.clone();
-        let push_channel_capacity = self.config.push_channel_capacity;
+        let current_server_index = self.current_server_index.clone();
 
         tokio::spawn(async move {
             let interval = health_checker.interval();
@@ -699,25 +753,25 @@ impl GrpcClient {
                         *guard = None;
                     }
 
-                    // Try to reconnect
+                    // Try to reconnect with failover across all configured servers.
+                    // Advance the index from the last-known position so we cycle
+                    // through nodes (Nacos round-robin failover semantics).
                     // Note: we don't have auth_provider here, so pass None for token
-                    // The auth will be re-established on the next request
-                    let result = GrpcConnection::connect(
-                        &server_addrs[0], // TODO: cycle through servers
-                        &module,
-                        labels.clone(),
-                        &tenant,
-                        None, // Token will be injected on next request
-                        push_channel_capacity,
-                    )
-                    .await;
+                    // The auth will be re-established on the next request.
+                    let next_index =
+                        (current_server_index.load(std::sync::atomic::Ordering::Relaxed) + 1)
+                            % config.server_addrs.len().max(1);
+                    let result = Self::connect_with_failover(&config, next_index, None).await;
 
                     match result {
-                        Ok((conn, push_rx)) => {
+                        Ok((conn, push_rx, connected_index, server_addr)) => {
                             info!(
-                                "Reconnected to server, connection_id={}",
+                                "Reconnected to server {}, connection_id={}",
+                                server_addr,
                                 conn.connection_id()
                             );
+                            current_server_index
+                                .store(connected_index, std::sync::atomic::Ordering::Relaxed);
 
                             {
                                 let mut guard = connection.write().await;
@@ -853,6 +907,68 @@ impl GrpcClient {
             }
         });
     }
+}
+
+/// Generic failover loop shared by initial connect and reconnect.
+///
+/// Iterates through `config.server_addrs` starting from `start_index`,
+/// invoking `attempt(addr)` for each. Returns on the first success, mapping
+/// it to `(value, absolute_index, address)`. Between failures we sleep
+/// `min(base * 2^retry, max) + random(0..jitter)` ms. After a full pass
+/// without success, returns the last error (wrapped in `ClientError::Other`
+/// if no specific error was produced).
+async fn try_failover<F, Fut, T>(
+    config: &GrpcClientConfig,
+    start_index: usize,
+    mut attempt: F,
+) -> Result<(T, mpsc::Receiver<Payload>, usize, String)>
+where
+    F: FnMut(&str) -> Fut,
+    Fut: std::future::Future<Output = Result<(T, mpsc::Receiver<Payload>)>>,
+{
+    let n = config.server_addrs.len();
+    if n == 0 {
+        return Err(ClientError::Other(anyhow::anyhow!(
+            "no server addresses configured"
+        )));
+    }
+
+    let mut last_err: Option<ClientError> = None;
+    for offset in 0..n {
+        let idx = (start_index + offset) % n;
+        let addr = config.server_addrs[idx].clone();
+        match attempt(&addr).await {
+            Ok((value, push_rx)) => return Ok((value, push_rx, idx, addr)),
+            Err(e) => {
+                warn!("Failover: connection to {} failed: {}", addr, e);
+                last_err = Some(e);
+                // Apply backoff before trying the next server (skip last attempt).
+                if offset + 1 < n {
+                    let delay = compute_backoff_ms(config, offset as u32);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        ClientError::Other(anyhow::anyhow!("all servers failed and no error captured"))
+    }))
+}
+
+/// Compute the backoff delay in milliseconds for the given retry attempt.
+fn compute_backoff_ms(config: &GrpcClientConfig, attempt: u32) -> u64 {
+    let base = config.reconnect_backoff_base_ms;
+    let max = config.reconnect_backoff_max_ms.max(base);
+    // Saturating shift to avoid overflow on large attempt numbers.
+    let exp = base.saturating_mul(1u64.checked_shl(attempt).unwrap_or(u64::MAX));
+    let capped = exp.min(max);
+    let jitter = if config.reconnect_backoff_jitter_ms == 0 {
+        0
+    } else {
+        rand::random::<u64>() % config.reconnect_backoff_jitter_ms
+    };
+    capped + jitter
 }
 
 #[cfg(test)]
@@ -1045,5 +1161,180 @@ mod tests {
 
         let resp: ServerCheckResponse = deserialize_payload(&payload);
         assert_eq!(resp.connection_id, "test-conn-id");
+    }
+
+    // ---- Failover tests ----
+    //
+    // These tests exercise `try_failover` (the generic helper used by both
+    // initial connect and reconnect) with synthetic attempt closures, so we
+    // can assert routing behavior without standing up a real gRPC server.
+
+    fn test_config(addrs: Vec<&str>) -> GrpcClientConfig {
+        GrpcClientConfig {
+            server_addrs: addrs.into_iter().map(String::from).collect(),
+            // Make the test fast — no jitter, tiny base delay.
+            reconnect_backoff_base_ms: 1,
+            reconnect_backoff_max_ms: 1,
+            reconnect_backoff_jitter_ms: 0,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failover_skips_failing_server() {
+        let config = test_config(vec!["bad:8848", "good:8848"]);
+        let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let attempts_cl = attempts.clone();
+
+        let result = try_failover(&config, 0, |addr| {
+            let attempts = attempts_cl.clone();
+            let addr_owned = addr.to_string();
+            async move {
+                attempts.lock().unwrap().push(addr_owned.clone());
+                if addr_owned.starts_with("bad") {
+                    Err(ClientError::NotConnected)
+                } else {
+                    let (_tx, rx) = mpsc::channel::<Payload>(1);
+                    Ok(((), rx))
+                }
+            }
+        })
+        .await;
+
+        let (_, _, idx, addr) = result.expect("failover should succeed on second server");
+        assert_eq!(idx, 1, "should have settled on index 1");
+        assert_eq!(addr, "good:8848");
+        let attempts = attempts.lock().unwrap();
+        assert_eq!(attempts.len(), 2, "should have tried both servers");
+        assert_eq!(attempts[0], "bad:8848");
+        assert_eq!(attempts[1], "good:8848");
+    }
+
+    #[tokio::test]
+    async fn test_failover_all_fail_returns_error_bounded() {
+        let config = test_config(vec!["a:8848", "b:8848", "c:8848"]);
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_cl = attempts.clone();
+
+        let result: Result<((), _, _, _)> = try_failover(&config, 0, |_addr| {
+            let attempts = attempts_cl.clone();
+            async move {
+                attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Err(ClientError::NotConnected)
+            }
+        })
+        .await;
+
+        assert!(result.is_err(), "all-failures must return an error");
+        // Must attempt each address exactly once — no infinite loop.
+        assert_eq!(
+            attempts.load(std::sync::atomic::Ordering::Relaxed),
+            3,
+            "should try each server exactly once per pass"
+        );
+        match result.unwrap_err() {
+            ClientError::NotConnected => {}
+            other => panic!("expected last NotConnected error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failover_index_wraps() {
+        // Start at index 1, addrs[1] fails, addrs[0] should be tried next via wrap-around.
+        let config = test_config(vec!["good:8848", "bad:8848"]);
+        let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let attempts_cl = attempts.clone();
+
+        let result = try_failover(&config, 1, |addr| {
+            let attempts = attempts_cl.clone();
+            let addr_owned = addr.to_string();
+            async move {
+                attempts.lock().unwrap().push(addr_owned.clone());
+                if addr_owned.starts_with("bad") {
+                    Err(ClientError::NotConnected)
+                } else {
+                    let (_tx, rx) = mpsc::channel::<Payload>(1);
+                    Ok(((), rx))
+                }
+            }
+        })
+        .await;
+
+        let (_, _, idx, addr) = result.expect("wrap-around should succeed");
+        assert_eq!(idx, 0, "should wrap around to index 0");
+        assert_eq!(addr, "good:8848");
+        let attempts = attempts.lock().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0], "bad:8848", "first attempt is start_index=1");
+        assert_eq!(attempts[1], "good:8848", "second attempt wraps to 0");
+    }
+
+    #[tokio::test]
+    async fn test_failover_empty_server_list() {
+        let config = test_config(vec![]);
+        let result: Result<((), _, _, _)> =
+            try_failover(&config, 0, |_| async { Err(ClientError::NotConnected) }).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compute_backoff_caps_at_max() {
+        let config = GrpcClientConfig {
+            reconnect_backoff_base_ms: 100,
+            reconnect_backoff_max_ms: 1000,
+            reconnect_backoff_jitter_ms: 0,
+            ..Default::default()
+        };
+        assert_eq!(compute_backoff_ms(&config, 0), 100);
+        assert_eq!(compute_backoff_ms(&config, 1), 200);
+        assert_eq!(compute_backoff_ms(&config, 2), 400);
+        assert_eq!(compute_backoff_ms(&config, 3), 800);
+        // capped
+        assert_eq!(compute_backoff_ms(&config, 4), 1000);
+        assert_eq!(compute_backoff_ms(&config, 50), 1000);
+    }
+
+    #[test]
+    fn test_compute_backoff_with_jitter() {
+        let config = GrpcClientConfig {
+            reconnect_backoff_base_ms: 100,
+            reconnect_backoff_max_ms: 100,
+            reconnect_backoff_jitter_ms: 50,
+            ..Default::default()
+        };
+        for _ in 0..32 {
+            let d = compute_backoff_ms(&config, 0);
+            assert!(d >= 100, "delay must be at least base ({})", d);
+            assert!(d < 150, "delay must be less than base + jitter ({})", d);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failover_succeeds_with_real_listener() {
+        // Bind a TCP listener to an ephemeral port. We don't speak gRPC over
+        // it — the failover helper just runs the closure we give it. This
+        // proves the helper integrates with real-port resolution patterns.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let good = format!("127.0.0.1:{}", port);
+        let config = test_config(vec!["127.0.0.1:1", &good]);
+
+        let result = try_failover(&config, 0, |addr| {
+            let addr_owned = addr.to_string();
+            async move {
+                if addr_owned == "127.0.0.1:1" {
+                    Err(ClientError::NotConnected)
+                } else {
+                    let (_tx, rx) = mpsc::channel::<Payload>(1);
+                    Ok(((), rx))
+                }
+            }
+        })
+        .await;
+
+        let (_, _, idx, addr) = result.expect("must succeed on the listener address");
+        assert_eq!(idx, 1);
+        assert_eq!(addr, good);
+        drop(listener);
     }
 }

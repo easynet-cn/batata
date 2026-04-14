@@ -9,7 +9,9 @@
 
 pub mod cmdb;
 pub mod control;
+pub mod encryption;
 pub mod spi;
+pub mod trace;
 pub mod webhook;
 
 pub use control::{
@@ -27,6 +29,15 @@ pub use webhook::{
 pub use cmdb::{
     CmdbConfig, CmdbEntity, CmdbEntityType, CmdbLabel, CmdbPlugin, CmdbSyncResult,
     DefaultCmdbPlugin, LabelMapping,
+};
+
+pub use trace::{
+    LoggingTraceSubscriber, TraceEvent, TraceEventKind, TraceSubscriber, TraceSubscriberRegistry,
+    global_trace_registry,
+};
+
+pub use encryption::{
+    EncryptionPlugin, EncryptionPluginRegistry, NoopEncryptionPlugin, global_encryption_registry,
 };
 
 /// Plugin trait (re-exported from batata-common)

@@ -693,16 +693,18 @@ impl AuthPersistence for DistributedPersistService {
         Ok(Page::new(total, page_no, page_size, page_items))
     }
 
-    async fn user_create(
+    async fn user_create_with_source(
         &self,
         username: &str,
         password_hash: &str,
         enabled: bool,
+        source: &str,
     ) -> anyhow::Result<()> {
         let request = RaftRequest::UserCreate {
             username: username.to_string(),
             password_hash: password_hash.to_string(),
             enabled,
+            source: source.to_string(),
         };
         self.raft_write(request).await
     }

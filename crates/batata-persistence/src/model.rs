@@ -11,6 +11,13 @@ pub struct UserInfo {
     pub username: String,
     pub password: String,
     pub enabled: bool,
+    /// Identity source: "local" (default), "oauth", or "ldap".
+    #[serde(default = "default_user_source")]
+    pub source: String,
+}
+
+fn default_user_source() -> String {
+    "local".to_string()
 }
 
 /// Role assignment information
@@ -398,6 +405,7 @@ mod tests {
             username: "admin".to_string(),
             password: "hashed".to_string(),
             enabled: true,
+            source: "local".to_string(),
         };
         assert_eq!(user.username, "admin");
         assert!(user.enabled);
@@ -409,6 +417,7 @@ mod tests {
             username: "test".to_string(),
             password: "pass".to_string(),
             enabled: false,
+            source: "local".to_string(),
         };
         let json = serde_json::to_string(&user).unwrap();
         assert!(json.contains("\"username\":\"test\""));

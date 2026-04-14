@@ -238,3 +238,124 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batata_core::service::distro::{DistroData, DistroDataType};
+
+    fn build_sync_data(namespace: &str, group: &str, service: &str, ip: &str) -> DistroData {
+        let content = DistroInstanceData {
+            namespace: namespace.to_string(),
+            group_name: group.to_string(),
+            service_name: service.to_string(),
+            instances: vec![DistroInstance {
+                instance_id: format!("{}-{}", service, ip),
+                ip: ip.to_string(),
+                port: 8080,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                metadata: std::collections::HashMap::new(),
+            }],
+        };
+        DistroData {
+            data_type: DistroDataType::NamingInstance,
+            key: format!("{}@@{}@@{}", namespace, group, service),
+            content: serde_json::to_vec(&content).unwrap(),
+            version: 1,
+            source: "10.0.0.2:8848".to_string(),
+        }
+    }
+
+    /// Gap A — after dispossession via `remove_data`, the service's
+    /// remote-synced ephemeral instances must be gone from the naming store.
+    #[tokio::test]
+    async fn test_dispossession_via_remove_data() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+
+        // Simulate: we received a sync for svc-foo from another node.
+        let data = build_sync_data("public", "DEFAULT_GROUP", "svc-foo", "192.168.1.1");
+        handler.process_sync_data(data).await.unwrap();
+
+        let key = "public@@DEFAULT_GROUP@@svc-foo";
+        let before = naming.get_instances_snapshot("public", "DEFAULT_GROUP", "svc-foo", "", false);
+        assert_eq!(before.len(), 1, "sync must have populated one instance");
+        assert_eq!(before[0].ip, "192.168.1.1");
+
+        // Peer verify-failure / membership change: dispossess.
+        handler.remove_data(key).await.unwrap();
+
+        let after = naming.get_instances_snapshot("public", "DEFAULT_GROUP", "svc-foo", "", false);
+        assert!(
+            after.is_empty(),
+            "dispossession must drop remote ephemeral instances; found {:?}",
+            after.iter().map(|i| i.ip.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Gap B — a 50-item batch (one item per service) must populate all 50
+    /// services when applied through the handler's `process_sync_data`.
+    #[tokio::test]
+    async fn test_batch_of_50_items_all_applied() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+
+        const N: usize = 50;
+        for i in 0..N {
+            let service = format!("svc-{:02}", i);
+            let ip = format!("192.168.1.{}", i + 1);
+            let data = build_sync_data("public", "DEFAULT_GROUP", &service, &ip);
+            handler
+                .process_sync_data(data)
+                .await
+                .expect("each item must apply");
+        }
+
+        let keys = handler.get_all_keys().await;
+        assert_eq!(keys.len(), N, "all {} services must be present", N);
+
+        for i in 0..N {
+            let service = format!("svc-{:02}", i);
+            let instances =
+                naming.get_instances_snapshot("public", "DEFAULT_GROUP", &service, "", false);
+            assert_eq!(
+                instances.len(),
+                1,
+                "service {} must have one instance",
+                service
+            );
+            assert_eq!(instances[0].ip, format!("192.168.1.{}", i + 1));
+            assert!(instances[0].ephemeral);
+            assert_eq!(instances[0].cluster_name, "DEFAULT");
+        }
+    }
+
+    /// Verify-failure flow end-to-end on the naming layer: dispossess drops
+    /// previously-synced data, then a fresh sync repopulates cleanly.
+    #[tokio::test]
+    async fn test_dispossess_then_resync_is_clean() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+
+        let d1 = build_sync_data("public", "DEFAULT_GROUP", "svc-x", "10.1.1.1");
+        handler.process_sync_data(d1).await.unwrap();
+
+        let key = "public@@DEFAULT_GROUP@@svc-x";
+        handler.remove_data(key).await.unwrap();
+        assert!(
+            naming
+                .get_instances_snapshot("public", "DEFAULT_GROUP", "svc-x", "", false)
+                .is_empty()
+        );
+
+        let d2 = build_sync_data("public", "DEFAULT_GROUP", "svc-x", "10.1.1.2");
+        handler.process_sync_data(d2).await.unwrap();
+        let after = naming.get_instances_snapshot("public", "DEFAULT_GROUP", "svc-x", "", false);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].ip, "10.1.1.2", "re-sync must populate the new IP");
+    }
+}

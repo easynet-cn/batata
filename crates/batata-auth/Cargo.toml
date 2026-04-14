@@ -54,3 +54,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+batata-consistency = { workspace = true }
+tempfile = { workspace = true }

@@ -87,6 +87,21 @@ impl ConfigEncryptionService {
         }
     }
 
+    /// Build the service around an already-constructed encryption plugin.
+    /// Used by the plugin-registry codepath where the backend is resolved
+    /// by algorithm name at startup rather than hardcoded.
+    pub fn from_plugin(
+        plugin: Arc<dyn EncryptionPlugin>,
+        patterns: Vec<EncryptionPattern>,
+    ) -> Self {
+        Self { plugin, patterns }
+    }
+
+    /// Return the backing plugin's algorithm name (e.g. `"aes-gcm"`, `"none"`).
+    pub fn plugin_name(&self) -> &str {
+        self.plugin.name()
+    }
+
     /// Check if encryption is enabled
     pub fn is_enabled(&self) -> bool {
         self.plugin.is_enabled()
@@ -387,6 +402,22 @@ mod tests {
         assert!(service.should_encrypt("cipher-secret-key"));
         assert!(!service.should_encrypt("normal-config"));
         assert!(!service.should_encrypt("password")); // doesn't have prefix
+    }
+
+    #[tokio::test]
+    async fn test_from_plugin_uses_registered_backend() {
+        let noop = Arc::new(batata_plugin::NoopEncryptionPlugin::new());
+        let service = ConfigEncryptionService::from_plugin(
+            noop,
+            vec![EncryptionPattern::Prefix("cipher-".to_string())],
+        );
+        assert_eq!(service.plugin_name(), "none");
+        assert!(!service.is_enabled());
+
+        // Matches pattern but plugin is disabled → content returned as-is.
+        let (content, key) = service.encrypt_if_needed("cipher-x", "secret").await;
+        assert_eq!(content, "secret");
+        assert!(key.is_empty());
     }
 
     #[test]

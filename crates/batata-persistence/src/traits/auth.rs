@@ -23,12 +23,34 @@ pub trait AuthPersistence: Send + Sync {
         accurate: bool,
     ) -> anyhow::Result<Page<UserInfo>>;
 
-    /// Create a new user
+    /// Create a new user (defaults to source = "local").
+    ///
+    /// Implemented as a convenience wrapper that delegates to
+    /// [`user_create_with_source`] using `"local"` as the source. Callers
+    /// provisioning users from external identity providers (OAuth, LDAP)
+    /// MUST use `user_create_with_source` directly so the source is
+    /// recorded correctly.
     async fn user_create(
         &self,
         username: &str,
         password_hash: &str,
         enabled: bool,
+    ) -> anyhow::Result<()> {
+        self.user_create_with_source(username, password_hash, enabled, "local")
+            .await
+    }
+
+    /// Create a new user with an explicit identity source.
+    ///
+    /// `source` is one of `"local"`, `"oauth"`, or `"ldap"`. Non-local
+    /// users should pass a sentinel as `password_hash` so password login
+    /// is impossible.
+    async fn user_create_with_source(
+        &self,
+        username: &str,
+        password_hash: &str,
+        enabled: bool,
+        source: &str,
     ) -> anyhow::Result<()>;
 
     /// Update user password

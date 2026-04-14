@@ -55,11 +55,56 @@ pub const USER_NOT_FOUND_MESSAGE: &str =
     "User not found! Please check user exist or password is right!";
 pub const ONLY_IDENTITY: &str = "only_identity";
 
+// ============================================================================
+// User source markers
+// ============================================================================
+//
+// Aligned with Nacos: a user account may originate from different identity
+// providers. Local-source users authenticate via password; OAuth/LDAP users
+// authenticate via their respective providers and password login is rejected.
+
+/// Built-in account whose password lives in the database.
+pub const USER_SOURCE_LOCAL: &str = "local";
+/// User auto-provisioned during an OAuth2/OIDC login.
+pub const USER_SOURCE_OAUTH: &str = "oauth";
+/// User auto-provisioned during an LDAP login.
+pub const USER_SOURCE_LDAP: &str = "ldap";
+
+/// Sentinel stored in the `password` column for non-local users. The leading
+/// `!` makes it impossible for `bcrypt::verify` to ever match (bcrypt hashes
+/// always start with `$2`), giving us a guaranteed unmatchable password hash
+/// without resorting to NULL columns or random bcrypt of a UUID.
+pub const NON_LOCAL_PASSWORD_SENTINEL: &str = "!non-local-user!";
+
+/// Resolve a possibly missing source string to a canonical value.
+///
+/// Existing rows from older schemas may have NULL/empty `source`; treat those
+/// as `local` for backwards compatibility.
+pub fn normalize_user_source(source: Option<&str>) -> String {
+    match source {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => USER_SOURCE_LOCAL.to_string(),
+    }
+}
+
+/// Returns true when the given source allows password-based login.
+pub fn source_allows_password_login(source: &str) -> bool {
+    source == USER_SOURCE_LOCAL
+}
+
 /// Basic user information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub username: String,
     pub password: String,
+    /// Identity provider that owns this account: one of
+    /// [`USER_SOURCE_LOCAL`], [`USER_SOURCE_OAUTH`], [`USER_SOURCE_LDAP`].
+    #[serde(default = "default_user_source")]
+    pub source: String,
+}
+
+fn default_user_source() -> String {
+    USER_SOURCE_LOCAL.to_string()
 }
 
 impl From<users::Model> for User {
@@ -67,6 +112,7 @@ impl From<users::Model> for User {
         Self {
             username: value.username,
             password: value.password,
+            source: normalize_user_source(value.source.as_deref()),
         }
     }
 }
@@ -76,6 +122,7 @@ impl From<&users::Model> for User {
         Self {
             username: value.username.to_string(),
             password: value.password.to_string(),
+            source: normalize_user_source(value.source.as_deref()),
         }
     }
 }
@@ -404,8 +451,10 @@ mod tests {
         let user = User {
             username: "test".to_string(),
             password: "password".to_string(),
+            source: USER_SOURCE_LOCAL.to_string(),
         };
         assert_eq!(user.username, "test");
+        assert_eq!(user.source, "local");
     }
 
     #[test]
@@ -577,10 +626,12 @@ mod tests {
             username: "testuser".to_string(),
             password: "hashed_password".to_string(),
             enabled: true,
+            source: Some(USER_SOURCE_LOCAL.to_string()),
         };
         let user = User::from(model);
         assert_eq!(user.username, "testuser");
         assert_eq!(user.password, "hashed_password");
+        assert_eq!(user.source, "local");
     }
 
     #[test]

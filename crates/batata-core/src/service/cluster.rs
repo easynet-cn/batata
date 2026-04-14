@@ -598,6 +598,34 @@ impl batata_common::ClusterManager for ServerMemberManager {
     fn is_self(&self, address: &str) -> bool {
         address == self.local_address
     }
+
+    fn update_member_state(&self, address: &str, state: &str) -> Result<String, String> {
+        let new_state = match state.to_uppercase().as_str() {
+            "UP" => NodeState::Up,
+            "DOWN" => NodeState::Down,
+            "SUSPICIOUS" => NodeState::Suspicious,
+            "STARTING" => NodeState::Starting,
+            "ISOLATION" => NodeState::Isolation,
+            other => return Err(format!("Invalid state: {}", other)),
+        };
+        let Some(mut member) = self.server_list.get_mut(address) else {
+            return Err(format!("Member not found: {}", address));
+        };
+        let previous = member.state;
+        member.state = new_state;
+        let snapshot = member.clone();
+        drop(member);
+
+        // Fire-and-forget publish; listeners handle errors internally.
+        let publisher = self.event_publisher.clone();
+        tokio::spawn(async move {
+            publisher
+                .publish(MemberChangeEvent::member_state_change(snapshot, previous))
+                .await;
+        });
+
+        Ok(previous.as_str().to_string())
+    }
 }
 
 /// Convert a Member to ExtendedMemberInfo

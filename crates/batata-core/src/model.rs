@@ -622,6 +622,20 @@ impl Configuration {
         ) as u32
     }
 
+    /// Maximum number of items packed into a single `DistroDataBatchSyncRequest`
+    /// (default: 50, equal to `DISTRO_BATCH_SIZE`).
+    ///
+    /// Mirrors Nacos's batched `DistroProtocol.syncToTarget` payload size.
+    /// Set to 1 to disable batching (each key sent in its own RPC).
+    pub fn distro_batch_sync_size(&self) -> usize {
+        let v = self.get_int_or(
+            "batata.cluster.distro.batch_sync_size",
+            "nacos.core.protocol.distro.data.sync.batchSize",
+            50,
+        );
+        if v < 1 { 1 } else { v as usize }
+    }
+
     /// Whether to require successful initial data load before marking node ready (default: false).
     /// false = Nacos-compatible: start immediately, verify cycle fills data.
     /// true  = strict: node stays NOT_READY until initial sync completes.

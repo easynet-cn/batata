@@ -14,7 +14,6 @@ use crate::connect_ca::ConsulConnectCAService;
 use crate::event::ConsulEventService;
 use crate::health::ConsulHealthService;
 use crate::kv::ConsulKVService;
-use crate::lock::{ConsulLockService, ConsulSemaphoreService};
 use crate::operator::ConsulOperatorService;
 use crate::query::ConsulQueryService;
 use crate::session::ConsulSessionService;
@@ -88,6 +87,9 @@ impl ClusterManager for TestClusterManager {
     fn is_self(&self, address: &str) -> bool {
         address == self.address
     }
+    fn update_member_state(&self, _address: &str, _state: &str) -> Result<String, String> {
+        Ok("UP".to_string())
+    }
 }
 
 /// Create a test app with all in-memory services configured.
@@ -112,10 +114,6 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     let event_service = ConsulEventService::new(index_provider.clone());
     let snapshot_service = ConsulSnapshotService::new();
     let query_service = ConsulQueryService::new();
-    let kv_arc = Arc::new(kv_service.clone());
-    let session_arc = Arc::new(session_service.clone());
-    let lock_service = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-    let semaphore_service = ConsulSemaphoreService::new(kv_arc, session_arc);
     let catalog_service = ConsulCatalogService::new(naming_store.clone());
     let config_entry_service = ConsulConfigEntryService::new();
     let connect_service = ConsulConnectService::new();
@@ -134,8 +132,6 @@ async fn create_test_app() -> impl actix_web::dev::Service<
             .app_data(web::Data::new(event_service))
             .app_data(web::Data::new(snapshot_service))
             .app_data(web::Data::new(query_service))
-            .app_data(web::Data::new(lock_service))
-            .app_data(web::Data::new(semaphore_service))
             .app_data(web::Data::new(catalog_service))
             .app_data(web::Data::new(config_entry_service))
             .app_data(web::Data::new(connect_service))

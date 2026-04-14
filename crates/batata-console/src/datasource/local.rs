@@ -1072,18 +1072,9 @@ impl ConsoleDataSource for LocalDataSource {
         address: &str,
         state: &str,
     ) -> anyhow::Result<String> {
-        let previous_state = match self.cluster_manager.get_member(address) {
-            Some(member) => member.state.to_string(),
-            None => return Err(anyhow::anyhow!("Member not found: {}", address)),
-        };
-
-        // Validate state string
-        match state.to_uppercase().as_str() {
-            "UP" | "DOWN" | "SUSPICIOUS" | "STARTING" | "ISOLATION" => {}
-            _ => return Err(anyhow::anyhow!("Invalid state: {}", state)),
-        };
-
-        Ok(previous_state)
+        self.cluster_manager
+            .update_member_state(address, state)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     fn cluster_is_leader(&self) -> bool {

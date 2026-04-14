@@ -150,10 +150,16 @@ impl EmbeddedPersistService {
 
     /// Convert JSON to UserInfo
     pub fn json_to_user(v: &serde_json::Value) -> UserInfo {
+        let source = v["source"].as_str().unwrap_or("");
         UserInfo {
             username: v["username"].as_str().unwrap_or("").to_string(),
             password: v["password_hash"].as_str().unwrap_or("").to_string(),
             enabled: v["enabled"].as_bool().unwrap_or(true),
+            source: if source.is_empty() {
+                "local".to_string()
+            } else {
+                source.to_string()
+            },
         }
     }
 
@@ -950,11 +956,12 @@ impl AuthPersistence for EmbeddedPersistService {
         Ok(Page::new(total, page_no, page_size, page_items))
     }
 
-    async fn user_create(
+    async fn user_create_with_source(
         &self,
         username: &str,
         password_hash: &str,
         enabled: bool,
+        source: &str,
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::user_key(username);
         let now = chrono::Utc::now().timestamp_millis();
@@ -964,6 +971,7 @@ impl AuthPersistence for EmbeddedPersistService {
             enabled,
             created_time: now,
             modified_time: now,
+            source: source.to_string(),
         };
         let cf = self.cf(CF_USERS)?;
         self.db
@@ -991,6 +999,11 @@ impl AuthPersistence for EmbeddedPersistService {
             enabled: existing_json["enabled"].as_bool().unwrap_or(true),
             created_time: existing_json["created_time"].as_i64().unwrap_or(now),
             modified_time: now,
+            source: existing_json["source"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("local")
+                .to_string(),
         };
         let cf = self.cf(CF_USERS)?;
         self.db

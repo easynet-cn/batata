@@ -346,3 +346,124 @@ impl PayloadHandler for PushAckHandler {
         "PushAckRequest"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::api::remote::model::{RequestTrait, ServerLoaderInfoRequest};
+    use async_trait::async_trait;
+    use batata_common::ConnectionInfo;
+
+    /// Minimal `ClientConnectionManager` stub that reports a fixed connection
+    /// count. Used to validate that `ServerLoaderInfoHandler::handle()`
+    /// exposes the real count (not a hardcoded zero) in `sdkConCount`.
+    struct StubConnManager {
+        count: usize,
+    }
+
+    #[async_trait]
+    impl ClientConnectionManager for StubConnManager {
+        fn connection_count(&self) -> usize {
+            self.count
+        }
+        fn has_connection(&self, _id: &str) -> bool {
+            false
+        }
+        fn get_all_connection_ids(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn get_connection_info(&self, _id: &str) -> Option<ConnectionInfo> {
+            None
+        }
+        fn get_all_connection_infos(&self) -> Vec<ConnectionInfo> {
+            Vec::new()
+        }
+        fn connections_for_ip(&self, _ip: &str) -> usize {
+            0
+        }
+        async fn push_message(&self, _id: &str, _payload: Payload) -> bool {
+            false
+        }
+        async fn push_message_to_many(&self, _ids: &[String], _payload: Payload) -> usize {
+            0
+        }
+        async fn load_single(&self, _id: &str, _redirect: Option<&str>) -> bool {
+            false
+        }
+        async fn load_count(&self, _target: usize, _redirect: Option<&str>) -> usize {
+            0
+        }
+        fn touch_connection(&self, _id: &str) {}
+    }
+
+    #[tokio::test]
+    async fn server_loader_info_handler_returns_real_metrics_shape() {
+        let stub = Arc::new(StubConnManager { count: 42 });
+        let handler = ServerLoaderInfoHandler {
+            connection_manager: stub,
+        };
+
+        let conn = Connection::default();
+        let request = ServerLoaderInfoRequest::new();
+        let payload = request.to_payload(None);
+        let response_payload = handler
+            .handle(&conn, &payload)
+            .await
+            .expect("handler should succeed");
+
+        // Decode response and validate every expected field is present with
+        // real data (not zeros), matching Nacos ServerLoaderInfoResponse.
+        // `ResponseTrait` has no `from_payload`; decode the JSON body directly.
+        let bytes: &[u8] = response_payload
+            .body
+            .as_ref()
+            .map(|b| b.value.as_slice())
+            .unwrap_or(&[]);
+        let response: ServerLoaderInfoResponse =
+            serde_json::from_slice(bytes).expect("valid response JSON");
+
+        // sdkConCount must reflect the stub's real value (not hardcoded 0).
+        let sdk_count = response
+            .loader_metrics
+            .get("sdkConCount")
+            .expect("sdkConCount must be present");
+        assert_eq!(sdk_count, "42", "sdkConCount must be the real count");
+
+        // cpu, load, and mem must be present and parseable as floats.
+        let cpu = response
+            .loader_metrics
+            .get("cpu")
+            .expect("cpu metric must be present");
+        assert!(
+            cpu.parse::<f32>().is_ok(),
+            "cpu must be a parseable float, got '{}'",
+            cpu
+        );
+        let load = response
+            .loader_metrics
+            .get("load")
+            .expect("load metric must be present");
+        assert!(
+            load.parse::<f32>().is_ok(),
+            "load must be a parseable float, got '{}'",
+            load
+        );
+        let mem = response
+            .loader_metrics
+            .get("mem")
+            .expect("mem metric must be present");
+        assert!(
+            mem.parse::<f32>().is_ok(),
+            "mem must be a parseable float, got '{}'",
+            mem
+        );
+
+        // Handler contract: internal auth, can_handle identity.
+        assert_eq!(handler.can_handle(), "ServerLoaderInfoRequest");
+        assert!(matches!(
+            handler.auth_requirement(),
+            AuthRequirement::Internal
+        ));
+    }
+}

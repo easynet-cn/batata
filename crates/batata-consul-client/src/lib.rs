@@ -23,7 +23,7 @@
 //! | [`kv`]                    | `api/kv.go`                               |
 //! | [`lock`]                  | `api/lock.go` + `api/semaphore.go`        |
 //! | [`namespace`]             | `api/namespace.go` (Enterprise)           |
-//! | [`operator`]              | `api/operator*.go` (area/audit/license/…) |
+//! | [`operator`]              | `api/operator*.go` (area/audit/segment/…) |
 //! | [`partition`]             | `api/partition.go` (Enterprise)           |
 //! | [`peering`]               | `api/peering.go`                          |
 //! | [`query`]                 | `api/prepared_query.go`                   |

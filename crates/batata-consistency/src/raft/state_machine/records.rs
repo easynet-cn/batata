@@ -129,6 +129,11 @@ pub struct StoredUser {
     pub created_time: i64,
     #[serde(default)]
     pub modified_time: i64,
+    /// Identity source: "local" (default), "oauth", or "ldap".
+    /// Defaults to empty for backwards compatibility with rows persisted
+    /// before this field existed; readers normalize empty to "local".
+    #[serde(default)]
+    pub source: String,
 }
 
 /// Typed value for CF_ROLES entries (bincode-encoded).

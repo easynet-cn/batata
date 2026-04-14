@@ -443,6 +443,16 @@ pub async fn publish_config(
             // Notify long-polling HTTP listeners about config change
             notifier.notify_change(namespace_id, &form.group, &form.data_id);
 
+            batata_plugin::global_trace_registry().fire_detached(
+                batata_plugin::TraceEvent::ConfigPublish {
+                    event_time: chrono::Utc::now().timestamp_millis(),
+                    namespace: namespace_id.to_string(),
+                    group: form.group.clone(),
+                    data_id: form.data_id.clone(),
+                    client_ip: src_ip.clone(),
+                },
+            );
+
             info!(
                 data_id = %form.data_id,
                 group = %form.group,
@@ -550,6 +560,16 @@ pub async fn delete_config(
         Ok(_) => {
             // Notify long-polling HTTP listeners about config deletion
             notifier.notify_change(namespace_id, &params.group, &params.data_id);
+
+            batata_plugin::global_trace_registry().fire_detached(
+                batata_plugin::TraceEvent::ConfigRemove {
+                    event_time: chrono::Utc::now().timestamp_millis(),
+                    namespace: namespace_id.to_string(),
+                    group: params.group.clone(),
+                    data_id: params.data_id.clone(),
+                    client_ip: src_ip.clone(),
+                },
+            );
 
             info!(
                 data_id = %params.data_id,

@@ -92,6 +92,7 @@ pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> 
         username: Set(username.to_string()),
         password: Set(hashed_password),
         enabled: Set(true),
+        source: Set(Some(crate::model::USER_SOURCE_LOCAL.to_string())),
     };
 
     users::Entity::insert(entity).exec(db).await?;

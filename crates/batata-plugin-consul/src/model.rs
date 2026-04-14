@@ -682,6 +682,12 @@ impl ValidatedCheck {
             timeout: self.timeout.clone(),
             deregister_critical_service_after: self.deregister_critical_service_after.clone(),
             status: self.status.clone(),
+            script: None,
+            args: None,
+            docker_container_id: None,
+            shell: None,
+            alias_node: None,
+            alias_service: None,
             ip: None,
             port: None,
         }
@@ -1190,6 +1196,32 @@ pub struct CheckRegistration {
     #[serde(rename = "Status", default)]
     pub status: Option<String>,
 
+    // Script / Docker checks. Consul executes a user-supplied command;
+    // batata never will. We still carry the fields so the adapter can
+    // reject such registrations with Consul's exact error text (see
+    // `validate_supported`). Matches Consul `structs.CheckType.Script/Args`
+    // and `DockerContainerID` in `agent.go:addCheck`.
+    #[serde(rename = "Script", default)]
+    pub script: Option<String>,
+
+    #[serde(rename = "Args", default)]
+    pub args: Option<Vec<String>>,
+
+    #[serde(rename = "DockerContainerID", default)]
+    pub docker_container_id: Option<String>,
+
+    #[serde(rename = "Shell", default)]
+    pub shell: Option<String>,
+
+    // Alias check: Consul-native feature where one check mirrors another
+    // check's state (`checks.CheckAlias`). Batata does not yet implement
+    // it; registrations are rejected rather than silently downgraded.
+    #[serde(rename = "AliasNode", default)]
+    pub alias_node: Option<String>,
+
+    #[serde(rename = "AliasService", default)]
+    pub alias_service: Option<String>,
+
     /// IP address of the service instance (populated internally, not from JSON)
     #[serde(skip)]
     pub ip: Option<String>,
@@ -1197,6 +1229,32 @@ pub struct CheckRegistration {
     /// Port of the service instance (populated internally, not from JSON)
     #[serde(skip)]
     pub port: Option<i32>,
+}
+
+/// Why a `CheckRegistration` cannot be accepted. Each variant mirrors an
+/// exact error path in Consul's `agent.addCheck` so clients see the same
+/// strings they would from upstream Consul.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckRegistrationRejection {
+    /// Matches Consul `agent.go:2937`: Script/Docker check submitted while
+    /// `enable_script_checks` / `enable_local_script_checks` is disabled.
+    /// Batata never enables script execution, so this rejection is
+    /// unconditional for Script/Docker checks.
+    ScriptsDisabled,
+    /// Alias checks are Consul-native but not yet implemented here.
+    AliasUnsupported,
+}
+
+impl CheckRegistrationRejection {
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::ScriptsDisabled => {
+                "Scripts are disabled on this agent; to enable, configure \
+                 'enable_script_checks' or 'enable_local_script_checks' to true"
+            }
+            Self::AliasUnsupported => "Alias checks are not yet supported on this agent",
+        }
+    }
 }
 
 impl CheckRegistration {
@@ -1209,6 +1267,32 @@ impl CheckRegistration {
                 format!("check:{}", self.name)
             }
         })
+    }
+
+    /// Mirrors Consul `CheckType.IsScript()`: any of Script / Args / Docker
+    /// fields trigger the Script-check code path.
+    pub fn is_script(&self) -> bool {
+        self.script.is_some()
+            || self.args.as_ref().is_some_and(|a| !a.is_empty())
+            || self.docker_container_id.is_some()
+    }
+
+    /// Whether this registration is an Alias check.
+    pub fn is_alias(&self) -> bool {
+        self.alias_service.is_some() || self.alias_node.is_some()
+    }
+
+    /// Validate that this registration uses a check type batata can execute.
+    /// Script/Docker and Alias checks are rejected instead of being silently
+    /// downgraded to TTL.
+    pub fn validate_supported(&self) -> Result<(), CheckRegistrationRejection> {
+        if self.is_script() {
+            return Err(CheckRegistrationRejection::ScriptsDisabled);
+        }
+        if self.is_alias() {
+            return Err(CheckRegistrationRejection::AliasUnsupported);
+        }
+        Ok(())
     }
 
     /// Determine the check type

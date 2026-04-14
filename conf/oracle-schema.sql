@@ -43,7 +43,6 @@ CREATE TABLE config_info (
 CREATE INDEX configinfo_dataid_key_idx ON config_info(data_id);
 CREATE INDEX configinfo_groupid_key_idx ON config_info(group_id);
 CREATE INDEX configinfo_dataid_group_key_idx ON config_info(data_id, group_id);
-CREATE INDEX configinfo_tenant_group_modified_idx ON config_info(tenant_id, group_id, gmt_modified);
 
 CREATE TABLE his_config_info (
     id NUMBER(20) NOT NULL,

@@ -28,6 +28,7 @@ mod tests {
         let user = User {
             username: "testuser".to_string(),
             password: "testpass".to_string(),
+            source: String::new(),
         };
         assert_eq!(user.username, "testuser");
         assert_eq!(user.password, "testpass");
