@@ -300,6 +300,31 @@ pub enum RaftRequest {
     /// Expire a lock (internal operation)
     LockExpire { namespace: String, name: String },
 
+    // ==================== Health Check Status Operations ====================
+    /// Replicate an active health-check probe result so every cluster node
+    /// agrees on the latest status. Only the leader writes; followers apply
+    /// the entry to their local `InstanceCheckRegistry`. See
+    /// `project_health_status_raft_sync_plan.md`.
+    HealthCheckStatusUpdate {
+        check_key: String,
+        /// "passing" / "warning" / "critical" — keep as a string here so the
+        /// raft crate doesn't have to depend on batata-naming's CheckStatus.
+        status: String,
+        output: String,
+        response_time_ms: u64,
+        timestamp_ms: i64,
+    },
+
+    /// TTL-style status update (no consecutive-success/failure thresholding).
+    /// Used by Consul session-bound checks (`/v1/agent/check/pass|fail|warn`).
+    HealthCheckTtlUpdate {
+        check_key: String,
+        status: String,
+        /// `None` keeps the existing output; `Some` replaces it.
+        output: Option<String>,
+        timestamp_ms: i64,
+    },
+
     // ==================== Plugin Extension Point ====================
     /// Generic plugin write operation routed through Raft consensus.
     /// Plugins register their own apply handlers; the core Raft does not
@@ -347,6 +372,8 @@ impl RaftRequest {
             RaftRequest::LockRenew { .. } => "LockRenew",
             RaftRequest::LockForceRelease { .. } => "LockForceRelease",
             RaftRequest::LockExpire { .. } => "LockExpire",
+            RaftRequest::HealthCheckStatusUpdate { .. } => "HealthCheckStatusUpdate",
+            RaftRequest::HealthCheckTtlUpdate { .. } => "HealthCheckTtlUpdate",
             RaftRequest::PluginWrite {
                 plugin_id, op_type, ..
             } => {

@@ -157,8 +157,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_reap_skips_checks_without_deregister_config() {
+    #[tokio::test]
+    async fn test_reap_skips_checks_without_deregister_config() {
         let (naming_service, registry) = create_test_components();
         let monitor = DeregisterMonitor::new(registry.clone(), 30);
 
@@ -181,7 +181,7 @@ mod tests {
             "no-deregister",
             CheckStatus::Critical,
             Some("failed".to_string()),
-        );
+        ).await;
 
         monitor.reap_critical_instances();
 
@@ -190,8 +190,8 @@ mod tests {
         assert_eq!(instances.len(), 1);
     }
 
-    #[test]
-    fn test_reap_deregisters_after_threshold() {
+    #[tokio::test]
+    async fn test_reap_deregisters_after_threshold() {
         let (naming_service, registry) = create_test_components();
         let monitor = DeregisterMonitor::new(registry.clone(), 30);
 
@@ -217,7 +217,7 @@ mod tests {
             "auto-deregister",
             CheckStatus::Critical,
             Some("failed".to_string()),
-        );
+        ).await;
 
         std::thread::sleep(Duration::from_millis(10));
 
@@ -230,8 +230,8 @@ mod tests {
         assert!(registry.get_check("auto-deregister").is_none());
     }
 
-    #[test]
-    fn test_reap_preserves_recently_critical() {
+    #[tokio::test]
+    async fn test_reap_preserves_recently_critical() {
         let (naming_service, registry) = create_test_components();
         let monitor = DeregisterMonitor::new(registry.clone(), 30);
 
@@ -256,7 +256,7 @@ mod tests {
             "recent-critical",
             CheckStatus::Critical,
             Some("just failed".to_string()),
-        );
+        ).await;
 
         monitor.reap_critical_instances();
 

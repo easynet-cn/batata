@@ -57,7 +57,7 @@ batata-migration = { path = "crates/batata-migration" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime
-tokio = "1.51"
+tokio = "1.52"
 async-trait = "0.1"
 futures = "0.3"
 

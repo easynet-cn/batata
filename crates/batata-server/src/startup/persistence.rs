@@ -11,7 +11,87 @@ use batata_core::cluster::ServerMemberManager;
 use batata_migration::{Migrator, MigratorTrait};
 use batata_persistence::{DeployTopology, PersistenceService, StorageBackend};
 use batata_server_common::model::config::Configuration;
-use tracing::info;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use tracing::{info, warn};
+
+/// Cross-process advisory lock so concurrent batata startups (e.g. 3-node
+/// cluster sharing the same DB) serialize their `Migrator::up` calls. Without
+/// this, two nodes racing on `CREATE TABLE` / `CREATE INDEX` produce errors
+/// like "Duplicate key name" because sea-orm's `seaql_migrations` row is only
+/// inserted *after* DDL succeeds, so the second runner sees the migration
+/// as pending and tries again. The advisory lock is session-scoped and is
+/// released automatically when the connection closes.
+///
+/// MySQL: `GET_LOCK(name, timeout)` / `RELEASE_LOCK(name)`
+/// Postgres: `pg_advisory_lock(key)` / `pg_advisory_unlock(key)`
+/// SQLite: no-op (single-writer by design)
+const MIGRATION_LOCK_NAME: &str = "batata_migration";
+const MIGRATION_LOCK_KEY: i64 = 0x6261_7461_7461_4d49u64 as i64; // "batataMI"
+
+async fn run_migrations_with_lock(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+    let backend = db.get_database_backend();
+    info!("Running database migrations (acquiring advisory lock)...");
+    acquire_migration_lock(db, backend).await?;
+
+    let result = Migrator::up(db, None).await;
+
+    if let Err(e) = release_migration_lock(db, backend).await {
+        warn!("Failed to release migration advisory lock: {}", e);
+    }
+
+    result?;
+    info!("Database migrations completed successfully");
+    Ok(())
+}
+
+async fn acquire_migration_lock(
+    db: &DatabaseConnection,
+    backend: DatabaseBackend,
+) -> Result<(), sea_orm::DbErr> {
+    match backend {
+        DatabaseBackend::MySql => {
+            // 5-min timeout — covers slow startups; a normal migration is < 5s.
+            db.execute(Statement::from_string(
+                backend,
+                format!("SELECT GET_LOCK('{}', 300)", MIGRATION_LOCK_NAME),
+            ))
+            .await?;
+        }
+        DatabaseBackend::Postgres => {
+            db.execute(Statement::from_string(
+                backend,
+                format!("SELECT pg_advisory_lock({})", MIGRATION_LOCK_KEY),
+            ))
+            .await?;
+        }
+        DatabaseBackend::Sqlite => { /* no-op */ }
+    }
+    Ok(())
+}
+
+async fn release_migration_lock(
+    db: &DatabaseConnection,
+    backend: DatabaseBackend,
+) -> Result<(), sea_orm::DbErr> {
+    match backend {
+        DatabaseBackend::MySql => {
+            db.execute(Statement::from_string(
+                backend,
+                format!("SELECT RELEASE_LOCK('{}')", MIGRATION_LOCK_NAME),
+            ))
+            .await?;
+        }
+        DatabaseBackend::Postgres => {
+            db.execute(Statement::from_string(
+                backend,
+                format!("SELECT pg_advisory_unlock({})", MIGRATION_LOCK_KEY),
+            ))
+            .await?;
+        }
+        DatabaseBackend::Sqlite => {}
+    }
+    Ok(())
+}
 
 /// Result of persistence layer initialization.
 ///
@@ -83,9 +163,7 @@ async fn init_external_db_standalone(
     let db = configuration.database_connection().await?;
 
     if configuration.db_migration_enabled() {
-        info!("Running database migrations...");
-        Migrator::up(&db, None).await?;
-        info!("Database migrations completed successfully");
+        run_migrations_with_lock(&db).await?;
     }
 
     let core_config = configuration.to_core_config();
@@ -156,9 +234,7 @@ async fn init_external_db_cluster(
     let db = configuration.database_connection().await?;
 
     if configuration.db_migration_enabled() {
-        info!("Running database migrations...");
-        Migrator::up(&db, None).await?;
-        info!("Database migrations completed successfully");
+        run_migrations_with_lock(&db).await?;
     }
 
     // PersistenceService goes to DB for config/namespace/auth

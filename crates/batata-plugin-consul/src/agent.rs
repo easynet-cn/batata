@@ -191,12 +191,14 @@ impl ConsulAgentService {
                 notes: String::new(),
                 service_tags: vec![],
             });
-            self.registry.update_check_result(
-                "serfHealth",
-                true,
-                "Agent alive and reachable".to_string(),
-                0,
-            );
+            self.registry
+                .update_check_result(
+                    "serfHealth",
+                    true,
+                    "Agent alive and reachable".to_string(),
+                    0,
+                )
+                .await;
         }
 
         tracing::info!(

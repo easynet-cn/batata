@@ -164,32 +164,23 @@ impl HealthCheckReactor {
                                 handle.abort();
                             }
 
-                            // Clone the chain handle so the spawned task reads
-                            // the latest cluster/standalone chain every tick —
-                            // members can join/leave while the task loops.
-                            let chain_lock = interceptor_chain_lock.clone();
-
+                            // NOTE: we deliberately do NOT gate this loop with
+                            // `interceptor_chain_lock.should_execute(...)` even in
+                            // cluster mode. Each cluster node has its own
+                            // `InstanceCheckRegistry` and runs `update_check_result`
+                            // locally — gating the probe to the responsible node
+                            // would leave the other nodes' registries with stale
+                            // initial status, and a Consul `/v1/health/*` query
+                            // that lands on a non-responsible node would return
+                            // wrong data. Until check status is replicated through
+                            // Raft (see project_consul_active_healthcheck_plan),
+                            // every node probes every active check. The N-fold
+                            // probe traffic this implies is the lesser evil
+                            // compared to wrong health responses.
                             let handle = tokio::spawn(async move {
                                 let task = RegistryCheckTask::new(check_key, reg_clone);
                                 loop {
-                                    // Cluster responsibility gate. The `responsible_id`
-                                    // is the instance key (`ip:port`) so that probing
-                                    // of the same backend lands on the same node across
-                                    // all reactors, matching how `DistroMapper` routes
-                                    // keys in the naming plane. Without this gate every
-                                    // cluster node would repeatedly probe every check
-                                    // it has in its Raft-replicated registry, causing
-                                    // N-fold traffic and racey `update_check_result`
-                                    // writes.
-                                    let responsible_id = task.responsible_id();
-                                    let should_run = {
-                                        let chain = chain_lock.read().clone();
-                                        chain.should_execute(&responsible_id)
-                                    };
-
-                                    if should_run {
-                                        task.execute().await;
-                                    }
+                                    task.execute().await;
 
                                     match task.interval() {
                                         Some(interval) => {
@@ -511,12 +502,14 @@ mod tests {
         // No crash = success
     }
 
-    /// Cluster-mode gate: when the interceptor chain reports this node is
-    /// NOT responsible for the check's `ip:port`, the reactor must NOT probe
-    /// even though the check is in the registry. Without this gate, every
-    /// node in the cluster would probe every Raft-replicated check, causing
-    /// N-fold probe traffic and racey status writes.
+    /// Reverted 2026-04-15: the previous version of this test asserted that
+    /// non-responsible cluster nodes skip probing when a cluster interceptor
+    /// chain is set. That gate was removed because per-node registries do
+    /// not replicate `update_check_result` through Raft yet, so gating the
+    /// probe makes other nodes' health responses go stale. Until status
+    /// replication lands, every node probes every active check.
     #[tokio::test]
+    #[ignore = "cluster gate removed; needs Raft status replication first"]
     async fn test_reactor_registry_check_respects_cluster_gate() {
         use crate::healthcheck::interceptor::HealthCheckInterceptorChain;
         use crate::healthcheck::registry::*;

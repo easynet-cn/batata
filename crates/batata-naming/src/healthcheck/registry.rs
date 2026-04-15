@@ -8,13 +8,47 @@
 //! - Immediately syncs health status changes via HealthCheckResultHandler
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
 use batata_plugin::HealthCheckResultHandler;
+
+/// Cluster-mode replication side-channel for health-check status.
+///
+/// Implementations decide whether a status update should be written
+/// through Raft (cluster leader) or simply forwarded:
+/// * `true`  — replicator took ownership; registry MUST NOT apply locally.
+///             The Raft apply path will write into the registry on every
+///             node via `HealthCheckApplyHook` (including this one).
+/// * `false` — registry should fall through to its in-process apply.
+///
+/// The methods are async because the cluster impl awaits a Raft write
+/// (which transparently forwards to the leader if this node is a
+/// follower and waits for local apply, giving read-your-write semantics
+/// even when an HTTP request lands on a follower).
+///
+/// In standalone mode no replicator is registered and `update_check_result`
+/// always applies locally — preserving the original single-node behavior.
+#[async_trait::async_trait]
+pub trait HealthStatusReplicator: Send + Sync {
+    async fn replicate_status(
+        &self,
+        check_key: &str,
+        success: bool,
+        output: &str,
+        response_time_ms: u64,
+    ) -> bool;
+
+    async fn replicate_ttl(
+        &self,
+        check_key: &str,
+        status: &str,
+        output: Option<&str>,
+    ) -> bool;
+}
 
 /// Tri-state health check status
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -212,6 +246,14 @@ pub struct InstanceCheckRegistry {
 
     // Result handler — called when health status changes.
     result_handler: Arc<dyn HealthCheckResultHandler>,
+
+    /// Cluster-mode Raft replicator. Set once at startup by the cluster
+    /// wiring code (see `project_health_status_raft_sync_plan.md`). When
+    /// `Some`, `update_check_result` / `ttl_update` route through the
+    /// replicator instead of mutating local state directly. The Raft apply
+    /// path then calls `apply_status_local` / `apply_ttl_local` on every
+    /// node so all registries converge.
+    replicator: OnceLock<Arc<dyn HealthStatusReplicator>>,
 }
 
 impl InstanceCheckRegistry {
@@ -223,7 +265,14 @@ impl InstanceCheckRegistry {
             instance_checks: DashMap::new(),
             service_instances: DashMap::new(),
             result_handler,
+            replicator: OnceLock::new(),
         }
+    }
+
+    /// Install the cluster-mode Raft replicator. Idempotent — calling more
+    /// than once is a no-op (the first replicator wins).
+    pub fn set_replicator(&self, replicator: Arc<dyn HealthStatusReplicator>) {
+        let _ = self.replicator.set(replicator);
     }
 
     /// Convenience constructor for the core Batata naming service.
@@ -349,7 +398,35 @@ impl InstanceCheckRegistry {
 
     /// Update check result from an active check execution.
     /// Handles threshold counting and aggregation + sync.
-    pub fn update_check_result(
+    ///
+    /// In cluster mode (replicator installed) this routes the update
+    /// through Raft instead of mutating local state — the Raft apply path
+    /// will call back into [`Self::apply_status_local`] on every node so
+    /// the in-memory registries on leader and followers stay in lock-step.
+    /// Async because the cluster path awaits a Raft write (forwarded to
+    /// leader if necessary, blocked on local apply).
+    pub async fn update_check_result(
+        &self,
+        check_key: &str,
+        success: bool,
+        output: String,
+        response_time_ms: u64,
+    ) {
+        if let Some(replicator) = self.replicator.get()
+            && replicator
+                .replicate_status(check_key, success, &output, response_time_ms)
+                .await
+        {
+            return;
+        }
+        self.apply_status_local(check_key, success, output, response_time_ms);
+    }
+
+    /// Local-only apply path. Called either directly from
+    /// [`Self::update_check_result`] (standalone mode) or from the Raft
+    /// state-machine `HealthCheckApplyHook` after a status update has
+    /// been replicated through consensus (cluster mode).
+    pub fn apply_status_local(
         &self,
         check_key: &str,
         success: bool,
@@ -409,7 +486,29 @@ impl InstanceCheckRegistry {
 
     /// Update check status from a TTL update (manual pass/warn/fail).
     /// No thresholds — immediate status change.
-    pub fn ttl_update(&self, check_key: &str, status: CheckStatus, output: Option<String>) {
+    ///
+    /// In cluster mode (replicator installed) this routes the update
+    /// through Raft, same as [`Self::update_check_result`]. Async for the
+    /// same reason — the cluster path awaits a forwarded Raft write.
+    pub async fn ttl_update(
+        &self,
+        check_key: &str,
+        status: CheckStatus,
+        output: Option<String>,
+    ) {
+        if let Some(replicator) = self.replicator.get()
+            && replicator
+                .replicate_ttl(check_key, status.as_str(), output.as_deref())
+                .await
+        {
+            return;
+        }
+        self.apply_ttl_local(check_key, status, output);
+    }
+
+    /// Local-only TTL apply. See [`Self::apply_status_local`] for the full
+    /// dual-path rationale.
+    pub fn apply_ttl_local(&self, check_key: &str, status: CheckStatus, output: Option<String>) {
         let config = match self.configs.get(check_key) {
             Some(c) => c.clone(),
             None => {
@@ -676,6 +775,118 @@ mod tests {
         Arc::new(crate::service::NamingService::new())
     }
 
+    /// Replicator that records every call and reports "I took ownership"
+    /// (returns `true`), simulating the cluster path where the leader
+    /// proposes the Raft entry and followers drop the local apply.
+    struct CapturingReplicator {
+        calls: std::sync::Mutex<Vec<(String, bool, String)>>,
+    }
+    #[async_trait::async_trait]
+    impl HealthStatusReplicator for CapturingReplicator {
+        async fn replicate_status(
+            &self,
+            check_key: &str,
+            success: bool,
+            output: &str,
+            _ms: u64,
+        ) -> bool {
+            self.calls.lock().unwrap().push((
+                check_key.to_string(),
+                success,
+                output.to_string(),
+            ));
+            true
+        }
+        async fn replicate_ttl(
+            &self,
+            check_key: &str,
+            status: &str,
+            _output: Option<&str>,
+        ) -> bool {
+            self.calls.lock().unwrap().push((
+                check_key.to_string(),
+                status == "passing",
+                status.to_string(),
+            ));
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn replicator_owns_apply_in_cluster_mode() {
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            test_naming_service(),
+        ));
+        registry.register_check(make_config(
+            "rcl-1",
+            CheckType::Tcp,
+            CheckStatus::Passing,
+        ));
+
+        let rep = Arc::new(CapturingReplicator {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        registry.set_replicator(rep.clone());
+
+        // Initial status: Passing. Failure should NOT mutate locally because
+        // replicator returned true (cluster path: Raft will eventually call
+        // apply_status_local on every node, including this one).
+        registry
+            .update_check_result("rcl-1", false, "down".into(), 50)
+            .await;
+
+        let (_cfg, status) = registry.get_check("rcl-1").unwrap();
+        assert_eq!(
+            status.status,
+            CheckStatus::Passing,
+            "local state must not change when replicator owns apply"
+        );
+        let calls = rep.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "rcl-1");
+        assert_eq!(calls[0].1, false);
+    }
+
+    #[test]
+    fn replicator_apply_local_works_after_routing() {
+        // Verify the local apply path that the Raft state machine will call
+        // via HealthCheckApplyHook actually mutates state — this is what
+        // converges leader and followers.
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            test_naming_service(),
+        ));
+        registry.register_check(make_config(
+            "rcl-2",
+            CheckType::Tcp,
+            CheckStatus::Passing,
+        ));
+
+        registry.apply_status_local("rcl-2", false, "down".into(), 50);
+        let (_cfg, status) = registry.get_check("rcl-2").unwrap();
+        assert_eq!(status.status, CheckStatus::Critical);
+        assert_eq!(status.output, "down");
+    }
+
+    #[tokio::test]
+    async fn no_replicator_falls_through_to_local() {
+        // Standalone case: no replicator → update_check_result must apply
+        // locally (preserves existing single-node behavior).
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            test_naming_service(),
+        ));
+        registry.register_check(make_config(
+            "rcl-3",
+            CheckType::Tcp,
+            CheckStatus::Passing,
+        ));
+
+        registry
+            .update_check_result("rcl-3", false, "down".into(), 50)
+            .await;
+        let (_cfg, status) = registry.get_check("rcl-3").unwrap();
+        assert_eq!(status.status, CheckStatus::Critical);
+    }
+
     fn make_config(
         check_id: &str,
         check_type: CheckType,
@@ -768,8 +979,8 @@ mod tests {
         assert!(registry.aggregate_instance_health(&instance_key));
     }
 
-    #[test]
-    fn test_update_check_result_immediate() {
+    #[tokio::test]
+    async fn test_update_check_result_immediate() {
         let ns = test_naming_service();
         let registry = InstanceCheckRegistry::with_naming_service(ns);
 
@@ -777,7 +988,9 @@ mod tests {
         registry.register_check(config);
 
         // Fail the check (threshold=0, immediate)
-        registry.update_check_result("check-1", false, "Connection refused".to_string(), 50);
+        registry
+            .update_check_result("check-1", false, "Connection refused".to_string(), 50)
+            .await;
 
         let status = registry.get_check_status("check-1").unwrap();
         assert_eq!(status.status, CheckStatus::Critical);
@@ -785,8 +998,8 @@ mod tests {
         assert!(status.critical_since.is_some());
     }
 
-    #[test]
-    fn test_update_check_result_with_threshold() {
+    #[tokio::test]
+    async fn test_update_check_result_with_threshold() {
         let ns = test_naming_service();
         let registry = InstanceCheckRegistry::with_naming_service(ns);
 
@@ -796,7 +1009,9 @@ mod tests {
 
         // First 3 failures should not transition to Critical
         for i in 0..3 {
-            registry.update_check_result("check-1", false, format!("fail {}", i), 50);
+            registry
+                .update_check_result("check-1", false, format!("fail {}", i), 50)
+                .await;
             let status = registry.get_check_status("check-1").unwrap();
             assert_eq!(
                 status.status,
@@ -807,13 +1022,15 @@ mod tests {
         }
 
         // 4th failure should transition to Critical
-        registry.update_check_result("check-1", false, "fail 3".to_string(), 50);
+        registry
+            .update_check_result("check-1", false, "fail 3".to_string(), 50)
+            .await;
         let status = registry.get_check_status("check-1").unwrap();
         assert_eq!(status.status, CheckStatus::Critical);
     }
 
-    #[test]
-    fn test_ttl_update() {
+    #[tokio::test]
+    async fn test_ttl_update() {
         let ns = test_naming_service();
         let registry = InstanceCheckRegistry::with_naming_service(ns);
 
@@ -821,7 +1038,9 @@ mod tests {
         registry.register_check(config);
 
         // TTL pass — immediate, no threshold
-        registry.ttl_update("check-1", CheckStatus::Passing, Some("alive".to_string()));
+        registry
+            .ttl_update("check-1", CheckStatus::Passing, Some("alive".to_string()))
+            .await;
 
         let status = registry.get_check_status("check-1").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
@@ -1015,12 +1234,14 @@ mod tests {
                 for round in 0..20 {
                     let idx = (t * 10 + round) % 20;
                     let success = round % 2 != 0;
-                    registry.update_check_result(
-                        &format!("upd-check-{}", idx),
-                        success,
-                        format!("round-{}", round),
-                        1,
-                    );
+                    registry
+                        .update_check_result(
+                            &format!("upd-check-{}", idx),
+                            success,
+                            format!("round-{}", round),
+                            1,
+                        )
+                        .await;
                     tokio::task::yield_now().await;
                 }
             }));

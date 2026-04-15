@@ -12,6 +12,7 @@ pub mod factory;
 pub mod heartbeat;
 pub mod interceptor;
 pub mod processor;
+pub mod raft_replicator;
 pub mod reactor;
 pub mod registry;
 pub mod registry_task;

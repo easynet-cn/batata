@@ -122,6 +122,11 @@ pub struct ConsulPluginInner {
     /// standalone to cluster so only the node responsible for a given
     /// instance actually probes it.
     pub distro_protocol: Option<Arc<batata_core::service::distro::DistroProtocol>>,
+    /// Raw `RaftNode` handle for cluster-wide health-check status sync.
+    /// `None` in standalone mode. The reactor wiring uses this to install a
+    /// `RaftHealthReplicator` on the registry and a `RegistryApplyHook` on
+    /// the Raft state machine.
+    pub raft_node_for_health: Option<Arc<batata_consistency::RaftNode>>,
 }
 
 /// Consul compatibility protocol adapter plugin.
@@ -216,6 +221,7 @@ impl ConsulPlugin {
             raft_writer: None,
             cluster_manager: None,
             distro_protocol: None,
+            raft_node_for_health: None,
         }
     }
 
@@ -304,7 +310,8 @@ impl ConsulPlugin {
             registry,
             raft_writer: Some(consul_raft),
             cluster_manager: None, // Set later via set_cluster_manager()
-            distro_protocol: None, // Set later in ConsulPlugin::init() from PluginContext
+            distro_protocol: None,
+            raft_node_for_health: None, // Set later in ConsulPlugin::init() from PluginContext
         }
     }
 
@@ -519,6 +526,13 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             inner.distro_protocol = Some(distro.clone());
         }
 
+        // Pick up the RaftNode handle so the reactor wiring (later in
+        // start_background_tasks) can install the Raft replicator + apply
+        // hook on the registry. Cluster mode only.
+        if let Some(raft) = ctx.get::<batata_consistency::RaftNode>("raft_node") {
+            inner.raft_node_for_health = Some(raft.clone());
+        }
+
         // Wire ConsulResultHandler to session/kv/check_index for:
         // - on_deregister: check_id → service_id → store_key chain
         // - on_check_critical: session invalidation + KV lock release
@@ -673,26 +687,34 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             );
             reactor.set_registry(inner.registry.clone());
 
-            // Cluster-mode responsibility gate: when running in a cluster,
-            // swap the standalone interceptor chain for a cluster chain so
-            // the reactor only probes checks whose `ip:port` hashes to this
-            // node via DistroMapper. Without this, every cluster node runs
-            // the Raft-replicated check registry independently and probes
-            // every check N times.
-            if let Some(ref distro) = inner.distro_protocol {
-                let cluster_chain = Arc::new(
-                    batata_naming::healthcheck::interceptor::HealthCheckInterceptorChain::cluster(
-                        hc_config,
-                        distro.mapper().clone(),
-                        distro.local_address().to_string(),
-                    ),
-                );
-                reactor.set_interceptor_chain(cluster_chain);
+            // Cluster mode: install the Raft replicator + apply hook so
+            // every node's `InstanceCheckRegistry` converges through Raft
+            // instead of running the probe loop independently. The leader
+            // probes and writes status; followers' probes are dropped at
+            // `replicate_status` and they receive the apply via the hook.
+            // See `project_health_status_raft_sync_plan.md`.
+            if let Some(ref raft) = inner.raft_node_for_health {
+                use batata_naming::healthcheck::raft_replicator::{
+                    RaftHealthReplicator, RegistryApplyHook,
+                };
+                inner
+                    .registry
+                    .set_replicator(Arc::new(RaftHealthReplicator::new(raft.clone())));
+                let hook = Arc::new(RegistryApplyHook::new(inner.registry.clone()));
+                let raft_for_hook = raft.clone();
+                tokio::spawn(async move {
+                    raft_for_hook.register_health_check_hook(hook).await;
+                });
                 tracing::info!(
-                    "Consul reactor switched to cluster interceptor chain (local={})",
-                    distro.local_address()
+                    "Consul reactor wired to Raft for cluster-wide health status sync"
                 );
             }
+
+            // The standalone interceptor chain is fine — we now have correct
+            // cluster status semantics through Raft, so a follow-up
+            // responsibility gate (see plan) can be added later without
+            // breaking query correctness.
+            let _ = (&hc_config, &inner.distro_protocol);
 
             // Wire the check scheduler so new active check registrations are auto-scheduled
             let reactor_ref = Arc::new(reactor);

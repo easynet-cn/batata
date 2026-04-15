@@ -40,12 +40,12 @@ impl TtlMonitor {
 
         loop {
             interval.tick().await;
-            self.scan_expired_ttl_checks();
+            self.scan_expired_ttl_checks().await;
         }
     }
 
     /// Scan all checks and mark expired TTL checks as Critical
-    fn scan_expired_ttl_checks(&self) {
+    async fn scan_expired_ttl_checks(&self) {
         let all_checks = self.registry.get_all_checks();
 
         for (config, status) in all_checks {
@@ -69,11 +69,13 @@ impl TtlMonitor {
                     current_timestamp_ms() - status.last_updated,
                     ttl.as_millis()
                 );
-                self.registry.ttl_update(
-                    &config.check_id,
-                    CheckStatus::Critical,
-                    Some("TTL expired".to_string()),
-                );
+                self.registry
+                    .ttl_update(
+                        &config.check_id,
+                        CheckStatus::Critical,
+                        Some("TTL expired".to_string()),
+                    )
+                    .await;
                 debug!(
                     "Marked check {} as Critical due to TTL expiration",
                     config.check_id
@@ -129,8 +131,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_ttl_monitor_skips_non_ttl_checks() {
+    #[tokio::test]
+    async fn test_ttl_monitor_skips_non_ttl_checks() {
         let registry = create_registry();
         let monitor = TtlMonitor::new(registry.clone());
 
@@ -140,7 +142,7 @@ mod tests {
         registry.register_check(config);
 
         // Scan should not affect TCP checks
-        monitor.scan_expired_ttl_checks();
+        monitor.scan_expired_ttl_checks().await;
 
         let (_, status) = registry.get_check("tcp-check").unwrap();
         assert_eq!(
@@ -150,8 +152,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_ttl_monitor_skips_already_critical() {
+    #[tokio::test]
+    async fn test_ttl_monitor_skips_already_critical() {
         let registry = create_registry();
         let monitor = TtlMonitor::new(registry.clone());
 
@@ -162,10 +164,10 @@ mod tests {
             "ttl-critical",
             CheckStatus::Critical,
             Some("already critical".to_string()),
-        );
+        ).await;
 
         // Scan should skip already-critical checks (no double update)
-        monitor.scan_expired_ttl_checks();
+        monitor.scan_expired_ttl_checks().await;
 
         let (_, status) = registry.get_check("ttl-critical").unwrap();
         assert_eq!(status.status, CheckStatus::Critical);
@@ -173,8 +175,8 @@ mod tests {
         assert_eq!(status.output, "already critical");
     }
 
-    #[test]
-    fn test_ttl_monitor_detects_expired_check() {
+    #[tokio::test]
+    async fn test_ttl_monitor_detects_expired_check() {
         let registry = create_registry();
         let monitor = TtlMonitor::new(registry.clone());
 
@@ -189,7 +191,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
 
         // Scan should detect the expired check
-        monitor.scan_expired_ttl_checks();
+        monitor.scan_expired_ttl_checks().await;
 
         let (_, status) = registry.get_check("ttl-expire").unwrap();
         assert_eq!(
@@ -203,8 +205,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_ttl_monitor_preserves_fresh_check() {
+    #[tokio::test]
+    async fn test_ttl_monitor_preserves_fresh_check() {
         let registry = create_registry();
         let monitor = TtlMonitor::new(registry.clone());
 
@@ -213,7 +215,7 @@ mod tests {
         registry.register_check(config);
 
         // Scan should not affect fresh checks
-        monitor.scan_expired_ttl_checks();
+        monitor.scan_expired_ttl_checks().await;
 
         let (_, status) = registry.get_check("ttl-fresh").unwrap();
         assert_eq!(
@@ -223,8 +225,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_ttl_monitor_renewed_check_stays_passing() {
+    #[tokio::test]
+    async fn test_ttl_monitor_renewed_check_stays_passing() {
         let registry = create_registry();
         let monitor = TtlMonitor::new(registry.clone());
 
@@ -237,10 +239,10 @@ mod tests {
             "ttl-renewed",
             CheckStatus::Passing,
             Some("renewed".to_string()),
-        );
+        ).await;
 
         // Scan should not expire it
-        monitor.scan_expired_ttl_checks();
+        monitor.scan_expired_ttl_checks().await;
 
         let (_, status) = registry.get_check("ttl-renewed").unwrap();
         assert_eq!(

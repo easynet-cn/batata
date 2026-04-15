@@ -20,6 +20,7 @@ use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Optio
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use super::health_check_hook::{SharedHealthCheckHook, new_shared_health_check_hook};
 use super::naming_hook::{SharedNamingHook, new_shared_naming_hook};
 use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
@@ -87,6 +88,10 @@ pub struct RocksStateMachine {
     /// construction (see `RaftNode::register_naming_hook`). Invoked after
     /// `apply_instance_*` succeeds to keep `NamingService` DashMap in sync.
     naming_hook: SharedNamingHook,
+    /// Apply-back hook for replicated health-check status. Registered after
+    /// both `RaftNode` and `InstanceCheckRegistry` exist. Mirror of
+    /// `naming_hook`. See `project_health_status_raft_sync_plan.md`.
+    health_check_hook: SharedHealthCheckHook,
     /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
     pub(super) write_opts: rocksdb::WriteOptions,
 }
@@ -128,6 +133,13 @@ impl RocksStateMachine {
     /// constructed at server startup. Mirrors `plugin_registry` pattern.
     pub fn naming_hook(&self) -> SharedNamingHook {
         self.naming_hook.clone()
+    }
+
+    /// Get a shared handle to the health-check apply hook slot. Registration
+    /// happens after both `RaftNode` and `InstanceCheckRegistry` are
+    /// constructed at server startup. Mirror of `naming_hook`.
+    pub fn health_check_hook(&self) -> SharedHealthCheckHook {
+        self.health_check_hook.clone()
     }
 
     /// Register a plugin handler for processing PluginWrite operations.
@@ -266,6 +278,7 @@ impl RocksStateMachine {
             last_membership: RwLock::new(StoredMembership::default()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
             naming_hook: new_shared_naming_hook(),
+            health_check_hook: new_shared_health_check_hook(),
             write_opts: custom_write_opts.unwrap_or_default(),
         };
 
@@ -726,6 +739,43 @@ impl RocksStateMachine {
                     );
                     RaftResponse::success()
                 }
+            }
+
+            RaftRequest::HealthCheckStatusUpdate {
+                check_key,
+                status,
+                output,
+                response_time_ms,
+                timestamp_ms,
+            } => {
+                // status arrives as "passing"/"warning"/"critical"; the
+                // active-probe path encodes only success vs failure, but we
+                // accept the same string format for symmetry with TTL updates
+                // and forward-compat. Map to (success, status_label) for the
+                // hook.
+                let success = matches!(status.as_str(), "passing" | "warning");
+                if let Some(hook) = self.health_check_hook.read().await.as_ref() {
+                    hook.on_status_update(
+                        &check_key,
+                        success,
+                        &output,
+                        response_time_ms,
+                        timestamp_ms,
+                    );
+                }
+                RaftResponse::success()
+            }
+
+            RaftRequest::HealthCheckTtlUpdate {
+                check_key,
+                status,
+                output,
+                timestamp_ms,
+            } => {
+                if let Some(hook) = self.health_check_hook.read().await.as_ref() {
+                    hook.on_ttl_update(&check_key, &status, output.as_deref(), timestamp_ms);
+                }
+                RaftResponse::success()
             }
         }
     }
@@ -1342,6 +1392,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
             plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
             naming_hook: self.naming_hook.clone(),
+            health_check_hook: self.health_check_hook.clone(),
             write_opts: rocksdb::WriteOptions::default(),
         }
     }

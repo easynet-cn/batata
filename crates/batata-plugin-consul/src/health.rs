@@ -115,7 +115,9 @@ impl ConsulHealthService {
         output: Option<String>,
     ) -> Result<(), String> {
         let check_status = check_status_from_consul(status);
-        self.registry.ttl_update(check_id, check_status, output);
+        self.registry
+            .ttl_update(check_id, check_status, output)
+            .await;
         Ok(())
     }
 
@@ -2143,8 +2145,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_register_and_query_ttl_check() {
+    #[tokio::test]
+    async fn test_register_and_query_ttl_check() {
         let (_service, registry) = create_test_health_service_with_registry();
 
         let config = InstanceCheckConfig {
@@ -2185,14 +2187,14 @@ mod tests {
             "svc:web-1",
             CheckStatus::Passing,
             Some("all good".to_string()),
-        );
+        ).await;
         let (_, status) = registry.get_check("svc:web-1").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
         assert_eq!(status.output, "all good");
     }
 
-    #[test]
-    fn test_pass_warn_fail_cycle() {
+    #[tokio::test]
+    async fn test_pass_warn_fail_cycle() {
         let (_service, registry) = create_test_health_service_with_registry();
 
         let config = InstanceCheckConfig {
@@ -2222,7 +2224,7 @@ mod tests {
         registry.register_check(config);
 
         // Pass
-        registry.ttl_update("cycle-check", CheckStatus::Passing, Some("ok".to_string()));
+        registry.ttl_update("cycle-check", CheckStatus::Passing, Some("ok".to_string())).await;
         assert_eq!(
             registry.get_check("cycle-check").unwrap().1.status,
             CheckStatus::Passing
@@ -2233,7 +2235,7 @@ mod tests {
             "cycle-check",
             CheckStatus::Warning,
             Some("degraded".to_string()),
-        );
+        ).await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Warning);
         assert!(
@@ -2246,7 +2248,7 @@ mod tests {
             "cycle-check",
             CheckStatus::Critical,
             Some("down".to_string()),
-        );
+        ).await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Critical);
         assert!(
@@ -2263,7 +2265,7 @@ mod tests {
             "cycle-check",
             CheckStatus::Passing,
             Some("recovered".to_string()),
-        );
+        ).await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
     }

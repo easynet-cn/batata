@@ -77,7 +77,8 @@ impl RegistryCheckTask {
         let response_time_ms = start.elapsed().as_millis() as u64;
 
         self.registry
-            .update_check_result(&self.check_key, success, output, response_time_ms);
+            .update_check_result(&self.check_key, success, output, response_time_ms)
+            .await;
     }
 
     /// Get the check interval, or None if the check was removed from registry

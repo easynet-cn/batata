@@ -54,6 +54,12 @@ pub struct RaftNode {
     /// with RocksDB `CF_INSTANCES` after every persistent instance apply.
     naming_hook: super::naming_hook::SharedNamingHook,
 
+    /// Shared health-check apply hook slot. Registered post-construction by
+    /// the consul plugin (or any reactor owner). When the leader writes a
+    /// `HealthCheckStatusUpdate` Raft entry, every node's apply path calls
+    /// this hook to update its `InstanceCheckRegistry` in lock-step.
+    health_check_hook: super::health_check_hook::SharedHealthCheckHook,
+
     /// Cached gRPC channel for forwarding writes to the Raft leader.
     /// Avoids creating a new TCP/HTTP2 connection on every forwarded write.
     leader_channel: tokio::sync::Mutex<Option<LeaderChannel>>,
@@ -145,6 +151,7 @@ impl RaftNode {
         let db = state_machine.db();
         let plugin_registry = state_machine.plugin_registry();
         let naming_hook = state_machine.naming_hook();
+        let health_check_hook = state_machine.health_check_hook();
 
         // Create network factory with configured timeouts
         let network_config = super::network::RaftNetworkConfig::from_raft_config(&config);
@@ -174,6 +181,7 @@ impl RaftNode {
                 db: db.clone(),
                 plugin_registry,
                 naming_hook,
+                health_check_hook,
                 leader_channel: tokio::sync::Mutex::new(None),
             },
             db,
@@ -215,6 +223,17 @@ impl RaftNode {
     /// state machine via `Arc<RwLock<_>>` and consulted on every apply.
     pub async fn register_naming_hook(&self, hook: Arc<dyn super::naming_hook::NamingApplyHook>) {
         *self.naming_hook.write().await = Some(hook);
+    }
+
+    /// Register the health-check apply hook so `HealthCheckStatusUpdate` /
+    /// `HealthCheckTtlUpdate` Raft entries flow back into the in-memory
+    /// `InstanceCheckRegistry` on every cluster node. Mirror of
+    /// `register_naming_hook`.
+    pub async fn register_health_check_hook(
+        &self,
+        hook: Arc<dyn super::health_check_hook::HealthCheckApplyHook>,
+    ) {
+        *self.health_check_hook.write().await = Some(hook);
     }
 
     /// Replay all persistent instances from RocksDB `CF_INSTANCES` into the
