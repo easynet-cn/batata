@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use batata_common::{AuthCheckResult, AuthPermission, AuthPlugin, IdentityContext, LoginResult};
+use batata_common::{
+    AuthCheckResult, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID, IdentityContext, LoginResult,
+};
 use batata_persistence::PersistenceService;
 use tracing::{debug, warn};
 
@@ -16,12 +18,10 @@ use crate::model::{
 use crate::service::auth::{decode_jwt_token_cached, encode_jwt_token, unblacklist_user};
 use crate::service::ldap::LdapAuthService;
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-
 /// Default auth plugin — the standard authentication backend.
 ///
 /// Uses JWT tokens for authentication and RBAC via the persistence
-/// layer for authorization. Plugin name is "nacos" for SDK compatibility.
+/// layer for authorization. Plugin name is "default" for SDK compatibility.
 pub struct DefaultAuthPlugin {
     secret_key: String,
     pub(crate) token_expire_seconds: i64,
@@ -89,13 +89,16 @@ impl DefaultAuthPlugin {
         match user {
             Some(user) => {
                 let source = normalize_user_source(Some(&user.source));
+
                 if !source_allows_password_login(&source) {
                     return Err(format!(
                         "user '{}' is managed by '{}' and cannot log in with a password",
                         username, source
                     ));
                 }
+
                 let valid = bcrypt::verify(password, &user.password).unwrap_or(false);
+
                 Ok(valid)
             }
             None => Ok(false),
@@ -106,7 +109,7 @@ impl DefaultAuthPlugin {
 #[async_trait::async_trait]
 impl AuthPlugin for DefaultAuthPlugin {
     fn plugin_name(&self) -> &str {
-        "nacos"
+        "default"
     }
 
     fn is_login_enabled(&self) -> bool {
@@ -126,6 +129,7 @@ impl AuthPlugin for DefaultAuthPlugin {
                 identity.username = username.clone();
                 identity.authenticated = true;
                 identity.is_global_admin = self.is_global_admin(&username).await;
+
                 AuthCheckResult::success()
             }
             Err(msg) => AuthCheckResult::fail(msg),
@@ -300,6 +304,7 @@ impl AuthPlugin for LdapAuthPlugin {
 
             // Generate JWT token
             unblacklist_user(username);
+
             let token = self.default_plugin.generate_token(username)?;
             let is_admin = self.default_plugin.is_global_admin(username).await;
 
@@ -312,6 +317,7 @@ impl AuthPlugin for LdapAuthPlugin {
         } else {
             // LDAP auth failed, try local fallback
             debug!(username, "LDAP auth failed, trying local fallback");
+
             self.default_plugin.login(username, password).await
         }
     }
@@ -353,13 +359,17 @@ mod tests {
 
         let password = "correct horse battery staple";
         let hash = bcrypt::hash(password, TEST_BCRYPT_COST).unwrap();
+
         svc.user_create_with_source("alice", &hash, true, "local")
             .await
             .unwrap();
 
         let result = plugin.login("alice", password).await;
+
         assert!(result.is_ok(), "local login should succeed: {:?}", result);
+
         let login = result.unwrap();
+
         assert_eq!(login.username, "alice");
         assert!(!login.token.is_empty(), "JWT token must be issued");
     }
@@ -369,11 +379,13 @@ mod tests {
         let (plugin, svc, _tmp) = build_plugin().await;
 
         let hash = bcrypt::hash("right", TEST_BCRYPT_COST).unwrap();
+
         svc.user_create_with_source("alice", &hash, true, "local")
             .await
             .unwrap();
 
         let err = plugin.login("alice", "wrong").await.unwrap_err();
+
         assert_eq!(
             err, "invalid credentials",
             "wrong password must return generic 'invalid credentials'"
@@ -399,6 +411,7 @@ mod tests {
             .login("oauth_github_123", "anything")
             .await
             .unwrap_err();
+
         assert!(
             err.contains("oauth") && err.contains("cannot log in with a password"),
             "oauth user login must be rejected with a source-specific error, got: {}",
@@ -420,6 +433,7 @@ mod tests {
         .unwrap();
 
         let err = plugin.login("ldap_user", "password").await.unwrap_err();
+
         assert!(
             err.contains("ldap"),
             "ldap user must get an ldap-specific rejection, got: {}",
@@ -432,6 +446,7 @@ mod tests {
         let (_plugin, svc, _tmp) = build_plugin().await;
 
         let hash = bcrypt::hash("pw", TEST_BCRYPT_COST).unwrap();
+
         svc.user_create_with_source("alice", &hash, true, "local")
             .await
             .unwrap();
@@ -445,6 +460,7 @@ mod tests {
         .unwrap();
 
         let page = svc.user_find_page("", 1, 10, false).await.unwrap();
+
         assert_eq!(page.total_count, 2);
 
         let alice = page
@@ -452,6 +468,7 @@ mod tests {
             .iter()
             .find(|u| u.username == "alice")
             .expect("alice present");
+
         assert_eq!(alice.source, "local");
 
         let oauth = page
@@ -459,6 +476,7 @@ mod tests {
             .iter()
             .find(|u| u.username == "oauth_user")
             .expect("oauth user present");
+
         assert_eq!(oauth.source, "oauth");
         assert_eq!(
             oauth.password,
@@ -474,6 +492,7 @@ mod tests {
         let matched = bcrypt::verify("", crate::model::NON_LOCAL_PASSWORD_SENTINEL)
             .ok()
             .unwrap_or(false);
+
         assert!(
             !matched,
             "sentinel must be a non-bcrypt string so verify() never returns true"

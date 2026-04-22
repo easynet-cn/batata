@@ -476,6 +476,7 @@ mod tests {
     #[test]
     fn test_batata_error_api_error() {
         let err = BatataError::ApiError(400, 20002, "validation failed".into(), "detail".into());
+
         assert_eq!(format!("{}", err), "validation failed");
     }
 
@@ -486,7 +487,9 @@ mod tests {
         let app_err = AppError::from(anyhow_err);
 
         let downcast = app_err.downcast_ref::<BatataError>();
+
         assert!(downcast.is_some());
+
         match downcast.unwrap() {
             BatataError::AuthError(msg) => assert_eq!(msg, "forbidden"),
             _ => panic!("unexpected error variant"),
@@ -496,6 +499,7 @@ mod tests {
     #[test]
     fn test_app_error_display() {
         let err = AppError::from(anyhow::anyhow!("something went wrong"));
+
         assert_eq!(format!("{}", err), "something went wrong");
     }
 
@@ -517,6 +521,7 @@ mod tests {
     fn test_error_code_serialization() {
         let code = SUCCESS;
         let json = serde_json::to_string(&code).unwrap();
+
         assert!(json.contains("\"code\":0"));
         assert!(json.contains("\"message\":\"success\""));
     }
@@ -524,6 +529,7 @@ mod tests {
     #[test]
     fn test_error_code_default() {
         let code = ErrorCode::default();
+
         assert_eq!(code.code, 0);
         assert_eq!(code.message, "");
     }

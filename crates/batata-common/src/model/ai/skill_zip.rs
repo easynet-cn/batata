@@ -71,7 +71,9 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
         validate_path_safety(&name)?;
 
         let mut content = Vec::new();
+
         file.read_to_end(&mut content)?;
+
         total_size += content.len() as u64;
 
         if total_size > MAX_TOTAL_UNCOMPRESSED_BYTES {
@@ -113,6 +115,7 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
 
     // Parse resources
     let mut resources = HashMap::new();
+
     for (path, content) in &entries {
         // Strip root prefix
         let relative = if !root_prefix.is_empty() && path.starts_with(root_prefix) {
@@ -155,6 +158,7 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
             content: Some(content_str),
             metadata,
         };
+
         resources.insert(resource.resource_identifier(), resource);
     }
 
@@ -192,6 +196,7 @@ pub fn skill_to_zip_bytes(skill: &Skill) -> anyhow::Result<Vec<u8>> {
         };
 
         validate_path_safety(&path)?;
+
         zip.start_file(&path, options)?;
 
         if let Some(ref content) = res.content {
@@ -201,6 +206,7 @@ pub fn skill_to_zip_bytes(skill: &Skill) -> anyhow::Result<Vec<u8>> {
     }
 
     let cursor = zip.finish()?;
+
     Ok(cursor.into_inner())
 }
 
@@ -245,6 +251,7 @@ fn parse_yaml_front_matter(content: &str) -> (HashMap<String, String>, &str) {
 
     // Parse simple YAML key: value pairs
     let mut current_parent: Option<String> = None;
+
     for line in yaml_block.lines() {
         let trimmed = line.trim();
 
@@ -272,6 +279,7 @@ fn parse_yaml_front_matter(content: &str) -> (HashMap<String, String>, &str) {
                 }
             } else {
                 current_parent = None;
+
                 map.insert(key.to_string(), unquoted);
             }
         }
@@ -284,9 +292,11 @@ fn parse_yaml_front_matter(content: &str) -> (HashMap<String, String>, &str) {
 fn unquote_yaml_value(value: &str) -> String {
     if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
         let inner = &value[1..value.len() - 1];
+
         inner.replace("\\\\", "\\").replace("\\\"", "\"")
     } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
         let inner = &value[1..value.len() - 1];
+
         inner.replace("''", "'")
     } else {
         value.to_string()
@@ -301,6 +311,7 @@ fn validate_path_safety(path: &str) -> anyhow::Result<()> {
     if path.starts_with('/') || path.starts_with('\\') {
         anyhow::bail!("Absolute path detected in ZIP entry: {}", path);
     }
+
     Ok(())
 }
 
@@ -320,6 +331,7 @@ fn strip_bom(s: &str) -> String {
 pub fn extract_version_from_skill_md(skill: &Skill) -> Option<String> {
     let md = skill.skill_md.as_deref()?;
     let (fm, _) = parse_yaml_front_matter(md);
+
     fm.get("version")
         .or_else(|| fm.get("metadata.version"))
         .cloned()
@@ -333,6 +345,7 @@ mod tests {
     fn test_parse_yaml_front_matter() {
         let content = "---\nname: test-skill\ndescription: A test\nversion: 1.0.0\n---\n# Body";
         let (map, body) = parse_yaml_front_matter(content);
+
         assert_eq!(map.get("name").unwrap(), "test-skill");
         assert_eq!(map.get("description").unwrap(), "A test");
         assert_eq!(map.get("version").unwrap(), "1.0.0");
@@ -343,6 +356,7 @@ mod tests {
     fn test_parse_yaml_front_matter_quoted() {
         let content = "---\nname: \"my \\\"skill\\\"\"\ndescription: 'it''s great'\n---\n";
         let (map, _) = parse_yaml_front_matter(content);
+
         assert_eq!(map.get("name").unwrap(), "my \"skill\"");
         assert_eq!(map.get("description").unwrap(), "it's great");
     }
@@ -400,13 +414,16 @@ mod tests {
         };
 
         let zip_bytes = skill_to_zip_bytes(&skill).unwrap();
+
         assert!(!zip_bytes.is_empty());
 
         let parsed = parse_skill_from_zip(&zip_bytes, "public").unwrap();
         assert_eq!(parsed.name, "test-skill");
         assert!(parsed.skill_md.is_some());
         assert_eq!(parsed.resource.len(), 1);
+
         let tool = parsed.resource.values().next().unwrap();
+
         assert_eq!(tool.name, "calc.py");
         assert_eq!(tool.resource_type, "tool");
         assert_eq!(tool.content.as_deref(), Some("print('hello')"));

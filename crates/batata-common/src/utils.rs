@@ -95,6 +95,7 @@ pub fn glob_matches(pattern: &str, text: &str) -> bool {
             .replace("\\*", ".*")
             .replace("\\?", ".")
     );
+
     regex_matches(&regex_pattern, text)
 }
 
@@ -236,6 +237,7 @@ mod tests {
         assert!(re1.is_some());
         // Second call should use cache
         let re2 = get_or_compile_regex(pattern);
+
         assert!(re2.is_some());
         assert!(re2.unwrap().is_match("cached_test_123"));
     }
@@ -243,6 +245,7 @@ mod tests {
     #[test]
     fn test_get_or_compile_regex_invalid() {
         let result = get_or_compile_regex("[invalid");
+
         assert!(result.is_none());
     }
 

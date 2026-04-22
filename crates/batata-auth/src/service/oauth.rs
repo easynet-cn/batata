@@ -371,6 +371,7 @@ impl OAuthService {
         // Get authorization endpoint
         let authorize_endpoint = if let Some(ref discovery_url) = provider.discovery_url {
             let discovery = self.get_oidc_discovery(discovery_url).await?;
+
             discovery.authorization_endpoint
         } else {
             provider
@@ -399,6 +400,7 @@ impl OAuthService {
 
         // Build authorization URL
         let mut url = url::Url::parse(&authorize_endpoint)?;
+
         url.query_pairs_mut()
             .append_pair("client_id", &provider.client_id)
             .append_pair("response_type", "code")
@@ -408,6 +410,7 @@ impl OAuthService {
             .append_pair("nonce", &nonce);
 
         debug!("Generated authorization URL for provider {}", provider_name);
+
         Ok((url.to_string(), state))
     }
 
@@ -441,6 +444,7 @@ impl OAuthService {
         // Get token endpoint
         let token_endpoint = if let Some(ref discovery_url) = provider.discovery_url {
             let discovery = self.get_oidc_discovery(discovery_url).await?;
+
             discovery.token_endpoint
         } else {
             provider
@@ -451,6 +455,7 @@ impl OAuthService {
 
         // Exchange code for tokens
         let mut params = HashMap::new();
+
         params.insert("grant_type", "authorization_code");
         params.insert("code", code);
         params.insert("redirect_uri", redirect_uri);
@@ -471,6 +476,7 @@ impl OAuthService {
         }
 
         let token_response: TokenResponse = response.json().await?;
+
         info!(
             "Successfully exchanged code for tokens from provider {}",
             provider_name
@@ -493,6 +499,7 @@ impl OAuthService {
         // Get userinfo endpoint
         let userinfo_endpoint = if let Some(ref discovery_url) = provider.discovery_url {
             let discovery = self.get_oidc_discovery(discovery_url).await?;
+
             discovery
                 .userinfo_endpoint
                 .ok_or_else(|| anyhow::anyhow!("No userinfo endpoint in discovery"))?
@@ -513,6 +520,7 @@ impl OAuthService {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
+
             return Err(anyhow::anyhow!("Failed to get user info: {}", error_text));
         }
 
@@ -575,6 +583,7 @@ impl OAuthService {
         }
 
         info!("Fetching OIDC discovery from {}", discovery_url);
+
         let response = self.http_client.get(discovery_url).send().await?;
 
         if !response.status().is_success() {
@@ -596,6 +605,7 @@ impl OAuthService {
     ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         // Split JWT into parts
         let parts: Vec<&str> = id_token.split('.').collect();
+
         if parts.len() != 3 {
             return Err(anyhow::anyhow!("Invalid ID token format"));
         }
@@ -607,6 +617,7 @@ impl OAuthService {
         // Basic validation
         if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
             let now = chrono::Utc::now().timestamp();
+
             if now > exp {
                 return Err(anyhow::anyhow!("ID token has expired"));
             }
@@ -649,6 +660,7 @@ impl batata_common::OAuthProvider for OAuthService {
         let resp = self
             .exchange_code(provider_name, code, redirect_uri, state)
             .await?;
+
         Ok(batata_common::OAuthTokenResponse {
             access_token: resp.access_token,
             token_type: resp.token_type,
@@ -665,6 +677,7 @@ impl batata_common::OAuthProvider for OAuthService {
         access_token: &str,
     ) -> anyhow::Result<batata_common::OAuthUserProfile> {
         let info = self.get_user_info(provider_name, access_token).await?;
+
         Ok(batata_common::OAuthUserProfile {
             provider_user_id: info.provider_user_id,
             username: info.username,
@@ -681,6 +694,7 @@ fn generate_random_string(len: usize) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
     let rng = std::collections::hash_map::RandomState::new();
+
     iter::repeat_with(|| {
         let idx = (std::hash::BuildHasher::hash_one(&rng, std::time::Instant::now()) as usize)
             % CHARSET.len();
@@ -694,6 +708,7 @@ fn generate_random_string(len: usize) -> String {
 fn base64_decode_url_safe(input: &str) -> anyhow::Result<Vec<u8>> {
     use base64::Engine;
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
     Ok(engine.decode(input)?)
 }
 
@@ -704,6 +719,7 @@ mod tests {
     #[test]
     fn test_oauth_config_default() {
         let config = OAuthConfig::default();
+
         assert!(!config.enabled);
         assert!(config.providers.is_empty());
         assert_eq!(config.user_creation, "auto");
@@ -712,6 +728,7 @@ mod tests {
     #[test]
     fn test_userinfo_mapping_default() {
         let mapping = UserInfoMapping::default();
+
         assert_eq!(mapping.username_claim, "sub");
         assert_eq!(mapping.email_claim, "email");
         assert_eq!(mapping.name_claim, "name");
@@ -721,6 +738,7 @@ mod tests {
     fn test_generate_random_string() {
         let s1 = generate_random_string(32);
         let s2 = generate_random_string(32);
+
         assert_eq!(s1.len(), 32);
         assert_eq!(s2.len(), 32);
         // They should be different (with very high probability)
@@ -730,6 +748,7 @@ mod tests {
     #[test]
     fn test_oauth_provider_type_variants() {
         assert_eq!(OAuthProviderType::default(), OAuthProviderType::Oidc);
+
         let types = vec![
             OAuthProviderType::Generic,
             OAuthProviderType::Oidc,
@@ -747,6 +766,7 @@ mod tests {
     #[test]
     fn test_oauth_config_disabled_by_default() {
         let config = OAuthConfig::from_env();
+
         assert!(!config.enabled);
         assert!(config.providers.is_empty());
     }
@@ -754,6 +774,7 @@ mod tests {
     #[test]
     fn test_oauth_config_get_provider() {
         let mut config = OAuthConfig::from_env();
+
         config.providers.insert(
             "test".to_string(),
             OAuthProviderConfig {
@@ -771,6 +792,7 @@ mod tests {
                 userinfo_mapping: UserInfoMapping::default(),
             },
         );
+
         assert!(config.get_provider("test").is_some());
         assert!(config.get_provider("nonexistent").is_none());
     }
@@ -778,6 +800,7 @@ mod tests {
     #[test]
     fn test_oauth_config_enabled_providers() {
         let mut config = OAuthConfig::from_env();
+
         config.providers.insert(
             "enabled1".to_string(),
             OAuthProviderConfig {
@@ -812,7 +835,9 @@ mod tests {
                 userinfo_mapping: UserInfoMapping::default(),
             },
         );
+
         let enabled = config.enabled_providers();
+
         assert_eq!(enabled.len(), 1);
         assert_eq!(enabled[0].0, "enabled1");
     }
@@ -821,6 +846,7 @@ mod tests {
     fn test_oauth_service_creation() {
         let config = OAuthConfig::from_env();
         let service = OAuthService::new(config).unwrap();
+
         assert!(!service.is_enabled());
         assert!(service.get_enabled_providers().is_empty());
     }
@@ -828,8 +854,11 @@ mod tests {
     #[test]
     fn test_oauth_service_enabled() {
         let mut config = OAuthConfig::from_env();
+
         config.enabled = true;
+
         let service = OAuthService::new(config).unwrap();
+
         assert!(service.is_enabled());
     }
 
@@ -844,6 +873,7 @@ mod tests {
             .encode(format!(r#"{{"sub":"user","exp":{}}}"#, 1000000));
         let token = format!("{}.{}.sig", header, payload);
         let result = service.parse_id_token(&token);
+
         assert!(result.is_err());
     }
 
@@ -857,7 +887,9 @@ mod tests {
             "id_token": "id789",
             "scope": "openid profile"
         }"#;
+
         let response: TokenResponse = serde_json::from_str(json).unwrap();
+
         assert_eq!(response.access_token, "at123");
         assert_eq!(response.token_type, "bearer");
         assert_eq!(response.expires_in, Some(3600));
@@ -876,7 +908,9 @@ mod tests {
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code"]
         }"#;
+
         let discovery: OidcDiscovery = serde_json::from_str(json).unwrap();
+
         assert_eq!(discovery.issuer, "https://auth.example.com");
         assert_eq!(discovery.scopes_supported.len(), 3);
     }

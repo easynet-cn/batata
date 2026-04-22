@@ -176,10 +176,12 @@ mod tests {
     #[test]
     fn test_auth_check_result() {
         let ok = AuthCheckResult::success();
+
         assert!(ok.success);
         assert!(ok.message.is_none());
 
         let fail = AuthCheckResult::fail("token expired");
+
         assert!(!fail.success);
         assert_eq!(fail.message.as_deref(), Some("token expired"));
     }
@@ -187,6 +189,7 @@ mod tests {
     #[test]
     fn test_identity_context_default() {
         let ctx = IdentityContext::default();
+
         assert!(ctx.token.is_none());
         assert!(ctx.username.is_empty());
         assert!(!ctx.authenticated);
@@ -196,9 +199,11 @@ mod tests {
     #[test]
     fn test_request_token_default() {
         let token = RequestToken::default();
+
         assert!(token.0.is_none());
 
         let token = RequestToken(Some("abc123".to_string()));
+
         assert_eq!(token.0.as_deref(), Some("abc123"));
     }
 
@@ -208,6 +213,7 @@ mod tests {
             resource: "public:DEFAULT_GROUP:config/app.yaml".to_string(),
             action: "r".to_string(),
         };
+
         assert!(perm.resource.contains("config"));
         assert_eq!(perm.action, "r");
     }
@@ -220,6 +226,7 @@ mod tests {
             username: "nacos".to_string(),
             is_global_admin: true,
         };
+
         assert_eq!(result.username, "nacos");
         assert!(result.is_global_admin);
         assert_eq!(result.token_ttl, 18000);

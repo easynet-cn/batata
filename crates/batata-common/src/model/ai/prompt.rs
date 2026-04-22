@@ -238,6 +238,7 @@ pub fn extract_prompt_key_from_descriptor(data_id: &str) -> Option<&str> {
 /// Validate semantic version format: `major.minor.patch`
 pub fn is_valid_version(version: &str) -> bool {
     let parts: Vec<&str> = version.split('.').collect();
+
     parts.len() == 3 && parts.iter().all(|p| p.parse::<u32>().is_ok())
 }
 
@@ -251,6 +252,7 @@ pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
             parts.get(2).copied().unwrap_or(0),
         )
     };
+
     parse(v1).cmp(&parse(v2))
 }
 
@@ -388,12 +390,16 @@ mod tests {
 
         // With defaults only
         let result = prompt.render(&HashMap::new());
+
         assert_eq!(result, "Hello User, welcome to Batata!");
 
         // With user override
         let mut vars = HashMap::new();
+
         vars.insert("name".to_string(), "Alice".to_string());
+
         let result = prompt.render(&vars);
+
         assert_eq!(result, "Hello Alice, welcome to Batata!");
     }
 
@@ -450,6 +456,7 @@ mod tests {
         };
 
         let prompt = info.to_client_prompt();
+
         assert_eq!(prompt.prompt_key, "greeting");
         assert_eq!(prompt.version, "1.0.0");
         assert_eq!(prompt.md5, "abc123");
@@ -479,6 +486,7 @@ mod tests {
         };
 
         let meta = compose_meta_info(&descriptor, &mapping);
+
         assert_eq!(meta.prompt_key, "test");
         assert_eq!(meta.description, Some("Test prompt".to_string()));
         assert_eq!(meta.versions.len(), 1);
@@ -501,10 +509,12 @@ mod tests {
         };
 
         let json = serde_json::to_string(&prompt).unwrap();
+
         assert!(json.contains("\"promptKey\":\"test\""));
         assert!(json.contains("\"defaultValue\":\"World\""));
 
         let deserialized: Prompt = serde_json::from_str(&json).unwrap();
+
         assert_eq!(deserialized.prompt_key, "test");
         assert_eq!(deserialized.variables.unwrap()[0].name, "name");
     }

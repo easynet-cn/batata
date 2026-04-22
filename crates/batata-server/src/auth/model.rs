@@ -13,14 +13,12 @@ mod tests {
         assert_eq!(GLOBAL_ADMIN_ROLE, "ROLE_ADMIN");
         assert_eq!(AUTHORIZATION_HEADER, "Authorization");
         assert_eq!(TOKEN_PREFIX, "Bearer ");
-        assert_eq!(DEFAULT_USER, "batata");
         assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
     }
 
     #[test]
     fn test_ldap_constants() {
         assert_eq!(AUTH_LDAP_URL, "batata.core.auth.ldap.url");
-        assert_eq!(LDAP_PREFIX, "LDAP_");
     }
 
     #[test]

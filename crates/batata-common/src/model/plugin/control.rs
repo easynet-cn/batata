@@ -339,31 +339,37 @@ impl ControlContext {
 
     pub fn with_ip(mut self, ip: impl Into<String>) -> Self {
         self.client_ip = Some(ip.into());
+
         self
     }
 
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = Some(client_id.into());
+
         self
     }
 
     pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
+
         self
     }
 
     pub fn with_service(mut self, service: impl Into<String>) -> Self {
         self.service = Some(service.into());
+
         self
     }
 
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
+
         self
     }
 
     pub fn with_user(mut self, user: impl Into<String>) -> Self {
         self.user = Some(user.into());
+
         self
     }
 

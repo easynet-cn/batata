@@ -113,14 +113,17 @@ pub fn decode_jwt_token_cached(
     // Check cache first - use token directly for lookup
     if let Some(cached) = token_cache().get(token) {
         let now = chrono::Utc::now().timestamp();
+
         if cached.claims.exp > now {
             // Check if user is blacklisted
             if is_user_blacklisted(&cached.claims.sub) {
                 token_cache().invalidate(token);
+
                 return Err(jsonwebtoken::errors::Error::from(
                     jsonwebtoken::errors::ErrorKind::InvalidToken,
                 ));
             }
+
             return Ok(jsonwebtoken::TokenData {
                 header: jsonwebtoken::Header::default(),
                 claims: cached.claims,
@@ -157,6 +160,7 @@ pub fn decode_jwt_token(
     secret_key: &str,
 ) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<JwtPayload>> {
     let decoding_key = DecodingKey::from_base64_secret(secret_key)?;
+
     decode::<JwtPayload>(token, &decoding_key, &Validation::default())
 }
 
@@ -232,6 +236,7 @@ pub fn encode_jwt_token(
     };
 
     let encoding_key = EncodingKey::from_base64_secret(secret_key)?;
+
     encode(&header, &payload, &encoding_key)
 }
 
@@ -248,12 +253,14 @@ mod tests {
 
     fn unique_user(prefix: &str) -> String {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+
         format!("{}_{}", prefix, id)
     }
 
     #[test]
     fn test_encode_jwt_token_success() {
         let token = encode_jwt_token("admin_enc", TEST_SECRET, 3600).unwrap();
+
         assert!(!token.is_empty());
         assert_eq!(token.split('.').count(), 3);
     }
@@ -263,6 +270,7 @@ mod tests {
         let user = unique_user("roundtrip");
         let token = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
         let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
+
         assert_eq!(decoded.claims.sub, user);
         assert!(decoded.claims.exp > chrono::Utc::now().timestamp());
     }
@@ -271,12 +279,14 @@ mod tests {
     fn test_decode_with_wrong_secret() {
         let token = encode_jwt_token("wrongsec", TEST_SECRET, 3600).unwrap();
         let wrong_secret = "d3JvbmdLZXlGb3JUZXN0aW5nMTIzNDU2Nzg5MDEyMzQ1Ng==";
+
         assert!(decode_jwt_token(&token, wrong_secret).is_err());
     }
 
     #[test]
     fn test_decode_expired_token() {
         let token = encode_jwt_token("expired", TEST_SECRET, -120).unwrap();
+
         assert!(decode_jwt_token(&token, TEST_SECRET).is_err());
     }
 
@@ -296,6 +306,7 @@ mod tests {
         let token = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
         let result1 = decode_jwt_token_cached(&token, TEST_SECRET).unwrap();
         let result2 = decode_jwt_token_cached(&token, TEST_SECRET).unwrap();
+
         assert_eq!(result1.claims.sub, result2.claims.sub);
         assert_eq!(result1.claims.exp, result2.claims.exp);
     }
@@ -309,6 +320,7 @@ mod tests {
         assert!(decode_jwt_token(&token, TEST_SECRET).is_ok());
 
         revoke_token(&token);
+
         assert!(token_blacklist().contains_key(&token));
 
         // Cached decode should fail (blacklisted)
@@ -342,6 +354,7 @@ mod tests {
 
         // Create token — should fail due to user blacklist
         let token = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
+
         assert!(decode_jwt_token_cached(&token, TEST_SECRET).is_err());
 
         // Unblacklist user
@@ -349,7 +362,9 @@ mod tests {
 
         // New token should work now (invalidate cached failure first)
         invalidate_token(&token);
+
         let token2 = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
+
         assert!(decode_jwt_token_cached(&token2, TEST_SECRET).is_ok());
     }
 
@@ -392,10 +407,12 @@ mod tests {
 
         // Add to blacklist
         token_blacklist().insert(token.clone(), ());
+
         assert!(token_blacklist().contains_key(&token));
 
         // Remove just this token (clean up without affecting others)
         token_blacklist().invalidate(&token);
+
         assert!(!token_blacklist().contains_key(&token));
     }
 
@@ -408,6 +425,7 @@ mod tests {
     fn test_token_with_special_characters_in_subject() {
         let token = encode_jwt_token("user@domain.com", TEST_SECRET, 3600).unwrap();
         let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
+
         assert_eq!(decoded.claims.sub, "user@domain.com");
     }
 
@@ -415,6 +433,7 @@ mod tests {
     fn test_token_with_empty_subject() {
         let token = encode_jwt_token("", TEST_SECRET, 3600).unwrap();
         let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
+
         assert_eq!(decoded.claims.sub, "");
     }
 
@@ -423,6 +442,7 @@ mod tests {
         let user = unique_user("multi");
         let token1 = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
         let token2 = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
+
         assert!(decode_jwt_token(&token1, TEST_SECRET).is_ok());
         assert!(decode_jwt_token(&token2, TEST_SECRET).is_ok());
     }
@@ -441,6 +461,7 @@ mod tests {
             ) {
                 let token = encode_jwt_token(&username, TEST_SECRET, 3600).unwrap();
                 let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
+
                 prop_assert_eq!(decoded.claims.sub, username);
             }
 
@@ -449,6 +470,7 @@ mod tests {
                 username in "[a-zA-Z]{1,20}"
             ) {
                 let token = encode_jwt_token(&username, TEST_SECRET, 3600).unwrap();
+
                 prop_assert_eq!(token.split('.').count(), 3);
             }
 
@@ -459,6 +481,7 @@ mod tests {
             ) {
                 let token1 = encode_jwt_token(&user1, TEST_SECRET, 3600).unwrap();
                 let token2 = encode_jwt_token(&user2, TEST_SECRET, 3600).unwrap();
+
                 if user1 != user2 {
                     prop_assert_ne!(token1, token2);
                 }
@@ -470,6 +493,7 @@ mod tests {
             ) {
                 let token = encode_jwt_token("user", TEST_SECRET, expire).unwrap();
                 let decoded = decode_jwt_token(&token, TEST_SECRET).unwrap();
+
                 prop_assert!(decoded.claims.exp > chrono::Utc::now().timestamp() - 1);
             }
         }

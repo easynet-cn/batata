@@ -199,6 +199,7 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     };
 
     roles::Entity::insert(entity).exec(db).await?;
+
     invalidate_roles_cache(username);
 
     Ok(())
@@ -219,12 +220,14 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
             .filter(roles::Column::Role.ne(GLOBAL_ADMIN_ROLE))
             .exec(db)
             .await?;
+
         // Invalidate only users who have this role, not entire cache
         invalidate_roles_cache_for_role(role);
     } else {
         roles::Entity::delete_by_id((role.to_owned(), username.to_owned()))
             .exec(db)
             .await?;
+
         invalidate_roles_cache(username);
     }
 
@@ -315,6 +318,7 @@ mod tests {
                 username: user1.clone(),
             },
         ];
+
         let roles_user2 = vec![RoleInfo {
             role: "superadmin".to_string(),
             username: user2.clone(),
@@ -369,10 +373,12 @@ mod tests {
             role: "test".to_string(),
             username: username.to_string(),
         }];
+
         ROLES_CACHE.insert(username.to_string(), roles);
 
         // Should be able to lookup with &str directly
         let result = ROLES_CACHE.get(username);
+
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 1);
 

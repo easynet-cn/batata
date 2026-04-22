@@ -33,13 +33,14 @@ pub fn create_auth_plugin(
                 default_auth::DefaultAuthPlugin::new(secret_key, token_expire_seconds, persistence);
             let ldap_config = ldap_config.expect("LDAP config required for ldap auth type");
             let ldap_service = crate::service::ldap::LdapAuthService::new(ldap_config);
+
             Arc::new(default_auth::LdapAuthPlugin::new(
                 default_plugin,
                 ldap_service,
             ))
         }
         _ => {
-            // "nacos" auth type is the default
+            // "default" auth type is the default
             Arc::new(default_auth::DefaultAuthPlugin::new(
                 secret_key,
                 token_expire_seconds,

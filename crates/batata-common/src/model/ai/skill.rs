@@ -424,6 +424,7 @@ pub fn parse_semver(v: &str) -> Option<(u64, u64, u64)> {
     let major = parts[0].parse().ok()?;
     let minor = parts[1].parse().ok()?;
     let patch = parts[2].parse().ok()?;
+
     Some((major, minor, patch))
 }
 
@@ -457,6 +458,7 @@ pub fn parse_legacy_version(v: &str) -> Option<u64> {
     if stripped.is_empty() || stripped.contains('.') {
         return None;
     }
+
     stripped.parse().ok()
 }
 
@@ -512,6 +514,7 @@ mod tests {
     #[test]
     fn test_compare_semver_ordering() {
         use std::cmp::Ordering;
+
         assert_eq!(compare_semver("1.0.0", "1.0.0"), Ordering::Equal);
         assert_eq!(compare_semver("1.0.1", "1.0.0"), Ordering::Greater);
         assert_eq!(compare_semver("1.0.0", "1.0.1"), Ordering::Less);
@@ -575,12 +578,14 @@ mod tests {
             content: None,
             metadata: HashMap::new(),
         };
+
         assert_eq!(res.resource_identifier(), "md5::compute");
     }
 
     #[test]
     fn test_skill_version_info_defaults() {
         let vi = SkillVersionInfo::default();
+
         assert!(vi.editing_version.is_none());
         assert!(vi.reviewing_version.is_none());
         assert_eq!(vi.online_cnt, 0);
@@ -630,6 +635,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&summary).unwrap();
+
         assert!(json.contains("\"namespaceId\":\"public\""));
         assert!(json.contains("\"name\":\"test-skill\""));
         assert!(json.contains("\"enable\":true"));
@@ -671,6 +677,7 @@ mod tests {
     fn test_skill_form_deserialization() {
         let json = r#"{"namespaceId":"ns1","skillName":"my-skill","version":"0.0.1"}"#;
         let form: SkillForm = serde_json::from_str(json).unwrap();
+
         assert_eq!(form.namespace_id, "ns1");
         assert_eq!(form.skill_name.as_deref(), Some("my-skill"));
         assert_eq!(form.version.as_deref(), Some("0.0.1"));
@@ -680,6 +687,7 @@ mod tests {
     fn test_skill_list_form_defaults() {
         let json = r#"{"namespaceId":"public"}"#;
         let form: SkillListForm = serde_json::from_str(json).unwrap();
+
         assert_eq!(form.namespace_id, "public");
         assert!(form.skill_name.is_none());
         assert!(form.search.is_none());
@@ -691,6 +699,7 @@ mod tests {
     fn test_skill_publish_form_update_latest_default() {
         let json = r#"{"namespaceId":"public","skillName":"s1","version":"0.0.1"}"#;
         let form: SkillPublishForm = serde_json::from_str(json).unwrap();
+
         assert!(
             form.update_latest_label,
             "updateLatestLabel should default to true"
@@ -721,6 +730,7 @@ mod tests {
     #[test]
     fn test_skill_with_resources_roundtrip() {
         let mut resource = HashMap::new();
+
         resource.insert(
             "tool::calculator".to_string(),
             SkillResource {
@@ -746,7 +756,9 @@ mod tests {
         assert_eq!(parsed.description.as_deref(), Some("Math utilities"));
         assert!(parsed.skill_md.is_some());
         assert_eq!(parsed.resource.len(), 1);
+
         let tool = parsed.resource.get("tool::calculator").unwrap();
+
         assert_eq!(tool.name, "calculator");
         assert_eq!(tool.resource_type, "tool");
         assert_eq!(tool.content.as_deref(), Some("fn calc() {}"));

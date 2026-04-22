@@ -97,6 +97,7 @@ mod tests {
             down: 1,
             ..Default::default()
         };
+
         assert!(healthy.is_healthy());
 
         let unhealthy = ClusterHealthSummary {
@@ -105,6 +106,7 @@ mod tests {
             down: 2,
             ..Default::default()
         };
+
         assert!(!unhealthy.is_healthy());
     }
 
@@ -117,6 +119,7 @@ mod tests {
             state: MemberState::Up,
             extend_info: std::collections::BTreeMap::new(),
         };
+
         assert_eq!(member.ip, "10.0.0.1");
         assert_eq!(member.state, MemberState::Up);
     }

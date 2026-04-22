@@ -8,7 +8,13 @@ use clap::Parser;
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
-use batata_auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
+use batata_auth::model::{
+    AUTH_ADMIN_ENABLED_KEY, AUTH_CONSOLE_ENABLED_KEY, AUTH_ENABLED_KEY, AUTH_LADP_USER_DN_PATTERN,
+    AUTH_LDAP_BASE_DC, AUTH_LDAP_BIND_DN, AUTH_LDAP_CASE_SENSITIVE, AUTH_LDAP_FILTER_PREFIX,
+    AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION, AUTH_LDAP_PASSWORD, AUTH_LDAP_TIMEOUT,
+    AUTH_LDAP_URL, AUTH_SERVER_IDENTITY_KEY_PROP, AUTH_SERVER_IDENTITY_VALUE_PROP,
+    AUTH_SYSTEM_TYPE_KEY, DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS,
+};
 
 use super::constants::{
     CONFIG_RENTENTION_DAYS, CONSOLE_REMOTE_CONNECT_TIMEOUT_MS, CONSOLE_REMOTE_PASSWORD,
@@ -400,14 +406,12 @@ impl Configuration {
     // ========================================================================
 
     pub fn auth_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.core.auth.enabled")
-            .unwrap_or(false)
+        self.config.get_bool(AUTH_ENABLED_KEY).unwrap_or(false)
     }
 
     pub fn auth_admin_enabled(&self) -> bool {
         self.config
-            .get_bool("batata.core.auth.admin.enabled")
+            .get_bool(AUTH_ADMIN_ENABLED_KEY)
             .unwrap_or(false)
     }
 
@@ -422,25 +426,25 @@ impl Configuration {
 
     pub fn server_identity_key(&self) -> String {
         self.config
-            .get_string("batata.core.auth.server.identity.key")
+            .get_string(AUTH_SERVER_IDENTITY_KEY_PROP)
             .unwrap_or_default()
     }
 
     pub fn server_identity_value(&self) -> String {
         self.config
-            .get_string("batata.core.auth.server.identity.value")
+            .get_string(AUTH_SERVER_IDENTITY_VALUE_PROP)
             .unwrap_or_default()
     }
 
     pub fn auth_system_type(&self) -> String {
         self.config
-            .get_string("batata.core.auth.system.type")
+            .get_string(AUTH_SYSTEM_TYPE_KEY)
             .unwrap_or("default".to_string())
     }
 
     pub fn auth_console_enabled(&self) -> bool {
         self.config
-            .get_bool("batata.core.auth.console.enabled")
+            .get_bool(AUTH_CONSOLE_ENABLED_KEY)
             .unwrap_or(true)
     }
 
@@ -463,56 +467,61 @@ impl Configuration {
 
     /// Get LDAP URL
     pub fn ldap_url(&self) -> Option<String> {
-        self.config.get_string("batata.core.auth.ldap.url").ok()
+        self.config.get_string(AUTH_LDAP_URL).ok()
     }
 
     /// Get LDAP base DN
     pub fn ldap_base_dn(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.base_dc")
+            .get_string(AUTH_LDAP_BASE_DC)
             .unwrap_or_default()
     }
 
     /// Get LDAP bind DN (admin user)
     pub fn ldap_bind_dn(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.bind_dn")
+            .get_string(AUTH_LDAP_BIND_DN)
             .unwrap_or_default()
     }
 
     /// Get LDAP bind password
     pub fn ldap_bind_password(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.password")
+            .get_string(AUTH_LDAP_PASSWORD)
             .unwrap_or_default()
     }
 
     /// Get LDAP user DN pattern
     pub fn ldap_user_dn_pattern(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.user_dn_pattern")
+            .get_string(AUTH_LADP_USER_DN_PATTERN)
             .unwrap_or_default()
     }
 
     /// Get LDAP filter prefix (default: uid)
     pub fn ldap_filter_prefix(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.filter.prefix")
+            .get_string(AUTH_LDAP_FILTER_PREFIX)
             .unwrap_or_else(|_| "uid".to_string())
     }
 
     /// Get LDAP connection timeout in milliseconds
     pub fn ldap_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.ldap.timeout")
-            .unwrap_or(5000) as u64
+        self.config.get_int(AUTH_LDAP_TIMEOUT).unwrap_or(5000) as u64
     }
 
     /// Check if LDAP username comparison is case-sensitive
     pub fn ldap_case_sensitive(&self) -> bool {
         self.config
-            .get_bool("batata.core.auth.ldap.case.sensitive")
+            .get_bool(AUTH_LDAP_CASE_SENSITIVE)
             .unwrap_or(true)
+    }
+
+    /// Check if LDAP should ignore partial result exceptions
+    pub fn ldap_ignore_partial_result_exception(&self) -> bool {
+        self.config
+            .get_bool(AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION)
+            .unwrap_or(false)
     }
 
     /// Get LDAP configuration as LdapConfig struct
@@ -526,10 +535,7 @@ impl Configuration {
             filter_prefix: self.ldap_filter_prefix(),
             timeout_ms: self.ldap_timeout_ms(),
             case_sensitive: self.ldap_case_sensitive(),
-            ignore_partial_result_exception: self
-                .config
-                .get_bool("batata.core.auth.ldap.ignore.partial.result.exception")
-                .unwrap_or(false),
+            ignore_partial_result_exception: self.ldap_ignore_partial_result_exception(),
         }
     }
 
@@ -2075,19 +2081,19 @@ mod tests {
     #[test]
     fn test_auth_enabled_does_not_include_admin() {
         // Setting admin.enabled=true should NOT make auth_enabled() return true
-        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![(AUTH_ADMIN_ENABLED_KEY, true.into())]);
         assert!(!cfg.auth_enabled());
     }
 
     #[test]
     fn test_auth_admin_enabled() {
-        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![(AUTH_ADMIN_ENABLED_KEY, true.into())]);
         assert!(cfg.auth_admin_enabled());
     }
 
     #[test]
     fn test_auth_enabled_for_api_type_open_api() {
-        let cfg = build_config(vec![("batata.core.auth.enabled", true.into())]);
+        let cfg = build_config(vec![(AUTH_ADMIN_ENABLED_KEY, true.into())]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::OpenApi));
 
         let cfg2 = build_config(vec![]);
@@ -2096,7 +2102,7 @@ mod tests {
 
     #[test]
     fn test_auth_enabled_for_api_type_admin_api() {
-        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![(AUTH_ADMIN_ENABLED_KEY, true.into())]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::AdminApi));
 
         let cfg2 = build_config(vec![]);
@@ -2109,7 +2115,7 @@ mod tests {
         let cfg = build_config(vec![]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::ConsoleApi));
 
-        let cfg2 = build_config(vec![("batata.core.auth.console.enabled", false.into())]);
+        let cfg2 = build_config(vec![(AUTH_CONSOLE_ENABLED_KEY, false.into())]);
         assert!(!cfg2.auth_enabled_for_api_type(ApiType::ConsoleApi));
     }
 
@@ -2129,10 +2135,7 @@ mod tests {
     #[test]
     fn test_server_identity_key_value() {
         let cfg = build_config(vec![
-            (
-                "batata.core.auth.server.identity.key",
-                "serverIdentity".into(),
-            ),
+            (AUTH_SERVER_IDENTITY_KEY_PROP, "serverIdentity".into()),
             (
                 "batata.core.auth.server.identity.value",
                 "cluster-node-1".into(),

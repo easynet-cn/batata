@@ -90,6 +90,7 @@ impl LdapAuthService {
                         username = %normalized_username,
                         "LDAP authentication successful"
                     );
+
                     AuthResult {
                         success: true,
                         username: normalized_username,
@@ -101,6 +102,7 @@ impl LdapAuthService {
                         username = %normalized_username,
                         "LDAP authentication failed: invalid credentials"
                     );
+
                     AuthResult {
                         success: false,
                         username: normalized_username,
@@ -115,6 +117,7 @@ impl LdapAuthService {
                     error = %e,
                     "LDAP authentication error"
                 );
+
                 AuthResult {
                     success: false,
                     username: normalized_username,
@@ -150,7 +153,9 @@ impl LdapAuthService {
 
             if entries.is_empty() {
                 tracing::debug!(username = %username, "User not found in LDAP");
+
                 let _ = ldap.unbind().await;
+
                 return Ok(false);
             }
 
@@ -159,6 +164,7 @@ impl LdapAuthService {
                 SearchEntry::construct(entry).dn
             } else {
                 let _ = ldap.unbind().await;
+
                 return Ok(false);
             };
 
@@ -243,11 +249,13 @@ impl LdapAuthService {
 
             let success = bind_result.rc == 0;
             let _ = ldap.unbind().await;
+
             Ok(success)
         } else {
             // Just test anonymous bind (may not be allowed)
             let bind_result = ldap.simple_bind("", "").await?;
             let _ = ldap.unbind().await;
+
             Ok(bind_result.rc == 0)
         }
     }
@@ -261,6 +269,7 @@ mod tests {
     fn test_ldap_auth_service_creation() {
         let config = LdapConfig::default();
         let service = LdapAuthService::new(config);
+
         assert!(!service.is_configured());
     }
 
@@ -271,6 +280,7 @@ mod tests {
             ..Default::default()
         };
         let service = LdapAuthService::new(config);
+
         assert!(service.is_configured());
     }
 
@@ -280,6 +290,7 @@ mod tests {
         let service = LdapAuthService::new(config);
 
         let result = service.authenticate("user", "password").await;
+
         assert!(!result.success);
         assert!(result.error_message.is_some());
         assert!(result.error_message.unwrap().contains("not configured"));
@@ -299,6 +310,7 @@ mod tests {
             ignore_partial_result_exception: true,
         };
         let service = LdapAuthService::new(config.clone());
+
         assert!(service.is_configured());
         assert_eq!(service.config().url, "ldap://ldap.example.com:389");
         assert!(!service.config().case_sensitive);
@@ -310,6 +322,7 @@ mod tests {
         let config = LdapConfig::default();
         let service = LdapAuthService::new(config);
         let result = service.authenticate("user", "pass").await;
+
         assert!(!result.success);
         assert!(result.error_message.is_some());
     }
@@ -319,6 +332,7 @@ mod tests {
         let config = LdapConfig::default();
         let service = LdapAuthService::new(config);
         let result = service.user_exists("anyuser").await;
+
         // Should return error for unconfigured
         assert!(result.is_err());
     }
@@ -328,6 +342,7 @@ mod tests {
         let config = LdapConfig::default();
         let service = LdapAuthService::new(config);
         let result = service.test_connection().await;
+
         // test_connection returns Ok(false) when not configured
         assert!(result.is_ok());
         assert!(!result.unwrap());

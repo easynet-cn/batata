@@ -17,42 +17,28 @@ pub const AUTH_SYSTEM_TYPE_KEY: &str = "batata.core.auth.system.type";
 pub const AUTH_SERVER_IDENTITY_KEY_PROP: &str = "batata.core.auth.server.identity.key";
 pub const AUTH_SERVER_IDENTITY_VALUE_PROP: &str = "batata.core.auth.server.identity.value";
 
-pub const AUTH_PLUGIN_TYPE: &str = "nacos";
-pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 pub const AUTHORIZATION_HEADER: &str = "Authorization";
 pub const TOKEN_PREFIX: &str = "Bearer ";
-pub const DEFAULT_USER: &str = "batata";
-pub const PARAM_USERNAME: &str = "username";
-pub const PARAM_PASSWORD: &str = "password";
 pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
 pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "console/user/password";
-pub const LOCK_OPERATOR_POINT: &str = "grpc/lock";
-/// Kept as "nacosuser" for wire-format compatibility
-pub const USER_CONTEXT_KEY: &str = "nacosuser";
-pub const TOKEN_SECRET_KEY: &str = "batata.core.auth.plugin.nacos.token.secret.key";
-pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
-pub const TOKEN_EXPIRE_SECONDS: &str = "batata.core.auth.plugin.nacos.token.expire.seconds";
+
+pub const TOKEN_EXPIRE_SECONDS: &str = "batata.core.auth.plugin.default.token.expire.seconds";
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
 
 // LDAP configuration keys
 pub const AUTH_LDAP_URL: &str = "batata.core.auth.ldap.url";
-pub const AUTH_LDAP_BASEDC: &str = "batata.core.auth.ldap.basedc";
-pub const AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
-pub const AUTH_LDAP_USERDN: &str = "batata.core.auth.ldap.userDn";
+pub const AUTH_LDAP_BASE_DC: &str = "batata.core.auth.ldap.base_dc";
+pub const AUTH_LDAP_BIND_DN: &str = "batata.core.auth.ldap.bind_dn";
 pub const AUTH_LDAP_PASSWORD: &str = "batata.core.auth.ldap.password";
+pub const AUTH_LADP_USER_DN_PATTERN: &str = "batata.core.auth.ldap.user_dn_pattern";
 pub const AUTH_LDAP_FILTER_PREFIX: &str = "batata.core.auth.ldap.filter.prefix";
+pub const AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
 pub const AUTH_LDAP_CASE_SENSITIVE: &str = "batata.core.auth.ldap.case.sensitive";
-pub const AUTH_LDAP_IGNORE_PARTIAL_RESULT: &str =
+pub const AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
     "batata.core.auth.ldap.ignore.partial.result.exception";
-pub const LDAP_PREFIX: &str = "LDAP_";
 
 pub const MAX_PASSWORD_LENGTH: i32 = 72;
-pub const USER_PATH: &str = "/v3/auth/user";
-pub const ROLE_PATH: &str = "/v3/auth/role";
-pub const PERMISSION_PATH: &str = "/v3/auth/permission";
-pub const USER_NOT_FOUND_MESSAGE: &str =
-    "User not found! Please check user exist or password is right!";
 pub const ONLY_IDENTITY: &str = "only_identity";
 
 // ============================================================================
@@ -341,16 +327,13 @@ mod tests {
         assert_eq!(GLOBAL_ADMIN_ROLE, "ROLE_ADMIN");
         assert_eq!(AUTHORIZATION_HEADER, "Authorization");
         assert_eq!(TOKEN_PREFIX, "Bearer ");
-        assert_eq!(DEFAULT_USER, "batata");
         assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
     }
 
     #[test]
     fn test_ldap_constants() {
-        assert_eq!(LDAP_AUTH_PLUGIN_TYPE, "ldap");
         assert_eq!(AUTH_LDAP_URL, "batata.core.auth.ldap.url");
-        assert_eq!(AUTH_LDAP_BASEDC, "batata.core.auth.ldap.basedc");
-        assert_eq!(LDAP_PREFIX, "LDAP_");
+        assert_eq!(AUTH_LDAP_BASE_DC, "batata.core.auth.ldap.base_dc");
     }
 
     #[test]
@@ -661,12 +644,5 @@ mod tests {
     #[test]
     fn test_max_password_length() {
         assert_eq!(MAX_PASSWORD_LENGTH, 72);
-    }
-
-    #[test]
-    fn test_path_constants() {
-        assert_eq!(USER_PATH, "/v3/auth/user");
-        assert_eq!(ROLE_PATH, "/v3/auth/role");
-        assert_eq!(PERMISSION_PATH, "/v3/auth/permission");
     }
 }

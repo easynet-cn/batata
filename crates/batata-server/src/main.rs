@@ -488,7 +488,7 @@ fn validate_config(configuration: &model::common::Configuration) {
             "FATAL: Authentication is enabled (batata.core.auth.enabled=true) but no JWT secret key is configured."
         );
         eprintln!(
-            "Set 'batata.core.auth.plugin.nacos.token.secret.key' to a non-empty Base64-encoded secret."
+            "Set 'batata.core.auth.plugin.default.token.secret.key' to a non-empty Base64-encoded secret."
         );
         std::process::exit(1);
     }
@@ -502,7 +502,7 @@ fn validate_config(configuration: &model::common::Configuration) {
     {
         eprintln!("WARNING: Using the default JWT secret key. This is insecure for production!");
         eprintln!("Generate a new key with: openssl rand -base64 32");
-        eprintln!("Set it via: batata.core.auth.plugin.nacos.token.secret.key=<your-key>");
+        eprintln!("Set it via: batata.core.auth.plugin.default.token.secret.key=<your-key>");
     }
 }
 

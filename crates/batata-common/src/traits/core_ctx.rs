@@ -103,6 +103,7 @@ mod tests {
             address: "192.168.1.1:8848".to_string(),
             state: MemberState::Up,
         };
+
         assert_eq!(member.ip, "192.168.1.1");
         assert_eq!(member.port, 8848);
     }

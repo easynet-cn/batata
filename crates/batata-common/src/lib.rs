@@ -52,11 +52,13 @@ pub fn default_page_size_small() -> u64 {
 #[inline]
 pub fn build_service_key(namespace: &str, group: &str, service: &str) -> String {
     let mut key = String::with_capacity(namespace.len() + group.len() + service.len() + 4);
+
     key.push_str(namespace);
     key.push_str("@@");
     key.push_str(group);
     key.push_str("@@");
     key.push_str(service);
+
     key
 }
 
@@ -66,9 +68,11 @@ pub fn build_service_key(namespace: &str, group: &str, service: &str) -> String 
 #[inline]
 pub fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
     let mut parts = key.splitn(3, "@@");
+
     let ns = parts.next()?;
     let group = parts.next()?;
     let service = parts.next()?;
+
     Some((ns, group, service))
 }
 
@@ -80,11 +84,13 @@ pub fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
 #[inline]
 pub fn build_config_key(data_id: &str, group: &str, tenant: &str) -> String {
     let mut key = String::with_capacity(data_id.len() + group.len() + tenant.len() + 2);
+
     key.push_str(data_id);
     key.push('+');
     key.push_str(group);
     key.push('+');
     key.push_str(tenant);
+
     key
 }
 
@@ -92,9 +98,11 @@ pub fn build_config_key(data_id: &str, group: &str, tenant: &str) -> String {
 #[inline]
 pub fn parse_config_key(key: &str) -> Option<(&str, &str, &str)> {
     let mut parts = key.splitn(3, '+');
+
     let data_id = parts.next()?;
     let group = parts.next()?;
     let tenant = parts.next()?;
+
     Some((data_id, group, tenant))
 }
 
@@ -118,6 +126,7 @@ pub fn parse_config_key(key: &str) -> Option<(&str, &str, &str)> {
 pub fn paginate(page_no: u64, page_size: u64, total: usize) -> (usize, usize) {
     let start = ((page_no.max(1) - 1) * page_size) as usize;
     let end = (start + page_size as usize).min(total);
+
     (start, end)
 }
 
@@ -303,6 +312,7 @@ mod tests {
             (SignType::Console, "console"),
             (SignType::Specified, "specified"),
         ];
+
         for (variant, expected) in variants {
             assert_eq!(variant.as_str(), expected);
             assert_eq!(format!("{}", variant), expected);
@@ -324,6 +334,7 @@ mod tests {
             (ApiType::OpenApi, "OPEN_API"),
             (ApiType::InnerApi, "INNER_API"),
         ];
+
         for (variant, expected) in variants {
             assert_eq!(variant.description(), expected);
             assert_eq!(format!("{}", variant), expected);
@@ -355,6 +366,7 @@ mod tests {
     #[test]
     fn test_parse_service_key() {
         let (ns, group, svc) = parse_service_key("public@@DEFAULT_GROUP@@my-service").unwrap();
+
         assert_eq!(ns, "public");
         assert_eq!(group, "DEFAULT_GROUP");
         assert_eq!(svc, "my-service");
@@ -373,6 +385,7 @@ mod tests {
     #[test]
     fn test_parse_config_key() {
         let (data_id, group, tenant) = parse_config_key("app.yaml+DEFAULT_GROUP+public").unwrap();
+
         assert_eq!(data_id, "app.yaml");
         assert_eq!(group, "DEFAULT_GROUP");
         assert_eq!(tenant, "public");

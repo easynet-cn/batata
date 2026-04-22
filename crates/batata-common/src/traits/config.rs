@@ -189,6 +189,7 @@ mod tests {
     #[test]
     fn test_namespace_info_default() {
         let ns = NamespaceInfo::default();
+
         assert!(ns.namespace_id.is_empty());
         assert!(ns.namespace_name.is_empty());
         assert_eq!(ns.config_count, 0);
@@ -198,6 +199,7 @@ mod tests {
     #[test]
     fn test_config_subscription_key() {
         let key = ConfigSubscriptionKey::new("app.yaml", "DEFAULT_GROUP", "public");
+
         assert_eq!(key.data_id, "app.yaml");
         assert_eq!(key.group, "DEFAULT_GROUP");
         assert_eq!(key.tenant, "public");
@@ -206,6 +208,7 @@ mod tests {
     #[test]
     fn test_connection_info_default() {
         let info = ConnectionInfo::default();
+
         assert!(info.connection_id.is_empty());
         assert!(info.client_ip.is_empty());
         assert_eq!(info.create_time, 0);
