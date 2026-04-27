@@ -36,6 +36,9 @@ base64 = { workspace = true }
 # ZIP support (for skill_zip)
 zip = { workspace = true, optional = true }
 
+# Utils
+chrono = { workspace = true }
+
 [features]
 default = ["skill-zip"]
 skill-zip = ["zip"]

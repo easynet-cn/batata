@@ -1,5 +1,64 @@
 //! Authentication and authorization traits and types.
 
+use chrono::{DateTime, Utc};
+use thiserror::Error;
+
+/// JWT token validation errors
+#[derive(Error, Debug, Clone)]
+pub enum TokenError {
+    #[error("token is missing")]
+    TokenMissing,
+
+    #[error("token has expired at {expired_at}")]
+    TokenExpired { expired_at: DateTime<Utc> },
+
+    #[error("token is malformed")]
+    TokenMalformed,
+
+    #[error("token signature is invalid")]
+    TokenSignatureInvalid,
+
+    #[error("token audience mismatch")]
+    TokenAudienceMismatch,
+
+    #[error("token issuer mismatch")]
+    TokenIssuerMismatch,
+
+    #[error("token is not yet valid (valid from: {valid_from})")]
+    TokenNotYetValid { valid_from: DateTime<Utc> },
+
+    #[error("token has been revoked")]
+    TokenRevoked,
+
+    #[error("token decode error: {0}")]
+    DecodeError(String),
+}
+
+/// Errors that can occur during authentication or authorization checks
+#[derive(Error, Debug, Clone)]
+pub enum AuthError {
+    #[error("token error: {0}")]
+    Token(#[from] TokenError),
+
+    #[error("user not found: {username}")]
+    UserNotFound { username: String },
+
+    #[error("invalid credentials")]
+    InvalidCredentials,
+
+    #[error("permission denied: {resource}")]
+    PermissionDenied { resource: String },
+
+    #[error("user not authenticated")]
+    NotAuthenticated,
+
+    #[error("no roles found for user")]
+    NoRolesFound,
+
+    #[error("internal error: {0}")]
+    InternalError(String),
+}
+
 /// Raw token extracted by middleware, stored in request extensions.
 /// The middleware only extracts the token string -- all validation
 /// (JWT decode, expiry check) is handled by the AuthPlugin.
@@ -35,21 +94,24 @@ pub struct AuthPermission {
 #[derive(Debug, Clone)]
 pub struct AuthCheckResult {
     pub success: bool,
-    pub message: Option<String>,
+    /// Structured error for precise error handling.
+    /// Callers can use `.error.as_ref().map(|e| e.to_string())` for display messages.
+    pub error: Option<AuthError>,
 }
 
 impl AuthCheckResult {
     pub fn success() -> Self {
         Self {
             success: true,
-            message: None,
+            error: None,
         }
     }
 
-    pub fn fail(msg: impl Into<String>) -> Self {
+    /// Create a failure result with a structured AuthError
+    pub fn fail(error: AuthError) -> Self {
         Self {
             success: false,
-            message: Some(msg.into()),
+            error: Some(error),
         }
     }
 }
@@ -178,12 +240,18 @@ mod tests {
         let ok = AuthCheckResult::success();
 
         assert!(ok.success);
-        assert!(ok.message.is_none());
+        assert!(ok.error.is_none());
 
-        let fail = AuthCheckResult::fail("token expired");
+        let fail = AuthCheckResult::fail(AuthError::Token(TokenError::TokenExpired {
+            expired_at: Utc::now(),
+        }));
 
         assert!(!fail.success);
-        assert_eq!(fail.message.as_deref(), Some("token expired"));
+        assert!(fail.error.is_some());
+
+        // Verify error message via to_string()
+        let msg = fail.error.as_ref().unwrap().to_string();
+        assert!(msg.contains("expired"));
     }
 
     #[test]

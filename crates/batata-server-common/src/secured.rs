@@ -213,13 +213,30 @@ macro_rules! secured {
                 let __id_result = __auth_plugin.validate_identity(&mut __identity).await;
 
                 if !__id_result.success {
-                    return $crate::model::response::ErrorResult::http_response_forbidden(
-                        actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                        __id_result
-                            .message
-                            .as_deref()
-                            .unwrap_or("authentication failed"),
-                        __secured.req.path(),
+                    // Map AuthError to specific message based on error type
+                    let __error_msg = match &__id_result.error {
+                        Some(batata_common::AuthError::Token(
+                            batata_common::TokenError::TokenMissing,
+                        )) => "User not found! Please check user exist or password is right!."
+                            .to_string(),
+                        Some(batata_common::AuthError::Token(
+                            batata_common::TokenError::TokenExpired { .. },
+                        )) => "token expired!.".to_string(),
+                        Some(batata_common::AuthError::Token(
+                            batata_common::TokenError::TokenSignatureInvalid,
+                        )) => "Invalid signature.".to_string(),
+                        Some(batata_common::AuthError::Token(_)) => {
+                            "token validation failed.".to_string()
+                        }
+                        Some(e) => e.to_string(),
+                        None => "authentication failed".to_string(),
+                    };
+
+                    return $crate::model::response::Result::<String>::http_response(
+                        actix_web::http::StatusCode::FORBIDDEN.as_u16(),
+                        batata_common::error::ACCESS_DENIED.code,
+                        batata_common::error::ACCESS_DENIED.message.to_string(),
+                        format!("Code: 401, Message: {}", __error_msg),
                     );
                 }
 
@@ -262,13 +279,17 @@ macro_rules! secured {
                             .await;
 
                         if !__perm_result.success {
-                            return $crate::model::response::ErrorResult::http_response_forbidden(
-                                actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                                __perm_result
-                                    .message
-                                    .as_deref()
-                                    .unwrap_or("authorization failed!."),
-                                __secured.req.path(),
+                            let __perm_error_msg = __perm_result
+                                .error
+                                .as_ref()
+                                .map(|e| e.to_string())
+                                .unwrap_or_else(|| "authorization failed!.".to_string());
+
+                            return $crate::model::response::Result::<String>::http_response(
+                                actix_web::http::StatusCode::FORBIDDEN.as_u16(),
+                                batata_common::error::ACCESS_DENIED.code,
+                                batata_common::error::ACCESS_DENIED.message.to_string(),
+                                format!("Code: 403, Message: {}", __perm_error_msg),
                             );
                         }
                     }

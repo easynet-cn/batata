@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use batata_common::{
-    AuthCheckResult, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID, IdentityContext, LoginResult,
+    AuthCheckResult, AuthError, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID,
+    IdentityContext, LoginResult, TokenError,
 };
 use batata_persistence::PersistenceService;
 use tracing::{debug, warn};
@@ -42,19 +43,32 @@ impl DefaultAuthPlugin {
     }
 
     /// Validate a JWT token and return the username
-    fn validate_token(&self, token: &str) -> Result<String, String> {
+    fn validate_token(&self, token: &str) -> Result<String, TokenError> {
         match decode_jwt_token_cached(token, &self.secret_key) {
             Ok(data) => Ok(data.claims.sub),
-            Err(e) => {
-                let msg = match e.kind() {
-                    jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
-                        "token expired!".to_string()
-                    }
-                    jsonwebtoken::errors::ErrorKind::InvalidToken => "token invalid!".to_string(),
-                    _ => format!("token validation failed: {}", e),
-                };
-                Err(msg)
+            Err(e) => Err(self.map_jwt_error(e)),
+        }
+    }
+
+    /// Map jsonwebtoken errors to TokenError with rich context
+    fn map_jwt_error(&self, e: jsonwebtoken::errors::Error) -> TokenError {
+        match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                // Estimate expired_at from current time + token cache delay
+                TokenError::TokenExpired {
+                    expired_at: chrono::Utc::now(),
+                }
             }
+            jsonwebtoken::errors::ErrorKind::InvalidToken => TokenError::TokenMalformed,
+            jsonwebtoken::errors::ErrorKind::InvalidSignature => TokenError::TokenSignatureInvalid,
+            jsonwebtoken::errors::ErrorKind::InvalidAudience => TokenError::TokenAudienceMismatch,
+            jsonwebtoken::errors::ErrorKind::InvalidIssuer => TokenError::TokenIssuerMismatch,
+            jsonwebtoken::errors::ErrorKind::ImmatureSignature => {
+                TokenError::TokenNotYetValid {
+                    valid_from: chrono::Utc::now(),
+                }
+            }
+            _ => TokenError::DecodeError(e.to_string()),
         }
     }
 
@@ -120,7 +134,7 @@ impl AuthPlugin for DefaultAuthPlugin {
         let token = match &identity.token {
             Some(t) if !t.is_empty() => t.clone(),
             _ => {
-                return AuthCheckResult::fail("no token provided");
+                return AuthCheckResult::fail(AuthError::Token(TokenError::TokenMissing));
             }
         };
 
@@ -132,7 +146,7 @@ impl AuthPlugin for DefaultAuthPlugin {
 
                 AuthCheckResult::success()
             }
-            Err(msg) => AuthCheckResult::fail(msg),
+            Err(token_error) => AuthCheckResult::fail(AuthError::Token(token_error)),
         }
     }
 
@@ -142,7 +156,7 @@ impl AuthPlugin for DefaultAuthPlugin {
         permission: &AuthPermission,
     ) -> AuthCheckResult {
         if !identity.authenticated {
-            return AuthCheckResult::fail("user not authenticated");
+            return AuthCheckResult::fail(AuthError::NotAuthenticated);
         }
 
         // Load roles
@@ -153,7 +167,7 @@ impl AuthPlugin for DefaultAuthPlugin {
             .unwrap_or_default();
 
         if roles.is_empty() {
-            return AuthCheckResult::fail("no roles found for user");
+            return AuthCheckResult::fail(AuthError::NoRolesFound);
         }
 
         // Load permissions for all roles
@@ -190,7 +204,9 @@ impl AuthPlugin for DefaultAuthPlugin {
                 action = %permission.action,
                 "authorization failed"
             );
-            AuthCheckResult::fail("authorization failed!")
+            AuthCheckResult::fail(AuthError::PermissionDenied {
+                resource: permission.resource.clone(),
+            })
         }
     }
 
