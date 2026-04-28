@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use batata_common::{
     AuthCheckResult, AuthError, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID,
-    IdentityContext, LoginResult, TokenError,
+    IdentityContext, LoginError, LoginResult, TokenError,
 };
 use batata_persistence::PersistenceService;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::model::{
     NON_LOCAL_PASSWORD_SENTINEL, USER_SOURCE_LDAP, normalize_user_source,
@@ -88,34 +88,38 @@ impl DefaultAuthPlugin {
 
     /// Verify password against stored hash.
     ///
-    /// Returns `Err` (rather than `Ok(false)`) when the user exists but is
-    /// owned by an external identity provider (OAuth, LDAP) — those users
-    /// cannot authenticate with a local password and the caller should
-    /// surface a specific error message rather than the generic "invalid
-    /// credentials" produced by failed bcrypt comparison.
-    async fn verify_credentials(&self, username: &str, password: &str) -> Result<bool, String> {
+    /// Returns detailed LoginError for different failure scenarios:
+    /// - UserNotFound: user does not exist
+    /// - PasswordError: password is incorrect
+    /// - ExternalUser: user is managed by external provider (OAuth, LDAP)
+    async fn verify_credentials(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<(), LoginError> {
         let user = self
             .persistence
             .user_find_by_username(username)
             .await
-            .map_err(|e| format!("failed to find user: {}", e))?;
+            .map_err(|e| LoginError::Internal(format!("failed to find user: {}", e)))?;
 
         match user {
+            None => Err(LoginError::UserNotFound),
             Some(user) => {
                 let source = normalize_user_source(Some(&user.source));
 
                 if !source_allows_password_login(&source) {
-                    return Err(format!(
-                        "user '{}' is managed by '{}' and cannot log in with a password",
-                        username, source
-                    ));
+                    return Err(LoginError::ExternalUser(source));
                 }
 
                 let valid = bcrypt::verify(password, &user.password).unwrap_or(false);
 
-                Ok(valid)
+                if !valid {
+                    return Err(LoginError::PasswordError);
+                }
+
+                Ok(())
             }
-            None => Ok(false),
         }
     }
 }
@@ -210,18 +214,16 @@ impl AuthPlugin for DefaultAuthPlugin {
         }
     }
 
-    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, String> {
-        let valid = self.verify_credentials(username, password).await?;
-
-        if !valid {
-            warn!(username, "login failed: invalid credentials");
-            return Err("invalid credentials".to_string());
-        }
+    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, LoginError> {
+        // Verify credentials - returns specific error for each failure case
+        self.verify_credentials(username, password).await?;
 
         // Clear user from blacklist on successful login
         unblacklist_user(username);
 
-        let token = self.generate_token(username)?;
+        let token = self
+            .generate_token(username)
+            .map_err(|e| LoginError::Internal(e))?;
         let is_admin = self.is_global_admin(username).await;
 
         Ok(LoginResult {
@@ -280,7 +282,7 @@ impl AuthPlugin for LdapAuthPlugin {
             .await
     }
 
-    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, String> {
+    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, LoginError> {
         // Admin users always use local auth (bypass LDAP)
         if self.default_plugin.is_global_admin(username).await {
             return self.default_plugin.login(username, password).await;
@@ -321,7 +323,10 @@ impl AuthPlugin for LdapAuthPlugin {
             // Generate JWT token
             unblacklist_user(username);
 
-            let token = self.default_plugin.generate_token(username)?;
+            let token = self
+                .default_plugin
+                .generate_token(username)
+                .map_err(|e| LoginError::Internal(e))?;
             let is_admin = self.default_plugin.is_global_admin(username).await;
 
             Ok(LoginResult {
@@ -391,6 +396,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nonexistent_user_returns_user_not_found() {
+        let (plugin, _svc, _tmp) = build_plugin().await;
+
+        let err = plugin.login("nonexistent", "password").await.unwrap_err();
+
+        assert!(
+            matches!(err, LoginError::UserNotFound),
+            "nonexistent user must return LoginError::UserNotFound, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
     async fn local_user_with_wrong_password_is_rejected() {
         let (plugin, svc, _tmp) = build_plugin().await;
 
@@ -402,9 +420,10 @@ mod tests {
 
         let err = plugin.login("alice", "wrong").await.unwrap_err();
 
-        assert_eq!(
-            err, "invalid credentials",
-            "wrong password must return generic 'invalid credentials'"
+        assert!(
+            matches!(err, LoginError::PasswordError),
+            "wrong password must return LoginError::PasswordError, got: {:?}",
+            err
         );
     }
 
@@ -429,8 +448,8 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            err.contains("oauth") && err.contains("cannot log in with a password"),
-            "oauth user login must be rejected with a source-specific error, got: {}",
+            matches!(err, LoginError::ExternalUser(ref source) if source == "oauth"),
+            "oauth user login must be rejected with LoginError::ExternalUser, got: {:?}",
             err
         );
     }
@@ -451,8 +470,8 @@ mod tests {
         let err = plugin.login("ldap_user", "password").await.unwrap_err();
 
         assert!(
-            err.contains("ldap"),
-            "ldap user must get an ldap-specific rejection, got: {}",
+            matches!(err, LoginError::ExternalUser(ref source) if source == "ldap"),
+            "ldap user must get LoginError::ExternalUser, got: {:?}",
             err
         );
     }

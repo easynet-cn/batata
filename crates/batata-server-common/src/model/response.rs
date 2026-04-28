@@ -78,6 +78,19 @@ impl<T> Result<T> {
         )
     }
 
+    /// Build a FORBIDDEN error response from an ErrorCode and detail message
+    pub fn http_forbidden(
+        error_code: &batata_common::error::ErrorCode,
+        detail: impl Serialize,
+    ) -> HttpResponse {
+        Result::<String>::http_response(
+            StatusCode::FORBIDDEN.as_u16(),
+            error_code.code,
+            error_code.message.to_string(),
+            detail,
+        )
+    }
+
     /// Build an INTERNAL_SERVER_ERROR response from an error
     pub fn http_internal_error(detail: impl std::fmt::Display) -> HttpResponse {
         Result::<String>::http_response(

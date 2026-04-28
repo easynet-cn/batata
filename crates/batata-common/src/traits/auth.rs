@@ -59,6 +59,22 @@ pub enum AuthError {
     InternalError(String),
 }
 
+/// Errors that can occur during login
+#[derive(Error, Debug, Clone)]
+pub enum LoginError {
+    #[error("user not found")]
+    UserNotFound,
+
+    #[error("password error")]
+    PasswordError,
+
+    #[error("user is managed by external identity provider: {0}")]
+    ExternalUser(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
 /// Raw token extracted by middleware, stored in request extensions.
 /// The middleware only extracts the token string -- all validation
 /// (JWT decode, expiry check) is handled by the AuthPlugin.
@@ -169,8 +185,8 @@ pub trait AuthPlugin: Send + Sync {
 
     /// Login with username/password credentials.
     ///
-    /// Returns a JWT token on success, or an error message on failure.
-    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, String>;
+    /// Returns a JWT token on success, or a structured LoginError on failure.
+    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, LoginError>;
 }
 
 /// OAuth/OIDC provider trait for pluggable external authentication.

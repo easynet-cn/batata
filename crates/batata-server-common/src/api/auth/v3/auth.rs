@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::auth::model::{AUTHORIZATION_HEADER, TOKEN_PREFIX};
 use crate::model::AppState;
+use crate::model::response::Result as ApiResult;
+use batata_common::LoginError;
+use batata_common::error::ACCESS_DENIED;
 
 /// Login attempt tracker for rate limiting
 struct LoginAttempt {
@@ -170,7 +173,10 @@ async fn internal_login(
 
     if username.is_empty() || password.is_empty() {
         record_failed_login(&client_ip);
-        return HttpResponse::Forbidden().body("user not found!");
+        return ApiResult::<String>::http_forbidden(
+            &ACCESS_DENIED,
+            "username or password is empty",
+        );
     }
 
     // Delegate to auth plugin for login
@@ -202,9 +208,24 @@ async fn internal_login(
                 ))
                 .json(login_result)
         }
-        Err(msg) => {
+        Err(login_error) => {
             record_failed_login(&client_ip);
-            HttpResponse::Forbidden().body(msg)
+
+            // Map LoginError to specific error message
+            let error_msg = match &login_error {
+                LoginError::UserNotFound => "user not found",
+                LoginError::PasswordError => "password error",
+                LoginError::ExternalUser(source) => {
+                    return HttpResponse::Forbidden().body(format!(
+                        "user is managed by '{}' and cannot log in with a password",
+                        source
+                    ))
+                }
+                LoginError::Internal(_) => "internal error",
+            };
+
+            // Return unified JSON error response using Result
+            ApiResult::<String>::http_forbidden(&ACCESS_DENIED, error_msg)
         }
     }
 }
