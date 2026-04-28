@@ -232,11 +232,9 @@ macro_rules! secured {
                         None => "authentication failed".to_string(),
                     };
 
-                    return $crate::model::response::Result::<String>::http_response(
-                        actix_web::http::StatusCode::FORBIDDEN.as_u16(),
-                        batata_common::error::ACCESS_DENIED.code,
-                        batata_common::error::ACCESS_DENIED.message.to_string(),
-                        format!("Code: 401, Message: {}", __error_msg),
+                    return $crate::model::response::Result::<String>::http_forbidden(
+                        &batata_common::error::ACCESS_DENIED,
+                        __error_msg,
                     );
                 }
 
@@ -285,11 +283,9 @@ macro_rules! secured {
                                 .map(|e| e.to_string())
                                 .unwrap_or_else(|| "authorization failed!.".to_string());
 
-                            return $crate::model::response::Result::<String>::http_response(
-                                actix_web::http::StatusCode::FORBIDDEN.as_u16(),
-                                batata_common::error::ACCESS_DENIED.code,
-                                batata_common::error::ACCESS_DENIED.message.to_string(),
-                                format!("Code: 403, Message: {}", __perm_error_msg),
+                            return $crate::model::response::Result::<String>::http_forbidden(
+                                &batata_common::error::ACCESS_DENIED,
+                                __perm_error_msg,
                             );
                         }
                     }

@@ -138,10 +138,12 @@ async fn internal_login(
 
     // Check login rate limit before processing
     if let Err(msg) = check_login_rate_limit(&client_ip) {
-        return HttpResponse::TooManyRequests().json(serde_json::json!({
-            "code": 429,
-            "message": msg,
-        }));
+        return ApiResult::<String>::http_response(
+            429,
+            batata_common::error::LOGIN_RATE_LIMITED.code,
+            msg,
+            serde_json::Value::Null,
+        );
     }
 
     let mut username = String::new();
@@ -183,10 +185,12 @@ async fn internal_login(
     let auth_plugin = match data.auth_plugin.as_ref() {
         Some(p) => p,
         None => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "auth plugin not configured",
-            }));
+            return ApiResult::<String>::http_response(
+                500,
+                batata_common::error::AUTH_PLUGIN_NOT_CONFIGURED.code,
+                batata_common::error::AUTH_PLUGIN_NOT_CONFIGURED.message.to_string(),
+                serde_json::Value::Null,
+            );
         }
     };
 
@@ -211,21 +215,24 @@ async fn internal_login(
         Err(login_error) => {
             record_failed_login(&client_ip);
 
-            // Map LoginError to specific error message
-            let error_msg = match &login_error {
-                LoginError::UserNotFound => "user not found",
-                LoginError::PasswordError => "password error",
-                LoginError::ExternalUser(source) => {
-                    return HttpResponse::Forbidden().body(format!(
-                        "user is managed by '{}' and cannot log in with a password",
-                        source
-                    ))
+            // Map LoginError to specific error code and message
+            match &login_error {
+                LoginError::UserNotFound => {
+                    ApiResult::<String>::http_forbidden(&batata_common::error::LOGIN_FAILED, "user not found")
                 }
-                LoginError::Internal(_) => "internal error",
-            };
-
-            // Return unified JSON error response using Result
-            ApiResult::<String>::http_forbidden(&ACCESS_DENIED, error_msg)
+                LoginError::PasswordError => {
+                    ApiResult::<String>::http_forbidden(&batata_common::error::USERNAME_OR_PASSWORD_ERROR, "password error")
+                }
+                LoginError::ExternalUser(source) => {
+                    ApiResult::<String>::http_forbidden(
+                        &batata_common::error::ACCESS_DENIED,
+                        format!("user is managed by '{}' and cannot log in with a password", source),
+                    )
+                }
+                LoginError::Internal(msg) => {
+                    ApiResult::<String>::http_forbidden(&batata_common::error::SERVER_ERROR, msg)
+                }
+            }
         }
     }
 }

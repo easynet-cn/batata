@@ -6,6 +6,7 @@ use crate::api::auth::{
     service::auth::encode_jwt_token,
 };
 use crate::model::AppState;
+use crate::model::response::Result as ApiResult;
 
 #[derive(Deserialize)]
 struct InitAdminData {
@@ -28,26 +29,26 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
     let password = form.password.clone().unwrap_or_default();
 
     if username.is_empty() || password.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "code": 400,
-            "message": "username and password cannot be empty"
-        }));
+        return ApiResult::<String>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            "username and password cannot be empty",
+        );
     }
 
     if batata_api::validation::validate_username(&username).is_err() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "code": 400,
-            "message": format!("invalid username format: must be alphanumeric, _, -, @, . (max {} chars)", batata_api::validation::MAX_USERNAME_LENGTH)
-        }));
+        return ApiResult::<String>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            format!("invalid username format: must be alphanumeric, _, -, @, . (max {} chars)", batata_api::validation::MAX_USERNAME_LENGTH),
+        );
     }
 
     // Skip strict password validation for init_admin (bootstrap endpoint)
     // to allow Nacos-compatible default "nacos"/"nacos" credentials
     if password.len() > batata_api::validation::MAX_PASSWORD_LENGTH {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "code": 400,
-            "message": format!("invalid password: must be at most {} characters", batata_api::validation::MAX_PASSWORD_LENGTH)
-        }));
+        return ApiResult::<String>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            format!("invalid password: must be at most {} characters", batata_api::validation::MAX_PASSWORD_LENGTH),
+        );
     }
 
     // Check if a global admin already exists
@@ -55,18 +56,17 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         Ok(v) => v,
         Err(e) => {
             tracing::error!("Failed to check global admin existence: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to check admin status"
-            }));
+            return ApiResult::<String>::http_internal_error(e);
         }
     };
 
     if has_admin {
-        return HttpResponse::Conflict().json(serde_json::json!({
-            "code": 409,
-            "message": "admin user already exists"
-        }));
+        return ApiResult::<String>::http_response(
+            409,
+            batata_common::error::RESOURCE_CONFLICT.code,
+            batata_common::error::RESOURCE_CONFLICT.message.to_string(),
+            "admin user already exists",
+        );
     }
 
     // Hash password
@@ -74,10 +74,7 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         Ok(h) => h,
         Err(e) => {
             tracing::error!("Failed to hash password: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to hash password"
-            }));
+            return ApiResult::<String>::http_internal_error(e);
         }
     };
 
@@ -88,10 +85,7 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         .await
     {
         tracing::error!("Failed to create admin user '{}': {}", username, e);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "code": 500,
-            "message": "Failed to create admin user"
-        }));
+        return ApiResult::<String>::http_internal_error(e);
     }
 
     // Create admin role
@@ -101,10 +95,7 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         .await
     {
         tracing::error!("Failed to create admin role for '{}': {}", username, e);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "code": 500,
-            "message": "Failed to create admin role"
-        }));
+        return ApiResult::<String>::http_internal_error(e);
     }
 
     tracing::info!(username = %username, "Admin user initialized successfully");
@@ -116,11 +107,8 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
     let access_token =
         match encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds) {
             Ok(token) => token,
-            Err(_) => {
-                return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "code": 500,
-                    "message": "Failed to generate token"
-                }));
+            Err(e) => {
+                return ApiResult::<String>::http_internal_error(e);
             }
         };
 

@@ -10,6 +10,7 @@ use crate::api::auth::{
     service::auth::encode_jwt_token,
 };
 use crate::model::AppState;
+use crate::model::response::Result as ApiResult;
 
 /// OAuth provider info for client
 #[derive(Debug, Serialize)]
@@ -93,11 +94,12 @@ pub async fn oauth_login(
     let oauth_service: &dyn batata_common::OAuthProvider = match data.oauth_service.as_deref() {
         Some(service) => service,
         None => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "code": 400,
-                "message": "OAuth is not enabled",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_response(
+                400,
+                batata_common::error::API_FUNCTION_DISABLED.code,
+                batata_common::error::API_FUNCTION_DISABLED.message.to_string(),
+                serde_json::Value::Null,
+            );
         }
     };
 
@@ -114,11 +116,10 @@ pub async fn oauth_login(
             .finish(),
         Err(e) => {
             tracing::error!("Failed to generate OAuth authorization URL: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "code": 400,
-                "message": format!("Invalid OAuth provider: {}", provider_name),
-                "data": null
-            }))
+            ApiResult::<serde_json::Value>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                format!("Invalid OAuth provider: {}", provider_name),
+            )
         }
     }
 }
@@ -136,11 +137,12 @@ pub async fn oauth_callback(
     let oauth_service: &dyn batata_common::OAuthProvider = match data.oauth_service.as_deref() {
         Some(service) => service,
         None => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "code": 400,
-                "message": "OAuth is not enabled",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_response(
+                400,
+                batata_common::error::API_FUNCTION_DISABLED.code,
+                batata_common::error::API_FUNCTION_DISABLED.message.to_string(),
+                serde_json::Value::Null,
+            );
         }
     };
 
@@ -155,11 +157,10 @@ pub async fn oauth_callback(
         Ok(tokens) => tokens,
         Err(e) => {
             tracing::error!("OAuth token exchange failed: {}", e);
-            return HttpResponse::Unauthorized().json(serde_json::json!({
-                "code": 401,
-                "message": "OAuth authentication failed",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_forbidden(
+                &batata_common::error::ACCESS_DENIED,
+                "OAuth authentication failed",
+            );
         }
     };
 
@@ -171,11 +172,10 @@ pub async fn oauth_callback(
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to get OAuth user info: {}", e);
-            return HttpResponse::Unauthorized().json(serde_json::json!({
-                "code": 401,
-                "message": "Failed to retrieve user information from OAuth provider",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_forbidden(
+                &batata_common::error::ACCESS_DENIED,
+                "Failed to retrieve user information from OAuth provider",
+            );
         }
     };
 
@@ -188,11 +188,7 @@ pub async fn oauth_callback(
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to query user '{}': {}", username, e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to query user from database",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_internal_error(e);
         }
     };
 
@@ -229,11 +225,7 @@ pub async fn oauth_callback(
         Ok(token) => token,
         Err(e) => {
             tracing::error!("Failed to generate JWT token: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to generate access token",
-                "data": null
-            }));
+            return ApiResult::<serde_json::Value>::http_internal_error(e);
         }
     };
 

@@ -94,6 +94,28 @@ pub const ACCESS_DENIED: ErrorCode<'static> = ErrorCode {
     message: "access denied",
 };
 
+// Nacos-compatible auth error codes
+pub const LOGIN_FAILED: ErrorCode<'static> = ErrorCode {
+    code: 20020,
+    message: "login failed",
+};
+
+pub const USERNAME_OR_PASSWORD_ERROR: ErrorCode<'static> = ErrorCode {
+    code: 20021,
+    message: "username or password error",
+};
+
+// Additional error codes for unified error handling
+pub const LOGIN_RATE_LIMITED: ErrorCode<'static> = ErrorCode {
+    code: 429,
+    message: "login rate limited",
+};
+
+pub const AUTH_PLUGIN_NOT_CONFIGURED: ErrorCode<'static> = ErrorCode {
+    code: 500,
+    message: "auth plugin not configured",
+};
+
 pub const DATA_ACCESS_ERROR: ErrorCode<'static> = ErrorCode {
     code: 10002,
     message: "data access error",
