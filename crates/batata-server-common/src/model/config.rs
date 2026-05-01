@@ -1834,6 +1834,26 @@ impl Configuration {
             .unwrap_or(60) as u64
     }
 
+    // ========================================================================
+    // Metrics Configuration
+    // ========================================================================
+
+    /// Check if system stats reporter is enabled (default: true)
+    /// When enabled, periodically collects CPU/memory metrics and exports via Prometheus
+    pub fn metrics_system_stats_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.metrics.system_stats.enabled")
+            .unwrap_or(true)
+    }
+
+    /// System stats reporter collection interval in seconds (default: 15)
+    /// Only effective when metrics_system_stats_enabled is true
+    pub fn metrics_system_stats_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.metrics.system_stats.interval_secs")
+            .unwrap_or(15) as u64
+    }
+
     /// Build a RocksDB configuration struct from the current config values
     pub fn rocksdb_config(&self) -> RocksDbConfig {
         RocksDbConfig {

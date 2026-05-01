@@ -24,6 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 1: Configuration and logging
     // ====================================================================
     let configuration = model::common::Configuration::new()?;
+
     validate_config(&configuration);
 
     let logging_config = startup::LoggingConfig::from_config(
@@ -49,7 +50,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     batata_server::metrics::init_metrics();
-    let _system_stats_handle = batata_server::metrics::start_system_stats_reporter(None);
+
+    // Start system stats reporter based on configuration
+    let _system_stats_handle = if configuration.metrics_system_stats_enabled() {
+        let interval_secs = configuration.metrics_system_stats_interval_secs();
+
+        tracing::info!(
+            "Starting system stats reporter with interval of {} seconds",
+            interval_secs
+        );
+
+        Some(batata_server::metrics::start_system_stats_reporter(Some(
+            interval_secs,
+        )))
+    } else {
+        tracing::info!("System stats reporter is disabled");
+
+        None
+    };
+
     let _rate_limit_cleanup_handle = rate_limit::start_cleanup_task();
 
     // Initialize auth caches with configuration values
@@ -97,6 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(
         consul_config,
     ));
+
     if consul_plugin.is_enabled() {
         plugin_manager.register_protocol_adapter(consul_plugin.clone());
         consul_plugin_ref = Some(consul_plugin.clone());
@@ -166,13 +186,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None,
                 None,
             ));
+
             info!(
                 "Health check manager created (expire_enabled={}, health_check_enabled={})",
                 expire_enabled, health_check_enabled
             );
+
             Some(manager)
         } else {
             info!("No naming service available - skipping health check manager");
+
             None
         };
 
@@ -300,6 +323,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Server registry for per-server health aggregation
     let server_registry = Arc::new(batata_core::ServerRegistry::new());
+
     server_registry.register(
         "SDK gRPC Server",
         batata_core::ServerType::Grpc,
@@ -385,7 +409,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build plugin context
     let mut plugin_ctx = batata_plugin::PluginContext::new();
     let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
+
     plugin_ctx.insert("is_cluster", Arc::new(is_cluster));
+
     if let Some(ref raft) = app_state.raft_node {
         plugin_ctx.insert("raft_node", raft.clone());
     }
@@ -412,6 +438,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref consul_plugin) = consul_plugin_ref {
         // Register gRPC handler for receiving event broadcasts from peers
         let event_service = consul_plugin.event_service().clone();
+
         grpc_servers.handler_registry().register_handler(Arc::new(
             batata_server::service::consul_event_handler::ConsulEventBroadcastHandler {
                 event_service: event_service.clone(),
@@ -428,7 +455,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     smm.clone(),
                 ),
             );
+
             event_service.set_broadcaster(broadcaster).await;
+
             info!("Consul event cluster broadcast enabled");
         }
     }
@@ -474,6 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await;
 
     info!("Batata server shutdown complete");
+
     Ok(())
 }
 
@@ -497,6 +527,7 @@ fn validate_config(configuration: &model::common::Configuration) {
         "NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm",
         "VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=",
     ];
+
     if configuration.auth_enabled()
         && DEFAULT_SECRET_KEYS.contains(&configuration.token_secret_key().as_str())
     {
@@ -519,14 +550,17 @@ fn init_oauth_service(
             state_capacity: configuration.oauth_state_cache_capacity(),
             http_timeout_secs: configuration.oauth_http_timeout_secs(),
         };
+
         info!(
             "OAuth2/OIDC authentication enabled with {} providers",
             oauth_config.providers.len()
         );
+
         let service = Arc::new(OAuthService::with_cache_config(
             oauth_config,
             oauth_cache_config,
         )?);
+
         Ok(Some(service as Arc<dyn batata_common::OAuthProvider>))
     } else {
         Ok(None)
@@ -538,12 +572,14 @@ async fn init_control_plugin(
     configuration: &model::common::Configuration,
 ) -> Option<Arc<dyn batata_plugin::ControlPlugin>> {
     let control_config = configuration.control_plugin_config();
+
     if !control_config.enabled {
         info!("Control plugin disabled by configuration");
         return None;
     }
 
     let plugin = batata_plugin::DefaultControlPlugin::new(control_config);
+
     if let Err(e) = plugin.init().await {
         tracing::warn!("Failed to initialize control plugin: {}", e);
         return None;
@@ -554,6 +590,7 @@ async fn init_control_plugin(
         configuration.control_plugin_default_tps(),
         configuration.control_plugin_max_connections()
     );
+
     Some(Arc::new(plugin))
 }
 
@@ -566,6 +603,7 @@ fn init_encryption_service(
     // Register the always-available "none" backend so `algorithm: none` in
     // configuration resolves to a real plugin instead of a disabled fallback.
     let registry = batata_plugin::global_encryption_registry();
+
     registry.register(Arc::new(batata_plugin::NoopEncryptionPlugin::new()));
 
     // Register the AES-GCM plugin when an encryption key is supplied.
@@ -591,6 +629,7 @@ fn init_encryption_service(
 
     // Resolve the configured algorithm name ("aes-gcm" by default).
     let plugin_name = configuration.encryption_plugin_type();
+
     if let Some(plugin) = registry.find(&plugin_name) {
         if plugin.is_enabled() {
             info!("Config encryption enabled via plugin '{}'", plugin.name());
@@ -607,6 +646,7 @@ fn init_encryption_service(
         "Encryption plugin '{}' not found in registry; disabling encryption",
         plugin_name
     );
+
     Arc::new(ConfigEncryptionService::disabled())
 }
 
@@ -614,9 +654,11 @@ fn init_encryption_service(
 fn start_health_checkers(health_check_manager: &Option<Arc<HealthCheckManager>>) {
     if let Some(hc_manager) = health_check_manager {
         let hc1 = hc_manager.clone();
+
         tokio::spawn(async move { hc1.unhealthy_checker().start().await });
 
         let hc2 = hc_manager.clone();
+
         tokio::spawn(async move { hc2.expired_checker().start().await });
 
         info!("Health check manager started (unhealthy/expired instance checkers)");
@@ -642,8 +684,10 @@ fn start_warmup_poller(
     let raft_ref = app_state.raft_node.clone();
     let is_standalone = app_state.configuration.is_standalone();
     let smm_clone = server_member_manager.cloned();
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
+
         loop {
             interval.tick().await;
             let db_ready = console_ds.server_readiness().await;
@@ -685,6 +729,7 @@ fn start_warmup_poller(
             }
         }
     });
+
     info!("Data warmup poller started (checking every 5s)");
 }
 
@@ -695,12 +740,15 @@ fn start_mcp_index_refresh(ai_services: &AIServices, app_state: &Arc<AppState>) 
     {
         let index = mcp_index.clone();
         let persist = persist.clone();
+
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
+
                 index.refresh(persist.as_ref()).await;
             }
         });
+
         info!("MCP index periodic refresh task started (every 30s)");
     }
 }
@@ -711,6 +759,7 @@ async fn start_xds_if_enabled(
     grpc_servers: &startup::GrpcServers,
 ) -> Option<XdsServerHandle> {
     let xds_config = app_state.configuration.xds_config();
+
     if !xds_config.enabled {
         return None;
     }
@@ -720,6 +769,7 @@ async fn start_xds_if_enabled(
         server_id = %xds_config.server_id,
         "Starting xDS service for service mesh support"
     );
+
     match start_xds_service(xds_config, grpc_servers.naming_provider()).await {
         Ok(handle) => {
             info!("xDS service started successfully");
@@ -771,6 +821,7 @@ async fn run_console_remote(
 
     // Minimal shutdown for console-remote mode
     server_status.set_down();
+
     if let Some(db) = database_connection {
         let _ = tokio::time::timeout(Duration::from_secs(5), db.close()).await;
     }
@@ -830,6 +881,7 @@ async fn run_http_servers(
                 "Starting Batata main server on {}:{}",
                 server_address, server_main_port
             );
+
             let mcp_registry_for_server = ai_services.mcp_registry.clone();
             let main = startup::main_server(
                 app_state.clone(),
@@ -845,7 +897,9 @@ async fn run_http_servers(
                 Some(server_registry.clone()),
                 grpc_servers.cluster_client_manager().clone(),
             )?;
+
             main_http_state.set_running();
+
             server_registry.register(
                 "Main HTTP Server",
                 batata_core::ServerType::Http,
@@ -896,6 +950,7 @@ async fn run_http_servers(
                 "Starting Console server on {}:{}",
                 server_address, console_server_port
             );
+
             let console = startup::console_server(
                 app_state.clone(),
                 Some(naming_provider.clone()),
@@ -904,7 +959,9 @@ async fn run_http_servers(
                 server_address.clone(),
                 console_server_port,
             )?;
+
             console_http_state.set_running();
+
             server_registry.register(
                 "Console HTTP Server",
                 batata_core::ServerType::Http,
@@ -929,7 +986,9 @@ async fn run_http_servers(
                 Some(server_registry.clone()),
                 grpc_servers.cluster_client_manager().clone(),
             )?;
+
             main_http_state.set_running();
+
             server_registry.register(
                 "Main HTTP Server",
                 batata_core::ServerType::Http,
@@ -985,17 +1044,21 @@ fn build_plugin_servers(
 ) -> Result<Vec<actix_web::dev::Server>, Box<dyn std::error::Error>> {
     let mut servers = Vec::new();
     let server_address = app_state.configuration.server_address();
+
     for plugin in plugin_manager.protocol_adapters() {
         if !plugin.is_enabled() {
             continue;
         }
+
         let port = plugin.default_port();
+
         info!(
             "Starting {} server on {}:{}",
             plugin.name(),
             server_address,
             port
         );
+
         let server = startup::plugin_http_server(
             app_state.clone(),
             grpc_servers.naming_provider(),
@@ -1003,8 +1066,10 @@ fn build_plugin_servers(
             server_address.clone(),
             port,
         )?;
+
         servers.push(server);
     }
+
     Ok(servers)
 }
 
@@ -1019,7 +1084,9 @@ fn build_mcp_registry(
     if !mcp_registry_enabled {
         return Ok(None);
     }
+
     info!("Starting MCP Registry server on {}:{}", address, port);
+
     Ok(Some(startup::mcp_registry_server(
         mcp_registry.clone(),
         address.to_string(),
@@ -1050,6 +1117,7 @@ async fn graceful_shutdown_sequence(
 ) {
     // Log per-server states before shutdown
     let states = server_registry.health();
+
     info!(
         "Starting graceful shutdown ({} servers registered): {:?}",
         states.len(),
@@ -1061,7 +1129,9 @@ async fn graceful_shutdown_sequence(
 
     // 1. DRAINING: reject new requests with 503
     server_status.set_draining();
+
     let drain_timeout = graceful_shutdown.drain_timeout();
+
     info!(
         "Server status: DRAINING (waiting up to {}s for in-flight requests)...",
         drain_timeout.as_secs()
@@ -1069,14 +1139,17 @@ async fn graceful_shutdown_sequence(
 
     // 2. Signal gRPC servers to stop accepting new connections
     grpc_servers.shutdown();
+
     info!("gRPC servers signaled to shut down");
 
     // 3. Brief pause for in-flight requests
     let drain_sleep = drain_timeout.min(Duration::from_secs(5));
+
     tokio::time::sleep(drain_sleep).await;
 
     // 4. DOWN
     server_status.set_down();
+
     info!("Server status: DOWN");
 
     // 5. Stop xDS
@@ -1096,13 +1169,16 @@ async fn graceful_shutdown_sequence(
         && !app_state.configuration.is_standalone()
     {
         info!("Stopping cluster manager...");
+
         smm.stop().await;
+
         info!("Cluster manager stopped");
     }
 
     // 8. Shutdown Raft node
     if let Some(ref raft_node) = app_state.raft_node {
         info!("Shutting down Raft node...");
+
         match tokio::time::timeout(Duration::from_secs(10), raft_node.shutdown()).await {
             Ok(Ok(())) => info!("Raft node shutdown complete"),
             Ok(Err(e)) => error!("Raft node shutdown error: {}", e),
@@ -1113,7 +1189,9 @@ async fn graceful_shutdown_sequence(
     // 9. Close database connection
     if let Some(db) = database_connection {
         let db_timeout = app_state.configuration.shutdown_db_close_timeout_secs();
+
         info!("Closing database connections (timeout: {}s)...", db_timeout);
+
         match tokio::time::timeout(Duration::from_secs(db_timeout), db.close()).await {
             Ok(Ok(())) => info!("Database connections closed"),
             Ok(Err(e)) => error!("Error closing database connections: {}", e),
@@ -1123,6 +1201,7 @@ async fn graceful_shutdown_sequence(
 
     // Log final per-server states
     let final_states = server_registry.health();
+
     info!(
         "Shutdown complete ({} servers): {:?}",
         final_states.len(),

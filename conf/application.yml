@@ -325,6 +325,14 @@ batata.otel.sampling_ratio: 0.1
 batata.otel.export_timeout_secs: 10
 
 # =============================================================================
+# Metrics (Prometheus)
+# =============================================================================
+
+# System stats reporter: collects CPU/memory and exports via Prometheus
+#batata.metrics.system_stats.enabled: true
+#batata.metrics.system_stats.interval_secs: 15
+
+# =============================================================================
 # Consul Compatibility Plugin
 # =============================================================================
 
