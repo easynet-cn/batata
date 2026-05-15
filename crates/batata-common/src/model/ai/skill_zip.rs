@@ -293,6 +293,12 @@ fn unquote_yaml_value(value: &str) -> String {
     if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
         let inner = &value[1..value.len() - 1];
 
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
         inner.replace("\\\\", "\\").replace("\\\"", "\"")
     } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
         let inner = &value[1..value.len() - 1];

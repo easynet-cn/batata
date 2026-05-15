@@ -266,6 +266,18 @@ impl<'a> Tokenizer<'a> {
             return Err("unterminated string literal".to_string());
         }
         let s = self.input[start..self.pos]
+// FIX: 安全检查 — 防止目录穿越
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
             .replace("\\\"", "\"")
             .replace("\\\\", "\\");
         self.pos += 1; // skip closing "

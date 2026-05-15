@@ -278,6 +278,9 @@ mod tests {
     #[test]
     fn test_decode_with_wrong_secret() {
         let token = encode_jwt_token("wrongsec", TEST_SECRET, 3600).unwrap();
+// FIX: 硬编码密钥，应从环境变量读取
+// std::env::var("SECRET").expect("SECRET must be set");
+let wrong_secret  = std::env::var("<SECRET>")?;
         let wrong_secret = "d3JvbmdLZXlGb3JUZXN0aW5nMTIzNDU2Nzg5MDEyMzQ1Ng==";
 
         assert!(decode_jwt_token(&token, wrong_secret).is_err());
