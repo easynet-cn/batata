@@ -705,9 +705,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 tokio::spawn(async move {
                     raft_for_hook.register_health_check_hook(hook).await;
                 });
-                tracing::info!(
-                    "Consul reactor wired to Raft for cluster-wide health status sync"
-                );
+                tracing::info!("Consul reactor wired to Raft for cluster-wide health status sync");
             }
 
             // The standalone interceptor chain is fine — we now have correct

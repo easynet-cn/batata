@@ -2183,11 +2183,13 @@ mod tests {
         assert_eq!(status.status, CheckStatus::Critical); // initial
 
         // Update via TTL
-        registry.ttl_update(
-            "svc:web-1",
-            CheckStatus::Passing,
-            Some("all good".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "svc:web-1",
+                CheckStatus::Passing,
+                Some("all good".to_string()),
+            )
+            .await;
         let (_, status) = registry.get_check("svc:web-1").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
         assert_eq!(status.output, "all good");
@@ -2224,18 +2226,22 @@ mod tests {
         registry.register_check(config);
 
         // Pass
-        registry.ttl_update("cycle-check", CheckStatus::Passing, Some("ok".to_string())).await;
+        registry
+            .ttl_update("cycle-check", CheckStatus::Passing, Some("ok".to_string()))
+            .await;
         assert_eq!(
             registry.get_check("cycle-check").unwrap().1.status,
             CheckStatus::Passing
         );
 
         // Warn
-        registry.ttl_update(
-            "cycle-check",
-            CheckStatus::Warning,
-            Some("degraded".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "cycle-check",
+                CheckStatus::Warning,
+                Some("degraded".to_string()),
+            )
+            .await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Warning);
         assert!(
@@ -2244,11 +2250,13 @@ mod tests {
         );
 
         // Fail
-        registry.ttl_update(
-            "cycle-check",
-            CheckStatus::Critical,
-            Some("down".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "cycle-check",
+                CheckStatus::Critical,
+                Some("down".to_string()),
+            )
+            .await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Critical);
         assert!(
@@ -2261,11 +2269,13 @@ mod tests {
         );
 
         // Pass again — should clear critical_since
-        registry.ttl_update(
-            "cycle-check",
-            CheckStatus::Passing,
-            Some("recovered".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "cycle-check",
+                CheckStatus::Passing,
+                Some("recovered".to_string()),
+            )
+            .await;
         let (_, status) = registry.get_check("cycle-check").unwrap();
         assert_eq!(status.status, CheckStatus::Passing);
     }

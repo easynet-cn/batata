@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use batata_common::{
-    AuthCheckResult, AuthError, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID,
-    IdentityContext, LoginError, LoginResult, TokenError,
+    AuthCheckResult, AuthError, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID, IdentityContext,
+    LoginError, LoginResult, TokenError,
 };
 use batata_persistence::PersistenceService;
 use tracing::debug;
@@ -63,11 +63,9 @@ impl DefaultAuthPlugin {
             jsonwebtoken::errors::ErrorKind::InvalidSignature => TokenError::TokenSignatureInvalid,
             jsonwebtoken::errors::ErrorKind::InvalidAudience => TokenError::TokenAudienceMismatch,
             jsonwebtoken::errors::ErrorKind::InvalidIssuer => TokenError::TokenIssuerMismatch,
-            jsonwebtoken::errors::ErrorKind::ImmatureSignature => {
-                TokenError::TokenNotYetValid {
-                    valid_from: chrono::Utc::now(),
-                }
-            }
+            jsonwebtoken::errors::ErrorKind::ImmatureSignature => TokenError::TokenNotYetValid {
+                valid_from: chrono::Utc::now(),
+            },
             _ => TokenError::DecodeError(e.to_string()),
         }
     }
@@ -92,11 +90,7 @@ impl DefaultAuthPlugin {
     /// - UserNotFound: user does not exist
     /// - PasswordError: password is incorrect
     /// - ExternalUser: user is managed by external provider (OAuth, LDAP)
-    async fn verify_credentials(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<(), LoginError> {
+    async fn verify_credentials(&self, username: &str, password: &str) -> Result<(), LoginError> {
         let user = self
             .persistence
             .user_find_by_username(username)

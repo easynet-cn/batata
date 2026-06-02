@@ -188,7 +188,9 @@ async fn internal_login(
             return ApiResult::<String>::http_response(
                 500,
                 batata_common::error::AUTH_PLUGIN_NOT_CONFIGURED.code,
-                batata_common::error::AUTH_PLUGIN_NOT_CONFIGURED.message.to_string(),
+                batata_common::error::AUTH_PLUGIN_NOT_CONFIGURED
+                    .message
+                    .to_string(),
                 serde_json::Value::Null,
             );
         }
@@ -217,18 +219,21 @@ async fn internal_login(
 
             // Map LoginError to specific error code and message
             match &login_error {
-                LoginError::UserNotFound => {
-                    ApiResult::<String>::http_forbidden(&batata_common::error::LOGIN_FAILED, "user not found")
-                }
-                LoginError::PasswordError => {
-                    ApiResult::<String>::http_forbidden(&batata_common::error::USERNAME_OR_PASSWORD_ERROR, "password error")
-                }
-                LoginError::ExternalUser(source) => {
-                    ApiResult::<String>::http_forbidden(
-                        &batata_common::error::ACCESS_DENIED,
-                        format!("user is managed by '{}' and cannot log in with a password", source),
-                    )
-                }
+                LoginError::UserNotFound => ApiResult::<String>::http_forbidden(
+                    &batata_common::error::LOGIN_FAILED,
+                    "user not found",
+                ),
+                LoginError::PasswordError => ApiResult::<String>::http_forbidden(
+                    &batata_common::error::USERNAME_OR_PASSWORD_ERROR,
+                    "password error",
+                ),
+                LoginError::ExternalUser(source) => ApiResult::<String>::http_forbidden(
+                    &batata_common::error::ACCESS_DENIED,
+                    format!(
+                        "user is managed by '{}' and cannot log in with a password",
+                        source
+                    ),
+                ),
                 LoginError::Internal(msg) => {
                     ApiResult::<String>::http_forbidden(&batata_common::error::SERVER_ERROR, msg)
                 }

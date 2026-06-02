@@ -160,11 +160,13 @@ mod tests {
         // Register a TTL check and make it critical
         let config = create_ttl_check_config("ttl-critical", 1);
         registry.register_check(config);
-        registry.ttl_update(
-            "ttl-critical",
-            CheckStatus::Critical,
-            Some("already critical".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "ttl-critical",
+                CheckStatus::Critical,
+                Some("already critical".to_string()),
+            )
+            .await;
 
         // Scan should skip already-critical checks (no double update)
         monitor.scan_expired_ttl_checks().await;
@@ -235,11 +237,13 @@ mod tests {
         registry.register_check(config);
 
         // Renew it
-        registry.ttl_update(
-            "ttl-renewed",
-            CheckStatus::Passing,
-            Some("renewed".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "ttl-renewed",
+                CheckStatus::Passing,
+                Some("renewed".to_string()),
+            )
+            .await;
 
         // Scan should not expire it
         monitor.scan_expired_ttl_checks().await;

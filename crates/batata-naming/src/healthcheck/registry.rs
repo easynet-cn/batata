@@ -42,12 +42,7 @@ pub trait HealthStatusReplicator: Send + Sync {
         response_time_ms: u64,
     ) -> bool;
 
-    async fn replicate_ttl(
-        &self,
-        check_key: &str,
-        status: &str,
-        output: Option<&str>,
-    ) -> bool;
+    async fn replicate_ttl(&self, check_key: &str, status: &str, output: Option<&str>) -> bool;
 }
 
 /// Tri-state health check status
@@ -490,12 +485,7 @@ impl InstanceCheckRegistry {
     /// In cluster mode (replicator installed) this routes the update
     /// through Raft, same as [`Self::update_check_result`]. Async for the
     /// same reason — the cluster path awaits a forwarded Raft write.
-    pub async fn ttl_update(
-        &self,
-        check_key: &str,
-        status: CheckStatus,
-        output: Option<String>,
-    ) {
+    pub async fn ttl_update(&self, check_key: &str, status: CheckStatus, output: Option<String>) {
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_ttl(check_key, status.as_str(), output.as_deref())
@@ -790,11 +780,10 @@ mod tests {
             output: &str,
             _ms: u64,
         ) -> bool {
-            self.calls.lock().unwrap().push((
-                check_key.to_string(),
-                success,
-                output.to_string(),
-            ));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((check_key.to_string(), success, output.to_string()));
             true
         }
         async fn replicate_ttl(
@@ -817,11 +806,7 @@ mod tests {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
             test_naming_service(),
         ));
-        registry.register_check(make_config(
-            "rcl-1",
-            CheckType::Tcp,
-            CheckStatus::Passing,
-        ));
+        registry.register_check(make_config("rcl-1", CheckType::Tcp, CheckStatus::Passing));
 
         let rep = Arc::new(CapturingReplicator {
             calls: std::sync::Mutex::new(Vec::new()),
@@ -855,11 +840,7 @@ mod tests {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
             test_naming_service(),
         ));
-        registry.register_check(make_config(
-            "rcl-2",
-            CheckType::Tcp,
-            CheckStatus::Passing,
-        ));
+        registry.register_check(make_config("rcl-2", CheckType::Tcp, CheckStatus::Passing));
 
         registry.apply_status_local("rcl-2", false, "down".into(), 50);
         let (_cfg, status) = registry.get_check("rcl-2").unwrap();
@@ -874,11 +855,7 @@ mod tests {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
             test_naming_service(),
         ));
-        registry.register_check(make_config(
-            "rcl-3",
-            CheckType::Tcp,
-            CheckStatus::Passing,
-        ));
+        registry.register_check(make_config("rcl-3", CheckType::Tcp, CheckStatus::Passing));
 
         registry
             .update_check_result("rcl-3", false, "down".into(), 50)

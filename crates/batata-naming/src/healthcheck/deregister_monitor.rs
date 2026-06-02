@@ -177,11 +177,13 @@ mod tests {
         let config = create_check_config("no-deregister", None);
         registry.register_check(config);
 
-        registry.ttl_update(
-            "no-deregister",
-            CheckStatus::Critical,
-            Some("failed".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "no-deregister",
+                CheckStatus::Critical,
+                Some("failed".to_string()),
+            )
+            .await;
 
         monitor.reap_critical_instances();
 
@@ -213,11 +215,13 @@ mod tests {
         config.initial_status = CheckStatus::Critical;
         registry.register_check(config);
 
-        registry.ttl_update(
-            "auto-deregister",
-            CheckStatus::Critical,
-            Some("failed".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "auto-deregister",
+                CheckStatus::Critical,
+                Some("failed".to_string()),
+            )
+            .await;
 
         std::thread::sleep(Duration::from_millis(10));
 
@@ -252,11 +256,13 @@ mod tests {
         config.port = 7070;
         registry.register_check(config);
 
-        registry.ttl_update(
-            "recent-critical",
-            CheckStatus::Critical,
-            Some("just failed".to_string()),
-        ).await;
+        registry
+            .ttl_update(
+                "recent-critical",
+                CheckStatus::Critical,
+                Some("just failed".to_string()),
+            )
+            .await;
 
         monitor.reap_critical_instances();
 

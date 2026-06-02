@@ -27,19 +27,12 @@ pub trait HealthCheckApplyHook: Send + Sync {
 
     /// TTL-style update — no consecutive-success/failure thresholding.
     /// Used by Consul's session-bound checks (`/v1/agent/check/pass|fail|warn`).
-    fn on_ttl_update(
-        &self,
-        check_key: &str,
-        status: &str,
-        output: Option<&str>,
-        timestamp_ms: i64,
-    );
+    fn on_ttl_update(&self, check_key: &str, status: &str, output: Option<&str>, timestamp_ms: i64);
 }
 
 /// Shared slot holding the optional hook. Registration happens after both
 /// `RaftNode` and `InstanceCheckRegistry` are constructed.
-pub type SharedHealthCheckHook =
-    Arc<tokio::sync::RwLock<Option<Arc<dyn HealthCheckApplyHook>>>>;
+pub type SharedHealthCheckHook = Arc<tokio::sync::RwLock<Option<Arc<dyn HealthCheckApplyHook>>>>;
 
 pub fn new_shared_health_check_hook() -> SharedHealthCheckHook {
     Arc::new(tokio::sync::RwLock::new(None))

@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use batata_consistency::RaftNode;
 use batata_consistency::raft::health_check_hook::HealthCheckApplyHook;
 use batata_consistency::raft::request::RaftRequest;
-use batata_consistency::RaftNode;
 use tracing::warn;
 
 use super::registry::{CheckStatus, HealthStatusReplicator, InstanceCheckRegistry};
@@ -79,12 +79,7 @@ impl HealthStatusReplicator for RaftHealthReplicator {
         true
     }
 
-    async fn replicate_ttl(
-        &self,
-        check_key: &str,
-        status: &str,
-        output: Option<&str>,
-    ) -> bool {
+    async fn replicate_ttl(&self, check_key: &str, status: &str, output: Option<&str>) -> bool {
         let req = RaftRequest::HealthCheckTtlUpdate {
             check_key: check_key.to_string(),
             status: status.to_string(),

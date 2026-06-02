@@ -97,7 +97,9 @@ pub async fn oauth_login(
             return ApiResult::<serde_json::Value>::http_response(
                 400,
                 batata_common::error::API_FUNCTION_DISABLED.code,
-                batata_common::error::API_FUNCTION_DISABLED.message.to_string(),
+                batata_common::error::API_FUNCTION_DISABLED
+                    .message
+                    .to_string(),
                 serde_json::Value::Null,
             );
         }
@@ -140,7 +142,9 @@ pub async fn oauth_callback(
             return ApiResult::<serde_json::Value>::http_response(
                 400,
                 batata_common::error::API_FUNCTION_DISABLED.code,
-                batata_common::error::API_FUNCTION_DISABLED.message.to_string(),
+                batata_common::error::API_FUNCTION_DISABLED
+                    .message
+                    .to_string(),
                 serde_json::Value::Null,
             );
         }

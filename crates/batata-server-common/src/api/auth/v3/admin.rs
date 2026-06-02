@@ -38,7 +38,10 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
     if batata_api::validation::validate_username(&username).is_err() {
         return ApiResult::<String>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
-            format!("invalid username format: must be alphanumeric, _, -, @, . (max {} chars)", batata_api::validation::MAX_USERNAME_LENGTH),
+            format!(
+                "invalid username format: must be alphanumeric, _, -, @, . (max {} chars)",
+                batata_api::validation::MAX_USERNAME_LENGTH
+            ),
         );
     }
 
@@ -47,7 +50,10 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
     if password.len() > batata_api::validation::MAX_PASSWORD_LENGTH {
         return ApiResult::<String>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
-            format!("invalid password: must be at most {} characters", batata_api::validation::MAX_PASSWORD_LENGTH),
+            format!(
+                "invalid password: must be at most {} characters",
+                batata_api::validation::MAX_PASSWORD_LENGTH
+            ),
         );
     }
 
