@@ -4,12 +4,17 @@
 // Module declarations
 pub mod api; // API handlers and models
 pub mod auth; // Authentication and authorization
+pub mod builder; // Trait-driven application building
 pub mod config; // Configuration management
 pub mod console; // Console web interface
+pub mod context; // Application context types
 pub mod error; // Error handling and types
+pub mod initializer; // Service initialization traits
+pub mod lifecycle; // Server lifecycle management
 pub mod metrics; // Metrics and observability
 pub mod middleware; // HTTP middleware
 pub mod model; // Data models and types
+pub mod registry; // Service and server registries
 pub mod service; // Business services
 pub mod startup; // Application startup utilities
 

@@ -84,6 +84,7 @@ pub async fn wait_for_shutdown_signal() -> ShutdownSignal {
 /// Graceful shutdown coordinator
 ///
 /// Coordinates the shutdown of multiple server components with a timeout
+#[derive(Clone)]
 pub struct GracefulShutdown {
     shutdown_signal: ShutdownSignal,
     shutdown_timeout: Duration,
