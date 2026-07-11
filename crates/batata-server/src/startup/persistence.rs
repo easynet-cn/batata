@@ -103,7 +103,7 @@ pub struct PersistenceContext {
     pub cluster_manager: Option<Arc<dyn ClusterManager>>,
     pub persistence: Option<Arc<dyn PersistenceService>>,
     /// Keep RocksDB handle alive for the duration of the process.
-    pub _rocks_db: Option<Arc<rocksdb::DB>>,
+    pub rocks_db: Option<Arc<rocksdb::DB>>,
     pub raft_node: Option<Arc<RaftNode>>,
 }
 
@@ -115,7 +115,7 @@ impl PersistenceContext {
             server_member_manager: None,
             cluster_manager: None,
             persistence: None,
-            _rocks_db: None,
+            rocks_db: None,
             raft_node: None,
         }
     }
@@ -178,7 +178,7 @@ async fn init_external_db_standalone(
         server_member_manager: Some(smm),
         cluster_manager: Some(cm),
         persistence: Some(persist),
-        _rocks_db: None,
+        rocks_db: None,
         raft_node: None,
     })
 }
@@ -217,7 +217,7 @@ async fn init_embedded_standalone(
         server_member_manager: Some(smm),
         cluster_manager: Some(cm),
         persistence: Some(persist),
-        _rocks_db: Some(rdb),
+        rocks_db: Some(rdb),
         raft_node: None,
     })
 }
@@ -259,7 +259,7 @@ async fn init_external_db_cluster(
         server_member_manager: Some(smm),
         cluster_manager: Some(cm),
         persistence: Some(persist),
-        _rocks_db: Some(rdb),
+        rocks_db: Some(rdb),
         raft_node: Some(raft_node),
     })
 }
@@ -385,7 +385,7 @@ async fn init_embedded_cluster(
         server_member_manager: Some(smm),
         cluster_manager: Some(cm),
         persistence: Some(persist),
-        _rocks_db: Some(rdb),
+        rocks_db: Some(rdb),
         raft_node: Some(raft_node),
     })
 }

@@ -24,7 +24,7 @@ actix-multipart = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
+yaml_serde = { workspace = true }
 serde_with = { workspace = true }
 
 # Async

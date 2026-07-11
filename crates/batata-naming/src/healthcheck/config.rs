@@ -111,7 +111,7 @@ impl Default for HealthCheckConfig {
 
 impl HealthCheckConfig {
     /// Create a new health check config from application.yml
-    pub fn from_yaml_config(yaml_config: &serde_yaml::Value) -> Self {
+    pub fn from_yaml_config(yaml_config: &yaml_serde::Value) -> Self {
         // Parse from yaml if available, otherwise use defaults
         // This allows overriding from application.yml
         let mut config = Self::default();
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_config_from_yaml() {
-        let yaml_value = serde_yaml::from_str(
+        let yaml_value = yaml_serde::from_str(
             r#"
             nacos:
               naming:

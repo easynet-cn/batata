@@ -233,7 +233,7 @@ mod tests {
             modify_time: 1704067200000,
         };
 
-        let yaml = serde_yaml::to_string(&meta).unwrap();
+        let yaml = yaml_serde::to_string(&meta).unwrap();
         assert!(yaml.contains("dataId: app.yaml"));
         assert!(yaml.contains("group: DEFAULT_GROUP"));
     }

@@ -11,6 +11,7 @@ members = [
     "crates/batata-naming",
     "crates/batata-plugin",
     "crates/batata-plugin-consul",
+    "crates/batata-plugin-apollo",
     "crates/batata-plugin-cloud",
     "crates/batata-console",
     "crates/batata-server-common",
@@ -44,6 +45,7 @@ batata-config = { path = "crates/batata-config" }
 batata-naming = { path = "crates/batata-naming" }
 batata-plugin = { path = "crates/batata-plugin" }
 batata-plugin-consul = { path = "crates/batata-plugin-consul" }
+batata-plugin-apollo = { path = "crates/batata-plugin-apollo" }
 batata-plugin-cloud = { path = "crates/batata-plugin-cloud" }
 batata-console = { path = "crates/batata-console" }
 batata-server-common = { path = "crates/batata-server-common" }
@@ -65,7 +67,7 @@ futures = "0.3"
 actix-web = { version = "4", features = ["compress-gzip", "compress-brotli", "compress-zstd"] }
 actix-rt = "2"
 actix-http = "3"
-actix-multipart = "0.7"
+actix-multipart = "0.8"
 actix-service = "2.0"
 actix-utils = "3.0"
 tonic = "0.14"
@@ -73,7 +75,7 @@ prost = "0.14"
 prost-types = "0.14"
 tonic-prost = "0.14"
 tower = "0.5"
-http = "1.3"
+http = "1.4"
 
 # Database (supports both MySQL and PostgreSQL)
 sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
@@ -82,7 +84,7 @@ sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+yaml_serde = "0.10"
 serde_urlencoded = "0.7"
 serde_with = "3.21"
 
@@ -116,7 +118,7 @@ reqwest = { version = "0.13", features = ["json", "stream", "query", "form"] }
 # Utils
 chrono = "0.4"
 uuid = { version = "1.23", features = ["v4"] }
-regex = "1.11"
+regex = "1.13"
 base64 = "0.22"
 md-5 = "0.11"
 bytes = "1.12"

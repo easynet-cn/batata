@@ -358,6 +358,17 @@ batata.plugin.consul.check_reap_interval: 30
 #batata.plugin.consul.client.read_timeout_secs: 30
 
 # =============================================================================
+# Apollo Compatibility Plugin
+# =============================================================================
+
+# Enable Apollo compatibility plugin (enabled by default since v0.1)
+batata.plugin.apollo.enabled: true
+# Apollo HTTP server port (default: 8080, same as Apollo's default port)
+batata.plugin.apollo.port: 8080
+# Apollo HTTP workers (0 = auto-detect based on CPU cores)
+#batata.plugin.apollo.http.workers: 0
+
+# =============================================================================
 # MCP Registry
 # =============================================================================
 

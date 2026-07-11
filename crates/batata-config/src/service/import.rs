@@ -39,7 +39,7 @@ pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem
         if name.ends_with(".meta") {
             // Parse metadata file
             let base_name = name.strip_suffix(".meta").unwrap_or(&name);
-            let metadata: NacosConfigMetadata = serde_yaml::from_str(&contents)?;
+            let metadata: NacosConfigMetadata = yaml_serde::from_str(&contents)?;
             meta_map.insert(base_name.to_string(), metadata);
         } else {
             // Content file

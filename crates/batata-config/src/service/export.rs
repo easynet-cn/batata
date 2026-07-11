@@ -48,7 +48,7 @@ pub fn create_nacos_export_zip(configs: Vec<ConfigAllInfo>) -> anyhow::Result<Ve
             modify_time: config.modify_time,
         };
 
-        let meta_yaml = serde_yaml::to_string(&metadata)?;
+        let meta_yaml = yaml_serde::to_string(&metadata)?;
         zip.start_file(&meta_path, options)?;
         zip.write_all(meta_yaml.as_bytes())?;
     }

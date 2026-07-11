@@ -1,0 +1,32 @@
+[package]
+name = "batata-plugin-apollo"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apollo compatibility plugin for Batata"
+
+[dependencies]
+batata-common = { workspace = true }
+batata-naming = { workspace = true }
+batata-consistency = { workspace = true }
+batata-plugin = { workspace = true }
+batata-core = { workspace = true }
+batata-config = { workspace = true }
+batata-persistence = { workspace = true }
+
+actix-web = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+moka = { workspace = true }
+chrono = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+config = { workspace = true }
+rocksdb = { workspace = true }

@@ -255,6 +255,22 @@ impl AppBuilder {
             info!("Consul plugin disabled by configuration");
         }
 
+        #[cfg(feature = "apollo")]
+        {
+            let apollo_config =
+                batata_plugin_apollo::ApolloPluginConfig::from_config(&config.config);
+            let apollo_plugin = Arc::new(batata_plugin_apollo::ApolloPlugin::from_plugin_config(
+                apollo_config,
+            ));
+
+            if apollo_plugin.is_enabled() {
+                plugin_manager.register_protocol_adapter(apollo_plugin.clone());
+                info!("Apollo plugin registered and enabled");
+            } else {
+                info!("Apollo plugin disabled by configuration");
+            }
+        }
+
         // Collect plugin CFs before creating RocksDB
         let plugin_cf_names = plugin_manager.collect_plugin_column_families();
 
@@ -732,6 +748,15 @@ impl AppBuilder {
         let mut plugin_ctx = batata_plugin::PluginContext::new();
         plugin_ctx.insert("is_cluster", Arc::new(is_cluster));
 
+        // Inject storage mode and database connection for plugins that need them (e.g. Apollo)
+        let storage_mode = app_state.configuration.persistence_mode();
+        plugin_ctx.insert("storage_mode", Arc::new(storage_mode));
+        if let Some(ref db) = persistence_ctx.database_connection {
+            plugin_ctx.insert("db", Arc::new(db.clone()));
+        }
+        if let Some(ref rdb) = persistence_ctx.rocks_db {
+            plugin_ctx.insert("rocks_db", rdb.clone());
+        }
         if let Some(ref raft) = app_state.raft_node {
             plugin_ctx.insert("raft_node", raft.clone());
         }
