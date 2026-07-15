@@ -1,6 +1,7 @@
 // RaftNode wrapper for managing Raft lifecycle
 // Provides a high-level API for interacting with the Raft consensus
 
+use crate::bincode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;

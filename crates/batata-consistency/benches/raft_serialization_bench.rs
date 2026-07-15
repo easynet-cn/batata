@@ -8,6 +8,7 @@
 
 use std::hint::black_box;
 
+use batata_consistency::bincode;
 use batata_consistency::raft::request::{
     ConfigPublishPayload, PersistentInstanceRegisterPayload, RaftRequest,
 };

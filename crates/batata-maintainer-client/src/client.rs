@@ -828,7 +828,7 @@ impl MaintainerClient {
             data_ids,
             app_name,
         };
-        let query_string = serde_urlencoded::to_string(&query)?;
+        let query_string = serde_www_form_urlencoded::to_string(&query)?;
         let path = format!("{}?{}", admin_api_path::CONFIG_EXPORT, query_string);
 
         self.http_client.get_bytes(&path).await
@@ -840,7 +840,7 @@ impl MaintainerClient {
         namespace_id: &str,
         policy: SameConfigPolicy,
     ) -> anyhow::Result<ImportResult> {
-        let query_string = serde_urlencoded::to_string([
+        let query_string = serde_www_form_urlencoded::to_string(&[
             ("namespace_id", namespace_id),
             ("policy", &format!("{}", policy)),
         ])?;

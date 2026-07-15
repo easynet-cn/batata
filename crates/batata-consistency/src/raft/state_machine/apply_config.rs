@@ -5,6 +5,7 @@
 //! top-level match on `RaftRequest` and must be called through a
 //! `RocksStateMachine` owning receiver (same as before the move).
 
+use crate::bincode;
 use md5::Digest;
 use tracing::{debug, error};
 

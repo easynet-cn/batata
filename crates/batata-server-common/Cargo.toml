@@ -64,7 +64,7 @@ metrics = { workspace = true }
 regex = { workspace = true }
 
 # HTML escaping (for error responses)
-htmlescape = { workspace = true }
+html-escape = { workspace = true }
 
 # gRPC (for TLS config)
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }

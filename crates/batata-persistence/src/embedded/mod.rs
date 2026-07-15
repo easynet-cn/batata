@@ -1,6 +1,7 @@
 // Embedded persistence backend using RocksDB
 // Provides standalone (single-node) storage without an external database
 
+use crate::bincode;
 use md5::Digest;
 use std::sync::Arc;
 

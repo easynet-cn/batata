@@ -27,6 +27,17 @@ mod m20260710_000021_create_apollo_role;
 mod m20260710_000022_create_apollo_role_permission;
 mod m20260710_000023_create_apollo_user_role;
 mod m20260710_000024_create_apollo_users;
+mod m20260710_000025_create_apollo_release_history;
+mod m20260710_000026_create_apollo_access_key;
+mod m20260710_000027_create_apollo_service_registry;
+mod m20260710_000028_create_apollo_audit_log;
+mod m20260710_000029_create_apollo_audit_log_data_influence;
+mod m20260710_000030_create_apollo_user_token;
+mod m20260710_000031_create_apollo_user_token_audit;
+mod m20260710_000032_create_apollo_authorities;
+mod m20260710_000033_seed_initial_data;
+mod m20260710_000034_fix_release_id_type;
+mod m20260710_000035_add_namespace_fields;
 
 pub struct ApolloMigrator;
 
@@ -62,6 +73,17 @@ impl MigratorTrait for ApolloMigrator {
             Box::new(m20260710_000022_create_apollo_role_permission::Migration),
             Box::new(m20260710_000023_create_apollo_user_role::Migration),
             Box::new(m20260710_000024_create_apollo_users::Migration),
+            Box::new(m20260710_000025_create_apollo_release_history::Migration),
+            Box::new(m20260710_000026_create_apollo_access_key::Migration),
+            Box::new(m20260710_000027_create_apollo_service_registry::Migration),
+            Box::new(m20260710_000028_create_apollo_audit_log::Migration),
+            Box::new(m20260710_000029_create_apollo_audit_log_data_influence::Migration),
+            Box::new(m20260710_000030_create_apollo_user_token::Migration),
+            Box::new(m20260710_000031_create_apollo_user_token_audit::Migration),
+            Box::new(m20260710_000032_create_apollo_authorities::Migration),
+            Box::new(m20260710_000033_seed_initial_data::Migration),
+            Box::new(m20260710_000034_fix_release_id_type::Migration),
+            Box::new(m20260710_000035_add_namespace_fields::Migration),
         ]
     }
 }

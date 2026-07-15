@@ -7,6 +7,7 @@
 //! - Common constants
 //! - Configuration encryption
 
+pub mod bincode;
 pub mod crypto;
 pub mod error;
 #[macro_use]

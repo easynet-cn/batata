@@ -180,7 +180,7 @@ impl ConsoleException {
         Result::<String>::http_response(
             500,
             crate::error::SERVER_ERROR.code,
-            htmlescape::encode_minimal(format!("caused: {}", message).as_str()),
+            html_escape::encode_text(&format!("caused: {}", message)).to_string(),
             String::new(),
         )
     }

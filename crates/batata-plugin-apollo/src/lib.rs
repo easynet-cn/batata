@@ -1,5 +1,9 @@
+pub mod bincode {
+    pub use batata_common::bincode::{deserialize, serialize};
+}
 pub mod plugin;
 pub mod migration;
+pub mod entity;
 pub mod model;
 pub mod persistence;
 pub mod api;

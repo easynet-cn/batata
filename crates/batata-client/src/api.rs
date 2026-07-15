@@ -367,7 +367,7 @@ impl BatataApiClient {
             data_ids,
             app_name,
         };
-        let query_string = serde_urlencoded::to_string(&query)?;
+        let query_string = serde_www_form_urlencoded::to_string(&query)?;
         let path = format!("/v3/admin/cs/config/export?{}", query_string);
 
         self.http_client.get_bytes(&path).await
@@ -382,7 +382,7 @@ impl BatataApiClient {
     ) -> anyhow::Result<ImportResult> {
         // Build query parameters
         let query_string =
-            serde_urlencoded::to_string([("namespace_id", namespace_id), ("policy", policy)])?;
+            serde_www_form_urlencoded::to_string(&[("namespace_id", namespace_id), ("policy", policy)])?;
         let path = format!("/v3/admin/cs/config/import?{}", query_string);
 
         // Create multipart form

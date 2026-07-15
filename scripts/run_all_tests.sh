@@ -299,15 +299,61 @@ run_standard() {
     local test_rc=0
     bash "${SCRIPT_DIR}/test_standalone_embedded.sh" || test_rc=$?
 
-    # Stop server
-    stop_bg_server "$pid"
-
     if [ $test_rc -ne 0 ]; then
         log_fail "Standalone embedded E2E tests failed (exit code: ${test_rc})"
+        stop_bg_server "$pid"
         return 1
     fi
 
     log_pass "Standalone embedded E2E tests completed"
+
+    # Stop server
+    stop_bg_server "$pid"
+
+    # ── Apollo plugin embedded E2E ─────────────────────────────────────────
+
+    log_info "Starting server with Apollo plugin (embedded mode)..."
+    local apollo_pid
+    apollo_pid=$(start_bg_server "standalone_apollo_embedded" \
+        --batata.sql.init.platform=embedded \
+        --batata.plugin.apollo.enabled=true \
+        --batata.plugin.apollo.port=18080 \
+        --batata.server.main.port=18848 \
+        --batata.console.port=18081)
+
+    # Wait for server ready
+    if ! wait_for_server "http://127.0.0.1:18081" 90; then
+        log_fail "Apollo embedded server failed to start"
+        echo "--- Server log (last 50 lines) ---"
+        tail -50 /tmp/batata_test_standalone_apollo_embedded.log 2>/dev/null || true
+        echo "---"
+        stop_bg_server "$apollo_pid"
+        return 1
+    fi
+
+    # Wait for Apollo plugin to be ready
+    log_info "Waiting for Apollo plugin..."
+    for i in $(seq 1 30); do
+        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/health" 2>/dev/null | grep -q "200"; then
+            break
+        fi
+        sleep 2
+    done
+
+    # Run Apollo embedded tests
+    log_info "Running Apollo embedded E2E tests..."
+    local apollo_test_rc=0
+    APOLLO_PORT=18080 MAIN_PORT=18848 APOLLO_EXTERNAL_SERVER=true \
+        bash "${SCRIPT_DIR}/test_apollo_embedded.sh" || apollo_test_rc=$?
+
+    stop_bg_server "$apollo_pid"
+
+    if [ $apollo_test_rc -ne 0 ]; then
+        log_fail "Apollo embedded E2E tests failed (exit code: ${apollo_test_rc})"
+        return 1
+    fi
+
+    log_pass "Apollo embedded E2E tests completed"
     return 0
 }
 

@@ -6,6 +6,7 @@
 // Allow complex types for snapshot data structures
 #![allow(clippy::type_complexity)]
 
+use crate::bincode;
 use std::hash::Hasher;
 use std::io::Cursor;
 use std::path::Path;
@@ -64,6 +65,20 @@ pub const CF_AI_RESOURCE: &str = "batata_ai_resource";
 pub const CF_AI_RESOURCE_VERSION: &str = "batata_ai_resource_version";
 pub const CF_PIPELINE_EXECUTION: &str = "batata_pipeline_execution";
 const CF_META: &str = "batata_meta";
+
+// Apollo plugin column families
+pub const CF_APOLLO_APP: &str = "apollo_app";
+pub const CF_APOLLO_CLUSTER: &str = "apollo_cluster";
+pub const CF_APOLLO_NAMESPACE: &str = "apollo_namespace";
+pub const CF_APOLLO_ITEM: &str = "apollo_item";
+pub const CF_APOLLO_RELEASE: &str = "apollo_release";
+pub const CF_APOLLO_COMMIT: &str = "apollo_commit";
+pub const CF_APOLLO_GRAY_RULE: &str = "apollo_gray_rule";
+pub const CF_APOLLO_INSTANCE: &str = "apollo_instance";
+pub const CF_APOLLO_ACCESS_KEY: &str = "apollo_access_key";
+pub const CF_APOLLO_RELEASE_MSG: &str = "apollo_release_msg";
+pub const CF_APOLLO_NAMESPACE_LOCK: &str = "apollo_namespace_lock";
+pub const CF_APOLLO_RELEASE_HISTORY: &str = "apollo_release_history";
 
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
@@ -261,6 +276,19 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE_VERSION, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_PIPELINE_EXECUTION, cf_opts.clone()),
+            // Apollo plugin column families
+            ColumnFamilyDescriptor::new(CF_APOLLO_APP, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_CLUSTER, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_NAMESPACE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_ITEM, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_RELEASE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_COMMIT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_GRAY_RULE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_INSTANCE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_ACCESS_KEY, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_RELEASE_MSG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_NAMESPACE_LOCK, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_RELEASE_HISTORY, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
         ];
 
@@ -1291,6 +1319,19 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_AI_RESOURCE,
             CF_AI_RESOURCE_VERSION,
             CF_PIPELINE_EXECUTION,
+            // Apollo plugin column families
+            CF_APOLLO_APP,
+            CF_APOLLO_CLUSTER,
+            CF_APOLLO_NAMESPACE,
+            CF_APOLLO_ITEM,
+            CF_APOLLO_RELEASE,
+            CF_APOLLO_COMMIT,
+            CF_APOLLO_GRAY_RULE,
+            CF_APOLLO_INSTANCE,
+            CF_APOLLO_ACCESS_KEY,
+            CF_APOLLO_RELEASE_MSG,
+            CF_APOLLO_NAMESPACE_LOCK,
+            CF_APOLLO_RELEASE_HISTORY,
         ] {
             if let Some(cf) = self.db.cf_handle(cf_name) {
                 let mut cf_data = Vec::new();

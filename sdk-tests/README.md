@@ -44,6 +44,14 @@ sdk-tests/
 │       ├── NacosClusterApiTest.java             # Cluster API tests (8 tests)
 │       ├── NacosGrpcErrorTest.java              # gRPC error handling (15 tests)
 │       └── NacosAuthRbacTest.java               # Auth RBAC permission tests (19 tests)
+├── apollo-java-tests/         # Apollo Java SDK tests (20+ tests)
+│   ├── pom.xml
+│   └── src/test/java/io/batata/tests/
+│       ├── ApolloTestBase.java               # Test utilities and helpers
+│       ├── ApolloAppTest.java                # App CRUD operations (6 tests)
+│       ├── ApolloNamespaceTest.java          # Namespace management (6 tests)
+│       ├── ApolloConfigItemTest.java         # Config item CRUD (6 tests)
+│       └── ApolloConfigReleaseTest.java      # Config release & client (5 tests)
 ├── consul-go-tests/           # Consul Go SDK tests (395 tests)
 │   ├── go.mod
 │   ├── agent_test.go                        # Basic agent API
@@ -79,7 +87,7 @@ sdk-tests/
 ├── podman-compose.yml         # Test environment
 └── README.md                  # This file
 
-Total: 870 SDK compatibility tests
+Total: 890+ SDK compatibility tests
 ```
 
 ## Prerequisites
@@ -142,6 +150,12 @@ podman-compose down -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONSUL_HTTP_ADDR` | `127.0.0.1:8848` | Batata server address |
+
+### Apollo Tests
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APOLLO_OPENAPI_URL` | `http://127.0.0.1:8080` | Apollo OpenAPI URL |
+| `APOLLO_OPENAPI_TOKEN` | `admin` | API access token |
 
 ## Test Categories
 
@@ -212,6 +226,13 @@ Advanced features that are less commonly used.
 - **Discovery**: Lookup, Tags, Health filter, Datacenter, Blocking, Failover
 - **Maintenance**: Node/service maintenance, Health impact, Discovery impact
 
+### Apollo SDK (20+ tests)
+- **App Management**: Create, Get, Update, Delete, Duplicate detection
+- **Namespace Management**: Create, Get, List, Update, Delete
+- **Config Item CRUD**: Create, Get, Update, Delete, List items
+- **Config Release**: Publish namespace, Client config retrieval
+- **Client SDK**: ConfigService, Property lookup with defaults
+
 ## Compatibility Matrix
 
 | Protocol | API | Status | Tests |
@@ -239,6 +260,10 @@ Advanced features that are less commonly used.
 | Consul Status | Full | :white_check_mark: | 7 |
 | Consul Peering | Full | :white_check_mark: | 8 |
 | Consul Service Mesh | Full | :white_check_mark: | 18 |
+| Apollo App Management | Partial | :warning: | 6 |
+| Apollo Namespace | Partial | :warning: | 6 |
+| Apollo Config Item | Partial | :warning: | 6 |
+| Apollo Config Release | Partial | :warning: | 5 |
 
 ## Troubleshooting
 

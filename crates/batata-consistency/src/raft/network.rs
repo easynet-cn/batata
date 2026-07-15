@@ -1,6 +1,7 @@
 // Raft network layer for gRPC-based inter-node communication
 // Implements openraft's network traits using tonic gRPC
 
+use crate::bincode;
 use std::future::Future;
 use std::time::Duration;
 

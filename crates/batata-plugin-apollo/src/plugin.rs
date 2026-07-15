@@ -5,12 +5,12 @@ use batata_plugin::{PluginContext, PluginStateProvider, ProtocolAdapterPlugin};
 
 use crate::model::config::ApolloPluginConfig;
 use crate::persistence::{
-    ApolloPersistence, EmbeddedApolloPersistence, ExternalDbApolloPersistence,
+    ApolloPersistenceService, EmbeddedApolloPersistence, SqlApolloPersistence,
 };
 
 #[derive(Clone)]
 pub struct ApolloPluginInner {
-    pub persistence: Arc<dyn ApolloPersistence>,
+    pub persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 pub struct ApolloPlugin {
@@ -56,7 +56,21 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
     }
 
     fn required_column_families(&self) -> Vec<String> {
-        Vec::new()
+        use batata_consistency::raft::state_machine::*;
+        vec![
+            CF_APOLLO_APP.to_string(),
+            CF_APOLLO_CLUSTER.to_string(),
+            CF_APOLLO_NAMESPACE.to_string(),
+            CF_APOLLO_ITEM.to_string(),
+            CF_APOLLO_RELEASE.to_string(),
+            CF_APOLLO_COMMIT.to_string(),
+            CF_APOLLO_GRAY_RULE.to_string(),
+            CF_APOLLO_INSTANCE.to_string(),
+            CF_APOLLO_ACCESS_KEY.to_string(),
+            CF_APOLLO_RELEASE_MSG.to_string(),
+            CF_APOLLO_NAMESPACE_LOCK.to_string(),
+            CF_APOLLO_RELEASE_HISTORY.to_string(),
+        ]
     }
 
     async fn init(&self, ctx: &PluginContext) -> anyhow::Result<()> {
@@ -71,7 +85,7 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
         let db = ctx.get::<sea_orm::DatabaseConnection>("db");
         let rocks_db = ctx.get::<rocksdb::DB>("rocks_db");
 
-        let persistence: Arc<dyn ApolloPersistence> = match storage_mode {
+        let persistence: Arc<dyn ApolloPersistenceService> = match storage_mode {
             Some(mode) if *mode == batata_persistence::model::StorageMode::ExternalDb => {
                 let db_conn = db
                     .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
@@ -80,7 +94,7 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                 crate::migration::run_apollo_migrations_with_lock(db_conn.as_ref()).await?;
                 tracing::info!("Apollo database migrations completed");
 
-                Arc::new(ExternalDbApolloPersistence::new(db_conn))
+                Arc::new(SqlApolloPersistence::new((*db_conn).clone()))
             }
             _ => {
                 let db = rocks_db
@@ -104,9 +118,18 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
     }
 
     fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
+        tracing::info!("Configuring Apollo plugin HTTP routes");
         let inner = self.inner();
-        cfg.app_data(actix_web::web::Data::from(inner.persistence.clone()))
-            .service(crate::route::routes());
+        // Use Data::new (not Data::from) because handlers expect web::Data<Arc<dyn ApolloPersistenceService>>
+        cfg.app_data(actix_web::web::Data::new(inner.persistence.clone()));
+
+        if let Some(db) = inner.persistence.get_db_connection() {
+            tracing::info!("Apollo plugin: registering DatabaseConnection as app data");
+            cfg.app_data(actix_web::web::Data::new(db));
+        }
+
+        crate::route::configure_routes(cfg);
+        tracing::info!("Apollo plugin HTTP routes configured");
     }
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {

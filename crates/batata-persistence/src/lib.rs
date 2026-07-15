@@ -5,6 +5,9 @@
 //! - Persistence trait abstractions for unified storage
 //! - Domain model types for persistence operations
 
+pub mod bincode {
+    pub use batata_common::bincode::{deserialize, serialize};
+}
 pub mod distributed;
 pub mod embedded;
 pub mod entity;

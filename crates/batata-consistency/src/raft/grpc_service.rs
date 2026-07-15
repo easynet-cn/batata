@@ -1,6 +1,7 @@
 // Raft gRPC service implementation
 // Handles incoming Raft RPC requests from other cluster nodes
 
+use crate::bincode;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -44,7 +45,7 @@ impl RaftGrpcService {
     /// Convert proto Entry to openraft Entry using bincode deserialization.
     fn from_proto_entry(
         entry: ProtoEntry,
-    ) -> Result<openraft::Entry<TypeConfig>, Box<bincode::ErrorKind>> {
+    ) -> anyhow::Result<openraft::Entry<TypeConfig>> {
         let log_id = super::proto_convert::from_proto_log_id(entry.log_id)
             .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
 

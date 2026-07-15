@@ -9,6 +9,9 @@
 
 #![allow(clippy::result_large_err)]
 
+pub mod bincode {
+    pub use batata_common::bincode::{deserialize, serialize};
+}
 pub mod lock;
 pub mod raft;
 
