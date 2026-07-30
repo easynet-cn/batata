@@ -16,13 +16,15 @@ impl MigrationTrait for Migration {
                     .table(ApolloNamespaceLock::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloNamespaceLock::Id, backend).auto_increment().primary_key())
-                    .col(unsigned_int(ApolloNamespaceLock::NamespaceId, backend).default(0))
+                    .col(string_len_default(ApolloNamespaceLock::AppId, 64, "default"))
+                    .col(string_len_default(ApolloNamespaceLock::ClusterName, 32, "default"))
+                    .col(string_len_default(ApolloNamespaceLock::NamespaceName, 128, "default"))
+                    .col(string_len_default(ApolloNamespaceLock::LockedBy, 64, "default"))
+                    .col(date_time(ApolloNamespaceLock::LockedAt))
                     .col(string_len_default(ApolloNamespaceLock::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloNamespaceLock::DataChangeCreatedTime))
                     .col(string_len_null(ApolloNamespaceLock::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloNamespaceLock::DataChangeLastTime))
-                    .col(bit(ApolloNamespaceLock::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloNamespaceLock::DeletedAt, backend).default(0))
                     .to_owned(),
             )
             .await?;
@@ -30,10 +32,11 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("uk_apollo_namespace_lock_namespaceid_deletedat")
+                    .name("uk_apollo_namespace_lock_app_cluster_namespace")
                     .table(ApolloNamespaceLock::Table)
-                    .col(ApolloNamespaceLock::NamespaceId)
-                    .col(ApolloNamespaceLock::DeletedAt)
+                    .col(ApolloNamespaceLock::AppId)
+                    .col(ApolloNamespaceLock::ClusterName)
+                    .col(ApolloNamespaceLock::NamespaceName)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -65,11 +68,13 @@ impl MigrationTrait for Migration {
 enum ApolloNamespaceLock {
     Table,
     Id,
-    NamespaceId,
+    AppId,
+    ClusterName,
+    NamespaceName,
+    LockedBy,
+    LockedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,
     DataChangeLastTime,
-    IsDeleted,
-    DeletedAt,
 }

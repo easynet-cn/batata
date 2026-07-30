@@ -22,8 +22,6 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloConsumer::OrgName, 64, "default"))
                     .col(string_len_default(ApolloConsumer::OwnerName, 500, "default"))
                     .col(string_len_default(ApolloConsumer::OwnerEmail, 500, "default"))
-                    .col(bit(ApolloConsumer::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloConsumer::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloConsumer::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloConsumer::DataChangeCreatedTime))
                     .col(string_len_null(ApolloConsumer::DataChangeLastModifiedBy, 64))
@@ -38,7 +36,6 @@ impl MigrationTrait for Migration {
                     .name("uk_apollo_consumer_appid_deletedat")
                     .table(ApolloConsumer::Table)
                     .col(ApolloConsumer::AppId)
-                    .col(ApolloConsumer::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -76,8 +73,6 @@ enum ApolloConsumer {
     OrgName,
     OwnerName,
     OwnerEmail,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

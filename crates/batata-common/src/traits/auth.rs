@@ -187,6 +187,14 @@ pub trait AuthPlugin: Send + Sync {
     ///
     /// Returns a JWT token on success, or a structured LoginError on failure.
     async fn login(&self, username: &str, password: &str) -> Result<LoginResult, LoginError>;
+
+    /// Check if a user has the global admin role.
+    ///
+    /// This is used by the visibility plugin to determine admin bypass.
+    /// Default returns false; plugins should override with actual role lookup.
+    async fn is_global_admin(&self, _username: &str) -> bool {
+        false
+    }
 }
 
 /// OAuth/OIDC provider trait for pluggable external authentication.

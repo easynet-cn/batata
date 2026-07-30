@@ -155,8 +155,8 @@ impl ItemPersistence for ItemSqlPersistence {
 
         // Fetch all created items
         let created_items = apollo_item::Entity::find()
-            .filter(apollo_item::Column::Id.gte(results.last_insert_id as i32 - results.last_insert_id as i32 + 1))
-            .filter(apollo_item::Column::Id.lte(results.last_insert_id as i32))
+            .filter(apollo_item::Column::Id.gte(results.last_insert_id.unwrap_or(0) as i32 - results.last_insert_id.unwrap_or(0) as i32 + 1))
+            .filter(apollo_item::Column::Id.lte(results.last_insert_id.unwrap_or(0) as i32))
             .filter(apollo_item::Column::IsDeleted.eq(false))
             .all(&self.db)
             .await?;

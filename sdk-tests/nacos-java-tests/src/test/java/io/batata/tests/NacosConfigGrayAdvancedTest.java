@@ -109,6 +109,24 @@ public class NacosConfigGrayAdvancedTest {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
+    /**
+     * Query gray config info via admin HTTP API to verify it exists
+     */
+    private HttpResponse<String> queryGrayConfig(String dataId) throws IOException, InterruptedException {
+        String url = "http://" + serverAddr + "/nacos/v3/admin/cs/config/gray/info"
+                + "?dataId=" + URLEncoder.encode(dataId, StandardCharsets.UTF_8)
+                + "&groupName=" + URLEncoder.encode(DEFAULT_GROUP, StandardCharsets.UTF_8)
+                + "&namespaceId=" + URLEncoder.encode(DEFAULT_NAMESPACE, StandardCharsets.UTF_8)
+                + "&accessToken=" + accessToken;
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .GET()
+                .build();
+
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
     // ==================== Percentage Gray Release Tests ====================
 
     /**
@@ -132,6 +150,13 @@ public class NacosConfigGrayAdvancedTest {
                 "Percentage gray publish should return 200. Body: " + response.body());
         assertTrue(response.body().contains("true") || response.body().contains("200"),
                 "Response should indicate success. Body: " + response.body());
+
+        // Verify gray config exists by querying it
+        HttpResponse<String> queryResponse = queryGrayConfig(dataId);
+        assertEquals(200, queryResponse.statusCode(),
+                "Query gray config should return 200. Body: " + queryResponse.body());
+        assertTrue(queryResponse.body().contains("percentage") || queryResponse.body().contains("gray"),
+                "Gray config info should contain percentage or gray indicators. Body: " + queryResponse.body());
 
         // Cleanup
         maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -158,10 +183,22 @@ public class NacosConfigGrayAdvancedTest {
         assertEquals(200, resp0.statusCode(),
                 "0% gray publish should succeed. Body: " + resp0.body());
 
+        // Verify 0% gray config exists but SDK still gets normal content
+        Thread.sleep(500);
+        String sdkContent0 = configService.getConfig(dataId0, DEFAULT_GROUP, 3000);
+        assertEquals(normalContent, sdkContent0,
+                "SDK should receive normal content when gray percentage is 0%");
+
         // 100% — all clients should get gray config
         HttpResponse<String> resp100 = publishGrayConfig(dataId100, grayContent, "&percentage=100");
         assertEquals(200, resp100.statusCode(),
                 "100% gray publish should succeed. Body: " + resp100.body());
+
+        // Verify 100% gray config: SDK should get gray content
+        Thread.sleep(500);
+        String sdkContent100 = configService.getConfig(dataId100, DEFAULT_GROUP, 3000);
+        assertEquals(grayContent, sdkContent100,
+                "SDK should receive gray content when gray percentage is 100%");
 
         // Cleanup
         maintainerService.deleteConfig(dataId0, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -217,6 +254,13 @@ public class NacosConfigGrayAdvancedTest {
         assertTrue(response.body().contains("true") || response.body().contains("200"),
                 "Response should indicate success. Body: " + response.body());
 
+        // Verify gray config exists by querying it
+        HttpResponse<String> queryResponse = queryGrayConfig(dataId);
+        assertEquals(200, queryResponse.statusCode(),
+                "Query gray config should return 200. Body: " + queryResponse.body());
+        assertTrue(queryResponse.body().contains("ipRange") || queryResponse.body().contains("gray"),
+                "Gray config info should contain ipRange or gray indicators. Body: " + queryResponse.body());
+
         // Cleanup
         maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
@@ -239,6 +283,12 @@ public class NacosConfigGrayAdvancedTest {
         HttpResponse<String> response = publishGrayConfig(dataId, grayContent, "&ipRange=" + cidr);
         assertEquals(200, response.statusCode(),
                 "Single-host CIDR gray publish should succeed. Body: " + response.body());
+
+        // Verify SDK gets gray content since client IP (127.0.0.1) matches the CIDR
+        Thread.sleep(500);
+        String sdkContent = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+        assertEquals(grayContent, sdkContent,
+                "SDK should receive gray content when client IP matches single-host CIDR");
 
         // Cleanup
         maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);

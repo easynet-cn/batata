@@ -8,6 +8,7 @@ use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuth
 use batata_consistency::RaftNode;
 use batata_persistence::PersistenceService;
 use batata_plugin::{ControlPlugin, PluginStateProvider};
+use batata_plugin::spi::PluginManager;
 
 use crate::console::datasource::ConsoleDataSource;
 
@@ -57,6 +58,8 @@ pub struct AppState {
     pub encryption_service: Option<Arc<dyn batata_common::ConfigEncryptionProvider>>,
     /// Plugin state providers for dynamic plugin state collection
     pub plugin_state_providers: Vec<Arc<dyn PluginStateProvider>>,
+    /// Plugin manager for config change and other plugin chains
+    pub plugin_manager: Option<Arc<PluginManager>>,
     /// Dynamic log level setter (set by batata-server logging init)
     /// Accepts a tracing filter directive string like "info" or "batata_naming=debug"
     pub log_level_setter: Option<Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>>,
@@ -81,6 +84,7 @@ impl std::fmt::Debug for AppState {
             .field("control_plugin", &self.control_plugin.is_some())
             .field("encryption_service", &self.encryption_service.is_some())
             .field("plugin_state_providers", &self.plugin_state_providers.len())
+            .field("plugin_manager", &self.plugin_manager.is_some())
             .finish()
     }
 }
@@ -101,6 +105,7 @@ impl Clone for AppState {
             control_plugin: self.control_plugin.clone(),
             encryption_service: self.encryption_service.clone(),
             plugin_state_providers: self.plugin_state_providers.clone(),
+            plugin_manager: self.plugin_manager.clone(),
             log_level_setter: self.log_level_setter.clone(),
         }
     }
@@ -226,6 +231,23 @@ impl AppState {
         self.cluster_manager
             .as_ref()
             .expect("Cluster manager not available in remote console mode")
+    }
+
+    // ========================================================================
+    // Plugin Manager Access
+    // ========================================================================
+
+    /// Try to get the plugin manager
+    pub fn try_plugin_manager(&self) -> Option<&PluginManager> {
+        self.plugin_manager.as_deref()
+    }
+
+    /// Get plugin manager (panics if not available)
+    pub fn plugin_manager(&self) -> &PluginManager {
+        self.plugin_manager
+            .as_ref()
+            .expect("Plugin manager not available")
+            .as_ref()
     }
 
     // ========================================================================

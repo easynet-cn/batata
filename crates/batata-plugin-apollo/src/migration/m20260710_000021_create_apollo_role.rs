@@ -17,6 +17,8 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(unsigned_int(ApolloRole::Id, backend).auto_increment().primary_key())
                     .col(string_len_default(ApolloRole::RoleName, 256, ""))
+                    .col(unsigned_int(ApolloRole::RoleType, backend))
+                    .col(string_len_default(ApolloRole::TargetId, 256, ""))
                     .col(bit(ApolloRole::IsDeleted, None))
                     .col(unsigned_big_int(ApolloRole::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloRole::DataChangeCreatedBy, 64, "default"))
@@ -66,6 +68,8 @@ enum ApolloRole {
     Table,
     Id,
     RoleName,
+    RoleType,
+    TargetId,
     IsDeleted,
     DeletedAt,
     DataChangeCreatedBy,

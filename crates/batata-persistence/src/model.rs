@@ -97,6 +97,51 @@ pub struct PipelineExecutionInfo {
     pub update_time: i64,
 }
 
+/// Filter parameters for ai_resource list queries.
+///
+/// Used by `AiResourcePersistence::ai_resource_list` to apply
+/// visibility-aware filtering (scope, owner) alongside name search.
+#[derive(Debug, Clone, Default)]
+pub struct AiResourceListFilter<'a> {
+    pub name_filter: Option<&'a str>,
+    pub search_accurate: bool,
+    pub order_by_downloads: bool,
+    /// Filter by exact scope value (e.g., "PUBLIC", "PRIVATE")
+    pub scope_filter: Option<&'a str>,
+    /// Filter by exact owner value
+    pub owner_filter: Option<&'a str>,
+    /// When true alongside owner_filter, also include PUBLIC resources
+    pub include_public_for_owner: bool,
+}
+
+impl<'a> AiResourceListFilter<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_name_filter(mut self, name: Option<&'a str>, accurate: bool) -> Self {
+        self.name_filter = name;
+        self.search_accurate = accurate;
+        self
+    }
+
+    pub fn with_order_by_downloads(mut self, enabled: bool) -> Self {
+        self.order_by_downloads = enabled;
+        self
+    }
+
+    pub fn with_scope(mut self, scope: Option<&'a str>) -> Self {
+        self.scope_filter = scope;
+        self
+    }
+
+    pub fn with_owner(mut self, owner: Option<&'a str>, include_public: bool) -> Self {
+        self.owner_filter = owner;
+        self.include_public_for_owner = include_public;
+        self
+    }
+}
+
 /// Generic paginated result (re-exported from batata-common)
 pub use batata_common::model::Page;
 

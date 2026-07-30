@@ -100,6 +100,191 @@ impl ConfigChangeResult {
     }
 }
 
+// =============================================================================
+// Enhanced Config Change Plugin V2 — Pointcut, ExecuteType, parameter replacement
+// =============================================================================
+
+/// Interception point for config operations.
+/// Mirrors Nacos `ConfigChangePointCutTypes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConfigPointcut {
+    Publish,
+    Remove,
+    Get,
+    Import,
+    Export,
+    History,
+}
+
+impl ConfigPointcut {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConfigPointcut::Publish => "publish",
+            ConfigPointcut::Remove => "remove",
+            ConfigPointcut::Get => "get",
+            ConfigPointcut::Import => "import",
+            ConfigPointcut::Export => "export",
+            ConfigPointcut::History => "history",
+        }
+    }
+}
+
+/// Execution timing for plugin hooks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecuteType {
+    Before,
+    After,
+}
+
+impl ExecuteType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExecuteType::Before => "before",
+            ExecuteType::After => "after",
+        }
+    }
+}
+
+/// Context for a config change operation, passed through the plugin chain.
+/// Plugins can read and modify fields (parameter replacement).
+#[derive(Debug, Clone)]
+pub struct ConfigChangeRequest {
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub content: String,
+    pub content_type: Option<String>,
+    pub metadata: HashMap<String, String>,
+    pub pointcut: ConfigPointcut,
+    pub execute_type: ExecuteType,
+    pub operator: String,
+    pub client_ip: Option<String>,
+    pub proceed: bool,
+    pub deny_reason: Option<String>,
+}
+
+impl ConfigChangeRequest {
+    pub fn new(
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        content: &str,
+        pointcut: ConfigPointcut,
+        execute_type: ExecuteType,
+        operator: &str,
+    ) -> Self {
+        Self {
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: tenant.to_string(),
+            content: content.to_string(),
+            content_type: None,
+            metadata: HashMap::new(),
+            pointcut,
+            execute_type,
+            operator: operator.to_string(),
+            client_ip: None,
+            proceed: true,
+            deny_reason: None,
+        }
+    }
+
+    pub fn deny(&mut self, reason: &str) {
+        self.proceed = false;
+        self.deny_reason = Some(reason.to_string());
+    }
+}
+
+/// Result after running the plugin chain.
+#[derive(Debug, Clone)]
+pub struct ConfigChangeResponse {
+    pub allowed: bool,
+    pub message: Option<String>,
+    pub request: Option<ConfigChangeRequest>,
+}
+
+impl ConfigChangeResponse {
+    pub fn allow() -> Self {
+        Self {
+            allowed: true,
+            message: None,
+            request: None,
+        }
+    }
+
+    pub fn allow_with_request(req: ConfigChangeRequest) -> Self {
+        Self {
+            allowed: true,
+            message: None,
+            request: Some(req),
+        }
+    }
+
+    pub fn deny(message: &str) -> Self {
+        Self {
+            allowed: false,
+            message: Some(message.to_string()),
+            request: None,
+        }
+    }
+}
+
+/// Enhanced config change plugin supporting Pointcut, ExecuteType, and parameter replacement.
+#[async_trait::async_trait]
+pub trait ConfigChangePluginV2: Send + Sync {
+    fn name(&self) -> &str;
+    fn order(&self) -> i32 { 0 }
+    fn is_enabled(&self) -> bool { true }
+    fn interested_pointcuts(&self) -> Vec<ConfigPointcut> {
+        vec![ConfigPointcut::Publish, ConfigPointcut::Remove, ConfigPointcut::Get, ConfigPointcut::Import, ConfigPointcut::Export, ConfigPointcut::History]
+    }
+    fn interested_execute_types(&self) -> Vec<ExecuteType> {
+        vec![ExecuteType::Before, ExecuteType::After]
+    }
+    async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult;
+}
+
+/// Wraps the old ConfigChangePlugin to work with the new V2 chain.
+pub struct ConfigChangePluginAdapter {
+    pub inner: Arc<dyn ConfigChangePlugin>,
+}
+
+#[async_trait::async_trait]
+impl ConfigChangePluginV2 for ConfigChangePluginAdapter {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn order(&self) -> i32 {
+        self.inner.priority()
+    }
+    fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
+    }
+    fn interested_pointcuts(&self) -> Vec<ConfigPointcut> {
+        vec![ConfigPointcut::Publish, ConfigPointcut::Remove]
+    }
+    async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult {
+        match (ctx.pointcut, ctx.execute_type) {
+            (ConfigPointcut::Publish, ExecuteType::Before) => {
+                self.inner.before_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content).await
+            }
+            (ConfigPointcut::Publish, ExecuteType::After) => {
+                self.inner.after_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content).await;
+                ConfigChangeResult::allow()
+            }
+            (ConfigPointcut::Remove, ExecuteType::Before) => {
+                self.inner.before_delete(&ctx.data_id, &ctx.group, &ctx.tenant).await
+            }
+            (ConfigPointcut::Remove, ExecuteType::After) => {
+                self.inner.after_delete(&ctx.data_id, &ctx.group, &ctx.tenant).await;
+                ConfigChangeResult::allow()
+            }
+            _ => ConfigChangeResult::allow(),
+        }
+    }
+}
+
+
 /// Traffic control plugin for rate limiting
 #[async_trait::async_trait]
 pub trait ControlPlugin: Plugin {
@@ -442,6 +627,7 @@ pub trait PluginStateProvider: Send + Sync {
 pub struct PluginManager {
     auth_plugins: Vec<Arc<dyn AuthPlugin>>,
     config_change_plugins: Vec<Arc<dyn ConfigChangePlugin>>,
+    config_change_plugins_v2: Vec<Arc<dyn ConfigChangePluginV2>>,
     control_plugins: Vec<Arc<dyn ControlPlugin>>,
     protocol_adapters: Vec<Arc<dyn ProtocolAdapterPlugin>>,
 }
@@ -451,6 +637,7 @@ impl PluginManager {
         Self {
             auth_plugins: Vec::new(),
             config_change_plugins: Vec::new(),
+            config_change_plugins_v2: Vec::new(),
             control_plugins: Vec::new(),
             protocol_adapters: Vec::new(),
         }
@@ -464,6 +651,42 @@ impl PluginManager {
     pub fn register_config_change(&mut self, plugin: Arc<dyn ConfigChangePlugin>) {
         self.config_change_plugins.push(plugin);
         self.config_change_plugins.sort_by_key(|p| p.priority());
+    }
+
+    pub fn register_config_change_v2(&mut self, plugin: Arc<dyn ConfigChangePluginV2>) {
+        self.config_change_plugins_v2.push(plugin);
+        self.config_change_plugins_v2.sort_by_key(|p| p.order());
+    }
+
+    /// Execute V2 plugin chain for a config change operation.
+    /// Supports Before/After, Pointcut filtering, and parameter replacement.
+    pub async fn execute_config_change_v2(
+        &self,
+        mut request: ConfigChangeRequest,
+    ) -> ConfigChangeResponse {
+        for plugin in &self.config_change_plugins_v2 {
+            if !plugin.is_enabled() {
+                continue;
+            }
+            if !plugin.interested_pointcuts().contains(&request.pointcut) {
+                continue;
+            }
+            if !plugin.interested_execute_types().contains(&request.execute_type) {
+                continue;
+            }
+            let result = plugin.execute(&mut request).await;
+            if !result.allowed {
+                return ConfigChangeResponse::deny(
+                    result.message.as_deref().unwrap_or("plugin denied"),
+                );
+            }
+            if !request.proceed {
+                return ConfigChangeResponse::deny(
+                    request.deny_reason.as_deref().unwrap_or("plugin denied"),
+                );
+            }
+        }
+        ConfigChangeResponse::allow_with_request(request)
     }
 
     pub fn register_control(&mut self, plugin: Arc<dyn ControlPlugin>) {
@@ -571,6 +794,10 @@ impl PluginManager {
 
     pub fn config_change_plugins(&self) -> &[Arc<dyn ConfigChangePlugin>] {
         &self.config_change_plugins
+    }
+
+    pub fn config_change_plugins_v2(&self) -> &[Arc<dyn ConfigChangePluginV2>] {
+        &self.config_change_plugins_v2
     }
 
     pub fn control_plugins(&self) -> &[Arc<dyn ControlPlugin>] {

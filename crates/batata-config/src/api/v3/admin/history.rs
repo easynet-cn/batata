@@ -1,14 +1,15 @@
 //! V3 Admin config history endpoints
 
-use actix_web::{HttpRequest, Responder, get, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, get, web};
 use serde::Deserialize;
 use tracing::warn;
 
 use batata_api::Page;
 
 use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small};
+use batata_plugin::spi::{ConfigChangeRequest, ConfigPointcut, ExecuteType};
 use batata_server_common::{
-    ActionTypes, ApiType, Secured, SignType, model, model::AppState, secured,
+    ActionTypes, ApiType, Secured, SignType, error, model, model::AppState, secured,
 };
 
 use crate::api::config_model::{ConfigBasicInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo};
@@ -78,7 +79,37 @@ async fn list_history(
         namespace_id = DEFAULT_NAMESPACE_ID.to_string();
     }
 
-    match data
+    // Execute ConfigChangePluginV2 Before hook for History
+    let src_user = req
+        .extensions()
+        .get::<batata_common::IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+    let operator = if src_user.is_empty() { "anonymous" } else { &src_user };
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req_plugin = ConfigChangeRequest::new(
+            &params.data_id, &params.group_name, &namespace_id, "",
+            ConfigPointcut::History, ExecuteType::Before,
+            operator,
+        );
+        req_plugin.client_ip = Some(src_ip.to_string());
+        let resp = plugin_mgr.execute_config_change_v2(req_plugin).await;
+        if !resp.allowed {
+            return model::common::Result::<String>::http_response(
+                403,
+                error::SERVER_ERROR.code,
+                resp.message.unwrap_or_else(|| "plugin denied".to_string()),
+                String::new(),
+            );
+        }
+    }
+
+    let result = data
         .persistence()
         .config_history_search_page(
             &params.data_id,
@@ -87,8 +118,20 @@ async fn list_history(
             params.page_no,
             params.page_size,
         )
-        .await
-    {
+        .await;
+
+    // Execute ConfigChangePluginV2 After hook for History
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req_plugin = ConfigChangeRequest::new(
+            &params.data_id, &params.group_name, &namespace_id, "",
+            ConfigPointcut::History, ExecuteType::After,
+            operator,
+        );
+        req_plugin.client_ip = Some(src_ip.to_string());
+        let _ = plugin_mgr.execute_config_change_v2(req_plugin).await;
+    }
+
+    match result {
         Ok(result) => {
             let page_result = Page::<ConfigHistoryBasicInfo>::new(
                 result.total_count,

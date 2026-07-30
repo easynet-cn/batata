@@ -203,6 +203,12 @@ public class NacosConfigEncryptionTest {
         // Note: The HTTP API response includes JSON wrapping, so we check the response body
         System.out.println("Raw server response for cipher config: " + rawResponse);
 
+        // Raw response must not contain the plain text content directly
+        // If encryption is working, the raw stored content should be different from plain text
+        assertFalse(rawResponse.contains(plainContent),
+                "Raw server response should NOT contain plain text for cipher- config; " +
+                "server should have stored encrypted content");
+
         // Via SDK, it should still be readable as plain text
         String sdkContent = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(plainContent, sdkContent, "SDK should still return decrypted plain content");

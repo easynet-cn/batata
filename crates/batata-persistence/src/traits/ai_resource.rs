@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use crate::model::{AiResourceInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo};
+use crate::model::{AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo, Page, PipelineExecutionInfo};
 
 /// Persistence operations for AI resources (skills, agentspecs, etc.)
 #[async_trait]
@@ -81,14 +81,12 @@ pub trait AiResourcePersistence: Send + Sync {
         resource_type: &str,
     ) -> anyhow::Result<u64>;
 
-    /// List resources with optional name filter and pagination
+    /// List resources with optional name filter, visibility filters, and pagination.
     async fn ai_resource_list(
         &self,
         namespace_id: &str,
         resource_type: &str,
-        name_filter: Option<&str>,
-        search_accurate: bool,
-        order_by_downloads: bool,
+        filter: &AiResourceListFilter<'_>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AiResourceInfo>>;

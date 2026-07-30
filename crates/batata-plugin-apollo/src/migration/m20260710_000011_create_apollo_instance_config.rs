@@ -16,13 +16,14 @@ impl MigrationTrait for Migration {
                     .table(ApolloInstanceConfig::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloInstanceConfig::Id, backend).auto_increment().primary_key())
-                    .col(unsigned_int_null(ApolloInstanceConfig::InstanceId, backend))
-                    .col(string_len_default(ApolloInstanceConfig::ConfigAppId, 64, "default"))
-                    .col(string_len_default(ApolloInstanceConfig::ConfigClusterName, 32, "default"))
-                    .col(string_len_default(ApolloInstanceConfig::ConfigNamespaceName, 32, "default"))
+                    .col(unsigned_int(ApolloInstanceConfig::InstanceId, backend))
+                    .col(string_len_default(ApolloInstanceConfig::NamespaceName, 128, "default"))
+                    .col(string_len_default(ApolloInstanceConfig::ClusterName, 32, "default"))
                     .col(string_len_default(ApolloInstanceConfig::ReleaseKey, 64, ""))
-                    .col(datetime_null(ApolloInstanceConfig::ReleaseDeliveryTime))
+                    .col(long_text_null(ApolloInstanceConfig::Configurations, backend))
+                    .col(string_len_default(ApolloInstanceConfig::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloInstanceConfig::DataChangeCreatedTime))
+                    .col(string_len_null(ApolloInstanceConfig::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloInstanceConfig::DataChangeLastTime))
                     .to_owned(),
             )
@@ -34,8 +35,8 @@ impl MigrationTrait for Migration {
                     .name("uk_apollo_instance_config_unique_key")
                     .table(ApolloInstanceConfig::Table)
                     .col(ApolloInstanceConfig::InstanceId)
-                    .col(ApolloInstanceConfig::ConfigAppId)
-                    .col(ApolloInstanceConfig::ConfigNamespaceName)
+                    .col(ApolloInstanceConfig::NamespaceName)
+                    .col(ApolloInstanceConfig::ClusterName)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -64,20 +65,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_apollo_instance_config_valid_namespace")
-                    .table(ApolloInstanceConfig::Table)
-                    .col(ApolloInstanceConfig::ConfigAppId)
-                    .col(ApolloInstanceConfig::ConfigClusterName)
-                    .col(ApolloInstanceConfig::ConfigNamespaceName)
-                    .col(ApolloInstanceConfig::DataChangeLastTime)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-
         Ok(())
     }
 
@@ -93,11 +80,12 @@ enum ApolloInstanceConfig {
     Table,
     Id,
     InstanceId,
-    ConfigAppId,
-    ConfigClusterName,
-    ConfigNamespaceName,
+    NamespaceName,
+    ClusterName,
     ReleaseKey,
-    ReleaseDeliveryTime,
+    Configurations,
+    DataChangeCreatedBy,
     DataChangeCreatedTime,
+    DataChangeLastModifiedBy,
     DataChangeLastTime,
 }

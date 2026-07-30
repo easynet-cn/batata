@@ -320,12 +320,15 @@ impl AIServices {
     pub fn with_ai_resource_services(
         mut self,
         persistence: Arc<dyn batata_persistence::PersistenceService>,
+        auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
     ) -> Self {
         self.skill_service = Some(Arc::new(batata_ai::SkillOperationService::new(
             persistence.clone(),
+            auth_plugin.clone(),
         )));
         self.agentspec_service = Some(Arc::new(batata_ai::AgentSpecOperationService::new(
             persistence.clone(),
+            auth_plugin,
         )));
         self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(persistence)));
         self

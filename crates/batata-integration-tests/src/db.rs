@@ -172,7 +172,7 @@ impl TestDatabase {
                 use sea_orm::{ConnectionTrait, Statement};
                 let db_backend = self.connection.get_database_backend();
                 self.connection
-                    .execute(Statement::from_string(db_backend, safe_statement))
+                    .execute_raw(Statement::from_string(db_backend, safe_statement))
                     .await
                     .map_err(|e| TestDatabaseError::MigrationFailed(e.to_string()))?;
             }
@@ -204,7 +204,7 @@ impl TestDatabase {
         // Disable foreign key checks
         if self.is_mysql() {
             self.connection
-                .execute(Statement::from_string(
+                .execute_raw(Statement::from_string(
                     db_backend,
                     "SET FOREIGN_KEY_CHECKS = 0".to_string(),
                 ))
@@ -223,7 +223,7 @@ impl TestDatabase {
 
             // Ignore errors for tables that might not exist
             self.connection
-                .execute(Statement::from_string(db_backend, sql))
+                .execute_raw(Statement::from_string(db_backend, sql))
                 .await
                 .ok();
         }
@@ -231,7 +231,7 @@ impl TestDatabase {
         // Re-enable foreign key checks
         if self.is_mysql() {
             self.connection
-                .execute(Statement::from_string(
+                .execute_raw(Statement::from_string(
                     db_backend,
                     "SET FOREIGN_KEY_CHECKS = 1".to_string(),
                 ))

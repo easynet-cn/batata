@@ -18,9 +18,6 @@ impl MigrationTrait for Migration {
                     .col(unsigned_int(ApolloFavorite::Id, backend).auto_increment().primary_key())
                     .col(string_len_default(ApolloFavorite::UserId, 32, "default"))
                     .col(string_len_default(ApolloFavorite::AppId, 64, "default"))
-                    .col(unsigned_int(ApolloFavorite::Position, backend).default(10000))
-                    .col(bit(ApolloFavorite::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloFavorite::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloFavorite::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloFavorite::DataChangeCreatedTime))
                     .col(string_len_null(ApolloFavorite::DataChangeLastModifiedBy, 64))
@@ -36,7 +33,6 @@ impl MigrationTrait for Migration {
                     .table(ApolloFavorite::Table)
                     .col(ApolloFavorite::UserId)
                     .col(ApolloFavorite::AppId)
-                    .col(ApolloFavorite::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -81,9 +77,6 @@ enum ApolloFavorite {
     Id,
     UserId,
     AppId,
-    Position,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

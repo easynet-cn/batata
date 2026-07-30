@@ -20,6 +20,7 @@ pub trait SkillService: Send + Sync {
         &self,
         namespace_id: &str,
         name: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<SkillMeta>>;
 
     async fn get_skill_version_detail(
@@ -27,6 +28,7 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         version: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
     async fn download_skill_version(
@@ -34,9 +36,15 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         version: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
-    async fn delete_skill(&self, namespace_id: &str, name: &str) -> anyhow::Result<()>;
+    async fn delete_skill(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
     async fn list_skills(
         &self,
@@ -46,6 +54,7 @@ pub trait SkillService: Send + Sync {
         order_by: Option<&str>,
         page_no: u64,
         page_size: u64,
+        user: Option<&str>,
     ) -> anyhow::Result<Page<SkillSummary>>;
 
     async fn upload_skill(
@@ -72,12 +81,23 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         skill: &Skill,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    async fn delete_draft(&self, namespace_id: &str, name: &str) -> anyhow::Result<()>;
+    async fn delete_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
-    async fn submit(&self, namespace_id: &str, name: &str, version: &str)
-    -> anyhow::Result<String>;
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<String>;
 
     async fn publish(
         &self,
@@ -85,6 +105,7 @@ pub trait SkillService: Send + Sync {
         name: &str,
         version: &str,
         update_latest_label: bool,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn update_labels(
@@ -92,6 +113,7 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         labels: std::collections::HashMap<String, String>,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn update_biz_tags(
@@ -99,6 +121,7 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         biz_tags: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn change_online_status(
@@ -108,10 +131,16 @@ pub trait SkillService: Send + Sync {
         scope: Option<&str>,
         version: Option<&str>,
         online: bool,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    async fn update_scope(&self, namespace_id: &str, name: &str, scope: &str)
-    -> anyhow::Result<()>;
+    async fn update_scope(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
     async fn query_skill(
         &self,
@@ -119,6 +148,7 @@ pub trait SkillService: Send + Sync {
         name: &str,
         version: Option<&str>,
         label: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
     async fn search_skills(
@@ -127,6 +157,7 @@ pub trait SkillService: Send + Sync {
         keyword: Option<&str>,
         page_no: u64,
         page_size: u64,
+        user: Option<&str>,
     ) -> anyhow::Result<Page<SkillBasicInfo>>;
 }
 
@@ -137,6 +168,7 @@ pub trait AgentSpecService: Send + Sync {
         &self,
         namespace_id: &str,
         name: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpecMeta>>;
 
     async fn get_version_detail(
@@ -144,9 +176,15 @@ pub trait AgentSpecService: Send + Sync {
         namespace_id: &str,
         name: &str,
         version: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>>;
 
-    async fn delete(&self, namespace_id: &str, name: &str) -> anyhow::Result<()>;
+    async fn delete(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
     async fn list(
         &self,
@@ -155,6 +193,7 @@ pub trait AgentSpecService: Send + Sync {
         search: Option<&str>,
         page_no: u64,
         page_size: u64,
+        user: Option<&str>,
     ) -> anyhow::Result<Page<AgentSpecSummary>>;
 
     async fn upload(
@@ -181,12 +220,23 @@ pub trait AgentSpecService: Send + Sync {
         namespace_id: &str,
         name: &str,
         spec: &AgentSpec,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    async fn delete_draft(&self, namespace_id: &str, name: &str) -> anyhow::Result<()>;
+    async fn delete_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
-    async fn submit(&self, namespace_id: &str, name: &str, version: &str)
-    -> anyhow::Result<String>;
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<String>;
 
     async fn publish(
         &self,
@@ -194,6 +244,7 @@ pub trait AgentSpecService: Send + Sync {
         name: &str,
         version: &str,
         update_latest_label: bool,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn update_labels(
@@ -201,6 +252,7 @@ pub trait AgentSpecService: Send + Sync {
         namespace_id: &str,
         name: &str,
         labels: std::collections::HashMap<String, String>,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn update_biz_tags(
@@ -208,6 +260,7 @@ pub trait AgentSpecService: Send + Sync {
         namespace_id: &str,
         name: &str,
         biz_tags: &str,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
     async fn change_online_status(
@@ -217,10 +270,16 @@ pub trait AgentSpecService: Send + Sync {
         scope: Option<&str>,
         version: Option<&str>,
         online: bool,
+        user: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    async fn update_scope(&self, namespace_id: &str, name: &str, scope: &str)
-    -> anyhow::Result<()>;
+    async fn update_scope(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
 
     async fn query(
         &self,
@@ -228,6 +287,7 @@ pub trait AgentSpecService: Send + Sync {
         name: &str,
         version: Option<&str>,
         label: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>>;
 
     async fn search(
@@ -236,6 +296,7 @@ pub trait AgentSpecService: Send + Sync {
         keyword: Option<&str>,
         page_no: u64,
         page_size: u64,
+        user: Option<&str>,
     ) -> anyhow::Result<Page<AgentSpecBasicInfo>>;
 }
 

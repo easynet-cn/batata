@@ -12,14 +12,14 @@ impl MigrationTrait for Migration {
 
         match backend {
             sea_orm::DatabaseBackend::MySql => {
-                conn.execute(Statement::from_string(
+                conn.execute_raw(Statement::from_string(
                     backend,
                     "ALTER TABLE apollo_release MODIFY COLUMN release_id BIGINT NULL DEFAULT NULL".to_string(),
                 ))
                 .await?;
             }
             sea_orm::DatabaseBackend::Postgres => {
-                conn.execute(Statement::from_string(
+                conn.execute_raw(Statement::from_string(
                     backend,
                     "ALTER TABLE apollo_release ALTER COLUMN release_id TYPE BIGINT".to_string(),
                 ))

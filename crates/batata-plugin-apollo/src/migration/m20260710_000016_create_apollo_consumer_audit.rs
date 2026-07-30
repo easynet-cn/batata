@@ -16,10 +16,13 @@ impl MigrationTrait for Migration {
                     .table(ApolloConsumerAudit::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloConsumerAudit::Id, backend).auto_increment().primary_key())
-                    .col(unsigned_int_null(ApolloConsumerAudit::ConsumerId, backend))
-                    .col(string_len_default(ApolloConsumerAudit::Uri, 1024, ""))
-                    .col(string_len_default(ApolloConsumerAudit::Method, 16, ""))
+                    .col(unsigned_int(ApolloConsumerAudit::ConsumerId, backend))
+                    .col(string_len_default(ApolloConsumerAudit::OpName, 50, "default"))
+                    .col(date_time(ApolloConsumerAudit::OpTime))
+                    .col(string_len_default(ApolloConsumerAudit::OpBy, 64, "default"))
+                    .col(string_len_default(ApolloConsumerAudit::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloConsumerAudit::DataChangeCreatedTime))
+                    .col(string_len_null(ApolloConsumerAudit::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloConsumerAudit::DataChangeLastTime))
                     .to_owned(),
             )
@@ -62,8 +65,11 @@ enum ApolloConsumerAudit {
     Table,
     Id,
     ConsumerId,
-    Uri,
-    Method,
+    OpName,
+    OpTime,
+    OpBy,
+    DataChangeCreatedBy,
     DataChangeCreatedTime,
+    DataChangeLastModifiedBy,
     DataChangeLastTime,
 }

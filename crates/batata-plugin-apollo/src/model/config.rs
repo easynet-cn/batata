@@ -11,7 +11,7 @@ pub struct ApolloPluginConfig {
 }
 
 fn default_enabled() -> bool {
-    false
+    true
 }
 
 fn default_port() -> u16 {

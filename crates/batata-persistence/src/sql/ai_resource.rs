@@ -292,12 +292,12 @@ impl AiResourcePersistence for ExternalDbPersistService {
         &self,
         namespace_id: &str,
         resource_type: &str,
-        name_filter: Option<&str>,
-        search_accurate: bool,
-        order_by_downloads: bool,
+        filter: &AiResourceListFilter<'_>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AiResourceInfo>> {
+        use sea_orm::Condition;
+
         let mut count_select = ai_resource::Entity::find()
             .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
             .filter(ai_resource::Column::Type.eq(resource_type));
@@ -305,15 +305,36 @@ impl AiResourcePersistence for ExternalDbPersistService {
             .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
             .filter(ai_resource::Column::Type.eq(resource_type));
 
-        if let Some(name) = name_filter
+        // Name filter
+        if let Some(name) = filter.name_filter
             && !name.is_empty()
         {
-            if search_accurate {
+            if filter.search_accurate {
                 count_select = count_select.filter(ai_resource::Column::Name.eq(name));
                 query_select = query_select.filter(ai_resource::Column::Name.eq(name));
             } else {
                 count_select = count_select.filter(ai_resource::Column::Name.contains(name));
                 query_select = query_select.filter(ai_resource::Column::Name.contains(name));
+            }
+        }
+
+        // Scope filter
+        if let Some(scope) = filter.scope_filter {
+            count_select = count_select.filter(ai_resource::Column::Scope.eq(scope));
+            query_select = query_select.filter(ai_resource::Column::Scope.eq(scope));
+        }
+
+        // Owner filter (with optional PUBLIC inclusion)
+        if let Some(owner) = filter.owner_filter {
+            if filter.include_public_for_owner {
+                let cond = Condition::any()
+                    .add(ai_resource::Column::Owner.eq(owner))
+                    .add(ai_resource::Column::Scope.eq("PUBLIC"));
+                count_select = count_select.filter(cond.clone());
+                query_select = query_select.filter(cond);
+            } else {
+                count_select = count_select.filter(ai_resource::Column::Owner.eq(owner));
+                query_select = query_select.filter(ai_resource::Column::Owner.eq(owner));
             }
         }
 
@@ -329,7 +350,7 @@ impl AiResourcePersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        if order_by_downloads {
+        if filter.order_by_downloads {
             query_select = query_select.order_by_desc(ai_resource::Column::DownloadCount);
         }
 

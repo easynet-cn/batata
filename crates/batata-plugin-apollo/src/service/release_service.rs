@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 
+use serde_json::Value;
+
 use crate::api::dto::{ReleaseDTO, ReleaseHistoryDTO};
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, ItemPersistence, NamespacePersistence};
@@ -125,6 +127,57 @@ impl ReleaseService {
 
         let created = <dyn ReleasePersistence>::create(&self.persistence, stored).await?;
         Ok(created.into())
+    }
+
+    pub async fn rollback_by_id(&self, release_id: i32, to_release_id: Option<i32>, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
+        let target_id = to_release_id.unwrap_or(release_id);
+        let target = <dyn ReleasePersistence>::get_by_id(&self.persistence, target_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Release not found: {}", target_id))?;
+
+        let now = Utc::now().timestamp_millis();
+        let new_release_id = now;
+        let release_key = format!("{}+{}+{}+{}+rollback", target.app_id, target.cluster_name, target.namespace_name, new_release_id);
+
+        let stored = StoredRelease {
+            id: 0,
+            release_key,
+            name: format!("rollback-{}", target.name),
+            comment: Some(format!("Rollback to release {}", target_id)),
+            app_id: target.app_id.clone(),
+            cluster_name: target.cluster_name.clone(),
+            namespace_name: target.namespace_name.clone(),
+            configurations: target.configurations.clone(),
+            release_id: Some(new_release_id),
+            is_abandoned: false,
+            is_deleted: false,
+            deleted_at: 0,
+            data_change_created_by: operator.to_string(),
+            data_change_created_time: now,
+            data_change_last_modified_by: None,
+            data_change_last_time: None,
+        };
+
+        let created = <dyn ReleasePersistence>::create(&self.persistence, stored).await?;
+        Ok(created.into())
+    }
+
+    pub async fn compare(&self, base_release_id: i32, to_compare_release_id: i32) -> Result<Value, anyhow::Error> {
+        let base = <dyn ReleasePersistence>::get_by_id(&self.persistence, base_release_id).await?;
+        let other = <dyn ReleasePersistence>::get_by_id(&self.persistence, to_compare_release_id).await?;
+
+        let base_configs: Value = base.as_ref()
+            .and_then(|b| serde_json::from_str(&b.configurations).ok())
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        let other_configs: Value = other.as_ref()
+            .and_then(|o| serde_json::from_str(&o.configurations).ok())
+            .unwrap_or_else(|| Value::Object(Default::default()));
+
+        Ok(serde_json::json!({
+            "baseReleaseId": base_release_id,
+            "toCompareReleaseId": to_compare_release_id,
+            "baseConfigurations": base_configs,
+            "toCompareConfigurations": other_configs,
+        }))
     }
 
     pub async fn merge_branch_and_release(

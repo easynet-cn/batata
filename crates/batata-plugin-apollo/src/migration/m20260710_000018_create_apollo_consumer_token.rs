@@ -18,9 +18,6 @@ impl MigrationTrait for Migration {
                     .col(unsigned_int(ApolloConsumerToken::Id, backend).auto_increment().primary_key())
                     .col(unsigned_int_null(ApolloConsumerToken::ConsumerId, backend))
                     .col(string_len_default(ApolloConsumerToken::Token, 128, ""))
-                    .col(datetime_default(ApolloConsumerToken::Expires, "2099-01-01 00:00:00"))
-                    .col(bit(ApolloConsumerToken::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloConsumerToken::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloConsumerToken::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloConsumerToken::DataChangeCreatedTime))
                     .col(string_len_null(ApolloConsumerToken::DataChangeLastModifiedBy, 64))
@@ -35,7 +32,6 @@ impl MigrationTrait for Migration {
                     .name("uk_apollo_consumer_token_token_deletedat")
                     .table(ApolloConsumerToken::Table)
                     .col(ApolloConsumerToken::Token)
-                    .col(ApolloConsumerToken::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -69,9 +65,6 @@ enum ApolloConsumerToken {
     Id,
     ConsumerId,
     Token,
-    Expires,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

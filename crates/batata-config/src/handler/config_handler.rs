@@ -44,6 +44,7 @@ use batata_common::error;
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_core::{GrpcResource, PermissionAction};
 use batata_server_common::model::AppState;
+use batata_plugin::spi::{ConfigChangeRequest, ConfigPointcut, ExecuteType};
 
 /// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
 #[allow(dead_code)]
@@ -204,6 +205,49 @@ impl PayloadHandler for ConfigQueryHandler {
 
         let persistence = self.app_state.persistence();
 
+        // Execute ConfigChangePluginV2 Before hook for Get
+        // For read operations, plugins can audit access or deny access
+        let src_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
+            .unwrap_or("");
+        let operator = ""; // gRPC query handler doesn't extract src_user from request
+        // These may be modified by Before plugins (parameter replacement)
+        let mut data_id = data_id.to_string();
+        let mut group = group.to_string();
+        let mut tenant = tenant.to_string();
+        let mut content = String::new(); // Empty for get operations
+        if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+            let mut req = ConfigChangeRequest::new(
+                &data_id, &group, &tenant, &content,
+                ConfigPointcut::Get, ExecuteType::Before,
+                operator,
+            );
+            req.client_ip = Some(src_ip.to_string());
+            let resp = plugin_mgr.execute_config_change_v2(req).await;
+            if !resp.allowed {
+                let mut response = ConfigQueryResponse::new();
+                response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
+                response.response.success = false;
+                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                return Ok(response.build_payload());
+            }
+            // Apply parameter replacement from Before plugins
+            if let Some(modified_req) = resp.request {
+                data_id = modified_req.data_id;
+                group = modified_req.group;
+                tenant = modified_req.tenant;
+                content = modified_req.content;
+            }
+        }
+        let data_id = data_id.as_str();
+        let group = group.as_str();
+        let tenant = tenant.as_str();
+        let _content = content.as_str(); // Unused for Get, but kept for consistency
+
         // Get encryption service for decryption
         let enc_svc = crate::service::encryption::get_encryption_provider(&self.app_state);
 
@@ -236,6 +280,19 @@ impl PayloadHandler for ConfigQueryHandler {
                 let decrypted = enc_svc
                     .decrypt_if_needed(data_id, &config.content, &config.encrypted_data_key)
                     .await;
+
+                // Execute ConfigChangePluginV2 After hook for Get
+                if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+                    let mut req = ConfigChangeRequest::new(
+                        data_id, group, tenant, &decrypted,
+                        ConfigPointcut::Get, ExecuteType::After,
+                        operator,
+                    );
+                    req.client_ip = Some(src_ip.to_string());
+                    req.content_type = Some(config.config_type.clone());
+                    let _ = plugin_mgr.execute_config_change_v2(req).await;
+                }
+
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
                 response.content = decrypted;
@@ -404,7 +461,48 @@ impl PayloadHandler for ConfigPublishHandler {
             data_id, group, tenant, src_user, src_ip
         );
 
+        let persistence = self.app_state.persistence();
+        let max_gray_count = self.app_state.configuration.config_gray_max_version_count();
+
+        // Execute ConfigChangePluginV2 Before hook for Publish
+        let operator = if src_user.is_empty() { "anonymous" } else { src_user };
+        // These may be modified by Before plugins (parameter replacement, like Nacos)
+        let mut data_id = data_id.to_string();
+        let mut group = group.to_string();
+        let mut tenant = tenant.to_string();
+        let mut content = content.to_string();
+        if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+            let mut req = ConfigChangeRequest::new(
+                &data_id, &group, &tenant, &content,
+                ConfigPointcut::Publish, ExecuteType::Before,
+                operator,
+            );
+            req.client_ip = Some(src_ip.to_string());
+            let resp = plugin_mgr.execute_config_change_v2(req).await;
+            if !resp.allowed {
+                let mut response = ConfigPublishResponse::new();
+                response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
+                response.response.success = false;
+                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                return Ok(response.build_payload());
+            }
+            // Apply parameter replacement from Before plugins (Nacos ConfigChangeAspect pattern)
+            if let Some(modified_req) = resp.request {
+                data_id = modified_req.data_id;
+                group = modified_req.group;
+                tenant = modified_req.tenant;
+                content = modified_req.content;
+            }
+        }
+        let data_id = data_id.as_str();
+        let group = group.as_str();
+        let tenant = tenant.as_str();
+        let content = content.as_str();
+
         // Encrypt content if needed (based on data_id pattern)
+        // Must run AFTER Before plugins so that plugin-modified content is also encrypted
         let enc_svc = crate::service::encryption::get_encryption_provider(&self.app_state);
         let (content, encrypted_data_key) = if encrypted_data_key.is_empty() {
             let (enc_content, enc_key) = enc_svc.encrypt_if_needed(data_id, content).await;
@@ -414,9 +512,6 @@ impl PayloadHandler for ConfigPublishHandler {
         };
         let content = content.as_str();
         let encrypted_data_key = encrypted_data_key.as_str();
-
-        let persistence = self.app_state.persistence();
-        let max_gray_count = self.app_state.configuration.config_gray_max_version_count();
 
         // Handle gray (beta/tag) publish
         if !beta_ips.is_empty() {
@@ -585,6 +680,17 @@ impl PayloadHandler for ConfigPublishHandler {
             .await
         {
             Ok(_) => {
+                // Execute ConfigChangePluginV2 After hook for Publish
+                if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+                    let mut req = ConfigChangeRequest::new(
+                        data_id, group, tenant, content,
+                        ConfigPointcut::Publish, ExecuteType::After,
+                        operator,
+                    );
+                    req.client_ip = Some(src_ip.to_string());
+                    let _ = plugin_mgr.execute_config_change_v2(req).await;
+                }
+
                 // Notify long-polling HTTP listeners about config change
                 self.config_change_notifier
                     .notify_change(tenant, group, data_id);
@@ -860,11 +966,56 @@ impl PayloadHandler for ConfigRemoveHandler {
 
         let persistence = self.app_state.persistence();
 
+        // Execute ConfigChangePluginV2 Before hook for Remove
+        let operator = if src_user.is_empty() { "anonymous" } else { src_user };
+        // These may be modified by Before plugins (parameter replacement, like Nacos)
+        let mut data_id = data_id.to_string();
+        let mut group = group.to_string();
+        let mut tenant = tenant.to_string();
+        if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+            let mut req = ConfigChangeRequest::new(
+                &data_id, &group, &tenant, "",
+                ConfigPointcut::Remove, ExecuteType::Before,
+                operator,
+            );
+            req.client_ip = Some(src_ip.to_string());
+            let resp = plugin_mgr.execute_config_change_v2(req).await;
+            if !resp.allowed {
+                let mut response = ConfigRemoveResponse::new();
+                response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
+                response.response.success = false;
+                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                return Ok(response.build_payload());
+            }
+            // Apply parameter replacement from Before plugins (Nacos ConfigChangeAspect pattern)
+            if let Some(modified_req) = resp.request {
+                data_id = modified_req.data_id;
+                group = modified_req.group;
+                tenant = modified_req.tenant;
+            }
+        }
+        let data_id = data_id.as_str();
+        let group = group.as_str();
+        let tenant = tenant.as_str();
+
         match persistence
             .config_delete(data_id, group, tenant, tag, src_ip, src_user)
             .await
         {
             Ok(_) => {
+                // Execute ConfigChangePluginV2 After hook for Remove
+                if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
+                    let mut req = ConfigChangeRequest::new(
+                        data_id, group, tenant, "",
+                        ConfigPointcut::Remove, ExecuteType::After,
+                        operator,
+                    );
+                    req.client_ip = Some(src_ip.to_string());
+                    let _ = plugin_mgr.execute_config_change_v2(req).await;
+                }
+
                 // Notify long-polling HTTP listeners about config removal
                 self.config_change_notifier
                     .notify_change(tenant, group, data_id);

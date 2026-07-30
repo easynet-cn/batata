@@ -11,7 +11,7 @@ use batata_core::cluster::ServerMemberManager;
 use batata_migration::{Migrator, MigratorTrait};
 use batata_persistence::{DeployTopology, PersistenceService, StorageBackend};
 use batata_server_common::model::config::Configuration;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use tracing::{info, warn};
 
 /// Cross-process advisory lock so concurrent batata startups (e.g. 3-node
@@ -31,64 +31,75 @@ const MIGRATION_LOCK_KEY: i64 = 0x6261_7461_7461_4d49u64 as i64; // "batataMI"
 async fn run_migrations_with_lock(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     let backend = db.get_database_backend();
     info!("Running database migrations (acquiring advisory lock)...");
-    acquire_migration_lock(db, backend).await?;
+
+    // Use a transaction to ensure GET_LOCK and RELEASE_LOCK happen on the
+    // same underlying connection. SeaORM's connection pool may assign
+    // different connections for each execute call, which would cause
+    // RELEASE_LOCK to silently fail (it operates on a different connection
+    // than the one that holds the lock), leaving the lock permanently held.
+    let txn = db.begin().await?;
+    acquire_migration_lock(&txn, backend).await?;
 
     let result = Migrator::up(db, None).await;
 
-    if let Err(e) = release_migration_lock(db, backend).await {
+    if let Err(e) = release_migration_lock(&txn, backend).await {
         warn!("Failed to release migration advisory lock: {}", e);
     }
+    // Rollback the empty transaction to return the connection to the pool
+    let _ = txn.rollback().await;
 
     result?;
     info!("Database migrations completed successfully");
     Ok(())
 }
 
-async fn acquire_migration_lock(
-    db: &DatabaseConnection,
+async fn acquire_migration_lock<C: ConnectionTrait>(
+    db: &C,
     backend: DatabaseBackend,
 ) -> Result<(), sea_orm::DbErr> {
     match backend {
         DatabaseBackend::MySql => {
             // 5-min timeout — covers slow startups; a normal migration is < 5s.
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT GET_LOCK('{}', 300)", MIGRATION_LOCK_NAME),
             ))
             .await?;
         }
         DatabaseBackend::Postgres => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT pg_advisory_lock({})", MIGRATION_LOCK_KEY),
             ))
             .await?;
         }
         DatabaseBackend::Sqlite => { /* no-op */ }
+        _ => {}
     }
     Ok(())
 }
 
-async fn release_migration_lock(
-    db: &DatabaseConnection,
+async fn release_migration_lock<C: ConnectionTrait>(
+    db: &C,
     backend: DatabaseBackend,
 ) -> Result<(), sea_orm::DbErr> {
     match backend {
         DatabaseBackend::MySql => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT RELEASE_LOCK('{}')", MIGRATION_LOCK_NAME),
             ))
             .await?;
         }
         DatabaseBackend::Postgres => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT pg_advisory_unlock({})", MIGRATION_LOCK_KEY),
             ))
             .await?;
         }
         DatabaseBackend::Sqlite => {}
+        _ => {}
     }
     Ok(())
 }

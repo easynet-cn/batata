@@ -16,12 +16,14 @@ impl MigrationTrait for Migration {
                     .table(ApolloAudit::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloAudit::Id, backend).auto_increment().primary_key())
+                    .col(string_len_default(ApolloAudit::AuditKey, 64, "default"))
                     .col(string_len_default(ApolloAudit::EntityName, 50, "default"))
-                    .col(unsigned_int_null(ApolloAudit::EntityId, backend))
+                    .col(string_len_default(ApolloAudit::EntityId, 50, "default"))
                     .col(string_len_default(ApolloAudit::OpName, 50, "default"))
-                    .col(string_len_null(ApolloAudit::Comment, 500))
-                    .col(bit(ApolloAudit::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloAudit::DeletedAt, backend).default(0))
+                    .col(date_time(ApolloAudit::OpTime))
+                    .col(string_len_default(ApolloAudit::OpBy, 64, "default"))
+                    .col(string_len_default(ApolloAudit::OpClientIp, 64, "default"))
+                    .col(long_text_null(ApolloAudit::Detail, backend))
                     .col(string_len_default(ApolloAudit::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloAudit::DataChangeCreatedTime))
                     .col(string_len_null(ApolloAudit::DataChangeLastModifiedBy, 64))
@@ -55,12 +57,14 @@ impl MigrationTrait for Migration {
 enum ApolloAudit {
     Table,
     Id,
+    AuditKey,
     EntityName,
     EntityId,
     OpName,
-    Comment,
-    IsDeleted,
-    DeletedAt,
+    OpTime,
+    OpBy,
+    OpClientIp,
+    Detail,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

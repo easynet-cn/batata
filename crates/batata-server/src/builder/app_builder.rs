@@ -26,6 +26,7 @@ use std::time::Duration;
 use batata_auth::service::oauth::OAuthService;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_plugin::{Plugin as _, ProtocolAdapterPlugin as _};
+use batata_plugin::spi::PluginManager;
 use batata_server_common::ServerStatusManager;
 use tracing::{error, info, warn};
 
@@ -431,6 +432,20 @@ impl AppBuilder {
         let control_plugin_for_self = control_plugin.clone();
         let auth_plugin_for_self = auth_plugin.clone();
 
+        // Initialize plugin manager with built-in plugins
+        let mut plugin_manager = PluginManager::new();
+        // Register audit plugin
+        plugin_manager.register_config_change_v2(Arc::new(batata_plugin::AuditPlugin::new(
+            Arc::new(batata_plugin::InMemoryAuditLogStore::new(10000))
+        )));
+        // Register webhook config change plugin (bridges config changes to webhook delivery)
+        let webhook_plugin: Arc<dyn batata_plugin::WebhookPlugin> =
+            Arc::new(batata_plugin::DefaultWebhookPlugin::new());
+        plugin_manager.register_config_change_v2(Arc::new(
+            batata_plugin::WebhookConfigChangePlugin::new(webhook_plugin)
+        ));
+        let plugin_manager = Arc::new(plugin_manager);
+
         // Build app state
         let app_state = Arc::new(AppState {
             configuration: config.as_ref().clone(),
@@ -450,6 +465,7 @@ impl AppBuilder {
                 encryption_service.clone() as Arc<dyn batata_common::ConfigEncryptionProvider>
             ),
             plugin_state_providers: plugin_state_providers.clone(),
+            plugin_manager: Some(plugin_manager),
             log_level_setter: Some(Arc::new(|filter: &str| {
                 crate::startup::logging::set_log_level(filter)
             })),
@@ -501,7 +517,7 @@ impl AppBuilder {
             (Some(persist), Some(ns)) => {
                 info!("AI services using config-backed persistence");
                 AIServices::with_persistence(persist.clone(), ns.clone())
-                    .with_ai_resource_services(persist.clone())
+                    .with_ai_resource_services(persist.clone(), app_state.auth_plugin.clone())
                     .with_copilot(persist.clone())
             }
             _ => {

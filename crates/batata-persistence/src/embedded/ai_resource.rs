@@ -7,7 +7,7 @@ use batata_consistency::raft::state_machine::{
     CF_AI_RESOURCE, CF_AI_RESOURCE_VERSION, CF_PIPELINE_EXECUTION,
 };
 
-use crate::model::{AiResourceInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo};
+use crate::model::{AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo, Page, PipelineExecutionInfo};
 use crate::traits::ai_resource::AiResourcePersistence;
 
 use super::EmbeddedPersistService;
@@ -344,9 +344,7 @@ impl AiResourcePersistence for EmbeddedPersistService {
         &self,
         namespace_id: &str,
         resource_type: &str,
-        name_filter: Option<&str>,
-        search_accurate: bool,
-        order_by_downloads: bool,
+        filter: &AiResourceListFilter<'_>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AiResourceInfo>> {
@@ -354,20 +352,34 @@ impl AiResourcePersistence for EmbeddedPersistService {
         let mut items = self.scan_ai_resources(&prefix)?;
 
         // Apply name filter
-        if let Some(filter) = name_filter
-            && !filter.is_empty()
+        if let Some(name) = filter.name_filter
+            && !name.is_empty()
         {
             items.retain(|item| {
-                if search_accurate {
-                    item.name == filter
+                if filter.search_accurate {
+                    item.name == name
                 } else {
-                    item.name.contains(filter)
+                    item.name.contains(name)
                 }
             });
         }
 
+        // Apply scope filter
+        if let Some(scope) = filter.scope_filter {
+            items.retain(|item| item.scope == scope);
+        }
+
+        // Apply owner filter (with optional PUBLIC inclusion)
+        if let Some(owner) = filter.owner_filter {
+            if filter.include_public_for_owner {
+                items.retain(|item| item.owner == owner || item.scope == "PUBLIC");
+            } else {
+                items.retain(|item| item.owner == owner);
+            }
+        }
+
         // Sort
-        if order_by_downloads {
+        if filter.order_by_downloads {
             items.sort_by(|a, b| b.download_count.cmp(&a.download_count));
         } else {
             items.sort_by(|a, b| a.name.cmp(&b.name));

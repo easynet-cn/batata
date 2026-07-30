@@ -19,8 +19,6 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloServerConfig::Key, 64, "default"))
                     .col(string_len_default(ApolloServerConfig::Value, 2048, "default"))
                     .col(string_len_null(ApolloServerConfig::Comment, 1024))
-                    .col(bit(ApolloServerConfig::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloServerConfig::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloServerConfig::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloServerConfig::DataChangeCreatedTime))
                     .col(string_len_null(ApolloServerConfig::DataChangeLastModifiedBy, 64))
@@ -35,7 +33,6 @@ impl MigrationTrait for Migration {
                     .name("uk_apollo_server_config_key_deletedat")
                     .table(ApolloServerConfig::Table)
                     .col(ApolloServerConfig::Key)
-                    .col(ApolloServerConfig::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -70,8 +67,6 @@ enum ApolloServerConfig {
     Key,
     Value,
     Comment,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

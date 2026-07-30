@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 use batata_common::IdentityContext;
 use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small, is_valid};
+use batata_plugin::spi::{ConfigChangeRequest, ConfigPointcut, ExecuteType};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model, model::AppState, secured,
 };
@@ -695,6 +696,31 @@ async fn import_config(
         );
     }
 
+    // Execute ConfigChangePluginV2 Before hook for Import
+    let operator = if src_user.is_empty() { "anonymous" } else { &src_user };
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req = ConfigChangeRequest::new(
+            "*", "*", &namespace_id, "",
+            ConfigPointcut::Import, ExecuteType::Before,
+            operator,
+        );
+        req.client_ip = Some(src_ip.to_string());
+        let resp = plugin_mgr.execute_config_change_v2(req).await;
+        if !resp.allowed {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::FORBIDDEN.as_u16(),
+                error::SERVER_ERROR.code,
+                resp.message.unwrap_or_else(|| "plugin denied".to_string()),
+                ImportResult::default(),
+            );
+        }
+        // Apply parameter replacement
+        if let Some(modified_req) = resp.request {
+            // For batch import, we don't replace individual items but could use modified namespace
+            let _ = modified_req;
+        }
+    }
+
     let persistence = data.persistence();
     let config_items: Vec<_> = items.into_iter().map(|i| i.into()).collect();
     let result = match import_with_persistence(
@@ -717,6 +743,17 @@ async fn import_config(
             );
         }
     };
+
+    // Execute ConfigChangePluginV2 After hook for Import
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req = ConfigChangeRequest::new(
+            "*", "*", &namespace_id, "",
+            ConfigPointcut::Import, ExecuteType::After,
+            operator,
+        );
+        req.client_ip = Some(src_ip.to_string());
+        let _ = plugin_mgr.execute_config_change_v2(req).await;
+    }
 
     model::common::Result::<ImportResult>::http_success(result)
 }
@@ -748,6 +785,36 @@ async fn export_config(
             .map(|s| s.trim().to_string())
             .collect::<Vec<String>>()
     });
+
+    // Execute ConfigChangePluginV2 Before hook for Export
+    let src_user_export = req
+        .extensions()
+        .get::<IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+    let src_ip_export = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+    let operator_export = if src_user_export.is_empty() { "anonymous" } else { &src_user_export };
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req_plugin = ConfigChangeRequest::new(
+            "*", "*", &namespace_id, "",
+            ConfigPointcut::Export, ExecuteType::Before,
+            operator_export,
+        );
+        req_plugin.client_ip = Some(src_ip_export.to_string());
+        let resp = plugin_mgr.execute_config_change_v2(req_plugin).await;
+        if !resp.allowed {
+            return model::common::Result::<String>::http_response(
+                StatusCode::FORBIDDEN.as_u16(),
+                error::SERVER_ERROR.code,
+                resp.message.unwrap_or_else(|| "plugin denied".to_string()),
+                String::new(),
+            );
+        }
+    }
 
     let persistence = data.persistence();
     let storage_configs = match persistence
@@ -794,6 +861,17 @@ async fn export_config(
         "batata_config_export_{}.zip",
         Utc::now().format("%Y%m%d%H%M%S")
     );
+
+    // Execute ConfigChangePluginV2 After hook for Export
+    if let Some(plugin_mgr) = data.try_plugin_manager() {
+        let mut req_plugin = ConfigChangeRequest::new(
+            "*", "*", &namespace_id, "",
+            ConfigPointcut::Export, ExecuteType::After,
+            operator_export,
+        );
+        req_plugin.client_ip = Some(src_ip_export.to_string());
+        let _ = plugin_mgr.execute_config_change_v2(req_plugin).await;
+    }
 
     HttpResponse::Ok()
         .content_type("application/zip")

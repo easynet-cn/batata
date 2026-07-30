@@ -31,6 +31,7 @@ async fn test_v1_auth_login_success() {
         control_plugin: None,
         encryption_service: None,
         plugin_state_providers: vec![],
+        plugin_manager: None,
     });
 
     // Create test app
@@ -93,6 +94,7 @@ async fn test_v3_auth_login_success() {
         control_plugin: None,
         encryption_service: None,
         plugin_state_providers: vec![],
+        plugin_manager: None,
     });
 
     // Create test app

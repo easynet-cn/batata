@@ -95,7 +95,7 @@ async fn build_skills_index(
 ) -> Result<WellKnownSkillsIndex, actix_web::Error> {
     // List all skills (no limit, get everything for registry index)
     let page = skill_service
-        .list_skills(namespace_id, None, None, None, 1, u64::MAX)
+        .list_skills(namespace_id, None, None, None, 1, u64::MAX, None)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
@@ -109,7 +109,7 @@ async fn build_skills_index(
 
         // Resolve latest online version via query_skill (uses "latest" label)
         let skill = match skill_service
-            .query_skill(&summary.namespace_id, &summary.name, None, None)
+            .query_skill(&summary.namespace_id, &summary.name, None, None, None)
             .await
         {
             Ok(Some(s)) => s,
@@ -145,7 +145,7 @@ async fn resolve_skill_file(
     file_name: &str,
 ) -> Result<Option<String>, actix_web::Error> {
     let skill = skill_service
-        .query_skill(namespace_id, skill_name, None, None)
+        .query_skill(namespace_id, skill_name, None, None, None)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
 
@@ -367,7 +367,7 @@ async fn search_skills(
     );
 
     let page = match skill_service
-        .search_skills(namespace_id, keyword, 1, limit)
+        .search_skills(namespace_id, keyword, 1, limit, None)
         .await
     {
         Ok(p) => p,

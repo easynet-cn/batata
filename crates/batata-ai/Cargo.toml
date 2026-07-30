@@ -16,6 +16,7 @@ batata-core = { workspace = true }
 batata-persistence = { workspace = true }
 batata-naming = { workspace = true }
 batata-server-common = { workspace = true }
+batata-visibility = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }

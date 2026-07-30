@@ -63,7 +63,7 @@ async fn get_agentspec_detail(
         }
     };
 
-    match agentspec_service.get_detail(ns, name).await {
+    match agentspec_service.get_detail(ns, name, Some(get_username(&req).as_str())).await {
         Ok(Some(meta)) => HttpResponse::Ok().json(Result::success(meta)),
         Ok(None) => Result::<()>::http_not_found(
             &batata_common::error::RESOURCE_NOT_FOUND,
@@ -110,7 +110,7 @@ async fn get_agentspec_version(
     };
 
     match agentspec_service
-        .get_version_detail(ns, name, version)
+        .get_version_detail(ns, name, version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(Some(spec)) => HttpResponse::Ok().json(Result::success(spec)),
@@ -159,7 +159,7 @@ async fn download_agentspec_version(
     };
 
     match agentspec_service
-        .get_version_detail(ns, name, version)
+        .get_version_detail(ns, name, version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(Some(spec)) => match serde_json::to_vec_pretty(&spec) {
@@ -210,7 +210,7 @@ async fn delete_agentspec(
         }
     };
 
-    match agentspec_service.delete(ns, name).await {
+    match agentspec_service.delete(ns, name, Some(get_username(&req).as_str())).await {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -241,6 +241,7 @@ async fn list_agentspecs(
             query.search.as_deref(),
             query.page_no,
             query.page_size,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -506,7 +507,7 @@ async fn update_draft(
     }
 
     match agentspec_service
-        .update_draft(ns, agent_spec_name, &spec)
+        .update_draft(ns, agent_spec_name, &spec, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -544,7 +545,7 @@ async fn delete_draft(
         }
     };
 
-    match agentspec_service.delete_draft(ns, name).await {
+    match agentspec_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -573,7 +574,7 @@ async fn submit_agentspec(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .submit(ns, &form.agent_spec_name, &form.version)
+        .submit(ns, &form.agent_spec_name, &form.version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(version) => HttpResponse::Ok().json(Result::success(version)),
@@ -609,6 +610,7 @@ async fn publish_agentspec(
             &form.agent_spec_name,
             &form.version,
             form.update_latest_label,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -651,7 +653,7 @@ async fn update_labels(
     };
 
     match agentspec_service
-        .update_labels(ns, &form.agent_spec_name, labels)
+        .update_labels(ns, &form.agent_spec_name, labels, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -682,7 +684,7 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .update_biz_tags(ns, &form.agent_spec_name, &form.biz_tags)
+        .update_biz_tags(ns, &form.agent_spec_name, &form.biz_tags, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -719,6 +721,7 @@ async fn online_agentspec(
             form.scope.as_deref(),
             form.version.as_deref(),
             true,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -756,6 +759,7 @@ async fn offline_agentspec(
             form.scope.as_deref(),
             form.version.as_deref(),
             false,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -787,7 +791,7 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .update_scope(ns, &form.agent_spec_name, &form.scope)
+        .update_scope(ns, &form.agent_spec_name, &form.scope, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -829,6 +833,7 @@ async fn client_query_agentspec(
             &query.name,
             query.version.as_deref(),
             query.label.as_deref(),
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -861,7 +866,7 @@ async fn client_search_agentspecs(
     let ns = normalize_namespace(&query.namespace_id);
 
     match agentspec_service
-        .search(ns, query.keyword.as_deref(), query.page_no, query.page_size)
+        .search(ns, query.keyword.as_deref(), query.page_no, query.page_size, Some(get_username(&req).as_str()))
         .await
     {
         Ok(page) => HttpResponse::Ok().json(Result::success(page)),

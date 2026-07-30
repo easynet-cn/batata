@@ -267,9 +267,10 @@ async fn execute_db_check(db_url: &str, timeout_duration: Duration) -> (bool, St
         let sql = match db.get_database_backend() {
             DbBackend::MySql | DbBackend::Postgres => "SELECT 1",
             DbBackend::Sqlite => "SELECT 1",
+            _ => "SELECT 1",
         };
 
-        db.execute(Statement::from_string(db.get_database_backend(), sql))
+        db.execute_raw(Statement::from_string(db.get_database_backend(), sql))
             .await
             .map_err(|e| format!("Database query failed: {}", e))?;
 

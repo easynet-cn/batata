@@ -16,10 +16,8 @@ impl MigrationTrait for Migration {
                     .table(ApolloUserRole::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloUserRole::Id, backend).auto_increment().primary_key())
-                    .col(string_len_null(ApolloUserRole::UserId, 128))
+                    .col(string_len_default(ApolloUserRole::UserId, 128, "default"))
                     .col(unsigned_int_null(ApolloUserRole::RoleId, backend))
-                    .col(bit(ApolloUserRole::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloUserRole::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloUserRole::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloUserRole::DataChangeCreatedTime))
                     .col(string_len_null(ApolloUserRole::DataChangeLastModifiedBy, 64))
@@ -35,7 +33,6 @@ impl MigrationTrait for Migration {
                     .table(ApolloUserRole::Table)
                     .col(ApolloUserRole::UserId)
                     .col(ApolloUserRole::RoleId)
-                    .col(ApolloUserRole::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -80,8 +77,6 @@ enum ApolloUserRole {
     Id,
     UserId,
     RoleId,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

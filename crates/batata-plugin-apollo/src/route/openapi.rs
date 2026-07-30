@@ -1,8 +1,11 @@
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
-use crate::persistence::traits::ApolloPersistenceService;
+use chrono::Utc;
+use crate::persistence::shared::StoredRelease;
+use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence};
 use crate::service::{AppService, NamespaceService, ItemService, ReleaseService, ClusterService, InstanceService, AccessKeyService, GrayReleaseRuleService, AppNamespaceService, CommitService};
 use crate::api::dto::{AppDTO, NamespaceDTO, ItemDTO, ErrorResponse, ClusterDTO, GrayReleaseRuleDTO, AppNamespaceDTO, CommitDTO, ItemChangeSets};
 
@@ -108,6 +111,7 @@ pub struct OpenEnvCluster {
 #[serde(rename_all = "camelCase")]
 pub struct OpenRelease {
     pub id: i32,
+    pub release_id: i32,
     pub app_id: String,
     pub cluster_name: String,
     pub namespace_name: String,
@@ -553,6 +557,7 @@ async fn publish_release(
                 .unwrap_or_else(|_| Value::Object(Default::default()));
             HttpResponse::Ok().json(OpenRelease {
                 id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
                 app_id: release.app_id,
                 cluster_name: release.cluster_name,
                 namespace_name: release.namespace_name,
@@ -580,6 +585,7 @@ async fn get_latest_release(
                 .unwrap_or_else(|_| Value::Object(Default::default()));
             HttpResponse::Ok().json(OpenRelease {
                 id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
                 app_id: release.app_id,
                 cluster_name: release.cluster_name,
                 namespace_name: release.namespace_name,
@@ -614,6 +620,7 @@ async fn find_active_releases(
                         .unwrap_or_else(|_| Value::Object(Default::default()));
                     OpenRelease {
                         id: r.id.unwrap_or(0),
+                        release_id: r.id.unwrap_or(0),
                         app_id: r.app_id,
                         cluster_name: r.cluster_name,
                         namespace_name: r.namespace_name,
@@ -651,6 +658,7 @@ async fn rollback_release(
                 .unwrap_or_else(|_| Value::Object(Default::default()));
             HttpResponse::Ok().json(OpenRelease {
                 id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
                 app_id: release.app_id,
                 cluster_name: release.cluster_name,
                 namespace_name: release.namespace_name,
@@ -946,6 +954,7 @@ async fn merge_branch(
                 .unwrap_or_else(|_| Value::Object(Default::default()));
             HttpResponse::Ok().json(OpenRelease {
                 id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
                 app_id: release.app_id,
                 cluster_name: release.cluster_name,
                 namespace_name: release.namespace_name,
@@ -1035,6 +1044,288 @@ async fn get_commit_openapi(
     }
 }
 
+async fn update_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    body: web::Json<AppDTO>,
+) -> impl Responder {
+    let app_id = app_id.into_inner();
+    let service = AppService::new(data.get_ref().clone());
+    let mut dto = body.into_inner();
+    let created_by = dto.data_change_created_by.clone();
+    dto.data_change_last_modified_by = Some(
+        dto.data_change_last_modified_by
+            .or(created_by)
+            .unwrap_or_else(|| "admin".to_string()),
+    );
+    match service.update(&app_id, dto).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let app_id = app_id.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = AppService::new(data.get_ref().clone());
+    match service.delete(&app_id, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn get_app_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (app_id, namespace_name) = path.into_inner();
+    let service = AppNamespaceService::new(data.get_ref().clone());
+    match service.get(&app_id, &namespace_name).await {
+        Ok(Some(ns)) => HttpResponse::Ok().json(ns),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("AppNamespace not found: {}/{}", app_id, namespace_name),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_app_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, namespace_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = AppNamespaceService::new(data.get_ref().clone());
+    match service.delete(&app_id, &namespace_name, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_cluster(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (_env, app_id, cluster_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = ClusterService::new(data.get_ref().clone());
+    match service.delete(&app_id, &cluster_name, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = NamespaceService::new(data.get_ref().clone());
+    match service.delete(&app_id, &cluster_name, &namespace_name, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn get_release_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i32)>,
+) -> impl Responder {
+    let (_env, release_id) = path.into_inner();
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.get_by_id(release_id).await {
+        Ok(Some(release)) => {
+            let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
+                .unwrap_or_else(|_| Value::Object(Default::default()));
+            HttpResponse::Ok().json(OpenRelease {
+                id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
+                app_id: release.app_id,
+                cluster_name: release.cluster_name,
+                namespace_name: release.namespace_name,
+                name: release.name,
+                configurations: configs,
+                comment: release.comment.unwrap_or_default(),
+            })
+        }
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("Release not found: {}", release_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn compare_releases(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.compare(base, to_compare).await {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn rollback_release_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i32)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (_env, release_id) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.rollback_by_id(release_id, to_release_id, operator).await {
+        Ok(release) => {
+            let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
+                .unwrap_or_else(|_| Value::Object(Default::default()));
+            HttpResponse::Ok().json(OpenRelease {
+                id: release.id.unwrap_or(0),
+                release_id: release.id.unwrap_or(0),
+                app_id: release.app_id,
+                cluster_name: release.cluster_name,
+                namespace_name: release.namespace_name,
+                name: release.name,
+                configurations: configs,
+                comment: release.comment.unwrap_or_default(),
+            })
+        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn create_gray_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String, String)>,
+    body: web::Json<NamespaceGrayDelReleaseDTO>,
+) -> impl Responder {
+    let (_env, app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
+    let req = body.into_inner();
+
+    let gray_service = GrayReleaseRuleService::new(data.get_ref().clone());
+    match gray_service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("Branch not found: {}", branch_name),
+        }),
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+
+    let item_service = ItemService::new(data.get_ref().clone());
+    let items = match item_service.list(&app_id, &cluster_name, &namespace_name).await {
+        Ok(items) => items,
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    };
+    let mut configurations: HashMap<String, String> = HashMap::new();
+    for item in items {
+        configurations.insert(item.key, item.value);
+    }
+    let configurations_json = match serde_json::to_string(&configurations) {
+        Ok(s) => s,
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    };
+
+    let now = Utc::now().timestamp_millis();
+    let release_id = now;
+    let release_key = format!(
+        "{}+{}+{}+{}+gray+{}",
+        app_id, cluster_name, namespace_name, release_id, branch_name
+    );
+
+    let stored = StoredRelease {
+        id: 0,
+        release_key,
+        name: req.release_title,
+        comment: if req.release_comment.is_empty() {
+            None
+        } else {
+            Some(req.release_comment)
+        },
+        app_id: app_id.clone(),
+        cluster_name: branch_name.clone(),
+        namespace_name: namespace_name.clone(),
+        configurations: configurations_json,
+        release_id: Some(release_id),
+        is_abandoned: false,
+        is_deleted: false,
+        deleted_at: 0,
+        data_change_created_by: req.released_by.clone(),
+        data_change_created_time: now,
+        data_change_last_modified_by: None,
+        data_change_last_time: None,
+    };
+
+    match <dyn ReleasePersistence>::create(&*data.get_ref(), stored).await {
+        Ok(created) => {
+            let configs: Value = serde_json::from_str(&created.configurations)
+                .unwrap_or_else(|_| Value::Object(Default::default()));
+            HttpResponse::Ok().json(OpenRelease {
+                id: created.id,
+                release_id: created.id,
+                app_id: created.app_id,
+                cluster_name: created.cluster_name,
+                namespace_name: created.namespace_name,
+                name: created.name,
+                configurations: configs,
+                comment: created.comment.unwrap_or_default(),
+            })
+        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
 pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/openapi/v1/apps")
@@ -1043,7 +1334,9 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     )
     .service(
         web::resource("/openapi/v1/apps/{app_id}")
-            .route(web::get().to(get_app)),
+            .route(web::get().to(get_app))
+            .route(web::put().to(update_app))
+            .route(web::delete().to(delete_app)),
     )
     .service(
         web::resource("/openapi/v1/apps/{app_id}/envclusters")
@@ -1053,6 +1346,11 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/openapi/v1/apps/{app_id}/appnamespaces")
             .route(web::post().to(create_app_namespace))
             .route(web::get().to(list_app_namespaces_openapi)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{namespace_name}")
+            .route(web::get().to(get_app_namespace))
+            .route(web::delete().to(delete_app_namespace)),
     )
     .service(
         web::resource("/openapi/v1/envs")
@@ -1068,7 +1366,8 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource(
             "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}",
         )
-        .route(web::get().to(get_cluster)),
+        .route(web::get().to(get_cluster))
+        .route(web::delete().to(delete_cluster)),
     )
     .service(
         web::resource(
@@ -1081,7 +1380,8 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource(
             "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}",
         )
-        .route(web::get().to(get_namespace)),
+        .route(web::get().to(get_namespace))
+        .route(web::delete().to(delete_namespace)),
     )
     .service(
         web::resource(
@@ -1116,6 +1416,18 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/{release_id}/rollback",
         )
         .route(web::post().to(rollback_release)),
+    )
+    .service(
+        web::resource("/openapi/v1/envs/{env}/releases/{release_id}")
+            .route(web::get().to(get_release_by_id)),
+    )
+    .service(
+        web::resource("/openapi/v1/envs/{env}/releases/compare")
+            .route(web::get().to(compare_releases)),
+    )
+    .service(
+        web::resource("/openapi/v1/envs/{env}/releases/{release_id}/rollback")
+            .route(web::put().to(rollback_release_by_id)),
     )
     .service(
         web::resource(
@@ -1158,6 +1470,12 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/merge",
         )
         .route(web::post().to(merge_branch)),
+    )
+    .service(
+        web::resource(
+            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/releases",
+        )
+        .route(web::post().to(create_gray_release)),
     )
     .service(
         web::resource(

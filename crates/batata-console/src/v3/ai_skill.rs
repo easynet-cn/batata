@@ -61,7 +61,7 @@ async fn get_skill_detail(
         }
     };
 
-    match skill_service.get_skill_detail(ns, name).await {
+    match skill_service.get_skill_detail(ns, name, Some(get_username(&req).as_str())).await {
         Ok(Some(meta)) => HttpResponse::Ok().json(common_response::Result::success(meta)),
         Ok(None) => common_response::Result::<()>::http_not_found(
             &batata_common::error::SKILL_NOT_FOUND,
@@ -108,7 +108,7 @@ async fn get_skill_version(
     };
 
     match skill_service
-        .get_skill_version_detail(ns, name, version)
+        .get_skill_version_detail(ns, name, version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(Some(skill)) => HttpResponse::Ok().json(common_response::Result::success(skill)),
@@ -157,7 +157,7 @@ async fn download_skill_version(
     };
 
     match skill_service
-        .download_skill_version(ns, name, version)
+        .download_skill_version(ns, name, version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(Some(skill)) => match skill_zip::skill_to_zip_bytes(&skill) {
@@ -205,7 +205,7 @@ async fn delete_skill(
         }
     };
 
-    match skill_service.delete_skill(ns, name).await {
+    match skill_service.delete_skill(ns, name, Some(get_username(&req).as_str())).await {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_internal_error(e),
     }
@@ -237,6 +237,7 @@ async fn list_skills(
             query.order_by.as_deref(),
             query.page_no,
             query.page_size,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -456,7 +457,7 @@ async fn update_draft(
         );
     }
 
-    match skill_service.update_draft(ns, skill_name, &skill).await {
+    match skill_service.update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str())).await {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -492,7 +493,7 @@ async fn delete_draft(
         }
     };
 
-    match skill_service.delete_draft(ns, name).await {
+    match skill_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -521,7 +522,7 @@ async fn submit_skill(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .submit(ns, &form.skill_name, &form.version)
+        .submit(ns, &form.skill_name, &form.version, Some(get_username(&req).as_str()))
         .await
     {
         Ok(version) => HttpResponse::Ok().json(common_response::Result::success(version)),
@@ -557,6 +558,7 @@ async fn publish_skill(
             &form.skill_name,
             &form.version,
             form.update_latest_label,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -599,7 +601,7 @@ async fn update_labels(
     };
 
     match skill_service
-        .update_labels(ns, &form.skill_name, labels)
+        .update_labels(ns, &form.skill_name, labels, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
@@ -630,7 +632,7 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .update_biz_tags(ns, &form.skill_name, &form.biz_tags)
+        .update_biz_tags(ns, &form.skill_name, &form.biz_tags, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
@@ -667,6 +669,7 @@ async fn online_skill(
             form.scope.as_deref(),
             form.version.as_deref(),
             true,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -704,6 +707,7 @@ async fn offline_skill(
             form.scope.as_deref(),
             form.version.as_deref(),
             false,
+            Some(get_username(&req).as_str()),
         )
         .await
     {
@@ -735,7 +739,7 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .update_scope(ns, &form.skill_name, &form.scope)
+        .update_scope(ns, &form.skill_name, &form.scope, Some(get_username(&req).as_str()))
         .await
     {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),

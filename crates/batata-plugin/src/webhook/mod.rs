@@ -6,8 +6,10 @@
 //! - Service change notification (PLG-103)
 //! - Retry mechanism (PLG-104)
 
+mod config_plugin;
 mod model;
 mod service;
 
+pub use config_plugin::*;
 pub use model::*;
 pub use service::*;

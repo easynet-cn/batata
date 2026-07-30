@@ -16,10 +16,8 @@ impl MigrationTrait for Migration {
                     .table(ApolloPermission::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloPermission::Id, backend).auto_increment().primary_key())
-                    .col(string_len_default(ApolloPermission::PermissionType, 32, ""))
+                    .col(unsigned_int(ApolloPermission::PermissionType, backend))
                     .col(string_len_default(ApolloPermission::TargetId, 256, ""))
-                    .col(bit(ApolloPermission::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloPermission::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloPermission::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloPermission::DataChangeCreatedTime))
                     .col(string_len_null(ApolloPermission::DataChangeLastModifiedBy, 64))
@@ -35,7 +33,6 @@ impl MigrationTrait for Migration {
                     .table(ApolloPermission::Table)
                     .col(ApolloPermission::TargetId)
                     .col(ApolloPermission::PermissionType)
-                    .col(ApolloPermission::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -69,8 +66,6 @@ enum ApolloPermission {
     Id,
     PermissionType,
     TargetId,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

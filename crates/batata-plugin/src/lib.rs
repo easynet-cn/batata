@@ -7,6 +7,7 @@
 //! - CMDB Plugin: Label sync and entity mapping (PLG-201 to PLG-203)
 //! - Extension points for custom plugins
 
+pub mod audit;
 pub mod cmdb;
 pub mod control;
 pub mod encryption;
@@ -22,8 +23,8 @@ pub use control::{
 };
 
 pub use webhook::{
-    DefaultWebhookPlugin, WebhookConfig, WebhookEvent, WebhookEventType, WebhookPlugin,
-    WebhookResult, WebhookRetryConfig,
+    DefaultWebhookPlugin, WebhookConfig, WebhookConfigChangePlugin, WebhookEvent, WebhookEventType,
+    WebhookPlugin, WebhookResult, WebhookRetryConfig,
 };
 
 pub use cmdb::{
@@ -38,6 +39,10 @@ pub use trace::{
 
 pub use encryption::{
     EncryptionPlugin, EncryptionPluginRegistry, NoopEncryptionPlugin, global_encryption_registry,
+};
+
+pub use audit::{
+    AuditLogEntry, AuditLogStore, AuditPlugin, InMemoryAuditLogStore,
 };
 
 /// Plugin trait (re-exported from batata-common)

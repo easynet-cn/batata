@@ -46,6 +46,7 @@ func TestAgentServiceSidecarProxy(t *testing.T) {
 
 	t.Logf("Main service registered: %v, Sidecar registered: %v", hasMain, hasSidecar)
 	assert.True(t, hasMain, "Main service should be registered")
+	assert.True(t, hasSidecar, "Sidecar proxy service should be registered")
 }
 
 // TestAgentServiceExplicitProxy tests explicit proxy registration
@@ -87,14 +88,14 @@ func TestAgentServiceExplicitProxy(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if proxy, ok := services[proxyName]; ok {
-		assert.Equal(t, api.ServiceKindConnectProxy, proxy.Kind)
-		if proxy.Proxy != nil {
-			t.Logf("Proxy registered for destination: %s", proxy.Proxy.DestinationServiceName)
-		} else {
-			t.Log("Proxy registered but Proxy config is nil")
-		}
-	}
+	proxy, ok := services[proxyName]
+	require.True(t, ok, "Proxy service %s should be registered", proxyName)
+	assert.Equal(t, api.ServiceKindConnectProxy, proxy.Kind)
+	require.NotNil(t, proxy.Proxy, "Proxy config should not be nil")
+	assert.Equal(t, serviceName, proxy.Proxy.DestinationServiceName,
+		"Destination service name should match")
+	assert.Equal(t, 8080, proxy.Proxy.LocalServicePort,
+		"Local service port should match")
 }
 
 // TestAgentServiceConnectNative tests native Connect service
@@ -122,9 +123,10 @@ func TestAgentServiceConnectNative(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[serviceName]; ok {
-		t.Logf("Service Connect.Native: %v", svc.Connect)
-	}
+	svc, ok := services[serviceName]
+	require.True(t, ok, "Service %s should be registered", serviceName)
+	require.NotNil(t, svc.Connect, "Connect config should not be nil")
+	assert.True(t, svc.Connect.Native, "Connect.Native should be true")
 }
 
 // ==================== Agent Multi-Port Service Tests ====================
@@ -166,10 +168,13 @@ func TestAgentServiceMultiPort(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[serviceName]; ok {
-		t.Logf("Tagged addresses: %v", svc.TaggedAddresses)
-		assert.NotEmpty(t, svc.TaggedAddresses, "Should have tagged addresses")
-	}
+	svc, ok := services[serviceName]
+	require.True(t, ok, "Service %s should be registered", serviceName)
+	assert.NotEmpty(t, svc.TaggedAddresses, "Should have tagged addresses")
+	assert.Len(t, svc.TaggedAddresses, 3, "Should have 3 tagged addresses")
+	assert.Contains(t, svc.TaggedAddresses, "http")
+	assert.Contains(t, svc.TaggedAddresses, "grpc")
+	assert.Contains(t, svc.TaggedAddresses, "admin")
 }
 
 // TestAgentServiceSocket tests Unix socket path registration
@@ -194,9 +199,10 @@ func TestAgentServiceSocket(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[serviceName]; ok {
-		t.Logf("Socket path: %s", svc.SocketPath)
-	}
+	svc, ok := services[serviceName]
+	require.True(t, ok, "Service %s should be registered", serviceName)
+	assert.Equal(t, "/tmp/test-service.sock", svc.SocketPath,
+		"Socket path should match")
 }
 
 // ==================== Agent Token Management Tests ====================
@@ -338,10 +344,10 @@ func TestAgentMeshGateway(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[gatewayName]; ok {
-		assert.Equal(t, api.ServiceKindMeshGateway, svc.Kind)
-		t.Logf("Mesh gateway registered: %s", gatewayName)
-	}
+	svc, ok := services[gatewayName]
+	require.True(t, ok, "Mesh gateway %s should be registered", gatewayName)
+	assert.Equal(t, api.ServiceKindMeshGateway, svc.Kind)
+	t.Logf("Mesh gateway registered: %s", gatewayName)
 }
 
 // TestAgentTerminatingGateway tests terminating gateway registration
@@ -367,10 +373,10 @@ func TestAgentTerminatingGateway(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[gatewayName]; ok {
-		assert.Equal(t, api.ServiceKindTerminatingGateway, svc.Kind)
-		t.Logf("Terminating gateway registered: %s", gatewayName)
-	}
+	svc, ok := services[gatewayName]
+	require.True(t, ok, "Terminating gateway %s should be registered", gatewayName)
+	assert.Equal(t, api.ServiceKindTerminatingGateway, svc.Kind)
+	t.Logf("Terminating gateway registered: %s", gatewayName)
 }
 
 // TestAgentIngressGateway tests ingress gateway registration
@@ -396,10 +402,10 @@ func TestAgentIngressGateway(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[gatewayName]; ok {
-		assert.Equal(t, api.ServiceKindIngressGateway, svc.Kind)
-		t.Logf("Ingress gateway registered: %s", gatewayName)
-	}
+	svc, ok := services[gatewayName]
+	require.True(t, ok, "Ingress gateway %s should be registered", gatewayName)
+	assert.Equal(t, api.ServiceKindIngressGateway, svc.Kind)
+	t.Logf("Ingress gateway registered: %s", gatewayName)
 }
 
 // ==================== Agent Health Check Advanced Tests ====================
@@ -486,9 +492,10 @@ func TestAgentCheckHTTP(t *testing.T) {
 	checks, err := agent.Checks()
 	require.NoError(t, err)
 
-	if check, ok := checks[checkID]; ok {
-		t.Logf("HTTP check status: %s", check.Status)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "HTTP check %s should be registered", checkID)
+	assert.Equal(t, api.HealthCritical, check.Status,
+		"HTTP check without reachable endpoint should be critical")
 }
 
 // TestAgentCheckTCP tests TCP health check
@@ -517,9 +524,10 @@ func TestAgentCheckTCP(t *testing.T) {
 	checks, err := agent.Checks()
 	require.NoError(t, err)
 
-	if check, ok := checks[checkID]; ok {
-		t.Logf("TCP check status: %s", check.Status)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "TCP check %s should be registered", checkID)
+	assert.Equal(t, api.HealthCritical, check.Status,
+		"TCP check without reachable endpoint should be critical")
 }
 
 // TestAgentCheckGRPC tests gRPC health check
@@ -548,9 +556,10 @@ func TestAgentCheckGRPC(t *testing.T) {
 	checks, err := agent.Checks()
 	require.NoError(t, err)
 
-	if check, ok := checks[checkID]; ok {
-		t.Logf("gRPC check status: %s", check.Status)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "gRPC check %s should be registered", checkID)
+	assert.Equal(t, api.HealthCritical, check.Status,
+		"gRPC check without reachable endpoint should be critical")
 }
 
 // TestAgentCheckDeregisterCritical tests auto-deregistration on critical
@@ -580,7 +589,9 @@ func TestAgentCheckDeregisterCritical(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if _, ok := services[serviceID]; ok {
-		t.Log("Service with DeregisterCriticalServiceAfter registered")
-	}
+	svc, ok := services[serviceID]
+	require.True(t, ok, "Service %s should be registered", serviceID)
+	require.NotNil(t, svc.Check, "Service should have a check")
+	assert.Equal(t, "1m", svc.Check.DeregisterCriticalServiceAfter,
+		"DeregisterCriticalServiceAfter should be '1m'")
 }

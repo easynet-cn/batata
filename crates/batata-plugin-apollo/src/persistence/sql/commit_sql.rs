@@ -118,10 +118,8 @@ impl CommitPersistence for CommitSqlPersistence {
     }
 
     async fn update(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
-        let commit_id = commit.id;
         let active_model: apollo_commit::ActiveModel = commit.into();
         let model = apollo_commit::Entity::update(active_model)
-            .filter(apollo_commit::Column::Id.eq(commit_id))
             .exec(&self.db)
             .await?;
         Ok(model.into())

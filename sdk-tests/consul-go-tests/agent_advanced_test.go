@@ -19,10 +19,11 @@ func TestAgentSelf(t *testing.T) {
 	assert.NoError(t, err, "Agent self should succeed")
 	assert.NotEmpty(t, self, "Should return agent info")
 
-	if config := self["Config"]; config != nil {
-		t.Logf("Node Name: %v", config["NodeName"])
-		t.Logf("Datacenter: %v", config["Datacenter"])
-	}
+	config, ok := self["Config"]
+	require.True(t, ok, "Self should have 'Config' section")
+	require.NotNil(t, config, "Config should not be nil")
+	assert.NotEmpty(t, config["NodeName"], "NodeName should not be empty")
+	assert.NotEmpty(t, config["Datacenter"], "Datacenter should not be empty")
 }
 
 // CAA-002: Test get agent members
@@ -59,10 +60,13 @@ func TestAgentVersion(t *testing.T) {
 	self, err := client.Agent().Self()
 	require.NoError(t, err)
 
-	if config := self["Config"]; config != nil {
-		version := config["Version"]
-		t.Logf("Agent version: %v", version)
-	}
+	config, ok := self["Config"]
+	require.True(t, ok, "Self should have 'Config' section")
+	require.NotNil(t, config)
+
+	version := config["Version"]
+	assert.NotEmpty(t, version, "Agent version should not be empty")
+	t.Logf("Agent version: %v", version)
 }
 
 // CAA-005: Test agent metrics
@@ -102,13 +106,20 @@ func TestAgentServiceMaintenance(t *testing.T) {
 	// Check service is in maintenance
 	services, err := client.Agent().Services()
 	require.NoError(t, err)
-	// Service should still be there but with maintenance flag
+	svc, ok := services[serviceID]
+	require.True(t, ok, "Service %s should exist", serviceID)
+	assert.True(t, svc.Maintenance, "Service should be in maintenance mode")
 
 	// Disable maintenance
 	err = client.Agent().DisableServiceMaintenance(serviceID)
 	assert.NoError(t, err, "Disable maintenance should succeed")
 
-	_ = services
+	// Verify maintenance is disabled
+	services, err = client.Agent().Services()
+	require.NoError(t, err)
+	svc, ok = services[serviceID]
+	require.True(t, ok, "Service %s should still exist after disabling maintenance", serviceID)
+	assert.False(t, svc.Maintenance, "Service should not be in maintenance mode after disable")
 }
 
 // CAA-007: Test node maintenance mode
@@ -124,9 +135,23 @@ func TestAgentNodeMaintenance(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
+	// Verify node is in maintenance
+	self, err := client.Agent().Self()
+	require.NoError(t, err)
+	config, ok := self["Config"]
+	require.True(t, ok)
+	assert.True(t, config["MaintenanceMode"], "Node should be in maintenance mode")
+
 	// Disable node maintenance
 	err = client.Agent().DisableNodeMaintenance()
 	assert.NoError(t, err, "Disable node maintenance should succeed")
+
+	// Verify maintenance is disabled
+	self, err = client.Agent().Self()
+	require.NoError(t, err)
+	config, ok = self["Config"]
+	require.True(t, ok)
+	assert.False(t, config["MaintenanceMode"], "Node should not be in maintenance mode after disable")
 }
 
 // CAA-008: Test warn TTL check status
@@ -152,9 +177,10 @@ func TestAgentWarnTTL(t *testing.T) {
 	checks, err := client.Agent().Checks()
 	require.NoError(t, err)
 
-	if check, ok := checks[checkID]; ok {
-		assert.Equal(t, api.HealthWarning, check.Status)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "Check %s should exist", checkID)
+	assert.Equal(t, api.HealthWarning, check.Status)
+	assert.Equal(t, "Warning: resource usage high", check.Output)
 }
 
 // CAA-009: Test update TTL check with full status
@@ -180,10 +206,10 @@ func TestAgentUpdateTTL(t *testing.T) {
 	checks, err := client.Agent().Checks()
 	require.NoError(t, err)
 
-	if check, ok := checks[checkID]; ok {
-		assert.Equal(t, api.HealthPassing, check.Status)
-		assert.Equal(t, "All systems operational", check.Output)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "Check %s should exist", checkID)
+	assert.Equal(t, api.HealthPassing, check.Status)
+	assert.Equal(t, "All systems operational", check.Output)
 }
 
 // CAA-010: Test service with check
@@ -210,9 +236,11 @@ func TestAgentServiceWithCheck(t *testing.T) {
 
 	// Check ID should be "service:serviceID"
 	checkID := "service:" + serviceID
-	if _, ok := checks[checkID]; ok {
-		t.Logf("Service check registered: %s", checkID)
-	}
+	check, ok := checks[checkID]
+	require.True(t, ok, "Service check %s should be registered", checkID)
+	assert.Equal(t, api.HealthPassing, check.Status,
+		"Service check should have initial passing status")
+	t.Logf("Service check registered: %s", checkID)
 }
 
 // CAA-011: Test service with multiple checks
@@ -246,6 +274,16 @@ func TestAgentServiceWithMultipleChecks(t *testing.T) {
 	checks, err := client.Agent().Checks()
 	require.NoError(t, err)
 
+	check1, ok1 := checks[serviceID+"-check1"]
+	check2, ok2 := checks[serviceID+"-check2"]
+	assert.True(t, ok1, "First check %s-check1 should exist", serviceID)
+	assert.True(t, ok2, "Second check %s-check2 should exist", serviceID)
+	if ok1 {
+		assert.Equal(t, "TTL Check 1", check1.Name)
+	}
+	if ok2 {
+		assert.Equal(t, "TTL Check 2", check2.Name)
+	}
 	t.Logf("Total checks: %d", len(checks))
 }
 
@@ -270,8 +308,11 @@ func TestAgentServiceWithWeights(t *testing.T) {
 	services, err := client.Agent().Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[serviceID]; ok {
-		t.Logf("Service weights - Passing: %d, Warning: %d",
-			svc.Weights.Passing, svc.Weights.Warning)
-	}
+	svc, ok := services[serviceID]
+	require.True(t, ok, "Service %s should exist", serviceID)
+	require.NotNil(t, svc.Weights, "Service should have weights")
+	assert.Equal(t, 10, svc.Weights.Passing, "Passing weight should be 10")
+	assert.Equal(t, 1, svc.Weights.Warning, "Warning weight should be 1")
+	t.Logf("Service weights - Passing: %d, Warning: %d",
+		svc.Weights.Passing, svc.Weights.Warning)
 }

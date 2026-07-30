@@ -18,8 +18,6 @@ impl MigrationTrait for Migration {
                     .col(unsigned_int(ApolloConsumerRole::Id, backend).auto_increment().primary_key())
                     .col(unsigned_int_null(ApolloConsumerRole::ConsumerId, backend))
                     .col(unsigned_int_null(ApolloConsumerRole::RoleId, backend))
-                    .col(bit(ApolloConsumerRole::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloConsumerRole::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloConsumerRole::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloConsumerRole::DataChangeCreatedTime))
                     .col(string_len_null(ApolloConsumerRole::DataChangeLastModifiedBy, 64))
@@ -35,7 +33,6 @@ impl MigrationTrait for Migration {
                     .table(ApolloConsumerRole::Table)
                     .col(ApolloConsumerRole::ConsumerId)
                     .col(ApolloConsumerRole::RoleId)
-                    .col(ApolloConsumerRole::DeletedAt)
                     .unique()
                     .if_not_exists()
                     .to_owned(),
@@ -80,8 +77,6 @@ enum ApolloConsumerRole {
     Id,
     ConsumerId,
     RoleId,
-    IsDeleted,
-    DeletedAt,
     DataChangeCreatedBy,
     DataChangeCreatedTime,
     DataChangeLastModifiedBy,

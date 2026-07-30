@@ -435,7 +435,7 @@ impl MysqlHealthCheckProcessor {
         let query = command.unwrap_or("SELECT 1");
         let result = timeout(
             self.connect_timeout,
-            db.execute(sea_orm::Statement::from_string(
+            db.execute_raw(sea_orm::Statement::from_string(
                 db.get_database_backend(),
                 query.to_string(),
             )),

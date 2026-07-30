@@ -20,8 +20,8 @@ impl MigrationTrait for Migration {
     }
 }
 
-async fn seed_server_config(
-    conn: &dyn ConnectionTrait,
+async fn seed_server_config<C: ConnectionTrait>(
+    conn: &C,
     backend: DatabaseBackend,
 ) -> Result<(), DbErr> {
     let configs = vec![
@@ -55,97 +55,45 @@ async fn seed_server_config(
     for (key, value, comment) in configs {
         match backend {
             DatabaseBackend::MySql => {
-                conn.execute(Statement::from_sql_and_values(
+                conn.execute_raw(Statement::from_sql_and_values(
                     backend,
                     r#"INSERT IGNORE INTO `apollo_server_config` (`key`, `value`, `comment`, `data_change_created_by`) VALUES (?, ?, ?, 'default')"#,
                     vec![
-                        Value::String(Some(Box::new(key.to_string()))),
-                        Value::String(Some(Box::new(value.to_string()))),
-                        Value::String(Some(Box::new(comment.to_string()))),
+                        Value::String(Some(key.to_string())),
+                        Value::String(Some(value.to_string())),
+                        Value::String(Some(comment.to_string())),
                     ],
                 ))
                 .await?;
             }
             DatabaseBackend::Postgres => {
-                conn.execute(Statement::from_sql_and_values(
+                conn.execute_raw(Statement::from_sql_and_values(
                     backend,
-                    r#"INSERT INTO "apollo_server_config" ("key", "value", "comment", "data_change_created_by") VALUES ($1, $2, $3, 'default') ON CONFLICT ("key", "deleted_at") DO NOTHING"#,
+                    r#"INSERT INTO "apollo_server_config" ("key", "value", "comment", "data_change_created_by") VALUES ($1, $2, $3, 'default') ON CONFLICT ("key") DO NOTHING"#,
                     vec![
-                        Value::String(Some(Box::new(key.to_string()))),
-                        Value::String(Some(Box::new(value.to_string()))),
-                        Value::String(Some(Box::new(comment.to_string()))),
+                        Value::String(Some(key.to_string())),
+                        Value::String(Some(value.to_string())),
+                        Value::String(Some(comment.to_string())),
                     ],
                 ))
                 .await?;
             }
             DatabaseBackend::Sqlite => {
-                conn.execute(Statement::from_sql_and_values(
+                conn.execute_raw(Statement::from_sql_and_values(
                     backend,
                     r#"INSERT OR IGNORE INTO "apollo_server_config" ("key", "value", "comment", "data_change_created_by") VALUES (?, ?, ?, 'default')"#,
                     vec![
-                        Value::String(Some(Box::new(key.to_string()))),
-                        Value::String(Some(Box::new(value.to_string()))),
-                        Value::String(Some(Box::new(comment.to_string()))),
+                        Value::String(Some(key.to_string())),
+                        Value::String(Some(value.to_string())),
+                        Value::String(Some(comment.to_string())),
                     ],
                 ))
                 .await?;
             }
+            _ => {}
         }
     }
 
     Ok(())
 }
 
-async fn seed_admin_user(
-    conn: &dyn ConnectionTrait,
-    backend: DatabaseBackend,
-) -> Result<(), DbErr> {
-    let username = "apollo";
-    let password = "$2a$10$7r20uS.BQ9uBpf3Baj3uQOZvMVvB1RN3PYoKE94gtz2.WAOuiiwXS";
-    let display_name = "apollo";
-    let email = "apollo@acme.com";
-
-    match backend {
-        DatabaseBackend::MySql => {
-            conn.execute(Statement::from_sql_and_values(
-                backend,
-                r#"INSERT IGNORE INTO `apollo_users` (`username`, `password`, `user_display_name`, `email`, `enabled`) VALUES (?, ?, ?, ?, 1)"#,
-                vec![
-                    Value::String(Some(Box::new(username.to_string()))),
-                    Value::String(Some(Box::new(password.to_string()))),
-                    Value::String(Some(Box::new(display_name.to_string()))),
-                    Value::String(Some(Box::new(email.to_string()))),
-                ],
-            ))
-            .await?;
-        }
-        DatabaseBackend::Postgres => {
-            conn.execute(Statement::from_sql_and_values(
-                backend,
-                r#"INSERT INTO "apollo_users" ("username", "password", "user_display_name", "email", "enabled") VALUES ($1, $2, $3, $4, 1) ON CONFLICT ("username") DO NOTHING"#,
-                vec![
-                    Value::String(Some(Box::new(username.to_string()))),
-                    Value::String(Some(Box::new(password.to_string()))),
-                    Value::String(Some(Box::new(display_name.to_string()))),
-                    Value::String(Some(Box::new(email.to_string()))),
-                ],
-            ))
-            .await?;
-        }
-        DatabaseBackend::Sqlite => {
-            conn.execute(Statement::from_sql_and_values(
-                backend,
-                r#"INSERT OR IGNORE INTO "apollo_users" ("username", "password", "user_display_name", "email", "enabled") VALUES (?, ?, ?, ?, 1)"#,
-                vec![
-                    Value::String(Some(Box::new(username.to_string()))),
-                    Value::String(Some(Box::new(password.to_string()))),
-                    Value::String(Some(Box::new(display_name.to_string()))),
-                    Value::String(Some(Box::new(email.to_string()))),
-                ],
-            ))
-            .await?;
-        }
-    }
-
-    Ok(())
-}

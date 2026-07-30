@@ -115,20 +115,21 @@ async fn acquire_migration_lock(
 ) -> Result<(), sea_orm::DbErr> {
     match backend {
         DatabaseBackend::MySql => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT GET_LOCK('{}', 300)", APOLLO_MIGRATION_LOCK_NAME),
             ))
             .await?;
         }
         DatabaseBackend::Postgres => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT pg_advisory_lock({})", APOLLO_MIGRATION_LOCK_KEY),
             ))
             .await?;
         }
         DatabaseBackend::Sqlite => {}
+        _ => {}
     }
     Ok(())
 }
@@ -139,20 +140,21 @@ async fn release_migration_lock(
 ) -> Result<(), sea_orm::DbErr> {
     match backend {
         DatabaseBackend::MySql => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT RELEASE_LOCK('{}')", APOLLO_MIGRATION_LOCK_NAME),
             ))
             .await?;
         }
         DatabaseBackend::Postgres => {
-            db.execute(Statement::from_string(
+            db.execute_raw(Statement::from_string(
                 backend,
                 format!("SELECT pg_advisory_unlock({})", APOLLO_MIGRATION_LOCK_KEY),
             ))
             .await?;
         }
         DatabaseBackend::Sqlite => {}
+        _ => {}
     }
     Ok(())
 }

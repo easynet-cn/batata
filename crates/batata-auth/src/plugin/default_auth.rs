@@ -227,6 +227,10 @@ impl AuthPlugin for DefaultAuthPlugin {
             is_global_admin: is_admin,
         })
     }
+
+    async fn is_global_admin(&self, username: &str) -> bool {
+        self.is_global_admin(username).await
+    }
 }
 
 // ============================================================================
@@ -274,6 +278,10 @@ impl AuthPlugin for LdapAuthPlugin {
         self.default_plugin
             .validate_authority(identity, permission)
             .await
+    }
+
+    async fn is_global_admin(&self, username: &str) -> bool {
+        self.default_plugin.is_global_admin(username).await
     }
 
     async fn login(&self, username: &str, password: &str) -> Result<LoginResult, LoginError> {
