@@ -337,31 +337,18 @@ pub const RPC: &str = "rpc";
 // Property Constants
 // ============================================================================
 
-pub const NOTIFY_CONNECT_TIMEOUT: &str = "notifyConnectTimeout";
-pub const NOTIFY_SOCKET_TIMEOUT: &str = "notifySocketTimeout";
-pub const IS_HEALTH_CHECK: &str = "isHealthCheck";
-pub const MAX_HEALTH_CHECK_FAIL_COUNT: &str = "maxHealthCheckFailCount";
-pub const MAX_CONTENT: &str = "maxContent";
-pub const IS_MANAGE_CAPACITY: &str = "isManageCapacity";
-pub const IS_CAPACITY_LIMIT_CHECK: &str = "isCapacityLimitCheck";
-pub const DEFAULT_CLUSTER_QUOTA: &str = "defaultClusterQuota";
-pub const DEFAULT_GROUP_QUOTA: &str = "defaultGroupQuota";
-pub const DEFAULT_TENANT_QUOTA: &str = "defaultTenantQuota";
-pub const DEFAULT_MAX_SIZE: &str = "defaultMaxSize";
-pub const DEFAULT_MAX_AGGR_COUNT: &str = "defaultMaxAggrCount";
-pub const DEFAULT_MAX_AGGR_SIZE: &str = "defaultMaxAggrSize";
-pub const CORRECT_USAGE_DELAY: &str = "correctUsageDelay";
-pub const INITIAL_EXPANSION_PERCENT: &str = "initialExpansionPercent";
-pub const SEARCH_MAX_CAPACITY: &str = "batata.config.search.max_capacity";
-pub const SEARCH_MAX_THREAD: &str = "batata.config.search.max_thread";
-pub const SEARCH_WAIT_TIMEOUT: &str = "batata.config.search.wait_timeout";
-pub const DUMP_CHANGE_ON: &str = "dumpChangeOn";
-pub const DUMP_CHANGE_WORKER_INTERVAL: &str = "dumpChangeWorkerInterval";
-pub const CONFIG_RENTENTION_DAYS: &str = "batata.config.retention.days";
-pub const GRAY_CAPATIBEL_MODEL: &str = "batata.config.gray.compatible.model";
-pub const NAMESPACE_COMPATIBLE_MODE: &str = "batata.config.namespace.compatible.mode";
-pub const DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
-    "batata.sys.duplicate.bean.enhancement.enabled";
+pub const NOTIFY_CONNECT_TIMEOUT: &str = "batata.config.notify.connect_timeout";
+pub const NOTIFY_SOCKET_TIMEOUT: &str = "batata.config.notify.socket_timeout";
+pub const IS_HEALTH_CHECK: &str = "batata.config.health_check.enabled";
+pub const MAX_HEALTH_CHECK_FAIL_COUNT: &str = "batata.config.health_check.max_fail_count";
+pub const MAX_CONTENT: &str = "batata.config.max_content";
+pub const IS_MANAGE_CAPACITY: &str = "batata.config.capacity.manage_enabled";
+pub const IS_CAPACITY_LIMIT_CHECK: &str = "batata.config.capacity.limit_check";
+pub const DEFAULT_CLUSTER_QUOTA: &str = "batata.config.capacity.default_cluster_quota";
+pub const DEFAULT_GROUP_QUOTA: &str = "batata.config.capacity.default_group_quota";
+pub const DEFAULT_MAX_SIZE: &str = "batata.config.capacity.default_max_size";
+pub const DEFAULT_MAX_AGGR_COUNT: &str = "batata.config.capacity.default_max_aggr_count";
+pub const DEFAULT_MAX_AGGR_SIZE: &str = "batata.config.capacity.default_max_aggr_size";
 
 // ============================================================================
 // Auth Module Constants

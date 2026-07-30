@@ -8,23 +8,10 @@ use clap::Parser;
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
-use batata_auth::model::{
-    AUTH_ADMIN_ENABLED_KEY, AUTH_CONSOLE_ENABLED_KEY, AUTH_ENABLED_KEY, AUTH_LADP_USER_DN_PATTERN,
-    AUTH_LDAP_BASE_DC, AUTH_LDAP_BIND_DN, AUTH_LDAP_CASE_SENSITIVE, AUTH_LDAP_FILTER_PREFIX,
-    AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION, AUTH_LDAP_PASSWORD, AUTH_LDAP_TIMEOUT,
-    AUTH_LDAP_URL, AUTH_SERVER_IDENTITY_KEY_PROP, AUTH_SERVER_IDENTITY_VALUE_PROP,
-    AUTH_SYSTEM_TYPE_KEY, DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS,
-};
-
+use super::typed_config;
 use super::constants::{
-    CONFIG_RENTENTION_DAYS, CONSOLE_REMOTE_CONNECT_TIMEOUT_MS, CONSOLE_REMOTE_PASSWORD,
-    CONSOLE_REMOTE_READ_TIMEOUT_MS, CONSOLE_REMOTE_SERVER_ADDR, CONSOLE_REMOTE_USERNAME,
-    DATASOURCE_PLATFORM_PROPERTY, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
-    DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, DEFAULT_SERVER_PORT,
-    DEPLOYMENT_TYPE, DEPLOYMENT_TYPE_CONSOLE, DEPLOYMENT_TYPE_MERGED, FUNCTION_MODE_PROPERTY_NAME,
-    IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
-    MAX_HEALTH_CHECK_FAIL_COUNT, NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT,
-    PLUGIN_DATASOURCE_LOG, SERVER_PORT_PROPERTY, STANDALONE_MODE_PROPERTY_NAME,
+    DEPLOYMENT_TYPE, DEPLOYMENT_TYPE_CONSOLE, FUNCTION_MODE_PROPERTY_NAME,
+    STANDALONE_MODE_PROPERTY_NAME,
 };
 
 use batata_api::model::{CLUSTER_GRPC_PORT_DEFAULT_OFFSET, SDK_GRPC_PORT_DEFAULT_OFFSET};
@@ -49,6 +36,7 @@ struct Cli {
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub config: Config,
+    pub typed: typed_config::BatataTypedConfig,
 }
 
 /// Extract `--dotted.key=value` property overrides from command-line arguments.
@@ -177,7 +165,11 @@ impl Configuration {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build configuration: {e}"))?;
 
-        Ok(Configuration { config: app_config })
+        let typed: typed_config::BatataTypedConfig = app_config
+            .get("batata")
+            .unwrap_or_default();
+
+        Ok(Configuration { config: app_config, typed })
     }
 
     // ========================================================================
@@ -185,15 +177,11 @@ impl Configuration {
     // ========================================================================
 
     pub fn deployment_type(&self) -> String {
-        self.config
-            .get_string(DEPLOYMENT_TYPE)
-            .unwrap_or(DEPLOYMENT_TYPE_MERGED.to_string())
+        self.typed.deployment.type_.clone()
     }
 
     pub fn is_standalone(&self) -> bool {
-        self.config
-            .get_bool(STANDALONE_MODE_PROPERTY_NAME)
-            .unwrap_or(false)
+        self.typed.standalone
     }
 
     pub fn startup_mode(&self) -> String {
@@ -205,7 +193,7 @@ impl Configuration {
     }
 
     pub fn function_mode(&self) -> Option<String> {
-        self.config.get_string(FUNCTION_MODE_PROPERTY_NAME).ok()
+        self.typed.function_mode.clone()
     }
 
     pub fn version(&self) -> String {
@@ -225,21 +213,15 @@ impl Configuration {
     // ========================================================================
 
     pub fn server_address(&self) -> String {
-        self.config
-            .get_string("server.address")
-            .unwrap_or("0.0.0.0".to_string())
+        self.typed.server.address.clone()
     }
 
     pub fn server_main_port(&self) -> u16 {
-        self.config
-            .get_int(SERVER_PORT_PROPERTY)
-            .unwrap_or(DEFAULT_SERVER_PORT.into()) as u16
+        self.typed.server.main.port as u16
     }
 
     pub fn server_context_path(&self) -> String {
-        self.config
-            .get_string("batata.server.context_path")
-            .unwrap_or("nacos".to_string())
+        self.typed.server.context_path.clone()
     }
 
     pub fn sdk_server_port(&self) -> u16 {
@@ -292,19 +274,15 @@ impl Configuration {
     // ========================================================================
 
     pub fn console_server_port(&self) -> u16 {
-        self.config.get_int("batata.console.port").unwrap_or(8081) as u16
+        self.typed.console.port as u16
     }
 
     pub fn console_server_context_path(&self) -> String {
-        self.config
-            .get_string("batata.console.context_path")
-            .unwrap_or_default()
+        self.typed.console.context_path.clone()
     }
 
     pub fn console_ui_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.console.ui.enabled")
-            .unwrap_or(true)
+        self.typed.console.ui.enabled
     }
 
     /// Check if console is in remote mode.
@@ -314,9 +292,7 @@ impl Configuration {
     }
 
     pub fn console_remote_server_addr(&self) -> String {
-        self.config
-            .get_string(CONSOLE_REMOTE_SERVER_ADDR)
-            .unwrap_or("http://127.0.0.1:8848".to_string())
+        self.typed.console.remote.server_addr.clone()
     }
 
     /// Resolve remote server addresses for console remote mode.
@@ -378,27 +354,19 @@ impl Configuration {
     }
 
     pub fn console_remote_username(&self) -> String {
-        self.config
-            .get_string(CONSOLE_REMOTE_USERNAME)
-            .unwrap_or("batata".to_string())
+        self.typed.console.remote.username.clone()
     }
 
     pub fn console_remote_password(&self) -> String {
-        self.config
-            .get_string(CONSOLE_REMOTE_PASSWORD)
-            .unwrap_or("batata".to_string())
+        self.typed.console.remote.password.clone()
     }
 
     pub fn console_remote_connect_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int(CONSOLE_REMOTE_CONNECT_TIMEOUT_MS)
-            .unwrap_or(5000) as u64
+        self.typed.console.remote.connect_timeout_ms as u64
     }
 
     pub fn console_remote_read_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int(CONSOLE_REMOTE_READ_TIMEOUT_MS)
-            .unwrap_or(30000) as u64
+        self.typed.console.remote.read_timeout_ms as u64
     }
 
     // ========================================================================
@@ -406,13 +374,11 @@ impl Configuration {
     // ========================================================================
 
     pub fn auth_enabled(&self) -> bool {
-        self.config.get_bool(AUTH_ENABLED_KEY).unwrap_or(false)
+        self.typed.core.auth.enabled
     }
 
     pub fn auth_admin_enabled(&self) -> bool {
-        self.config
-            .get_bool(AUTH_ADMIN_ENABLED_KEY)
-            .unwrap_or(false)
+        self.typed.core.auth.admin.enabled
     }
 
     pub fn auth_enabled_for_api_type(&self, api_type: batata_common::ApiType) -> bool {
@@ -425,39 +391,27 @@ impl Configuration {
     }
 
     pub fn server_identity_key(&self) -> String {
-        self.config
-            .get_string(AUTH_SERVER_IDENTITY_KEY_PROP)
-            .unwrap_or_default()
+        self.typed.core.auth.server.identity.key.clone()
     }
 
     pub fn server_identity_value(&self) -> String {
-        self.config
-            .get_string(AUTH_SERVER_IDENTITY_VALUE_PROP)
-            .unwrap_or_default()
+        self.typed.core.auth.server.identity.value.clone()
     }
 
     pub fn auth_system_type(&self) -> String {
-        self.config
-            .get_string(AUTH_SYSTEM_TYPE_KEY)
-            .unwrap_or("default".to_string())
+        self.typed.core.auth.system.type_.clone()
     }
 
     pub fn auth_console_enabled(&self) -> bool {
-        self.config
-            .get_bool(AUTH_CONSOLE_ENABLED_KEY)
-            .unwrap_or(true)
+        self.typed.core.auth.console.enabled
     }
 
     pub fn token_secret_key(&self) -> String {
-        self.config
-            .get_string("batata.core.auth.plugin.default.token.secret.key")
-            .unwrap_or_default()
+        self.typed.core.auth.plugin.default.token.secret.key.clone()
     }
 
     pub fn auth_token_expire_seconds(&self) -> i64 {
-        self.config
-            .get_int(TOKEN_EXPIRE_SECONDS)
-            .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS)
+        self.typed.core.auth.plugin.default.token.expire.seconds
     }
 
     /// Check if LDAP authentication is enabled
@@ -467,61 +421,47 @@ impl Configuration {
 
     /// Get LDAP URL
     pub fn ldap_url(&self) -> Option<String> {
-        self.config.get_string(AUTH_LDAP_URL).ok()
+        self.typed.core.auth.ldap.url.clone()
     }
 
     /// Get LDAP base DN
     pub fn ldap_base_dn(&self) -> String {
-        self.config
-            .get_string(AUTH_LDAP_BASE_DC)
-            .unwrap_or_default()
+        self.typed.core.auth.ldap.base_dc.clone()
     }
 
     /// Get LDAP bind DN (admin user)
     pub fn ldap_bind_dn(&self) -> String {
-        self.config
-            .get_string(AUTH_LDAP_BIND_DN)
-            .unwrap_or_default()
+        self.typed.core.auth.ldap.bind_dn.clone()
     }
 
     /// Get LDAP bind password
     pub fn ldap_bind_password(&self) -> String {
-        self.config
-            .get_string(AUTH_LDAP_PASSWORD)
-            .unwrap_or_default()
+        self.typed.core.auth.ldap.password.clone()
     }
 
     /// Get LDAP user DN pattern
     pub fn ldap_user_dn_pattern(&self) -> String {
-        self.config
-            .get_string(AUTH_LADP_USER_DN_PATTERN)
-            .unwrap_or_default()
+        self.typed.core.auth.ldap.user_dn_pattern.clone()
     }
 
     /// Get LDAP filter prefix (default: uid)
     pub fn ldap_filter_prefix(&self) -> String {
-        self.config
-            .get_string(AUTH_LDAP_FILTER_PREFIX)
-            .unwrap_or_else(|_| "uid".to_string())
+        self.typed.core.auth.ldap.filter.prefix.clone()
     }
 
     /// Get LDAP connection timeout in milliseconds
     pub fn ldap_timeout_ms(&self) -> u64 {
-        self.config.get_int(AUTH_LDAP_TIMEOUT).unwrap_or(5000) as u64
+        self.typed.core.auth.ldap.timeout as u64
     }
 
     /// Check if LDAP username comparison is case-sensitive
     pub fn ldap_case_sensitive(&self) -> bool {
-        self.config
-            .get_bool(AUTH_LDAP_CASE_SENSITIVE)
-            .unwrap_or(true)
+        self.typed.core.auth.ldap.case.sensitive
     }
 
     /// Check if LDAP should ignore partial result exceptions
     pub fn ldap_ignore_partial_result_exception(&self) -> bool {
-        self.config
-            .get_bool(AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION)
-            .unwrap_or(false)
+        self.typed.core.auth.ldap.ignore.partial.result.exception
     }
 
     /// Get LDAP configuration as LdapConfig struct
@@ -545,30 +485,22 @@ impl Configuration {
 
     /// Check if OAuth2/OIDC authentication is enabled
     pub fn is_oauth_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.core.auth.oauth.enabled")
-            .unwrap_or(false)
+        self.typed.core.auth.oauth.enabled
     }
 
     /// Get OAuth user creation mode (auto or manual)
     pub fn oauth_user_creation(&self) -> String {
-        self.config
-            .get_string("batata.core.auth.oauth.user.creation")
-            .unwrap_or_else(|_| "auto".to_string())
+        self.typed.core.auth.oauth.user.creation.clone()
     }
 
     /// Get OAuth role sync mode (on_login or periodic)
     pub fn oauth_role_sync(&self) -> String {
-        self.config
-            .get_string("batata.core.auth.oauth.role.sync")
-            .unwrap_or_else(|_| "on_login".to_string())
+        self.typed.core.auth.oauth.role.sync.clone()
     }
 
     /// Get default OAuth redirect URI template
     pub fn oauth_redirect_uri(&self) -> Option<String> {
-        self.config
-            .get_string("batata.core.auth.oauth.redirect.uri")
-            .ok()
+        self.typed.core.auth.oauth.redirect.uri.clone()
     }
 
     /// Get OAuth configuration as OAuthConfig struct
@@ -639,16 +571,12 @@ impl Configuration {
     /// Get the base data directory for embedded modes.
     /// This is the root directory for all persistent data (RocksDB, node-id, etc.)
     pub fn embedded_data_dir(&self) -> String {
-        self.config
-            .get_string("batata.persistence.embedded.data_dir")
-            .unwrap_or_else(|_| "data".to_string())
+        self.typed.persistence.embedded.data_dir.clone()
     }
 
     /// Get the RocksDB database name (subdirectory under data_dir).
     pub fn embedded_db_name(&self) -> String {
-        self.config
-            .get_string("batata.persistence.embedded.db_name")
-            .unwrap_or_else(|_| "batata_rocksdb".to_string())
+        self.typed.persistence.embedded.db_name.clone()
     }
 
     /// Get the full RocksDB storage path: {data_dir}/{db_name}
@@ -663,48 +591,30 @@ impl Configuration {
     // ========================================================================
 
     pub fn datasource_platform(&self) -> String {
-        self.config
-            .get_string(DATASOURCE_PLATFORM_PROPERTY)
-            .unwrap_or_default()
+        self.typed.sql.init.platform.clone()
     }
 
     pub fn plugin_datasource_log(&self) -> bool {
-        self.config.get_bool(PLUGIN_DATASOURCE_LOG).unwrap_or(false)
+        self.typed.plugin.datasource.log.enabled
     }
 
     pub async fn database_connection(
         &self,
     ) -> std::result::Result<DatabaseConnection, Box<dyn std::error::Error>> {
-        let max_connections = self
-            .config
-            .get_int("batata.db.pool.max_connections")
-            .unwrap_or(200) as u32;
-        let min_connections = self
-            .config
-            .get_int("batata.db.pool.min_connections")
-            .unwrap_or(5) as u32;
-        let connect_timeout = self
-            .config
-            .get_int("batata.db.pool.connect_timeout")
-            .unwrap_or(10) as u64;
-        let acquire_timeout = self
-            .config
-            .get_int("batata.db.pool.acquire_timeout")
-            .unwrap_or(10) as u64;
-        let idle_timeout = self
-            .config
-            .get_int("batata.db.pool.idle_timeout")
-            .unwrap_or(300) as u64;
-        let max_lifetime = self
-            .config
-            .get_int("batata.db.pool.max_lifetime")
-            .unwrap_or(1800) as u64;
-        let sqlx_logging = self
-            .config
-            .get_bool("batata.db.pool.sqlx_logging")
-            .unwrap_or(false);
+        let max_connections = self.typed.db.pool.max_connections as u32;
+        let min_connections = self.typed.db.pool.min_connections as u32;
+        let connect_timeout = self.typed.db.pool.connect_timeout as u64;
+        let acquire_timeout = self.typed.db.pool.acquire_timeout as u64;
+        let idle_timeout = self.typed.db.pool.idle_timeout as u64;
+        let max_lifetime = self.typed.db.pool.max_lifetime as u64;
+        let sqlx_logging = self.typed.db.pool.sqlx_logging;
 
-        let url = self.config.get_string("batata.db.url")?;
+        let url = self
+            .typed
+            .db
+            .url
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database URL not configured (batata.db.url)"))?;
 
         let mut opt = ConnectOptions::new(url);
 
@@ -735,9 +645,7 @@ impl Configuration {
     /// Check if database migration is enabled on startup.
     /// When true, pending SeaORM migrations will be applied automatically.
     pub fn db_migration_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.db.migration.enabled")
-            .unwrap_or(true)
+        self.typed.db.migration.enabled
     }
 
     // ========================================================================
@@ -747,18 +655,14 @@ impl Configuration {
     /// Check if instance expiration is enabled
     /// When true, instances will be automatically deleted after ip_delete_timeout
     pub fn expire_instance_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.naming.expire_instance")
-            .unwrap_or(true)
+        self.typed.naming.expire_instance
     }
 
     /// Check if data warmup is enabled for naming service.
     /// When true, the server stays in STARTING state until subsystems are ready.
     /// When false (default), the server transitions to UP immediately after startup.
     pub fn data_warmup(&self) -> bool {
-        self.config
-            .get_bool("batata.naming.data.warmup")
-            .unwrap_or(false)
+        self.typed.naming.data.warmup
     }
 
     // ========================================================================
@@ -769,17 +673,13 @@ impl Configuration {
     /// During this period, the server stops accepting new connections and waits
     /// for in-flight requests to complete before proceeding with cleanup.
     pub fn shutdown_drain_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.shutdown.drain_timeout")
-            .unwrap_or(30) as u64
+        self.typed.server.shutdown.drain_timeout as u64
     }
 
     /// Database connection close timeout in seconds during graceful shutdown.
     /// If pending transactions or cleanup take longer, the shutdown proceeds anyway.
     pub fn shutdown_db_close_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.shutdown.db_close_timeout")
-            .unwrap_or(10) as u64
+        self.typed.server.shutdown.db_close_timeout as u64
     }
 
     // ========================================================================
@@ -787,59 +687,55 @@ impl Configuration {
     // ========================================================================
 
     pub fn notify_connect_timeout(&self) -> i32 {
-        self.config.get_int(NOTIFY_CONNECT_TIMEOUT).unwrap_or(100) as i32
+        self.typed.config.notify.connect_timeout as i32
     }
 
     pub fn notify_socket_timeout(&self) -> i32 {
-        self.config.get_int(NOTIFY_SOCKET_TIMEOUT).unwrap_or(200) as i32
+        self.typed.config.notify.socket_timeout as i32
     }
 
     pub fn is_health_check(&self) -> bool {
-        self.config.get_bool(IS_HEALTH_CHECK).unwrap_or(true)
+        self.typed.config.health_check.enabled
     }
 
     pub fn max_health_check_fail_count(&self) -> i32 {
-        self.config
-            .get_int(MAX_HEALTH_CHECK_FAIL_COUNT)
-            .unwrap_or(12) as i32
+        self.typed.config.health_check.max_fail_count as i32
     }
 
     pub fn max_content(&self) -> i32 {
-        self.config.get_int(MAX_CONTENT).unwrap_or(10 * 1024 * 1024) as i32
+        self.typed.config.max_content as i32
     }
 
     pub fn is_manage_capacity(&self) -> bool {
-        self.config.get_bool(IS_MANAGE_CAPACITY).unwrap_or(true)
+        self.typed.config.capacity.manage_enabled
     }
 
     pub fn is_capacity_limit_check(&self) -> bool {
-        self.config
-            .get_bool(IS_CAPACITY_LIMIT_CHECK)
-            .unwrap_or(false)
+        self.typed.config.capacity.limit_check
     }
 
     pub fn default_cluster_quota(&self) -> i32 {
-        self.config.get_int(DEFAULT_CLUSTER_QUOTA).unwrap_or(100000) as i32
+        self.typed.config.capacity.default_cluster_quota as i32
     }
 
     pub fn default_group_quota(&self) -> i32 {
-        self.config.get_int(DEFAULT_GROUP_QUOTA).unwrap_or(200) as i32
+        self.typed.config.capacity.default_group_quota as i32
     }
 
     pub fn default_max_size(&self) -> i32 {
-        self.config.get_int(DEFAULT_MAX_SIZE).unwrap_or(100 * 1024) as i32
+        self.typed.config.capacity.default_max_size as i32
     }
 
     pub fn default_max_aggr_count(&self) -> i32 {
-        self.config.get_int(DEFAULT_MAX_AGGR_COUNT).unwrap_or(10000) as i32
+        self.typed.config.capacity.default_max_aggr_count as i32
     }
 
     pub fn default_max_aggr_size(&self) -> i32 {
-        self.config.get_int(DEFAULT_MAX_AGGR_SIZE).unwrap_or(1024) as i32
+        self.typed.config.capacity.default_max_aggr_size as i32
     }
 
     pub fn config_rentention_days(&self) -> i32 {
-        self.config.get_int(CONFIG_RENTENTION_DAYS).unwrap_or(30) as i32
+        self.typed.config.retention.days as i32
     }
 
     // ========================================================================
@@ -847,31 +743,23 @@ impl Configuration {
     // ========================================================================
 
     pub fn otel_enabled(&self) -> bool {
-        self.config.get_bool("batata.otel.enabled").unwrap_or(false)
+        self.typed.otel.enabled
     }
 
     pub fn otel_endpoint(&self) -> String {
-        self.config
-            .get_string("batata.otel.endpoint")
-            .unwrap_or_else(|_| "http://localhost:4317".to_string())
+        self.typed.otel.endpoint.clone()
     }
 
     pub fn otel_service_name(&self) -> String {
-        self.config
-            .get_string("batata.otel.service_name")
-            .unwrap_or_else(|_| "batata".to_string())
+        self.typed.otel.service_name.clone()
     }
 
     pub fn otel_sampling_ratio(&self) -> f64 {
-        self.config
-            .get_float("batata.otel.sampling_ratio")
-            .unwrap_or(1.0)
+        self.typed.otel.sampling_ratio
     }
 
     pub fn otel_export_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.otel.export_timeout_secs")
-            .unwrap_or(10) as u64
+        self.typed.otel.export_timeout_secs as u64
     }
 
     // ========================================================================
@@ -880,51 +768,37 @@ impl Configuration {
 
     /// Check if API rate limiting is enabled
     pub fn ratelimit_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.ratelimit.enabled")
-            .unwrap_or(false)
+        self.typed.ratelimit.enabled
     }
 
     /// Get maximum requests per window for API rate limiting
     pub fn ratelimit_max_requests(&self) -> u32 {
-        self.config
-            .get_int("batata.ratelimit.max_requests")
-            .unwrap_or(100) as u32
+        self.typed.ratelimit.max_requests as u32
     }
 
     /// Get rate limit window duration in seconds
     pub fn ratelimit_window_seconds(&self) -> u64 {
-        self.config
-            .get_int("batata.ratelimit.window_seconds")
-            .unwrap_or(60) as u64
+        self.typed.ratelimit.window_seconds as u64
     }
 
     /// Check if authentication rate limiting is enabled
     pub fn ratelimit_auth_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.ratelimit.auth.enabled")
-            .unwrap_or(false)
+        self.typed.ratelimit.auth.enabled
     }
 
     /// Get maximum login attempts before lockout
     pub fn ratelimit_auth_max_attempts(&self) -> u32 {
-        self.config
-            .get_int("batata.ratelimit.auth.max_attempts")
-            .unwrap_or(5) as u32
+        self.typed.ratelimit.auth.max_attempts as u32
     }
 
     /// Get login attempt window duration in seconds
     pub fn ratelimit_auth_window_seconds(&self) -> u64 {
-        self.config
-            .get_int("batata.ratelimit.auth.window_seconds")
-            .unwrap_or(60) as u64
+        self.typed.ratelimit.auth.window_seconds as u64
     }
 
     /// Get lockout duration in seconds after exceeding max login attempts
     pub fn ratelimit_auth_lockout_seconds(&self) -> u64 {
-        self.config
-            .get_int("batata.ratelimit.auth.lockout_seconds")
-            .unwrap_or(300) as u64
+        self.typed.ratelimit.auth.lockout_seconds as u64
     }
 
     // ========================================================================
@@ -935,29 +809,21 @@ impl Configuration {
     /// Whether HTTP access logging is enabled (default: true).
     /// Disable for better performance in production.
     pub fn http_access_log_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.server.http.access_log.enabled")
-            .unwrap_or(true)
+        self.typed.server.http.access_log.enabled
     }
 
     pub fn control_plugin_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.plugin.control.enabled")
-            .unwrap_or(true)
+        self.typed.plugin.control.enabled
     }
 
     /// Get default TPS limit per control point
     pub fn control_plugin_default_tps(&self) -> u32 {
-        self.config
-            .get_int("batata.plugin.control.default_tps")
-            .unwrap_or(10000) as u32
+        self.typed.plugin.control.default_tps as u32
     }
 
     /// Get maximum concurrent gRPC connections
     pub fn control_plugin_max_connections(&self) -> u32 {
-        self.config
-            .get_int("batata.plugin.control.max_connections")
-            .unwrap_or(50000) as u32
+        self.typed.plugin.control.max_connections as u32
     }
 
     /// Create ControlPluginConfig from configuration
@@ -996,28 +862,22 @@ impl Configuration {
 
     /// Check if configuration encryption is enabled
     pub fn encryption_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.config.encryption.enabled")
-            .unwrap_or(false)
+        self.typed.config.encryption.enabled
     }
 
     /// Get the encryption plugin type
     pub fn encryption_plugin_type(&self) -> String {
-        self.config
-            .get_string("batata.config.encryption.plugin.type")
-            .unwrap_or_else(|_| "aes-gcm".to_string())
+        self.typed.config.encryption.plugin.type_.clone()
     }
 
     /// Get the encryption key (Base64-encoded)
     pub fn encryption_key(&self) -> Option<String> {
-        self.config.get_string("batata.config.encryption.key").ok()
+        self.typed.config.encryption.key.clone()
     }
 
     /// Get the encryption hot reload interval in milliseconds (0 = disabled)
     pub fn encryption_reload_interval_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.config.encryption.reload.interval.ms")
-            .unwrap_or(0) as u64
+        self.typed.config.encryption.reload.interval.ms as u64
     }
 
     /// Check if encryption hot reload is enabled
@@ -1031,44 +891,32 @@ impl Configuration {
 
     /// Check if TLS is enabled for SDK gRPC server
     pub fn grpc_sdk_tls_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.remote.server.grpc.sdk.tls.enabled")
-            .unwrap_or(false)
+        self.typed.remote.server.grpc.sdk.tls.enabled
     }
 
     /// Check if TLS is enabled for cluster gRPC server
     pub fn grpc_cluster_tls_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.remote.server.grpc.cluster.tls.enabled")
-            .unwrap_or(false)
+        self.typed.remote.server.grpc.cluster.tls.enabled
     }
 
     /// Get the path to the server certificate file
     pub fn grpc_tls_cert_path(&self) -> Option<String> {
-        self.config
-            .get_string("batata.remote.server.grpc.tls.cert.path")
-            .ok()
+        self.typed.remote.server.grpc.tls.cert.path.clone()
     }
 
     /// Get the path to the server private key file
     pub fn grpc_tls_key_path(&self) -> Option<String> {
-        self.config
-            .get_string("batata.remote.server.grpc.tls.key.path")
-            .ok()
+        self.typed.remote.server.grpc.tls.key.path.clone()
     }
 
     /// Get the path to the CA certificate for mTLS
     pub fn grpc_tls_ca_cert_path(&self) -> Option<String> {
-        self.config
-            .get_string("batata.remote.server.grpc.tls.ca.cert.path")
-            .ok()
+        self.typed.remote.server.grpc.tls.ca.cert.path.clone()
     }
 
     /// Check if mutual TLS is enabled
     pub fn grpc_mtls_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.remote.server.grpc.tls.mtls.enabled")
-            .unwrap_or(false)
+        self.typed.remote.server.grpc.tls.mtls.enabled
     }
 
     /// Get gRPC TLS configuration
@@ -1099,66 +947,52 @@ impl Configuration {
 
     /// Check if xDS server is enabled
     pub fn xds_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.mesh.xds.enabled")
-            .unwrap_or(false)
+        self.typed.mesh.xds.enabled
     }
 
     /// Get xDS server port (default: 15010)
     pub fn xds_server_port(&self) -> u16 {
-        self.config.get_int("batata.mesh.xds.port").unwrap_or(15010) as u16
+        self.typed.mesh.xds.port as u16
     }
 
     /// Get xDS server ID
     pub fn xds_server_id(&self) -> String {
-        self.config
-            .get_string("batata.mesh.xds.server.id")
-            .unwrap_or_else(|_| "batata-xds-server".to_string())
+        self.typed.mesh.xds.server.id.clone()
     }
 
     /// Get xDS sync interval in milliseconds
     pub fn xds_sync_interval_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.mesh.xds.sync.interval.ms")
-            .unwrap_or(5000) as u64
+        self.typed.mesh.xds.sync.interval.ms as u64
     }
 
     /// Check if xDS should generate default listeners
     pub fn xds_generate_listeners(&self) -> bool {
-        self.config
-            .get_bool("batata.mesh.xds.generate.listeners")
-            .unwrap_or(true)
+        self.typed.mesh.xds.generate.listeners
     }
 
     /// Check if xDS should generate default routes
     pub fn xds_generate_routes(&self) -> bool {
-        self.config
-            .get_bool("batata.mesh.xds.generate.routes")
-            .unwrap_or(true)
+        self.typed.mesh.xds.generate.routes
     }
 
     /// Get default listener port for xDS generated listeners
     pub fn xds_default_listener_port(&self) -> u16 {
-        self.config
-            .get_int("batata.mesh.xds.default.listener.port")
-            .unwrap_or(15001) as u16
+        self.typed.mesh.xds.default.listener.port as u16
     }
 
     /// Check if xDS TLS is enabled
     pub fn xds_tls_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.mesh.xds.tls.enabled")
-            .unwrap_or(false)
+        self.typed.mesh.xds.tls.enabled
     }
 
     /// Get xDS TLS certificate path
     pub fn xds_tls_cert_path(&self) -> Option<String> {
-        self.config.get_string("batata.mesh.xds.tls.cert.path").ok()
+        self.typed.mesh.xds.tls.cert.path.clone()
     }
 
     /// Get xDS TLS key path
     pub fn xds_tls_key_path(&self) -> Option<String> {
-        self.config.get_string("batata.mesh.xds.tls.key.path").ok()
+        self.typed.mesh.xds.tls.key.path.clone()
     }
 
     /// Get xDS configuration
@@ -1183,16 +1017,12 @@ impl Configuration {
 
     /// Check if MCP Registry server is enabled (default: false)
     pub fn mcp_registry_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.ai.mcp.registry.enabled")
-            .unwrap_or(false)
+        self.typed.ai.mcp.registry.enabled
     }
 
     /// Get MCP Registry server port (default: 9080)
     pub fn mcp_registry_port(&self) -> u16 {
-        self.config
-            .get_int("batata.ai.mcp.registry.port")
-            .unwrap_or(9080) as u16
+        self.typed.ai.mcp.registry.port as u16
     }
 
     // ========================================================================
@@ -1201,28 +1031,22 @@ impl Configuration {
 
     /// Get log directory path
     pub fn log_dir(&self) -> Option<String> {
-        self.config.get_string("batata.logs.path").ok()
+        self.typed.logs.path.clone()
     }
 
     /// Check if console logging is enabled
     pub fn log_console_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.logs.console.enabled")
-            .unwrap_or(true)
+        self.typed.logs.console.enabled
     }
 
     /// Check if file logging is enabled
     pub fn log_file_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.logs.file.enabled")
-            .unwrap_or(true)
+        self.typed.logs.file.enabled
     }
 
     /// Get log level
     pub fn log_level(&self) -> String {
-        self.config
-            .get_string("batata.logs.level")
-            .unwrap_or_else(|_| "info".to_string())
+        self.typed.logs.level.clone()
     }
 
     // NOTE: logging_config() is provided as an extension in batata-server/src/startup/logging.rs
@@ -1234,10 +1058,7 @@ impl Configuration {
 
     /// HTTP server worker threads (0 = auto-detect based on CPU cores)
     pub fn http_workers(&self) -> usize {
-        let v = self
-            .config
-            .get_int("batata.server.http.workers")
-            .unwrap_or(0) as usize;
+        let v = self.typed.server.http.workers as usize;
         if v == 0 {
             std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -1249,114 +1070,82 @@ impl Configuration {
 
     /// HTTP keep-alive timeout in seconds (main server)
     pub fn http_keep_alive_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.http.keep_alive")
-            .unwrap_or(75) as u64
+        self.typed.server.http.keep_alive as u64
     }
 
     /// Console HTTP keep-alive timeout in seconds
     pub fn console_keep_alive_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.console.http.keep_alive")
-            .unwrap_or(30) as u64
+        self.typed.console.http.keep_alive as u64
     }
 
     /// Maximum request payload size in bytes (default 10MB)
     pub fn max_payload_size(&self) -> usize {
-        self.config
-            .get_int("batata.server.http.max_payload_size")
-            .unwrap_or(10_485_760) as usize // 10MB
+        self.typed.server.http.max_payload_size as usize
     }
 
     /// Maximum JSON body size in bytes (default 5MB)
     pub fn max_json_size(&self) -> usize {
-        self.config
-            .get_int("batata.server.http.max_json_size")
-            .unwrap_or(5_242_880) as usize // 5MB
+        self.typed.server.http.max_json_size as usize
     }
 
     /// gRPC TCP keep-alive interval in seconds
     pub fn grpc_tcp_keepalive_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.tcp_keepalive")
-            .unwrap_or(30) as u64
+        self.typed.server.grpc.tcp_keepalive as u64
     }
 
     /// gRPC HTTP/2 keep-alive interval in seconds
     pub fn grpc_http2_keepalive_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.http2_keepalive_interval")
-            .unwrap_or(30) as u64
+        self.typed.server.grpc.http2_keepalive_interval as u64
     }
 
     /// gRPC HTTP/2 keep-alive timeout in seconds
     pub fn grpc_http2_keepalive_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.http2_keepalive_timeout")
-            .unwrap_or(10) as u64
+        self.typed.server.grpc.http2_keepalive_timeout as u64
     }
 
     /// gRPC max concurrent streams per connection
     pub fn grpc_concurrency_limit(&self) -> usize {
-        self.config
-            .get_int("batata.server.grpc.concurrency_limit")
-            .unwrap_or(256) as usize
+        self.typed.server.grpc.concurrency_limit as usize
     }
 
     /// Auth token cache max capacity
     pub fn auth_token_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.token_capacity")
-            .unwrap_or(50000) as u64
+        self.typed.core.auth.cache.token_capacity as u64
     }
 
     /// Auth roles cache max capacity
     pub fn auth_roles_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.roles_capacity")
-            .unwrap_or(50000) as u64
+        self.typed.core.auth.cache.roles_capacity as u64
     }
 
     /// Auth permissions cache max capacity
     pub fn auth_permissions_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.permissions_capacity")
-            .unwrap_or(20000) as u64
+        self.typed.core.auth.cache.permissions_capacity as u64
     }
 
     /// RocksDB write buffer size in MB
     pub fn rocksdb_write_buffer_mb(&self) -> usize {
-        self.config
-            .get_int("batata.rocksdb.write_buffer_mb")
-            .unwrap_or(128) as usize
+        self.typed.rocksdb.write_buffer_mb as usize
     }
 
     /// RocksDB max write buffer number
     pub fn rocksdb_max_write_buffers(&self) -> i32 {
-        self.config
-            .get_int("batata.rocksdb.max_write_buffers")
-            .unwrap_or(4) as i32
+        self.typed.rocksdb.max_write_buffers as i32
     }
 
     /// RocksDB max background jobs
     pub fn rocksdb_max_background_jobs(&self) -> i32 {
-        self.config
-            .get_int("batata.rocksdb.max_background_jobs")
-            .unwrap_or(4) as i32
+        self.typed.rocksdb.max_background_jobs as i32
     }
 
     /// RocksDB block cache size in MB
     pub fn rocksdb_block_cache_mb(&self) -> usize {
-        self.config
-            .get_int("batata.rocksdb.block_cache_mb")
-            .unwrap_or(256) as usize
+        self.typed.rocksdb.block_cache_mb as usize
     }
 
     /// Connection stale threshold in milliseconds
     pub fn grpc_connection_stale_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.connection_stale_ms")
-            .unwrap_or(60000) as u64
+        self.typed.server.grpc.connection_stale_ms as u64
     }
 
     // ========================================================================
@@ -1365,23 +1154,17 @@ impl Configuration {
 
     /// Whether HTTP response compression is enabled
     pub fn http_compression_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.server.http.compression.enabled")
-            .unwrap_or(true)
+        self.typed.server.http.compression.enabled
     }
 
     /// Minimum response size in bytes to trigger compression (default 256)
     pub fn http_compression_min_size(&self) -> usize {
-        self.config
-            .get_int("batata.server.http.compression.min_size")
-            .unwrap_or(256) as usize
+        self.typed.server.http.compression.min_size as usize
     }
 
     /// HTTP client request timeout in seconds
     pub fn http_client_request_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.server.http.client_request_timeout")
-            .unwrap_or(60) as u64
+        self.typed.server.http.client_request_timeout as u64
     }
 
     // ========================================================================
@@ -1390,30 +1173,22 @@ impl Configuration {
 
     /// Enable TCP_NODELAY for gRPC (disable Nagle's algorithm)
     pub fn grpc_tcp_nodelay(&self) -> bool {
-        self.config
-            .get_bool("batata.server.grpc.tcp_nodelay")
-            .unwrap_or(true)
+        self.typed.server.grpc.tcp_nodelay
     }
 
     /// gRPC HTTP/2 initial connection window size in bytes (default 1MB)
     pub fn grpc_initial_connection_window_size(&self) -> u32 {
-        self.config
-            .get_int("batata.server.grpc.initial_connection_window_size")
-            .unwrap_or(1_048_576) as u32
+        self.typed.server.grpc.initial_connection_window_size as u32
     }
 
     /// gRPC HTTP/2 initial stream window size in bytes (default 512KB)
     pub fn grpc_initial_stream_window_size(&self) -> u32 {
-        self.config
-            .get_int("batata.server.grpc.initial_stream_window_size")
-            .unwrap_or(524_288) as u32
+        self.typed.server.grpc.initial_stream_window_size as u32
     }
 
     /// gRPC HTTP/2 max frame size in bytes (default 16KB)
     pub fn grpc_max_frame_size(&self) -> u32 {
-        self.config
-            .get_int("batata.server.grpc.max_frame_size")
-            .unwrap_or(16_384) as u32
+        self.typed.server.grpc.max_frame_size as u32
     }
 
     // ========================================================================
@@ -1422,30 +1197,22 @@ impl Configuration {
 
     /// Raft gRPC TCP keep-alive interval in seconds (default 10s)
     pub fn raft_grpc_tcp_keepalive_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.grpc.tcp_keepalive")
-            .unwrap_or(10) as u64
+        self.typed.raft.grpc.tcp_keepalive as u64
     }
 
     /// Raft gRPC TCP_NODELAY (default true)
     pub fn raft_grpc_tcp_nodelay(&self) -> bool {
-        self.config
-            .get_bool("batata.raft.grpc.tcp_nodelay")
-            .unwrap_or(true)
+        self.typed.raft.grpc.tcp_nodelay
     }
 
     /// Raft gRPC HTTP/2 keep-alive interval in seconds (default 10s)
     pub fn raft_grpc_http2_keepalive_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.grpc.http2_keepalive_interval")
-            .unwrap_or(10) as u64
+        self.typed.raft.grpc.http2_keepalive_interval as u64
     }
 
     /// Raft gRPC HTTP/2 keep-alive timeout in seconds (default 5s)
     pub fn raft_grpc_http2_keepalive_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.grpc.http2_keepalive_timeout")
-            .unwrap_or(5) as u64
+        self.typed.raft.grpc.http2_keepalive_timeout as u64
     }
 
     // ========================================================================
@@ -1454,65 +1221,49 @@ impl Configuration {
 
     /// Timeout in milliseconds for pushing a message to a client connection (default 5000ms)
     pub fn grpc_push_message_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.push_message_timeout")
-            .unwrap_or(5000) as u64
+        self.typed.server.grpc.push_message_timeout as u64
     }
 
     /// Buffer size for bi-directional streaming channel (default 128)
     pub fn grpc_bistream_channel_capacity(&self) -> usize {
-        self.config
-            .get_int("batata.server.grpc.bistream_channel_capacity")
-            .unwrap_or(128) as usize
+        self.typed.server.grpc.bistream_channel_capacity as usize
     }
 
     /// Timeout in milliseconds for subscriber notification (default 3000ms).
     /// 0 means fire-and-forget (non-blocking).
     pub fn notify_subscriber_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.server.grpc.notify_subscriber_timeout")
-            .unwrap_or(0) as u64
+        self.typed.server.grpc.notify_subscriber_timeout as u64
     }
 
     /// Config read cache TTL in seconds (default 0 = disabled).
     /// When enabled, caches config_find_one results to reduce RocksDB reads in distributed mode.
     /// Recommended: 5-30 for high-read workloads.
     pub fn config_read_cache_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.config.read_cache_ttl")
-            .unwrap_or(0) as u64
+        self.typed.config.read_cache_ttl as u64
     }
 
     /// Config read cache max entries (default 10000).
     pub fn config_read_cache_max_entries(&self) -> u64 {
-        self.config
-            .get_int("batata.config.read_cache_max_entries")
-            .unwrap_or(10_000) as u64
+        self.typed.config.read_cache_max_entries as u64
     }
 
     /// Max consecutive push timeouts before closing a slow client connection (default 5).
     /// 0 = disabled (never close connections due to push timeouts).
     pub fn grpc_max_push_timeouts(&self) -> u32 {
-        self.config
-            .get_int("batata.server.grpc.max_push_timeouts")
-            .unwrap_or(5) as u32
+        self.typed.server.grpc.max_push_timeouts as u32
     }
 
     /// Maximum concurrent HTTP/2 streams per gRPC connection (default 200).
     /// Limits the number of concurrent RPCs a single client can make.
     /// Protects against resource exhaustion from misbehaving clients.
     pub fn grpc_max_concurrent_streams(&self) -> u32 {
-        self.config
-            .get_int("batata.server.grpc.max_concurrent_streams")
-            .unwrap_or(200) as u32
+        self.typed.server.grpc.max_concurrent_streams as u32
     }
 
     /// Maximum number of SDK gRPC connections (default 10000).
     /// 0 means unlimited.
     pub fn grpc_max_connections(&self) -> usize {
-        self.config
-            .get_int("batata.server.grpc.max_connections")
-            .unwrap_or(10000) as usize
+        self.typed.server.grpc.max_connections as usize
     }
 
     // ========================================================================
@@ -1521,79 +1272,57 @@ impl Configuration {
 
     /// RocksDB bloom filter bits per key (0 = disabled)
     pub fn rocksdb_bloom_filter_bits(&self) -> f64 {
-        self.config
-            .get_float("batata.rocksdb.bloom_filter_bits")
-            .unwrap_or(10.0)
+        self.typed.rocksdb.bloom_filter_bits
     }
 
     /// Whether to enable dynamic level compaction
     pub fn rocksdb_level_compaction_dynamic(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.level_compaction_dynamic")
-            .unwrap_or(true)
+        self.typed.rocksdb.level_compaction_dynamic
     }
 
     /// RocksDB bottommost level compression type (zstd or lz4)
     pub fn rocksdb_bottommost_compression(&self) -> String {
-        self.config
-            .get_string("batata.rocksdb.bottommost_compression")
-            .unwrap_or_else(|_| "zstd".to_string())
+        self.typed.rocksdb.bottommost_compression.clone()
     }
 
     /// RocksDB default compression type (lz4, zstd, snappy, none)
     pub fn rocksdb_compression(&self) -> String {
-        self.config
-            .get_string("batata.rocksdb.compression")
-            .unwrap_or_else(|_| "lz4".to_string())
+        self.typed.rocksdb.compression.clone()
     }
 
     /// Whether RocksDB internal statistics are enabled
     pub fn rocksdb_enable_statistics(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.enable_statistics")
-            .unwrap_or(false)
+        self.typed.rocksdb.enable_statistics
     }
 
     /// Whether whole-key filtering is enabled in bloom filter
     pub fn rocksdb_whole_key_filtering(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.whole_key_filtering")
-            .unwrap_or(true)
+        self.typed.rocksdb.whole_key_filtering
     }
 
     /// Hash ratio for binary-and-hash data block index (0.0 = disabled)
     pub fn rocksdb_data_block_hash_ratio(&self) -> f64 {
-        self.config
-            .get_float("batata.rocksdb.data_block_hash_ratio")
-            .unwrap_or(0.75)
+        self.typed.rocksdb.data_block_hash_ratio
     }
 
     /// Whether to fsync WAL on every state-machine write (default: false)
     pub fn rocksdb_sm_sync(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.sm_sync")
-            .unwrap_or(false)
+        self.typed.rocksdb.sm_sync
     }
 
     /// Whether to disable WAL for state-machine writes (default: false)
     pub fn rocksdb_sm_disable_wal(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.sm_disable_wal")
-            .unwrap_or(false)
+        self.typed.rocksdb.sm_disable_wal
     }
 
     /// Write buffer size in MB for history column family (default: 0 = same as write_buffer_mb)
     pub fn rocksdb_history_write_buffer_mb(&self) -> usize {
-        self.config
-            .get_int("batata.rocksdb.history_write_buffer_mb")
-            .unwrap_or(0) as usize
+        self.typed.rocksdb.history_write_buffer_mb as usize
     }
 
     /// Whether to enable bloom filter for history CF (default: false)
     pub fn rocksdb_history_bloom_filter(&self) -> bool {
-        self.config
-            .get_bool("batata.rocksdb.history_bloom_filter")
-            .unwrap_or(false)
+        self.typed.rocksdb.history_bloom_filter
     }
 
     // ========================================================================
@@ -1602,16 +1331,12 @@ impl Configuration {
 
     /// Maximum number of tracked IPs for rate limiting (prevents memory exhaustion)
     pub fn rate_limit_max_tracked_ips(&self) -> usize {
-        self.config
-            .get_int("batata.ratelimit.max_tracked_ips")
-            .unwrap_or(100_000) as usize
+        self.typed.ratelimit.max_tracked_ips as usize
     }
 
     /// Cleanup interval for rate limiter entries in seconds
     pub fn rate_limit_cleanup_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.ratelimit.cleanup_interval_secs")
-            .unwrap_or(300) as u64
+        self.typed.ratelimit.cleanup_interval_secs as u64
     }
 
     // ========================================================================
@@ -1620,23 +1345,17 @@ impl Configuration {
 
     /// Token cache TTL in seconds (default: 60s for cluster-safe operation)
     pub fn auth_token_cache_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.token_ttl_secs")
-            .unwrap_or(60) as u64
+        self.typed.core.auth.cache.token_ttl_secs as u64
     }
 
     /// Token blacklist max capacity
     pub fn auth_blacklist_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.blacklist_capacity")
-            .unwrap_or(100_000) as u64
+        self.typed.core.auth.cache.blacklist_capacity as u64
     }
 
     /// Token blacklist TTL in seconds
     pub fn auth_blacklist_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.blacklist_ttl_secs")
-            .unwrap_or(86400) as u64
+        self.typed.core.auth.cache.blacklist_ttl_secs as u64
     }
 
     // ---- Raft consensus tuning ----
@@ -1645,70 +1364,52 @@ impl Configuration {
     /// If a follower doesn't hear from the leader within this time, it starts an election.
     /// Increase for WAN clusters or high-latency networks.
     pub fn raft_election_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.election_timeout_ms")
-            .unwrap_or(5000) as u64
+        self.typed.raft.election_timeout_ms as u64
     }
 
     /// Raft heartbeat interval in milliseconds (default: 1000).
     /// Leader sends heartbeats at this interval. Should be < election_timeout / 3.
     pub fn raft_heartbeat_interval_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.heartbeat_interval_ms")
-            .unwrap_or(1000) as u64
+        self.typed.raft.heartbeat_interval_ms as u64
     }
 
     /// Raft RPC request timeout in milliseconds (default: 5000).
     /// Timeout for individual Raft RPCs (AppendEntries, Vote).
     pub fn raft_rpc_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.rpc_timeout_ms")
-            .unwrap_or(5000) as u64
+        self.typed.raft.rpc_timeout_ms as u64
     }
 
     /// Raft snapshot threshold — log entries before triggering snapshot (default: 10000).
     pub fn raft_snapshot_threshold(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.snapshot_threshold")
-            .unwrap_or(10000) as u64
+        self.typed.raft.snapshot_threshold as u64
     }
 
     /// Raft snapshot transfer timeout in milliseconds (default: 30000).
     /// Timeout for full snapshot transfer between nodes. Should be larger than rpc_timeout.
     pub fn raft_snapshot_transfer_timeout_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.snapshot_transfer_timeout_ms")
-            .unwrap_or(30000) as u64
+        self.typed.raft.snapshot_transfer_timeout_ms as u64
     }
 
     /// Max retries when forwarding write to Raft leader (default: 3)
     pub fn raft_forward_max_retries(&self) -> u32 {
-        self.config
-            .get_int("batata.raft.forward.max_retries")
-            .unwrap_or(3) as u32
+        self.typed.raft.forward.max_retries as u32
     }
 
     /// Initial retry delay in ms for leader forwarding (default: 200)
     /// Doubles each attempt with 25% jitter.
     pub fn raft_forward_initial_delay_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.forward.initial_delay_ms")
-            .unwrap_or(200) as u64
+        self.typed.raft.forward.initial_delay_ms as u64
     }
 
     /// Timeout in seconds for waiting for Raft peer gRPC servers to become reachable
     /// during cluster initialization (default: 30).
     pub fn raft_peer_connect_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.peer_connect_timeout_secs")
-            .unwrap_or(30) as u64
+        self.typed.raft.peer_connect_timeout_secs as u64
     }
 
     /// Retry interval in milliseconds when probing Raft peer readiness (default: 500).
     pub fn raft_peer_connect_retry_interval_ms(&self) -> u64 {
-        self.config
-            .get_int("batata.raft.peer_connect_retry_interval_ms")
-            .unwrap_or(500) as u64
+        self.typed.raft.peer_connect_retry_interval_ms as u64
     }
 
     // ========================================================================
@@ -1718,9 +1419,7 @@ impl Configuration {
     /// Maximum number of gray versions per config (default: 10).
     /// Matches batata.config.gray.version.max.count property.
     pub fn config_gray_max_version_count(&self) -> usize {
-        self.config
-            .get_int("batata.config.gray.version.max_count")
-            .unwrap_or(10) as usize
+        self.typed.config.gray.version.max_count as usize
     }
 
     // ========================================================================
@@ -1729,16 +1428,12 @@ impl Configuration {
 
     /// Console remote data source refresh interval in seconds (default: 30)
     pub fn console_remote_refresh_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.console.remote.refresh_interval_secs")
-            .unwrap_or(30) as u64
+        self.typed.console.remote.refresh_interval_secs as u64
     }
 
     /// Console remote data source initial delay in seconds (default: 5)
     pub fn console_remote_initial_delay_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.console.remote.initial_delay_secs")
-            .unwrap_or(5) as u64
+        self.typed.console.remote.initial_delay_secs as u64
     }
 
     // ========================================================================
@@ -1747,9 +1442,7 @@ impl Configuration {
 
     /// Webhook HTTP client default timeout in seconds (default: 30)
     pub fn webhook_default_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.plugin.webhook.default_timeout_secs")
-            .unwrap_or(30) as u64
+        self.typed.plugin.webhook.default_timeout_secs as u64
     }
 
     // ========================================================================
@@ -1758,23 +1451,17 @@ impl Configuration {
 
     /// Naming heartbeat check interval in seconds (default: 5)
     pub fn naming_heartbeat_check_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.naming.healthcheck.heartbeat_interval_secs")
-            .unwrap_or(5) as u64
+        self.typed.naming.healthcheck.heartbeat_interval_secs as u64
     }
 
     /// Naming TTL monitor interval in seconds (default: 5)
     pub fn naming_ttl_monitor_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.naming.healthcheck.ttl_monitor_interval_secs")
-            .unwrap_or(5) as u64
+        self.typed.naming.healthcheck.ttl_monitor_interval_secs as u64
     }
 
     /// Naming deregister monitor interval in seconds (default: 10)
     pub fn naming_deregister_monitor_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.naming.healthcheck.deregister_monitor_interval_secs")
-            .unwrap_or(10) as u64
+        self.typed.naming.healthcheck.deregister_monitor_interval_secs as u64
     }
 
     // ========================================================================
@@ -1783,37 +1470,27 @@ impl Configuration {
 
     /// OAuth provider discovery cache TTL in seconds (default: 3600)
     pub fn oauth_discovery_cache_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.oauth.cache.discovery_ttl_secs")
-            .unwrap_or(3600) as u64
+        self.typed.core.auth.oauth.cache.discovery_ttl_secs as u64
     }
 
     /// OAuth provider discovery cache max capacity (default: 100)
     pub fn oauth_discovery_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.oauth.cache.discovery_capacity")
-            .unwrap_or(100) as u64
+        self.typed.core.auth.oauth.cache.discovery_capacity as u64
     }
 
     /// OAuth state cache TTL in seconds (default: 600)
     pub fn oauth_state_cache_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.oauth.cache.state_ttl_secs")
-            .unwrap_or(600) as u64
+        self.typed.core.auth.oauth.cache.state_ttl_secs as u64
     }
 
     /// OAuth state cache max capacity (default: 10000)
     pub fn oauth_state_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.oauth.cache.state_capacity")
-            .unwrap_or(10000) as u64
+        self.typed.core.auth.oauth.cache.state_capacity as u64
     }
 
     /// OAuth HTTP client timeout in seconds (default: 30)
     pub fn oauth_http_timeout_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.oauth.http_timeout_secs")
-            .unwrap_or(30) as u64
+        self.typed.core.auth.oauth.http_timeout_secs as u64
     }
 
     // ========================================================================
@@ -1822,16 +1499,12 @@ impl Configuration {
 
     /// gRPC auth permission check cache max capacity (default: 10000)
     pub fn grpc_auth_cache_capacity(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.grpc_permission_capacity")
-            .unwrap_or(10000) as u64
+        self.typed.core.auth.cache.grpc_permission_capacity as u64
     }
 
     /// gRPC auth permission check cache TTL in seconds (default: 60s for cluster-safe operation)
     pub fn grpc_auth_cache_ttl_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.core.auth.cache.grpc_permission_ttl_secs")
-            .unwrap_or(60) as u64
+        self.typed.core.auth.cache.grpc_permission_ttl_secs as u64
     }
 
     // ========================================================================
@@ -1841,17 +1514,13 @@ impl Configuration {
     /// Check if system stats reporter is enabled (default: true)
     /// When enabled, periodically collects CPU/memory metrics and exports via Prometheus
     pub fn metrics_system_stats_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.metrics.system_stats.enabled")
-            .unwrap_or(true)
+        self.typed.metrics.system_stats.enabled
     }
 
     /// System stats reporter collection interval in seconds (default: 15)
     /// Only effective when metrics_system_stats_enabled is true
     pub fn metrics_system_stats_interval_secs(&self) -> u64 {
-        self.config
-            .get_int("batata.metrics.system_stats.interval_secs")
-            .unwrap_or(15) as u64
+        self.typed.metrics.system_stats.interval_secs as u64
     }
 
     /// Build a RocksDB configuration struct from the current config values
@@ -2073,6 +1742,10 @@ pub struct XdsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_auth::model::{
+        AUTH_ADMIN_ENABLED_KEY, AUTH_CONSOLE_ENABLED_KEY, AUTH_ENABLED_KEY,
+        AUTH_SERVER_IDENTITY_KEY_PROP,
+    };
     use batata_common::ApiType;
     use config::Config;
 
@@ -2081,9 +1754,9 @@ mod tests {
         for (key, value) in overrides {
             builder = builder.set_override(key, value).unwrap();
         }
-        Configuration {
-            config: builder.build().unwrap(),
-        }
+        let config = builder.build().unwrap();
+        let typed = config.get("batata").unwrap_or_default();
+        Configuration { config, typed }
     }
 
     #[test]
@@ -2113,7 +1786,7 @@ mod tests {
 
     #[test]
     fn test_auth_enabled_for_api_type_open_api() {
-        let cfg = build_config(vec![(AUTH_ADMIN_ENABLED_KEY, true.into())]);
+        let cfg = build_config(vec![(AUTH_ENABLED_KEY, true.into())]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::OpenApi));
 
         let cfg2 = build_config(vec![]);
@@ -2449,5 +2122,1349 @@ mod tests {
         let custom_path = Some("/etc/batata/app.yml".to_string());
         let resolved = custom_path.as_deref().unwrap_or("conf/application.yml");
         assert_eq!(resolved, "/etc/batata/app.yml");
+    }
+
+    // ========================================================================
+    // Typed Config: Server defaults and overrides
+    // ========================================================================
+
+    #[test]
+    fn test_typed_server_port_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.server_main_port(), 8849);
+    }
+
+    #[test]
+    fn test_typed_server_context_path_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.server_context_path(), "nacos");
+    }
+
+    #[test]
+    fn test_typed_http_workers_default_zero() {
+        let cfg = build_config(vec![]);
+        // Default is 0, which means auto-detect
+        assert!(cfg.http_workers() > 0); // auto-detected
+    }
+
+    #[test]
+    fn test_typed_http_workers_custom() {
+        let cfg = build_config(vec![("batata.server.http.workers", 8_i64.into())]);
+        assert_eq!(cfg.http_workers(), 8);
+    }
+
+    #[test]
+    fn test_typed_http_keep_alive_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.http_keep_alive_secs(), 75);
+    }
+
+    #[test]
+    fn test_typed_max_payload_size_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.max_payload_size(), 10_485_760);
+    }
+
+    #[test]
+    fn test_typed_max_json_size_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.max_json_size(), 5_242_880);
+    }
+
+    #[test]
+    fn test_typed_http_compression_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.http_compression_enabled());
+        assert_eq!(cfg.http_compression_min_size(), 256);
+    }
+
+    #[test]
+    fn test_typed_shutdown_timeouts_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.shutdown_drain_timeout_secs(), 30);
+        assert_eq!(cfg.shutdown_db_close_timeout_secs(), 10);
+    }
+
+    #[test]
+    fn test_typed_grpc_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.grpc_tcp_keepalive_secs(), 30);
+        assert!(cfg.grpc_tcp_nodelay());
+        assert_eq!(cfg.grpc_http2_keepalive_interval_secs(), 30);
+        assert_eq!(cfg.grpc_http2_keepalive_timeout_secs(), 10);
+        assert_eq!(cfg.grpc_concurrency_limit(), 256);
+        assert_eq!(cfg.grpc_connection_stale_ms(), 60000);
+        assert_eq!(cfg.grpc_push_message_timeout_ms(), 5000);
+        assert_eq!(cfg.grpc_bistream_channel_capacity(), 128);
+        assert_eq!(cfg.grpc_max_push_timeouts(), 5);
+        assert_eq!(cfg.grpc_max_concurrent_streams(), 200);
+        assert_eq!(cfg.grpc_max_connections(), 10000);
+    }
+
+    // ========================================================================
+    // Typed Config: Standalone & Deployment
+    // ========================================================================
+
+    #[test]
+    fn test_typed_standalone_default_false() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.is_standalone());
+    }
+
+    #[test]
+    fn test_typed_deployment_type_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.deployment_type(), "merged");
+    }
+
+    #[test]
+    fn test_typed_deployment_type_custom() {
+        let cfg = build_config(vec![("batata.deployment.type", "console".into())]);
+        assert_eq!(cfg.deployment_type(), "console");
+    }
+
+    #[test]
+    fn test_typed_function_mode_default_none() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.function_mode().is_none());
+    }
+
+    #[test]
+    fn test_typed_function_mode_custom() {
+        let cfg = build_config(vec![("batata.function_mode", "config".into())]);
+        assert_eq!(cfg.function_mode(), Some("config".to_string()));
+    }
+
+    // ========================================================================
+    // Typed Config: Console
+    // ========================================================================
+
+    #[test]
+    fn test_typed_console_port_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.console_server_port(), 8081);
+    }
+
+    #[test]
+    fn test_typed_console_context_path_default_empty() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.console_server_context_path(), "");
+    }
+
+    #[test]
+    fn test_typed_console_ui_enabled_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.console_ui_enabled());
+    }
+
+    #[test]
+    fn test_typed_console_remote_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.console_remote_server_addr(), "http://127.0.0.1:8848");
+        assert_eq!(cfg.console_remote_username(), "batata");
+        assert_eq!(cfg.console_remote_password(), "batata");
+        assert_eq!(cfg.console_remote_connect_timeout_ms(), 5000);
+        assert_eq!(cfg.console_remote_read_timeout_ms(), 30000);
+        assert_eq!(cfg.console_remote_refresh_interval_secs(), 30);
+        assert_eq!(cfg.console_remote_initial_delay_secs(), 5);
+    }
+
+    #[test]
+    fn test_typed_console_remote_overrides() {
+        let cfg = build_config(vec![
+            ("batata.console.remote.server_addr", "http://remote:9999".into()),
+            ("batata.console.remote.username", "admin".into()),
+            ("batata.console.remote.password", "secret".into()),
+        ]);
+        assert_eq!(cfg.console_remote_server_addr(), "http://remote:9999");
+        assert_eq!(cfg.console_remote_username(), "admin");
+        assert_eq!(cfg.console_remote_password(), "secret");
+    }
+
+    #[test]
+    fn test_typed_console_keep_alive_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.console_keep_alive_secs(), 30);
+    }
+
+    // ========================================================================
+    // Typed Config: Database
+    // ========================================================================
+
+    #[test]
+    fn test_typed_db_pool_defaults() {
+        let cfg = build_config(vec![]);
+        // These are the code defaults, NOT the YAML values
+        // YAML has 100/10/30/30/600 but code defaults are 200/5/10/10/300
+        assert_eq!(cfg.typed.db.pool.max_connections, 200);
+        assert_eq!(cfg.typed.db.pool.min_connections, 5);
+        assert_eq!(cfg.typed.db.pool.connect_timeout, 10);
+        assert_eq!(cfg.typed.db.pool.acquire_timeout, 10);
+        assert_eq!(cfg.typed.db.pool.idle_timeout, 300);
+        assert_eq!(cfg.typed.db.pool.max_lifetime, 1800);
+        assert!(!cfg.typed.db.pool.sqlx_logging);
+    }
+
+    #[test]
+    fn test_typed_db_pool_overrides() {
+        let cfg = build_config(vec![
+            ("batata.db.pool.max_connections", 50_i64.into()),
+            ("batata.db.pool.min_connections", 2_i64.into()),
+            ("batata.db.pool.sqlx_logging", true.into()),
+        ]);
+        assert_eq!(cfg.typed.db.pool.max_connections, 50);
+        assert_eq!(cfg.typed.db.pool.min_connections, 2);
+        assert!(cfg.typed.db.pool.sqlx_logging);
+    }
+
+    #[test]
+    fn test_typed_db_migration_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.db_migration_enabled());
+    }
+
+    #[test]
+    fn test_typed_db_migration_disabled() {
+        let cfg = build_config(vec![("batata.db.migration.enabled", false.into())]);
+        assert!(!cfg.db_migration_enabled());
+    }
+
+    #[test]
+    fn test_typed_datasource_platform_default_empty() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.datasource_platform(), "");
+    }
+
+    #[test]
+    fn test_typed_datasource_platform_custom() {
+        let cfg = build_config(vec![("batata.sql.init.platform", "postgresql".into())]);
+        assert_eq!(cfg.datasource_platform(), "postgresql");
+    }
+
+    // ========================================================================
+    // Typed Config: Authentication
+    // ========================================================================
+
+    #[test]
+    fn test_typed_auth_system_type_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.auth_system_type(), "default");
+    }
+
+    #[test]
+    fn test_typed_auth_system_type_ldap() {
+        let cfg = build_config(vec![("batata.core.auth.system.type", "ldap".into())]);
+        assert_eq!(cfg.auth_system_type(), "ldap");
+        assert!(cfg.is_ldap_auth_enabled());
+    }
+
+    #[test]
+    fn test_typed_auth_console_enabled_default_true() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.auth_console_enabled());
+    }
+
+    #[test]
+    fn test_typed_auth_caching_enabled_default_true() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.typed.core.auth.caching.enabled);
+    }
+
+    #[test]
+    fn test_typed_token_expire_seconds_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.auth_token_expire_seconds(), 18000);
+    }
+
+    #[test]
+    fn test_typed_token_secret_key_default_empty() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.token_secret_key(), "");
+    }
+
+    #[test]
+    fn test_typed_token_secret_key_override() {
+        let cfg = build_config(vec![
+            ("batata.core.auth.plugin.default.token.secret.key", "secret123".into()),
+        ]);
+        assert_eq!(cfg.token_secret_key(), "secret123");
+    }
+
+    #[test]
+    fn test_typed_server_identity_defaults_empty() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.server_identity_key(), "");
+        assert_eq!(cfg.server_identity_value(), "");
+    }
+
+    #[test]
+    fn test_typed_server_identity_overrides() {
+        let cfg = build_config(vec![
+            ("batata.core.auth.server.identity.key", "my-key".into()),
+            ("batata.core.auth.server.identity.value", "my-value".into()),
+        ]);
+        assert_eq!(cfg.server_identity_key(), "my-key");
+        assert_eq!(cfg.server_identity_value(), "my-value");
+    }
+
+    // ========================================================================
+    // Typed Config: LDAP
+    // ========================================================================
+
+    #[test]
+    fn test_typed_ldap_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.ldap_url().is_none());
+        assert_eq!(cfg.ldap_base_dn(), "");
+        assert_eq!(cfg.ldap_bind_dn(), "");
+        assert_eq!(cfg.ldap_bind_password(), "");
+        assert_eq!(cfg.ldap_user_dn_pattern(), "");
+        assert_eq!(cfg.ldap_filter_prefix(), "uid");
+        assert_eq!(cfg.ldap_timeout_ms(), 5000);
+        assert!(cfg.ldap_case_sensitive());
+        assert!(!cfg.ldap_ignore_partial_result_exception());
+    }
+
+    #[test]
+    fn test_typed_ldap_overrides() {
+        let cfg = build_config(vec![
+            ("batata.core.auth.ldap.url", "ldap://localhost:389".into()),
+            ("batata.core.auth.ldap.base_dc", "dc=example,dc=org".into()),
+            ("batata.core.auth.ldap.bind_dn", "cn=admin,dc=example,dc=org".into()),
+            ("batata.core.auth.ldap.filter.prefix", "cn".into()),
+            ("batata.core.auth.ldap.timeout", 10000_i64.into()),
+            ("batata.core.auth.ldap.case.sensitive", false.into()),
+            (
+                "batata.core.auth.ldap.ignore.partial.result.exception",
+                true.into(),
+            ),
+        ]);
+        assert_eq!(cfg.ldap_url(), Some("ldap://localhost:389".to_string()));
+        assert_eq!(cfg.ldap_base_dn(), "dc=example,dc=org");
+        assert_eq!(cfg.ldap_bind_dn(), "cn=admin,dc=example,dc=org");
+        assert_eq!(cfg.ldap_filter_prefix(), "cn");
+        assert_eq!(cfg.ldap_timeout_ms(), 10000);
+        assert!(!cfg.ldap_case_sensitive());
+        assert!(cfg.ldap_ignore_partial_result_exception());
+    }
+
+    // ========================================================================
+    // Typed Config: Auth Cache
+    // ========================================================================
+
+    #[test]
+    fn test_typed_auth_cache_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.auth_token_cache_capacity(), 50000);
+        assert_eq!(cfg.auth_token_cache_ttl_secs(), 60);
+        assert_eq!(cfg.auth_roles_cache_capacity(), 50000);
+        assert_eq!(cfg.auth_permissions_cache_capacity(), 20000);
+        assert_eq!(cfg.auth_blacklist_capacity(), 100000);
+        assert_eq!(cfg.auth_blacklist_ttl_secs(), 86400);
+        assert_eq!(cfg.grpc_auth_cache_capacity(), 10000);
+        assert_eq!(cfg.grpc_auth_cache_ttl_secs(), 60);
+    }
+
+    // ========================================================================
+    // Typed Config: OAuth
+    // ========================================================================
+
+    #[test]
+    fn test_typed_oauth_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.is_oauth_enabled());
+        assert_eq!(cfg.oauth_user_creation(), "auto");
+        assert_eq!(cfg.oauth_role_sync(), "on_login");
+        assert!(cfg.oauth_redirect_uri().is_none());
+        assert_eq!(cfg.oauth_discovery_cache_ttl_secs(), 3600);
+        assert_eq!(cfg.oauth_discovery_cache_capacity(), 100);
+        assert_eq!(cfg.oauth_state_cache_ttl_secs(), 600);
+        assert_eq!(cfg.oauth_state_cache_capacity(), 10000);
+        assert_eq!(cfg.oauth_http_timeout_secs(), 30);
+    }
+
+    // ========================================================================
+    // Typed Config: Plugin
+    // ========================================================================
+
+    #[test]
+    fn test_typed_control_plugin_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.control_plugin_enabled());
+        assert_eq!(cfg.control_plugin_default_tps(), 10000);
+        assert_eq!(cfg.control_plugin_max_connections(), 50000);
+    }
+
+    #[test]
+    fn test_typed_control_plugin_overrides() {
+        let cfg = build_config(vec![
+            ("batata.plugin.control.enabled", false.into()),
+            ("batata.plugin.control.default_tps", 5000_i64.into()),
+        ]);
+        assert!(!cfg.control_plugin_enabled());
+        assert_eq!(cfg.control_plugin_default_tps(), 5000);
+    }
+
+    #[test]
+    fn test_typed_consul_plugin_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.typed.plugin.consul.enabled);
+        assert_eq!(cfg.typed.plugin.consul.port, 8500);
+    }
+
+    #[test]
+    fn test_typed_apollo_plugin_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.typed.plugin.apollo.enabled);
+        assert_eq!(cfg.typed.plugin.apollo.port, 8080);
+    }
+
+    #[test]
+    fn test_typed_visibility_plugin_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.typed.plugin.visibility.enabled);
+        assert_eq!(cfg.typed.plugin.visibility.type_, "nacos");
+    }
+
+    #[test]
+    fn test_typed_webhook_timeout_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.webhook_default_timeout_secs(), 30);
+    }
+
+    // ========================================================================
+    // Typed Config: Encryption
+    // ========================================================================
+
+    #[test]
+    fn test_typed_encryption_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.encryption_enabled());
+        assert_eq!(cfg.encryption_plugin_type(), "aes-gcm");
+        assert!(cfg.encryption_key().is_none());
+        assert_eq!(cfg.encryption_reload_interval_ms(), 0);
+        assert!(!cfg.encryption_hot_reload_enabled());
+    }
+
+    #[test]
+    fn test_typed_encryption_overrides() {
+        let cfg = build_config(vec![
+            ("batata.config.encryption.enabled", true.into()),
+            ("batata.config.encryption.plugin.type", "aes-cbc".into()),
+            ("batata.config.encryption.key", "base64key".into()),
+            ("batata.config.encryption.reload.interval.ms", 5000_i64.into()),
+        ]);
+        assert!(cfg.encryption_enabled());
+        assert_eq!(cfg.encryption_plugin_type(), "aes-cbc");
+        assert_eq!(cfg.encryption_key(), Some("base64key".to_string()));
+        assert_eq!(cfg.encryption_reload_interval_ms(), 5000);
+        assert!(cfg.encryption_hot_reload_enabled());
+    }
+
+    // ========================================================================
+    // Typed Config: OpenTelemetry
+    // ========================================================================
+
+    #[test]
+    fn test_typed_otel_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.otel_enabled());
+        assert_eq!(cfg.otel_endpoint(), "http://localhost:4317");
+        assert_eq!(cfg.otel_service_name(), "batata");
+        assert_eq!(cfg.otel_sampling_ratio(), 1.0);
+        assert_eq!(cfg.otel_export_timeout_secs(), 10);
+    }
+
+    #[test]
+    fn test_typed_otel_overrides() {
+        let cfg = build_config(vec![
+            ("batata.otel.enabled", true.into()),
+            ("batata.otel.endpoint", "http://otel:4317".into()),
+            ("batata.otel.service_name", "my-service".into()),
+            ("batata.otel.sampling_ratio", 0.5_f64.into()),
+            ("batata.otel.export_timeout_secs", 30_i64.into()),
+        ]);
+        assert!(cfg.otel_enabled());
+        assert_eq!(cfg.otel_endpoint(), "http://otel:4317");
+        assert_eq!(cfg.otel_service_name(), "my-service");
+        assert_eq!(cfg.otel_sampling_ratio(), 0.5);
+        assert_eq!(cfg.otel_export_timeout_secs(), 30);
+    }
+
+    // ========================================================================
+    // Typed Config: Logging
+    // ========================================================================
+
+    #[test]
+    fn test_typed_log_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.log_dir().is_none());
+        assert!(cfg.log_console_enabled());
+        assert!(cfg.log_file_enabled());
+        assert_eq!(cfg.log_level(), "info");
+    }
+
+    #[test]
+    fn test_typed_log_overrides() {
+        let cfg = build_config(vec![
+            ("batata.logs.path", "/var/log/batata".into()),
+            ("batata.logs.console.enabled", false.into()),
+            ("batata.logs.level", "debug".into()),
+        ]);
+        assert_eq!(cfg.log_dir(), Some("/var/log/batata".to_string()));
+        assert!(!cfg.log_console_enabled());
+        assert_eq!(cfg.log_level(), "debug");
+    }
+
+    // ========================================================================
+    // Typed Config: xDS / Mesh
+    // ========================================================================
+
+    #[test]
+    fn test_typed_xds_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.xds_enabled());
+        assert_eq!(cfg.xds_server_port(), 15010);
+        assert_eq!(cfg.xds_server_id(), "batata-xds-server");
+        assert_eq!(cfg.xds_sync_interval_ms(), 5000);
+        assert!(cfg.xds_generate_listeners());
+        assert!(cfg.xds_generate_routes());
+        assert_eq!(cfg.xds_default_listener_port(), 15001);
+        assert!(!cfg.xds_tls_enabled());
+    }
+
+    #[test]
+    fn test_typed_xds_overrides() {
+        let cfg = build_config(vec![
+            ("batata.mesh.xds.enabled", true.into()),
+            ("batata.mesh.xds.port", 16010_i64.into()),
+            ("batata.mesh.xds.server.id", "custom-xds".into()),
+        ]);
+        assert!(cfg.xds_enabled());
+        assert_eq!(cfg.xds_server_port(), 16010);
+        assert_eq!(cfg.xds_server_id(), "custom-xds");
+    }
+
+    // ========================================================================
+    // Typed Config: MCP Registry
+    // ========================================================================
+
+    #[test]
+    fn test_typed_mcp_registry_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.mcp_registry_enabled());
+        assert_eq!(cfg.mcp_registry_port(), 9080);
+    }
+
+    #[test]
+    fn test_typed_mcp_registry_override() {
+        let cfg = build_config(vec![
+            ("batata.ai.mcp.registry.enabled", true.into()),
+            ("batata.ai.mcp.registry.port", 9081_i64.into()),
+        ]);
+        assert!(cfg.mcp_registry_enabled());
+        assert_eq!(cfg.mcp_registry_port(), 9081);
+    }
+
+    // ========================================================================
+    // Typed Config: Raft
+    // ========================================================================
+
+    #[test]
+    fn test_typed_raft_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.raft_election_timeout_ms(), 5000);
+        assert_eq!(cfg.raft_heartbeat_interval_ms(), 1000);
+        assert_eq!(cfg.raft_rpc_timeout_ms(), 5000);
+        assert_eq!(cfg.raft_snapshot_threshold(), 10000);
+        assert_eq!(cfg.raft_snapshot_transfer_timeout_ms(), 30000);
+        assert_eq!(cfg.raft_forward_max_retries(), 3);
+        assert_eq!(cfg.raft_forward_initial_delay_ms(), 200);
+        assert_eq!(cfg.raft_peer_connect_timeout_secs(), 30);
+        assert_eq!(cfg.raft_peer_connect_retry_interval_ms(), 500);
+    }
+
+    #[test]
+    fn test_typed_raft_grpc_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.raft_grpc_tcp_keepalive_secs(), 10);
+        assert!(cfg.raft_grpc_tcp_nodelay());
+        assert_eq!(cfg.raft_grpc_http2_keepalive_interval_secs(), 10);
+        assert_eq!(cfg.raft_grpc_http2_keepalive_timeout_secs(), 5);
+    }
+
+    #[test]
+    fn test_typed_raft_overrides() {
+        let cfg = build_config(vec![
+            ("batata.raft.election_timeout_ms", 10000_i64.into()),
+            ("batata.raft.heartbeat_interval_ms", 2000_i64.into()),
+        ]);
+        assert_eq!(cfg.raft_election_timeout_ms(), 10000);
+        assert_eq!(cfg.raft_heartbeat_interval_ms(), 2000);
+    }
+
+    // ========================================================================
+    // Typed Config: RocksDB
+    // ========================================================================
+
+    #[test]
+    fn test_typed_rocksdb_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.rocksdb_write_buffer_mb(), 128);
+        assert_eq!(cfg.rocksdb_max_write_buffers(), 4);
+        assert_eq!(cfg.rocksdb_max_background_jobs(), 4);
+        assert_eq!(cfg.rocksdb_block_cache_mb(), 256);
+        assert_eq!(cfg.rocksdb_bloom_filter_bits(), 10.0);
+        assert!(cfg.rocksdb_level_compaction_dynamic());
+        assert_eq!(cfg.rocksdb_bottommost_compression(), "zstd");
+        assert_eq!(cfg.rocksdb_compression(), "lz4");
+        assert!(!cfg.rocksdb_enable_statistics());
+        assert!(cfg.rocksdb_whole_key_filtering());
+        assert_eq!(cfg.rocksdb_data_block_hash_ratio(), 0.75);
+        assert!(!cfg.rocksdb_sm_sync());
+        assert!(!cfg.rocksdb_sm_disable_wal());
+        assert_eq!(cfg.rocksdb_history_write_buffer_mb(), 0);
+        assert!(!cfg.rocksdb_history_bloom_filter());
+    }
+
+    #[test]
+    fn test_typed_rocksdb_overrides() {
+        let cfg = build_config(vec![
+            ("batata.rocksdb.write_buffer_mb", 256_i64.into()),
+            ("batata.rocksdb.compression", "zstd".into()),
+            ("batata.rocksdb.enable_statistics", true.into()),
+        ]);
+        assert_eq!(cfg.rocksdb_write_buffer_mb(), 256);
+        assert_eq!(cfg.rocksdb_compression(), "zstd");
+        assert!(cfg.rocksdb_enable_statistics());
+    }
+
+    // ========================================================================
+    // Typed Config: Persistence / Embedded
+    // ========================================================================
+
+    #[test]
+    fn test_typed_persistence_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.embedded_data_dir(), "data");
+        assert_eq!(cfg.embedded_db_name(), "batata_rocksdb");
+        assert_eq!(cfg.embedded_rocksdb_dir(), "data/batata_rocksdb");
+    }
+
+    #[test]
+    fn test_typed_persistence_overrides() {
+        let cfg = build_config(vec![
+            ("batata.persistence.embedded.data_dir", "/var/data".into()),
+            ("batata.persistence.embedded.db_name", "custom_db".into()),
+        ]);
+        assert_eq!(cfg.embedded_data_dir(), "/var/data");
+        assert_eq!(cfg.embedded_db_name(), "custom_db");
+        assert_eq!(cfg.embedded_rocksdb_dir(), "/var/data/custom_db");
+    }
+
+    // ========================================================================
+    // Typed Config: Naming
+    // ========================================================================
+
+    #[test]
+    fn test_typed_naming_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.expire_instance_enabled());
+        assert!(!cfg.data_warmup());
+        assert_eq!(cfg.naming_heartbeat_check_interval_secs(), 5);
+        assert_eq!(cfg.naming_ttl_monitor_interval_secs(), 5);
+        assert_eq!(cfg.naming_deregister_monitor_interval_secs(), 10);
+    }
+
+    #[test]
+    fn test_typed_naming_overrides() {
+        let cfg = build_config(vec![
+            ("batata.naming.expire_instance", false.into()),
+            ("batata.naming.data.warmup", true.into()),
+            ("batata.naming.healthcheck.heartbeat_interval_secs", 10_i64.into()),
+        ]);
+        assert!(!cfg.expire_instance_enabled());
+        assert!(cfg.data_warmup());
+        assert_eq!(cfg.naming_heartbeat_check_interval_secs(), 10);
+    }
+
+    // ========================================================================
+    // Typed Config: Config Module
+    // ========================================================================
+
+    #[test]
+    fn test_typed_config_retention_days_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.config_rentention_days(), 30);
+    }
+
+    #[test]
+    fn test_typed_config_gray_max_count_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.config_gray_max_version_count(), 10);
+    }
+
+    #[test]
+    fn test_typed_config_read_cache_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.config_read_cache_ttl_secs(), 0);
+        assert_eq!(cfg.config_read_cache_max_entries(), 10000);
+    }
+
+    // ========================================================================
+    // Typed Config: Metrics
+    // ========================================================================
+
+    #[test]
+    fn test_typed_metrics_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.metrics_system_stats_enabled());
+        assert_eq!(cfg.metrics_system_stats_interval_secs(), 15);
+    }
+
+    // ========================================================================
+    // Typed Config: gRPC TLS
+    // ========================================================================
+
+    #[test]
+    fn test_typed_grpc_tls_defaults() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.grpc_sdk_tls_enabled());
+        assert!(!cfg.grpc_cluster_tls_enabled());
+        assert!(cfg.grpc_tls_cert_path().is_none());
+        assert!(cfg.grpc_tls_key_path().is_none());
+        assert!(cfg.grpc_tls_ca_cert_path().is_none());
+        assert!(!cfg.grpc_mtls_enabled());
+    }
+
+    #[test]
+    fn test_typed_grpc_tls_overrides() {
+        let cfg = build_config(vec![
+            ("batata.remote.server.grpc.sdk.tls.enabled", true.into()),
+            ("batata.remote.server.grpc.tls.cert.path", "/certs/server.crt".into()),
+            ("batata.remote.server.grpc.tls.key.path", "/certs/server.key".into()),
+            ("batata.remote.server.grpc.tls.mtls.enabled", true.into()),
+        ]);
+        assert!(cfg.grpc_sdk_tls_enabled());
+        assert_eq!(cfg.grpc_tls_cert_path(), Some("/certs/server.crt".to_string()));
+        assert_eq!(cfg.grpc_tls_key_path(), Some("/certs/server.key".to_string()));
+        assert!(cfg.grpc_mtls_enabled());
+    }
+
+    // ========================================================================
+    // Typed Config: HTTP Access Log
+    // ========================================================================
+
+    #[test]
+    fn test_typed_http_access_log_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.http_access_log_enabled());
+    }
+
+    #[test]
+    fn test_typed_http_access_log_disabled() {
+        let cfg = build_config(vec![("batata.server.http.access_log.enabled", false.into())]);
+        assert!(!cfg.http_access_log_enabled());
+    }
+
+    // ========================================================================
+    // Typed Config: gRPC Advanced Tuning
+    // ========================================================================
+
+    #[test]
+    fn test_typed_grpc_advanced_defaults() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.grpc_initial_connection_window_size(), 1_048_576);
+        assert_eq!(cfg.grpc_initial_stream_window_size(), 524_288);
+        assert_eq!(cfg.grpc_max_frame_size(), 16_384);
+        assert_eq!(cfg.notify_subscriber_timeout_ms(), 0);
+    }
+
+    // ========================================================================
+    // Typed Config: Deeply Nested Paths
+    // ========================================================================
+
+    #[test]
+    fn test_typed_deeply_nested_ldap_ignore() {
+        // Test the deeply nested path:
+        // batata.core.auth.ldap.ignore.partial.result.exception
+        let cfg = build_config(vec![
+            (
+                "batata.core.auth.ldap.ignore.partial.result.exception",
+                true.into(),
+            ),
+        ]);
+        assert!(cfg.ldap_ignore_partial_result_exception());
+    }
+
+    #[test]
+    fn test_typed_deeply_nested_token_cache() {
+        // Test: batata.core.auth.plugin.default.token.cache.enable
+        let cfg = build_config(vec![
+            ("batata.core.auth.plugin.default.token.cache.enable", true.into()),
+        ]);
+        assert!(cfg.typed.core.auth.plugin.default.token.cache.enable);
+    }
+
+    #[test]
+    fn test_typed_deeply_nested_anonymous_ai() {
+        // Test: batata.core.auth.default.anonymous.ai.enabled
+        let cfg = build_config(vec![
+            ("batata.core.auth.default.anonymous.ai.enabled", true.into()),
+        ]);
+        assert!(cfg.typed.core.auth.default.anonymous.ai.enabled);
+    }
+
+    // ========================================================================
+    // Typed Config: Compatibility with YAML file loading
+    // ========================================================================
+
+    #[test]
+    fn test_typed_yaml_file_loading() {
+        // Test that typed config works when loading from a YAML file
+        // (not just from overrides)
+        let yaml_content = r#"
+batata.server.main.port: 9999
+batata.standalone: false
+batata.core.auth.enabled: true
+batata.core.auth.system.type: ldap
+batata.console.port: 7777
+batata.db.pool.max_connections: 42
+"#;
+        let config = Config::builder()
+            .add_source(config::File::from_str(yaml_content, config::FileFormat::Yaml))
+            .build()
+            .unwrap();
+        let typed: typed_config::BatataTypedConfig =
+            config.get("batata").unwrap_or_default();
+
+        assert_eq!(typed.server.main.port, 9999);
+        assert!(!typed.standalone);
+        assert!(typed.core.auth.enabled);
+        assert_eq!(typed.core.auth.system.type_, "ldap");
+        assert_eq!(typed.console.port, 7777);
+        assert_eq!(typed.db.pool.max_connections, 42);
+    }
+
+    #[test]
+    fn test_typed_partial_yaml_loading() {
+        // Test that partial YAML (missing keys) uses defaults
+        let yaml_content = r#"
+batata.server.main.port: 8888
+"#;
+        let config = Config::builder()
+            .add_source(config::File::from_str(yaml_content, config::FileFormat::Yaml))
+            .build()
+            .unwrap();
+        let typed: typed_config::BatataTypedConfig =
+            config.get("batata").unwrap_or_default();
+
+        // Set value
+        assert_eq!(typed.server.main.port, 8888);
+        // Default values for missing keys
+        assert_eq!(typed.server.context_path, "nacos");
+        assert!(!typed.standalone);
+        assert_eq!(typed.deployment.type_, "merged");
+        assert_eq!(typed.console.port, 8081);
+    }
+
+    // ========================================================================
+    // Typed Config: Environment variable override simulation
+    // ========================================================================
+
+    #[test]
+    fn test_typed_env_var_override_simulation() {
+        // Simulate env var override: BATATA_SERVER_MAIN_PORT=9999
+        // which maps to batata.server.main.port=9999
+        let config = Config::builder()
+            .set_override("batata.server.main.port", 9999_i64)
+            .unwrap()
+            .set_override("batata.core.auth.enabled", true)
+            .unwrap()
+            .build()
+            .unwrap();
+        let typed: typed_config::BatataTypedConfig =
+            config.get("batata").unwrap_or_default();
+
+        assert_eq!(typed.server.main.port, 9999);
+        assert!(typed.core.auth.enabled);
+    }
+
+    // ========================================================================
+    // Typed Config: All defaults via empty config
+    // ========================================================================
+
+    #[test]
+    fn test_typed_all_defaults_from_empty_config() {
+        // Build a config with no batata keys at all
+        let config = Config::builder().build().unwrap();
+        let typed: typed_config::BatataTypedConfig =
+            config.get("batata").unwrap_or_default();
+
+        // Server
+        assert_eq!(typed.server.main.port, 8849);
+        assert_eq!(typed.server.context_path, "nacos");
+        assert_eq!(typed.server.address, "0.0.0.0");
+        // Console
+        assert_eq!(typed.console.port, 8081);
+        assert_eq!(typed.console.context_path, "");
+        assert!(typed.console.ui.enabled);
+        // DB
+        assert_eq!(typed.db.pool.max_connections, 200);
+        assert!(typed.db.migration.enabled);
+        // Auth
+        assert!(!typed.core.auth.enabled);
+        assert!(!typed.core.auth.admin.enabled);
+        assert!(typed.core.auth.console.enabled);
+        assert_eq!(typed.core.auth.system.type_, "default");
+        // RateLimit
+        assert!(!typed.ratelimit.enabled);
+        assert_eq!(typed.ratelimit.max_requests, 100);
+        // Plugin
+        assert!(typed.plugin.control.enabled);
+        assert!(typed.plugin.consul.enabled);
+        assert!(typed.plugin.apollo.enabled);
+        assert!(typed.plugin.visibility.enabled);
+        // Otel
+        assert!(!typed.otel.enabled);
+        assert_eq!(typed.otel.service_name, "batata");
+        // Logs
+        assert!(typed.logs.console.enabled);
+        assert_eq!(typed.logs.level, "info");
+        // RocksDB
+        assert_eq!(typed.rocksdb.write_buffer_mb, 128);
+        assert_eq!(typed.rocksdb.compression, "lz4");
+    }
+
+    // ========================================================================
+    // Server Address (typed config)
+    // ========================================================================
+
+    #[test]
+    fn test_server_address_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.server_address(), "0.0.0.0");
+    }
+
+    #[test]
+    fn test_server_address_override() {
+        let cfg = build_config(vec![("batata.server.address", "192.168.1.1".into())]);
+        assert_eq!(cfg.server_address(), "192.168.1.1");
+    }
+
+    // ========================================================================
+    // Derived port methods
+    // ========================================================================
+
+    #[test]
+    fn test_sdk_server_port() {
+        let cfg = build_config(vec![("batata.server.main.port", 8848_i64.into())]);
+        assert_eq!(cfg.sdk_server_port(), 8848 + SDK_GRPC_PORT_DEFAULT_OFFSET);
+    }
+
+    #[test]
+    fn test_cluster_server_port() {
+        let cfg = build_config(vec![("batata.server.main.port", 8848_i64.into())]);
+        assert_eq!(
+            cfg.cluster_server_port(),
+            8848 + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
+        );
+    }
+
+    #[test]
+    fn test_raft_port() {
+        let cfg = build_config(vec![("batata.server.main.port", 8848_i64.into())]);
+        assert_eq!(
+            cfg.raft_port(),
+            8848 - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
+        );
+    }
+
+    // ========================================================================
+    // Startup mode and version
+    // ========================================================================
+
+    #[test]
+    fn test_startup_mode_standalone() {
+        let cfg = build_config(vec![("batata.standalone", true.into())]);
+        assert_eq!(cfg.startup_mode(), "standalone");
+    }
+
+    #[test]
+    fn test_startup_mode_cluster() {
+        let cfg = build_config(vec![("batata.standalone", false.into())]);
+        assert_eq!(cfg.startup_mode(), "cluster");
+    }
+
+    #[test]
+    fn test_version_matches_cargo() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.version(), env!("CARGO_PKG_VERSION"));
+        assert_eq!(cfg.batata_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_compat_version_default_empty() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.compat_version(), "");
+    }
+
+    #[test]
+    fn test_compat_version_override() {
+        let cfg = build_config(vec![("nacos.version", "3.2.3".into())]);
+        assert_eq!(cfg.compat_version(), "3.2.3");
+    }
+
+    // ========================================================================
+    // Storage backend and deploy topology (derived)
+    // ========================================================================
+
+    #[test]
+    fn test_storage_backend_mysql() {
+        let cfg = build_config(vec![("batata.sql.init.platform", "mysql".into())]);
+        assert_eq!(cfg.storage_backend(), batata_persistence::StorageBackend::ExternalDb);
+    }
+
+    #[test]
+    fn test_storage_backend_postgresql() {
+        let cfg = build_config(vec![("batata.sql.init.platform", "postgresql".into())]);
+        assert_eq!(cfg.storage_backend(), batata_persistence::StorageBackend::ExternalDb);
+    }
+
+    #[test]
+    fn test_storage_backend_embedded() {
+        let cfg = build_config(vec![("batata.sql.init.platform", "".into())]);
+        assert_eq!(cfg.storage_backend(), batata_persistence::StorageBackend::Embedded);
+    }
+
+    #[test]
+    fn test_deploy_topology_standalone() {
+        let cfg = build_config(vec![("batata.standalone", true.into())]);
+        assert_eq!(cfg.deploy_topology(), batata_persistence::DeployTopology::Standalone);
+    }
+
+    #[test]
+    fn test_deploy_topology_cluster() {
+        let cfg = build_config(vec![("batata.standalone", false.into())]);
+        assert_eq!(cfg.deploy_topology(), batata_persistence::DeployTopology::Cluster);
+    }
+
+    // ========================================================================
+    // Shutdown timeouts (override tests; defaults in test_typed_shutdown_timeouts_default)
+    // ========================================================================
+
+    #[test]
+    fn test_shutdown_drain_timeout_override() {
+        let cfg = build_config(vec![("batata.server.shutdown.drain_timeout", 60_i64.into())]);
+        assert_eq!(cfg.shutdown_drain_timeout_secs(), 60);
+    }
+
+    #[test]
+    fn test_shutdown_db_close_timeout_override() {
+        let cfg = build_config(vec![("batata.server.shutdown.db_close_timeout", 30_i64.into())]);
+        assert_eq!(cfg.shutdown_db_close_timeout_secs(), 30);
+    }
+
+    // ========================================================================
+    // Datasource log (unique; platform tests in test_typed_datasource_platform_*)
+    // ========================================================================
+
+    #[test]
+    fn test_plugin_datasource_log_default() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.plugin_datasource_log());
+    }
+
+    #[test]
+    fn test_plugin_datasource_log_enabled() {
+        let cfg = build_config(vec![("batata.plugin.datasource.log.enabled", true.into())]);
+        assert!(cfg.plugin_datasource_log());
+    }
+
+    // ========================================================================
+    // DB URL (typed config, Option<String>)
+    // ========================================================================
+
+    #[test]
+    fn test_typed_db_url_default_none() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.typed.db.url.is_none());
+    }
+
+    #[test]
+    fn test_typed_db_url_override() {
+        let cfg = build_config(vec![(
+            "batata.db.url",
+            "mysql://user:pass@localhost:3306/batata".into(),
+        )]);
+        assert_eq!(
+            cfg.typed.db.url.as_deref(),
+            Some("mysql://user:pass@localhost:3306/batata")
+        );
+    }
+
+    // ========================================================================
+    // ========================================================================
+    // Typed config vs accessor consistency (override values)
+    // ========================================================================
+
+    #[test]
+    fn test_consistency_server_port() {
+        let cfg = build_config(vec![("batata.server.main.port", 9090_i64.into())]);
+        assert_eq!(cfg.typed.server.main.port, 9090);
+        assert_eq!(cfg.server_main_port(), 9090);
+    }
+
+    #[test]
+    fn test_consistency_server_context_path() {
+        let cfg = build_config(vec![("batata.server.context_path", "/custom".into())]);
+        assert_eq!(cfg.typed.server.context_path, "/custom");
+        assert_eq!(cfg.server_context_path(), "/custom");
+    }
+
+    #[test]
+    fn test_consistency_auth_enabled() {
+        let cfg = build_config(vec![("batata.core.auth.enabled", true.into())]);
+        assert!(cfg.typed.core.auth.enabled);
+        assert!(cfg.auth_enabled());
+    }
+
+    #[test]
+    fn test_consistency_console_port() {
+        let cfg = build_config(vec![("batata.console.port", 3000_i64.into())]);
+        assert_eq!(cfg.typed.console.port, 3000);
+        assert_eq!(cfg.console_server_port(), 3000);
+    }
+
+    #[test]
+    fn test_consistency_standalone() {
+        let cfg = build_config(vec![("batata.standalone", true.into())]);
+        assert!(cfg.typed.standalone);
+        assert!(cfg.is_standalone());
+    }
+
+    #[test]
+    fn test_consistency_deployment_type() {
+        let cfg = build_config(vec![("batata.deployment.type", "console".into())]);
+        assert_eq!(cfg.typed.deployment.type_, "console");
+        assert_eq!(cfg.deployment_type(), "console");
+    }
+
+    #[test]
+    fn test_consistency_auth_system_type() {
+        let cfg = build_config(vec![("batata.core.auth.system.type", "ldap".into())]);
+        assert_eq!(cfg.typed.core.auth.system.type_, "ldap");
+        assert_eq!(cfg.auth_system_type(), "ldap");
+    }
+
+    #[test]
+    fn test_consistency_token_expire_seconds() {
+        let cfg = build_config(vec![
+            ("batata.core.auth.plugin.default.token.expire.seconds", 3600_i64.into()),
+        ]);
+        assert_eq!(
+            cfg.typed.core.auth.plugin.default.token.expire.seconds,
+            3600
+        );
+        assert_eq!(cfg.auth_token_expire_seconds(), 3600);
+    }
+
+    #[test]
+    fn test_consistency_db_pool_max_connections() {
+        let cfg = build_config(vec![("batata.db.pool.max_connections", 50_i64.into())]);
+        assert_eq!(cfg.typed.db.pool.max_connections, 50);
+    }
+
+    #[test]
+    fn test_consistency_ratelimit_enabled() {
+        let cfg = build_config(vec![("batata.ratelimit.enabled", true.into())]);
+        assert!(cfg.typed.ratelimit.enabled);
+        assert!(cfg.ratelimit_enabled());
+    }
+
+    #[test]
+    fn test_consistency_encryption_enabled() {
+        let cfg = build_config(vec![("batata.config.encryption.enabled", true.into())]);
+        assert!(cfg.typed.config.encryption.enabled);
+        assert!(cfg.encryption_enabled());
+    }
+
+    #[test]
+    fn test_consistency_otel_enabled() {
+        let cfg = build_config(vec![("batata.otel.enabled", true.into())]);
+        assert!(cfg.typed.otel.enabled);
+        assert!(cfg.otel_enabled());
+    }
+
+    #[test]
+    fn test_consistency_log_level() {
+        let cfg = build_config(vec![("batata.logs.level", "debug".into())]);
+        assert_eq!(cfg.typed.logs.level, "debug");
+        assert_eq!(cfg.log_level(), "debug");
+    }
+
+    #[test]
+    fn test_consistency_xds_enabled() {
+        let cfg = build_config(vec![("batata.mesh.xds.enabled", true.into())]);
+        assert!(cfg.typed.mesh.xds.enabled);
+        assert!(cfg.xds_enabled());
+    }
+
+    #[test]
+    fn test_consistency_server_address() {
+        let cfg = build_config(vec![("batata.server.address", "10.0.0.1".into())]);
+        assert_eq!(cfg.typed.server.address, "10.0.0.1");
+        assert_eq!(cfg.server_address(), "10.0.0.1");
+    }
+
+    // ========================================================================
+    // Default value consistency: all defaults from empty config
+    // ========================================================================
+
+    #[test]
+    fn test_default_consistency_all_empty_config() {
+        let cfg = build_config(vec![]);
+
+        // Server
+        assert_eq!(cfg.server_main_port(), 8849); // typed default
+        assert_eq!(cfg.server_address(), "0.0.0.0");
+        assert_eq!(cfg.server_context_path(), "nacos");
+
+        // Console
+        assert_eq!(cfg.console_server_port(), 8081);
+        assert_eq!(cfg.console_server_context_path(), "");
+        assert!(cfg.console_ui_enabled());
+
+        // Auth
+        assert!(!cfg.auth_enabled());
+        assert!(!cfg.auth_admin_enabled());
+        assert!(cfg.auth_console_enabled());
+        assert_eq!(cfg.auth_system_type(), "default");
+
+        // DB pool
+        assert_eq!(cfg.typed.db.pool.max_connections, 200);
+        assert_eq!(cfg.typed.db.pool.min_connections, 5);
+
+        // RateLimit
+        assert!(!cfg.ratelimit_enabled());
+        assert_eq!(cfg.ratelimit_max_requests(), 100);
+
+        // Otel
+        assert!(!cfg.otel_enabled());
+        assert_eq!(cfg.otel_service_name(), "batata");
+
+        // Logs
+        assert!(cfg.log_console_enabled());
+        assert_eq!(cfg.log_level(), "info");
+
+        // Capacity & Health (now typed config, default values)
+        assert_eq!(cfg.notify_connect_timeout(), 100);
+        assert_eq!(cfg.notify_socket_timeout(), 200);
+        assert!(cfg.is_health_check());
+        assert_eq!(cfg.max_health_check_fail_count(), 12);
+        assert_eq!(cfg.max_content(), 10 * 1024 * 1024);
+        assert!(cfg.is_manage_capacity());
+        assert!(!cfg.is_capacity_limit_check());
+        assert_eq!(cfg.default_cluster_quota(), 100_000);
+        assert_eq!(cfg.default_group_quota(), 200);
+        assert_eq!(cfg.default_max_size(), 100 * 1024);
+        assert_eq!(cfg.default_max_aggr_count(), 10_000);
+        assert_eq!(cfg.default_max_aggr_size(), 1024);
+        assert_eq!(cfg.config_rentention_days(), 30);
+    }
+
+    // ========================================================================
+    // Behavior consistency: typed config vs accessor for config.* keys
+    // ========================================================================
+
+    #[test]
+    fn test_consistency_notify_connect_timeout() {
+        let cfg = build_config(vec![("batata.config.notify.connect_timeout", 300_i64.into())]);
+        assert_eq!(cfg.typed.config.notify.connect_timeout, 300);
+        assert_eq!(cfg.notify_connect_timeout(), 300);
+    }
+
+    #[test]
+    fn test_consistency_notify_socket_timeout() {
+        let cfg = build_config(vec![("batata.config.notify.socket_timeout", 600_i64.into())]);
+        assert_eq!(cfg.typed.config.notify.socket_timeout, 600);
+        assert_eq!(cfg.notify_socket_timeout(), 600);
+    }
+
+    #[test]
+    fn test_consistency_is_health_check() {
+        let cfg = build_config(vec![("batata.config.health_check.enabled", false.into())]);
+        assert!(!cfg.typed.config.health_check.enabled);
+        assert!(!cfg.is_health_check());
+    }
+
+    #[test]
+    fn test_consistency_max_health_check_fail_count() {
+        let cfg = build_config(vec![("batata.config.health_check.max_fail_count", 24_i64.into())]);
+        assert_eq!(cfg.typed.config.health_check.max_fail_count, 24);
+        assert_eq!(cfg.max_health_check_fail_count(), 24);
+    }
+
+    #[test]
+    fn test_consistency_max_content() {
+        let cfg = build_config(vec![("batata.config.max_content", 999_i64.into())]);
+        assert_eq!(cfg.typed.config.max_content, 999);
+        assert_eq!(cfg.max_content(), 999);
+    }
+
+    #[test]
+    fn test_consistency_manage_capacity() {
+        let cfg = build_config(vec![("batata.config.capacity.manage_enabled", false.into())]);
+        assert!(!cfg.typed.config.capacity.manage_enabled);
+        assert!(!cfg.is_manage_capacity());
+    }
+
+    #[test]
+    fn test_consistency_capacity_limit_check() {
+        let cfg = build_config(vec![("batata.config.capacity.limit_check", true.into())]);
+        assert!(cfg.typed.config.capacity.limit_check);
+        assert!(cfg.is_capacity_limit_check());
+    }
+
+    #[test]
+    fn test_consistency_default_cluster_quota() {
+        let cfg = build_config(vec![("batata.config.capacity.default_cluster_quota", 42_i64.into())]);
+        assert_eq!(cfg.typed.config.capacity.default_cluster_quota, 42);
+        assert_eq!(cfg.default_cluster_quota(), 42);
+    }
+
+    #[test]
+    fn test_consistency_default_group_quota() {
+        let cfg = build_config(vec![("batata.config.capacity.default_group_quota", 500_i64.into())]);
+        assert_eq!(cfg.typed.config.capacity.default_group_quota, 500);
+        assert_eq!(cfg.default_group_quota(), 500);
+    }
+
+    #[test]
+    fn test_consistency_default_max_size() {
+        let cfg = build_config(vec![("batata.config.capacity.default_max_size", 200_000_i64.into())]);
+        assert_eq!(cfg.typed.config.capacity.default_max_size, 200_000);
+        assert_eq!(cfg.default_max_size(), 200_000);
+    }
+
+    #[test]
+    fn test_consistency_default_max_aggr_count() {
+        let cfg = build_config(vec![("batata.config.capacity.default_max_aggr_count", 5_000_i64.into())]);
+        assert_eq!(cfg.typed.config.capacity.default_max_aggr_count, 5_000);
+        assert_eq!(cfg.default_max_aggr_count(), 5_000);
+    }
+
+    #[test]
+    fn test_consistency_default_max_aggr_size() {
+        let cfg = build_config(vec![("batata.config.capacity.default_max_aggr_size", 2048_i64.into())]);
+        assert_eq!(cfg.typed.config.capacity.default_max_aggr_size, 2048);
+        assert_eq!(cfg.default_max_aggr_size(), 2048);
+    }
+
+    #[test]
+    fn test_consistency_config_retention_days() {
+        let cfg = build_config(vec![("batata.config.retention.days", 90_i64.into())]);
+        assert_eq!(cfg.typed.config.retention.days, 90);
+        assert_eq!(cfg.config_rentention_days(), 90);
     }
 }

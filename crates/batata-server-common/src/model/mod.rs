@@ -10,6 +10,7 @@ pub mod constants;
 pub mod response;
 pub mod server_status;
 pub mod tls;
+pub mod typed_config;
 
 // Re-export commonly used types at the module level
 pub use app_state::AppState;

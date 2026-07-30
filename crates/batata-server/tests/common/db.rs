@@ -5,6 +5,8 @@
 use sea_orm::{Database, DatabaseConnection, DbErr};
 use std::env;
 
+use batata_migration::{Migrator, MigratorTrait};
+
 /// Configuration for test database
 #[derive(Clone, Debug)]
 pub struct TestDatabaseConfig {
@@ -134,50 +136,11 @@ impl TestDatabase {
         self.config.url.starts_with("postgres://")
     }
 
-    /// Run database migrations (execute schema SQL)
+    /// Run database migrations via SeaORM Migrator (same as production)
     pub async fn run_migrations(&self) -> Result<(), TestDatabaseError> {
-        // Load schema based on database type
-        let schemas: Vec<&str> = if self.is_mysql() {
-            vec![include_str!("../../../../conf/mysql-schema.sql")]
-        } else if self.is_postgres() {
-            vec![include_str!("../../../../conf/postgresql-schema.sql")]
-        } else {
-            return Err(TestDatabaseError::UnsupportedDatabase);
-        };
-
-        let schema_sql = schemas.join(";\n");
-
-        // Split by semicolon and execute each statement
-        for statement in schema_sql.split(';') {
-            let statement = statement.trim();
-            if statement.is_empty() || statement.starts_with("--") || statement.starts_with("/*") {
-                continue;
-            }
-
-            // Skip DROP statements in tests to avoid accidental data loss
-            if statement.to_uppercase().starts_with("DROP") {
-                continue;
-            }
-
-            // Use CREATE TABLE IF NOT EXISTS for safety
-            let safe_statement = if statement.to_uppercase().contains("CREATE TABLE")
-                && !statement.to_uppercase().contains("IF NOT EXISTS")
-            {
-                statement.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
-            } else {
-                statement.to_string()
-            };
-
-            if !safe_statement.is_empty() {
-                use sea_orm::{ConnectionTrait, Statement};
-                let db_backend = self.connection.get_database_backend();
-                self.connection
-                    .execute_raw(Statement::from_string(db_backend, safe_statement))
-                    .await
-                    .map_err(|e| TestDatabaseError::MigrationFailed(e.to_string()))?;
-            }
-        }
-
+        Migrator::up(&self.connection, None)
+            .await
+            .map_err(|e| TestDatabaseError::MigrationFailed(e.to_string()))?;
         Ok(())
     }
 

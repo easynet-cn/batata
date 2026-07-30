@@ -13,6 +13,7 @@ publish = false
 batata-client = { workspace = true }
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-migration = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

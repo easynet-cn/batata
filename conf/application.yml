@@ -6,6 +6,15 @@
 #   - BATATA_* environment variables (e.g., BATATA_SERVER_MAIN_PORT=9090)
 #   - CLI property overrides (e.g., --batata.server.main.port=9090)
 #
+# Configuration mapping: nacos.* keys map to batata.* keys.
+# Notable differences:
+#   nacos.core.auth.system.type=nacos     ->  batata.core.auth.system.type=default
+#   nacos.core.auth.plugin.nacos.*        ->  batata.core.auth.plugin.default.*
+#   nacos.core.auth.plugin.oidc.*         ->  batata.core.auth.oauth.*
+#   nacos.core.auth.ldap.basedc           ->  batata.core.auth.ldap.base_dc
+#   nacos.core.auth.ldap.userDn           ->  batata.core.auth.ldap.bind_dn
+#   nacos.core.auth.ldap.userdn           ->  batata.core.auth.ldap.user_dn_pattern
+#
 
 # =============================================================================
 # Server
@@ -27,6 +36,13 @@ batata.standalone: true
 # - serverWithMcp:    Main Server + MCP Registry (9080)
 #batata.deployment.type: merged
 
+# --- Network Configuration ---
+# If prefer hostname over ip for server addresses in cluster.conf
+#batata.inetutils.prefer_hostname_over_ip: false
+
+# Specify local server's IP address
+#batata.inetutils.ip_address:
+
 # =============================================================================
 # Console
 # =============================================================================
@@ -40,10 +56,44 @@ batata.console.context_path:
 # Enable/disable console UI
 #batata.console.ui.enabled: true
 
+# Default console UI version: 'next' (new UI) or 'legacy' (old UI)
+# Not yet implemented
+#batata.console.ui.default: next
+
+# --- Console Upload & Encoding ---
+# Maximum upload file size for console (e.g. skill zip). Default 10MB.
+#batata.console.upload.max_file_size: 10MB
+#batata.console.upload.max_request_size: 10MB
+
+# Console encoding
+#batata.console.encoding.enabled: true
+#batata.console.encoding.force: true
+#batata.console.encoding.charset: UTF-8
+
+# --- Console CORS (Cross-Origin Resource Sharing) ---
+# Whether to allow credentials (cookies, authorization headers, TLS client certificates)
+#batata.console.cors.allow_credentials: true
+
+# Allowed headers, comma separated. Empty means allow all headers (*)
+#batata.console.cors.allowed_headers:
+
+# Maximum age (in seconds) of the CORS preflight request cache
+#batata.console.cors.max_age: 18000
+
+# Allowed HTTP methods, comma separated. Empty means allow all methods (*)
+#batata.console.cors.allowed_methods:
+
+# Allowed origins, comma separated. Empty means allow all origin patterns (*)
+# Example: http://localhost:8080,https://example.com
+#batata.console.cors.allowed_origins:
+
 # --- Console Remote Mode (used when deployment type is `console`) ---
 
 # Remote server address (fallback if batata.member.list and cluster.conf are not configured)
 #batata.console.remote.server_addr: http://127.0.0.1:8848
+
+# Remote server context path (links to server's context_path)
+#batata.console.remote.server_context_path: /nacos
 
 # Remote data auto-refresh settings
 #batata.console.remote.refresh_interval_secs: 30     # polling interval for cluster info
@@ -58,9 +108,9 @@ batata.console.context_path:
 # =============================================================================
 
 # Storage mode is auto-derived:
-#   platform = "mysql"/"postgresql"       → External DB (requires batata.db.url)
-#   platform = empty + standalone=true    → Embedded RocksDB (single node)
-#   platform = empty + standalone=false   → Distributed Raft + RocksDB (cluster)
+#   platform = "mysql"/"postgresql"       -> External DB (requires batata.db.url)
+#   platform = empty + standalone=true    -> Embedded RocksDB (single node)
+#   platform = empty + standalone=false   -> Distributed Raft + RocksDB (cluster)
 batata.sql.init.platform: mysql
 
 # Database connection URL
@@ -81,6 +131,9 @@ batata.db.pool.sqlx_logging: false
 # Auto-run database migrations on startup (only for external DB mode)
 batata.db.migration.enabled: true
 
+# Enable datasource SQL logging
+#batata.plugin.datasource.log.enabled: true
+
 # Base data directory (for embedded modes only)
 #batata.persistence.embedded.data_dir: data
 # RocksDB database name (subdirectory under data_dir, default: batata_rocksdb)
@@ -91,6 +144,7 @@ batata.db.migration.enabled: true
 # =============================================================================
 
 # Auth system type: default, ldap, or oauth
+# (nacos.core.auth.system.type=nacos maps to batata.core.auth.system.type=default)
 batata.core.auth.system.type: default
 
 # Enable auth for each API surface
@@ -98,15 +152,26 @@ batata.core.auth.enabled: true
 batata.core.auth.admin.enabled: true
 batata.core.auth.console.enabled: true
 
+# Turn on/off caching of auth information.
+# By turning on this switch, the update of auth information would have a 15 seconds delay.
+batata.core.auth.caching.enabled: true
+
 # Server identity for trusted server-to-server communication
 # Used by InnerApi auth bypass and Console remote mode
 batata.core.auth.server.identity.key: default-server-key
 batata.core.auth.server.identity.value: default-server-value
 
-# JWT token configuration
+# JWT token configuration (default auth plugin)
+# (nacos.core.auth.plugin.nacos.* maps to batata.core.auth.plugin.default.*)
 batata.core.auth.plugin.default.token.expire.seconds: 18000
 # Secret key (Base64-encoded). Generate with: openssl rand -base64 32
 batata.core.auth.plugin.default.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
+# Enable token parse and validation cache
+#batata.core.auth.plugin.default.token.cache.enable: false
+
+# Allow anonymous read access, default false.
+# Current only ai (skill, agentspec) supported.
+#batata.core.auth.default.anonymous.ai.enabled: false
 
 # --- LDAP Configuration (when batata.core.auth.system.type=ldap) ---
 #batata.core.auth.ldap.url: ldap://localhost:389
@@ -118,10 +183,66 @@ batata.core.auth.plugin.default.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OW
 #batata.core.auth.ldap.case.sensitive: true
 #batata.core.auth.ldap.ignore.partial.result.exception: false
 
-# --- OAuth2/OIDC Configuration ---
+# --- OAuth2/OIDC Configuration (when batata.core.auth.system.type=oauth) ---
+# (nacos.core.auth.plugin.oidc.* maps to batata.core.auth.oauth.*)
 #batata.core.auth.oauth.enabled: false
-#batata.core.auth.oauth.user.creation: auto
-#batata.core.auth.oauth.role.sync: on_login
+
+# OIDC issuer URI (for auto-discovery)
+#batata.core.auth.oauth.issuer_uri:
+
+# OIDC client ID
+#batata.core.auth.oauth.client_id:
+
+# OIDC client secret
+#batata.core.auth.oauth.client_secret:
+
+# OIDC scopes
+#batata.core.auth.oauth.scope: openid
+
+# Token validation method: jwt or introspection (not yet implemented)
+#batata.core.auth.oauth.token_validation_method:
+
+# JWKS cache TTL in seconds (not yet implemented)
+#batata.core.auth.oauth.jwks_cache_ttl_secs:
+
+# Username claim in ID token
+#batata.core.auth.oauth.username_claim: sub
+
+# Roles claim in ID token
+#batata.core.auth.oauth.roles_claim:
+
+# Admin role name in OIDC claims
+#batata.core.auth.oauth.admin_role:
+
+# Auto create user on first login
+#batata.core.auth.oauth.auto_create_user: true
+
+# External authorization endpoint (IdP handles all authorization)
+#batata.core.auth.oauth.authorization_endpoint:
+
+# Authorization request timeout in milliseconds
+#batata.core.auth.oauth.authorization_timeout_ms:
+
+# Whether to enforce strict nonce validation (not yet implemented)
+#batata.core.auth.oauth.strict_nonce_validation: false
+
+# Whether to enforce strict audience validation (not yet implemented)
+#batata.core.auth.oauth.strict_audience_validation: false
+
+# OAuth cache settings
+#batata.core.auth.oauth.cache.discovery_ttl_secs: 3600
+#batata.core.auth.oauth.cache.discovery_capacity: 100
+#batata.core.auth.oauth.cache.state_ttl_secs: 600
+#batata.core.auth.oauth.cache.state_capacity: 10000
+#batata.core.auth.oauth.http_timeout_secs: 30
+
+# --- Security Ignore URLs ---
+# The ignore urls of auth (not yet implemented)
+#batata.security.ignore.urls: /,/error,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.ico,/console-ui/public/**,/v1/auth/**,/v1/console/health/**,/actuator/**,/v1/console/server/**
+
+# --- Snowflake Worker ID ---
+# Set the WorkerID manually (not yet implemented)
+#batata.core.snowflake.worker_id:
 
 # =============================================================================
 # Rate Limiting
@@ -149,6 +270,15 @@ batata.plugin.control.default_tps: 10000
 # Maximum concurrent gRPC connections
 batata.plugin.control.max_connections: 50000
 
+# Control plugin manager type
+#batata.plugin.control.manager.type: nacos
+
+# Local control rule storage dir
+#batata.plugin.control.rule.local.basedir: ${batata.home}
+
+# External control rule storage type, if exist
+#batata.plugin.control.rule.external.storage:
+
 # =============================================================================
 # Config Module
 # =============================================================================
@@ -158,7 +288,6 @@ batata.plugin.control.max_connections: 50000
 
 # --- Config Gray Version Management ---
 # Maximum number of gray (beta/tag) versions per config entry (default: 10)
-# Matches batata.config.gray.version.max.count property.
 #batata.config.gray.version.max_count: 10
 
 # --- Config Encryption ---
@@ -168,6 +297,54 @@ batata.config.encryption.plugin.type: aes-gcm
 #batata.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
 # Hot reload interval in ms (0 = disabled)
 batata.config.encryption.reload.interval.ms: 0
+
+# --- Config Push ---
+# The maximum retry times for push (not yet implemented)
+#batata.config.push.max_retry_time: 50
+
+# --- Config Change Plugin: Webhook ---
+#batata.config.plugin.webhook.enabled: false
+#batata.config.plugin.webhook.url: http://localhost:8080/webhook/send?token=***
+# The content push max capacity, in bytes
+#batata.config.plugin.webhook.content_max_capacity: 102400
+
+# --- Config Change Plugin: Whitelist (not yet implemented) ---
+#batata.config.plugin.whitelist.enabled: false
+# The import file suffixes
+#batata.config.plugin.whitelist.suffixes: xml,text,properties,yaml,html
+
+# --- Config Change Plugin: File Format Check (not yet implemented) ---
+#batata.config.plugin.fileformatcheck.enabled: false
+
+# --- Config Notify (notification timeouts in milliseconds) ---
+#batata.config.notify.connect_timeout: 100
+#batata.config.notify.socket_timeout: 200
+
+# --- Config Health Check ---
+# Whether to enable config health check (default: true)
+#batata.config.health_check.enabled: true
+# Maximum consecutive health check failures before marking unhealthy (default: 12)
+#batata.config.health_check.max_fail_count: 12
+
+# --- Config Content Limit ---
+# Maximum config content size in bytes (default: 10MB)
+#batata.config.max_content: 10485760
+
+# --- Config Capacity Management ---
+# Enable capacity management (quota tracking and enforcement)
+#batata.config.capacity.manage_enabled: true
+# Enable capacity limit check (reject writes when quota exceeded)
+#batata.config.capacity.limit_check: false
+# Default cluster-level quota (max config count per cluster)
+#batata.config.capacity.default_cluster_quota: 100000
+# Default group-level quota (max config count per group)
+#batata.config.capacity.default_group_quota: 200
+# Default max content size per config entry in bytes (default: 100KB)
+#batata.config.capacity.default_max_size: 102400
+# Default max aggregate config count per dataId
+#batata.config.capacity.default_max_aggr_count: 10000
+# Default max aggregate config size per dataId in bytes (default: 1KB)
+#batata.config.capacity.default_max_aggr_size: 1024
 
 # =============================================================================
 # Naming Module
@@ -184,6 +361,27 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.naming.healthcheck.ttl_monitor_interval_secs: 5       # TTL monitor scan interval
 #batata.naming.healthcheck.deregister_monitor_interval_secs: 10  # deregister monitor interval
 
+# --- Naming Empty-Service Auto-Clean (not yet implemented) ---
+#batata.naming.empty_service.auto_clean: true
+#batata.naming.empty_service.clean.initial_delay_ms: 50000
+#batata.naming.empty_service.clean.period_time_ms: 30000
+
+# =============================================================================
+# CMDB Plugin
+# =============================================================================
+
+# The interval to dump external CMDB in seconds
+#batata.cmdb.dump_task_interval: 3600
+
+# The interval of polling data change event in seconds
+#batata.cmdb.event_task_interval: 10
+
+# The interval of loading labels in seconds
+#batata.cmdb.label_task_interval: 300
+
+# If turn on data loading task
+#batata.cmdb.load_data_at_start: false
+
 # =============================================================================
 # Cluster
 # =============================================================================
@@ -194,6 +392,21 @@ batata.config.encryption.reload.interval.ms: 0
 
 # Member lookup type: file (default) or address-server
 #batata.core.member.lookup.type: file
+
+# --- Member Metadata ---
+#batata.core.member.meta.site:
+#batata.core.member.meta.adweight:
+#batata.core.member.meta.weight:
+
+# --- Address Server Lookup ---
+# Maximum number of retries to query the address server upon initialization
+#batata.core.address_server.retry: 5
+# Server domain name address of address-server mode
+#batata.core.address_server.domain: jmenv.tbsite.net
+# Server port of address-server mode
+#batata.core.address_server.port: 8080
+# Request address of address-server mode
+#batata.core.address_server.url: /nacos/serverlist
 
 # =============================================================================
 # Cluster Internal (circuit breaker, distro, health check)
@@ -233,6 +446,12 @@ batata.config.encryption.reload.interval.ms: 0
 # =============================================================================
 # Raft Consensus (distributed embedded mode only)
 # =============================================================================
+# Nacos JRaft config mapping:
+#   nacos.core.protocol.raft.data.election_timeout_ms   -> batata.raft.election_timeout_ms
+#   nacos.core.protocol.raft.data.rpc_request_timeout_ms -> batata.raft.rpc_timeout_ms
+#   nacos.core.protocol.raft.data.snapshot_interval_secs -> (batata uses snapshot_threshold)
+#   nacos.core.protocol.raft.data.core_thread_num       -> (batata uses async runtime)
+#   nacos.core.protocol.raft.data.read_index_type       -> (batata uses heartbeat confirmation)
 
 # Election timeout (ms). Follower starts election if no heartbeat within this period.
 # Increase for WAN clusters or high-latency networks. Must be > 3 * heartbeat_interval.
@@ -244,13 +463,13 @@ batata.config.encryption.reload.interval.ms: 0
 # RPC request timeout (ms) for individual Raft RPCs (AppendEntries, Vote).
 #batata.raft.rpc_timeout_ms: 5000
 
-# Snapshot threshold — number of log entries before triggering a snapshot.
+# Snapshot threshold -- number of log entries before triggering a snapshot.
 #batata.raft.snapshot_threshold: 10000
 
 # Snapshot transfer timeout (ms). Should be larger than rpc_timeout for large snapshots.
 #batata.raft.snapshot_transfer_timeout_ms: 30000
 
-# --- Raft Leader Forwarding (follower → leader write forwarding) ---
+# --- Raft Leader Forwarding (follower -> leader write forwarding) ---
 # Max retries when forwarding writes to leader. Uses exponential backoff with jitter.
 #batata.raft.forward.max_retries: 3
 # Initial retry delay in ms. Doubles each attempt: 200, 400, 800ms.
@@ -271,6 +490,7 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.remote.server.grpc.sdk.max_inbound_message_size: 10485760
 #batata.remote.server.grpc.sdk.keep_alive_time: 7200000
 #batata.remote.server.grpc.sdk.keep_alive_timeout: 20000
+#batata.remote.server.grpc.sdk.permit_keep_alive_time: 300000
 
 # --- Cluster gRPC Server (inter-node, port = main port + 1001) ---
 #batata.remote.server.grpc.cluster.connect_timeout: 5000
@@ -278,6 +498,10 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.remote.server.grpc.cluster.max_retries: 3
 #batata.remote.server.grpc.cluster.retry_delay: 500
 #batata.remote.server.grpc.cluster.idle_timeout: 300000
+#batata.remote.server.grpc.cluster.max_inbound_message_size: 10485760
+#batata.remote.server.grpc.cluster.keep_alive_time: 7200000
+#batata.remote.server.grpc.cluster.keep_alive_timeout: 20000
+#batata.remote.server.grpc.cluster.permit_keep_alive_time: 300000
 
 # --- gRPC Server TLS ---
 #batata.remote.server.grpc.sdk.tls.enabled: false
@@ -293,6 +517,22 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.remote.client.grpc.cluster.tls.key.path: /path/to/client.key
 #batata.remote.client.grpc.cluster.tls.ca.cert.path: /path/to/ca.crt
 #batata.remote.client.grpc.cluster.tls.domain: cluster.local
+
+# =============================================================================
+# Access Log
+# =============================================================================
+
+# HTTP access log (per-request logging). Disable for better performance.
+#batata.server.http.access_log.enabled: true
+
+# Access log automatic cleaning time (days)
+#batata.server.http.access_log.max_days: 30
+
+# The access log pattern
+#batata.server.http.access_log.pattern: %h %l %u %t "%r" %s %b %D %{User-Agent}i %{Request-Source}i
+
+# The directory of access log
+#batata.server.http.basedir: file:.
 
 # =============================================================================
 # Logging
@@ -332,6 +572,21 @@ batata.otel.export_timeout_secs: 10
 #batata.metrics.system_stats.enabled: true
 #batata.metrics.system_stats.interval_secs: 15
 
+# Enable Prometheus service discovery
+#batata.prometheus.metrics.enabled: true
+
+# Metrics for elastic search (not yet implemented)
+#batata.metrics.export.elastic.enabled: false
+#batata.metrics.export.elastic.host: http://localhost:9200
+
+# Metrics for influx (not yet implemented)
+#batata.metrics.export.influx.enabled: false
+#batata.metrics.export.influx.db: springboot
+#batata.metrics.export.influx.uri: http://localhost:8086
+#batata.metrics.export.influx.auto_create_db: true
+#batata.metrics.export.influx.consistency: one
+#batata.metrics.export.influx.compressed: true
+
 # =============================================================================
 # Consul Compatibility Plugin
 # =============================================================================
@@ -369,12 +624,66 @@ batata.plugin.apollo.port: 8080
 #batata.plugin.apollo.http.workers: 0
 
 # =============================================================================
-# MCP Registry
+# Visibility Plugin
+# =============================================================================
+# The default 'nacos' visibility plugin re-uses the auth plugin user information,
+# so use this feature should enable auth plugin by batata.core.auth.enabled,
+# batata.core.auth.admin.enabled and batata.core.auth.console.enabled.
+
+# If turn on visibility plugin
+batata.plugin.visibility.enabled: true
+# The visibility plugin to use, default 'nacos' is supported
+batata.plugin.visibility.type: nacos
+
+# =============================================================================
+# AI Module
 # =============================================================================
 
-# Official MCP Registry OpenAPI server (automatically enabled with serverWithMcp deployment)
+# Whether AI module is enabled, default true.
+# The AI module needs both config module and naming module enabled.
+# If false, the console hides AI registry entries and AI console APIs are disabled.
+#batata.extension.ai.enabled: true
+
+# --- AI Registry ---
+# Unified AI registry port (default 9080).
+# batata.ai.mcp.registry.port is deprecated, use batata.ai.registry.port instead.
+#batata.ai.registry.port: 9080
+
+# Whether MCP registry is enabled, default is false.
+# When enabled=true, starts an MCP registry server on batata.ai.registry.port
 batata.ai.mcp.registry.enabled: false
 batata.ai.mcp.registry.port: 9080
+
+# Whether skill registry is enabled, default is false.
+# When enabled=true, starts a skill registry server on batata.ai.registry.port
+#batata.ai.skill.registry.enabled: false
+
+# --- AI Publish Pipeline ---
+# Total switch for ai-pipeline plugin
+#batata.plugin.ai-pipeline.enabled: true
+# Pipeline type: skill-scanner (skill-scanner execution not yet implemented)
+#batata.plugin.ai-pipeline.type: skill-scanner
+#batata.plugin.ai-pipeline.skill-scanner.enabled: true
+# Optional: specify an absolute executable path when PATH resolution differs
+#batata.plugin.ai-pipeline.skill-scanner.command: /Users/your-user/.local/bin/skill-scanner
+# Optional: auto-publish skill versions after pipeline approval, default false
+#batata.ai.skill.auto_publish_after_review.enabled: false
+
+# --- AI Resource Importer (not yet implemented) ---
+# Optional: reopen deprecated legacy MCP import APIs during a compatibility window
+#batata.ai.resource.import.legacy_mcp_api_enabled: false
+# Optional: allow legacy MCP import APIs to fetch user-provided URLs when reopened
+#batata.ai.resource.import.allow_user_url: false
+# Enable the built-in official MCP registry import source. Source id: mcp-official
+#batata.plugin.ai.importer.mcp.official.enabled: true
+# Enable the built-in Skill well-known import source. Configure the registry root URL first.
+#batata.plugin.ai.importer.skills.well-known.enabled: true
+#batata.plugin.ai.importer.skills.well-known.url: https://developers.cloudflare.com
+# Enable the built-in skills.sh import source. Source id: skills-sh.
+#batata.plugin.ai.importer.skills.skills-sh.enabled: true
+# Optional: allow non-HTTPS or private-network endpoints only for controlled deployments.
+#batata.plugin.ai.importer.<preset>.allow_http: false
+#batata.plugin.ai.importer.<preset>.allow_private_network: false
 
 # =============================================================================
 # Service Mesh (xDS)
@@ -390,6 +699,36 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.mesh.xds.tls.enabled: false
 #batata.mesh.xds.tls.cert.path: /path/to/xds-server.crt
 #batata.mesh.xds.tls.key.path: /path/to/xds-server.key
+
+# =============================================================================
+# Istio MCP Server
+# =============================================================================
+
+# If turn on the Istio MCP server
+#batata.istio.mcp.server.enabled: false
+
+# =============================================================================
+# Kubernetes Sync
+# =============================================================================
+
+# If turn on the K8s sync
+#batata.k8s.sync.enabled: false
+
+# If use the API from an application outside a kubernetes cluster
+#batata.k8s.sync.outside_cluster: false
+#batata.k8s.sync.kube_config: /.kube/config
+
+# =============================================================================
+# API Compatibility
+# =============================================================================
+# Not yet implemented. These switches control Nacos API version compatibility.
+
+# Enabled for open API (client SDK) compatibility
+#batata.core.api.compatibility.client.enabled: true
+# Enabled for admin API compatibility
+#batata.core.api.compatibility.admin.enabled: false
+# Enabled for console API compatibility
+#batata.core.api.compatibility.console.enabled: false
 
 # =============================================================================
 # Performance Tuning
@@ -410,9 +749,6 @@ batata.mesh.xds.default.listener.port: 15001
 # Particularly effective for large config payloads and service lists.
 #batata.server.http.compression.enabled: true
 #batata.server.http.compression.min_size: 256    # bytes; responses smaller than this are not compressed
-
-# HTTP access log (per-request logging). Disable for better performance.
-#batata.server.http.access_log.enabled: true
 
 # --- Graceful Shutdown ---
 # Drain timeout: time to wait for in-flight requests before shutting down
@@ -504,16 +840,9 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.core.auth.cache.grpc_permission_capacity: 10000  # gRPC permission check cache
 #batata.core.auth.cache.grpc_permission_ttl_secs: 300    # gRPC permission cache TTL (5 minutes)
 
-# --- OAuth Cache ---
-#batata.core.auth.oauth.cache.discovery_ttl_secs: 3600     # OIDC discovery cache (1 hour)
-#batata.core.auth.oauth.cache.discovery_capacity: 100
-#batata.core.auth.oauth.cache.state_ttl_secs: 600          # OAuth state cache (10 minutes)
-#batata.core.auth.oauth.cache.state_capacity: 10000
-#batata.core.auth.oauth.http_timeout_secs: 30               # OAuth HTTP client timeout
-
 # =============================================================================
 # Version Information
 # =============================================================================
 
 # Nacos compatibility version (the Nacos version that Batata is compatible with)
-nacos.version: 3.2.0
+nacos.version: 3.2.3

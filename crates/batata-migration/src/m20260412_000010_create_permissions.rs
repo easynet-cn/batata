@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
                     .table(Permissions::Table)
                     .if_not_exists()
                     .col(string_len(Permissions::Role, 50).not_null())
-                    .col(string_len(Permissions::Resource, 128).not_null())
+                    .col(string_len(Permissions::Resource, 512).not_null())
                     .col(string_len(Permissions::Action, 8).not_null())
                     .to_owned(),
             )

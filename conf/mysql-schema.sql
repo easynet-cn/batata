@@ -37,7 +37,7 @@ CREATE TABLE `config_info` (
                                `encrypted_data_key` varchar(1024) NOT NULL DEFAULT '' COMMENT '密钥',
                                PRIMARY KEY (`id`),
                                UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='config_info';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='config_info';
 
 /******************************************/
 /*   表名称 = config_info  since 2.5.0                */
@@ -61,7 +61,7 @@ CREATE TABLE `config_info_gray` (
                                     UNIQUE KEY `uk_configinfogray_datagrouptenantgray` (`data_id`,`group_id`,`tenant_id`,`gray_name`),
                                     KEY `idx_dataid_gmt_modified` (`data_id`,`gmt_modified`),
                                     KEY `idx_gmt_modified` (`gmt_modified`)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='config_info_gray';
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='config_info_gray';
 
 /******************************************/
 /*   表名称 = config_tags_relation         */
@@ -77,7 +77,7 @@ CREATE TABLE `config_tags_relation` (
                                         PRIMARY KEY (`nid`),
                                         UNIQUE KEY `uk_configtagrelation_configidtag` (`id`,`tag_name`,`tag_type`),
                                         KEY `idx_tenant_id` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='config_tag_relation';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='config_tag_relation';
 
 /******************************************/
 /*   表名称 = group_capacity               */
@@ -95,7 +95,7 @@ CREATE TABLE `group_capacity` (
                                   `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '修改时间',
                                   PRIMARY KEY (`id`),
                                   UNIQUE KEY `uk_group_id` (`group_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='集群、各Group容量信息表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='集群、各Group容量信息表';
 
 /******************************************/
 /*   表名称 = his_config_info              */
@@ -122,7 +122,7 @@ CREATE TABLE `his_config_info` (
                                    KEY `idx_gmt_create` (`gmt_create`),
                                    KEY `idx_gmt_modified` (`gmt_modified`),
                                    KEY `idx_did` (`data_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='多租户改造';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='多租户改造';
 
 
 /******************************************/
@@ -141,7 +141,7 @@ CREATE TABLE `tenant_capacity` (
                                    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '修改时间',
                                    PRIMARY KEY (`id`),
                                    UNIQUE KEY `uk_tenant_id` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='租户容量信息表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='租户容量信息表';
 
 
 CREATE TABLE `tenant_info` (
@@ -156,7 +156,7 @@ CREATE TABLE `tenant_info` (
                                PRIMARY KEY (`id`),
                                UNIQUE KEY `uk_tenant_info_kptenantid` (`kp`,`tenant_id`),
                                KEY `idx_tenant_id` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='tenant_info';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='tenant_info';
 
 CREATE TABLE `users` (
                          `username` varchar(50) NOT NULL PRIMARY KEY COMMENT 'username',
@@ -172,10 +172,10 @@ CREATE TABLE `roles` (
 
 CREATE TABLE `permissions` (
                                `role` varchar(50) NOT NULL COMMENT 'role',
-                               `resource` varchar(128) NOT NULL COMMENT 'resource',
+                               `resource` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'resource',
                                `action` varchar(8) NOT NULL COMMENT 'action',
                                UNIQUE INDEX `uk_role_permission` (`role`,`resource`,`action`) USING BTREE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC;
 
 
 /******************************************/
@@ -192,7 +192,7 @@ CREATE TABLE `pipeline_execution` (
     `create_time`   bigint(20)   NOT NULL COMMENT '创建时间',
     `update_time`   bigint(20)   NOT NULL COMMENT '修改时间',
     PRIMARY KEY (`execution_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源发布审核Pipeline执行记录';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='AI资源发布审核Pipeline执行记录';
 
 /******************************************/
 /*   表名称 = ai_resource                 */
@@ -219,7 +219,7 @@ CREATE TABLE `ai_resource` (
     KEY `idx_ai_resource_name` (`name`),
     KEY `idx_ai_resource_type` (`type`),
     KEY `idx_ai_resource_gmt_modified` (`gmt_modified`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源元数据表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='AI资源元数据表';
 
 /******************************************/
 /*   表名称 = ai_resource_version         */
@@ -243,4 +243,76 @@ CREATE TABLE `ai_resource_version` (
     KEY `idx_ai_resource_ver_name` (`name`),
     KEY `idx_ai_resource_ver_status` (`status`),
     KEY `idx_ai_resource_ver_gmt_modified` (`gmt_modified`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源版本表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='AI资源版本表';
+
+/******************************************/
+/*   表名称 = ai_resource_search_document       */
+/******************************************/
+CREATE TABLE `ai_resource_search_document` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'id',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '修改时间',
+    `namespace_id` varchar(128) NOT NULL DEFAULT '' COMMENT '命名空间ID',
+    `resource_type` varchar(32) NOT NULL COMMENT '资源类型',
+    `resource_name` varchar(256) NOT NULL COMMENT '资源名称',
+    `resource_version` varchar(64) NOT NULL COMMENT '资源版本',
+    `display_name` varchar(256) NOT NULL COMMENT '展示名称',
+    `c_desc` varchar(2048) DEFAULT NULL COMMENT '描述',
+    `tags` longtext DEFAULT NULL COMMENT '标签(JSON)',
+    `capabilities` longtext DEFAULT NULL COMMENT '能力(JSON)',
+    `representative_queries` longtext DEFAULT NULL COMMENT '代表性查询(JSON)',
+    `metadata` longtext DEFAULT NULL COMMENT '元数据(JSON)',
+    `source_digest` varchar(64) NOT NULL COMMENT '来源摘要',
+    `status` varchar(32) NOT NULL COMMENT '状态',
+    `generate_mode` varchar(32) NOT NULL COMMENT '生成模式',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_search_document_resource_version` (`namespace_id`,`resource_type`,`resource_name`,`resource_version`),
+    KEY `idx_search_document_type_status` (`namespace_id`,`resource_type`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源检索文档表';
+
+/******************************************/
+/*   表名称 = ai_resource_search_chunk       */
+/******************************************/
+CREATE TABLE `ai_resource_search_chunk` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'id',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '修改时间',
+    `document_id` bigint(20) NOT NULL COMMENT '检索文档ID',
+    `namespace_id` varchar(128) NOT NULL DEFAULT '' COMMENT '命名空间ID',
+    `resource_type` varchar(32) NOT NULL COMMENT '资源类型',
+    `resource_name` varchar(256) NOT NULL COMMENT '资源名称',
+    `resource_version` varchar(64) NOT NULL COMMENT '资源版本',
+    `chunk_type` varchar(64) NOT NULL COMMENT '分片类型',
+    `chunk_text` longtext NOT NULL COMMENT '分片文本',
+    `canonical_text` longtext NOT NULL COMMENT '规范化文本',
+    `language` varchar(16) DEFAULT NULL COMMENT '语言',
+    `chunk_hash` varchar(64) NOT NULL COMMENT '分片摘要',
+    `metadata` longtext DEFAULT NULL COMMENT '元数据(JSON)',
+    `status` varchar(32) NOT NULL COMMENT '状态',
+    PRIMARY KEY (`id`),
+    KEY `idx_search_chunk_document` (`document_id`),
+    KEY `idx_search_chunk_hash` (`chunk_hash`),
+    KEY `idx_search_chunk_resource` (`namespace_id`,`resource_type`,`resource_name`,`resource_version`),
+    KEY `idx_search_chunk_type_status` (`namespace_id`,`resource_type`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源检索分片表';
+
+/******************************************/
+/*   表名称 = ai_resource_search_index_task  */
+/******************************************/
+CREATE TABLE `ai_resource_search_index_task` (
+    `task_key` varchar(64) NOT NULL COMMENT '资源任务键',
+    `namespace_id` varchar(128) NOT NULL DEFAULT '' COMMENT '命名空间ID',
+    `resource_type` varchar(32) NOT NULL COMMENT '资源类型',
+    `resource_name` varchar(256) NOT NULL COMMENT '资源名称',
+    `status` varchar(32) NOT NULL COMMENT '任务状态',
+    `attempt_count` int NOT NULL DEFAULT 0 COMMENT '重试次数',
+    `revision` bigint(20) NOT NULL DEFAULT 1 COMMENT '任务修订号',
+    `next_retry_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '下次重试时间',
+    `lease_until` datetime DEFAULT NULL COMMENT '租约到期时间',
+    `last_error` varchar(2000) DEFAULT NULL COMMENT '最近错误',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '修改时间',
+    PRIMARY KEY (`task_key`),
+    KEY `idx_search_task_due` (`status`,`next_retry_time`),
+    KEY `idx_search_task_lease` (`status`,`lease_until`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI资源检索索引任务表';
