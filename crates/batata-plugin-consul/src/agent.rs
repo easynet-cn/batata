@@ -1073,6 +1073,7 @@ pub async fn get_agent_self(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
+    health_service: web::Data<ConsulHealthService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
@@ -1084,6 +1085,12 @@ pub async fn get_agent_self(
     let self_member = member_manager.get_self_member();
     let health_summary = member_manager.health_summary();
 
+    // Check if node maintenance mode is active (presence of _node_maintenance check)
+    let maintenance_mode = health_service
+        .get_check("_node_maintenance")
+        .await
+        .is_some();
+
     // Use stable node_id and node_name from dc_config (persisted in data_dir/consul-node-id)
     let config = AgentConfig {
         datacenter: dc_config.datacenter.clone(),
@@ -1093,6 +1100,7 @@ pub async fn get_agent_self(
         revision: dc_config.batata_version.clone(),
         version: dc_config.full_version(),
         primary_datacenter: dc_config.primary_datacenter.clone(),
+        maintenance_mode,
     };
 
     // Tags matching get_agent_self (Consul's delegate.AgentLocalMember().Tags)

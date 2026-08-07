@@ -40,11 +40,13 @@ impl SkillOperationService {
     pub fn new(
         persistence: Arc<dyn PersistenceService>,
         auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
+        auth_enabled: bool,
     ) -> Self {
         let visibility_manager = batata_visibility::VisibilityPluginManager::instance();
         // Ensure default visibility service is registered
         if visibility_manager.default_service().is_none() {
-            let mut service = batata_visibility::DefaultVisibilityService::new();
+            let mut service = batata_visibility::DefaultVisibilityService::new()
+                .with_auth_disabled(!auth_enabled);
             if let Some(plugin) = auth_plugin {
                 service = service.with_auth_plugin(plugin);
             }

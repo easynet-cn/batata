@@ -50,6 +50,7 @@ batata-mesh = { workspace = true, optional = true }
 
 # Web framework
 actix-web = { workspace = true }
+actix-files = { workspace = true }
 actix-rt = { workspace = true }
 
 # gRPC

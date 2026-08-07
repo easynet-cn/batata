@@ -830,6 +830,7 @@ impl ConsulCatalogService {
                 enable_tag_override: None,
                 tagged_addresses: None,
                 namespace: None,
+                socket_path: None,
             };
 
             let data = match serde_json::to_vec(&reg) {

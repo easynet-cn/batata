@@ -1,13 +1,16 @@
 //! HTTP server setup module for main and console servers.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use actix_web::{
     App, HttpResponse, HttpServer,
     dev::Server,
+    http::Method,
     middleware::{Compress, Condition, DefaultHeaders, Logger},
     web,
 };
+use actix_web::HttpRequest;
 #[cfg(feature = "consul")]
 use batata_plugin::ProtocolAdapterPlugin;
 
@@ -57,6 +60,12 @@ pub fn console_server(
     let max_json_size = app_state.configuration.max_json_size();
     let compression_enabled = app_state.configuration.http_compression_enabled();
     let access_log_enabled = app_state.configuration.http_access_log_enabled();
+    // Packaged UI (batata-ui build) is served from this directory when enabled.
+    let ui_dir = if app_state.configuration.console_ui_enabled() {
+        app_state.configuration.console_ui_dir()
+    } else {
+        None
+    };
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
@@ -125,7 +134,7 @@ pub fn console_server(
         if let Some(ref ns) = naming_service {
             app = app.app_data(web::Data::new(ns.clone()));
         }
-        app.service(
+        app = app.service(
             web::scope(&context_path)
                 .service(auth::v3::route::routes())
                 .service(
@@ -141,7 +150,17 @@ pub fn console_server(
                         .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
                 )
                 .configure(batata_console::configure_v2_console_routes),
-        )
+        );
+
+        if let Some(ref ui_dir) = ui_dir {
+            app = app
+                .app_data(web::Data::new(UiState {
+                    dir: ui_dir.to_string(),
+                }))
+                .default_service(web::to(serve_ui));
+        }
+
+        app
     })
     .workers(workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
@@ -321,14 +340,17 @@ impl AIServices {
         mut self,
         persistence: Arc<dyn batata_persistence::PersistenceService>,
         auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
+        auth_enabled: bool,
     ) -> Self {
         self.skill_service = Some(Arc::new(batata_ai::SkillOperationService::new(
             persistence.clone(),
             auth_plugin.clone(),
+            auth_enabled,
         )));
         self.agentspec_service = Some(Arc::new(batata_ai::AgentSpecOperationService::new(
             persistence.clone(),
             auth_plugin,
+            auth_enabled,
         )));
         self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(persistence)));
         self
@@ -586,4 +608,50 @@ async fn health_readiness(app_state: web::Data<Arc<AppState>>) -> HttpResponse {
     }
 
     HttpResponse::Ok().json(serde_json::json!({"status": "UP"}))
+}
+
+/// Serves the packaged Batata UI (batata-ui build output) with SPA fallback.
+///
+/// Static asset requests are served directly from the configured UI directory;
+/// any other request (history-mode client routes) resolves to `index.html`.
+pub async fn serve_ui(req: HttpRequest, ui: web::Data<UiState>) -> HttpResponse {
+    // Only browser navigation (GET/HEAD) receives the SPA fallback.
+    if req.method() != Method::GET && req.method() != Method::HEAD {
+        return HttpResponse::NotFound().finish();
+    }
+    let path = req.path().trim_start_matches('/');
+    // Do not shadow API endpoints with the SPA fallback.
+    for prefix in ["v1/", "v2/", "v3/", "nacos/"] {
+        if path.starts_with(prefix) {
+            return HttpResponse::NotFound().finish();
+        }
+    }
+    let base = Path::new(&ui.dir);
+    // Resolve the requested file; guard against path traversal.
+    let requested = if path.is_empty() {
+        None
+    } else {
+        let candidate = base.join(path);
+        if candidate.starts_with(base) && candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    };
+
+    let file = match requested {
+        Some(f) => f,
+        None => base.join("index.html"),
+    };
+
+    match actix_files::NamedFile::open_async(&file).await {
+        Ok(nf) => nf.into_response(&req),
+        Err(_) => HttpResponse::NotFound().body("Not Found"),
+    }
+}
+
+/// UI serving state shared by the SPA fallback handler.
+#[derive(Clone)]
+pub struct UiState {
+    pub dir: String,
 }

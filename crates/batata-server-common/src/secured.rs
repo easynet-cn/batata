@@ -148,6 +148,15 @@ macro_rules! secured {
             .configuration
             .auth_enabled_for_api_type(__secured.api_type);
 
+        tracing::info!(
+            "[DEBUG] secured! path={}, auth_enabled={}, api_type={:?}, auth_console_enabled={}, auth_enabled={}",
+            __secured.req.path(),
+            __auth_enabled,
+            __secured.api_type,
+            __secured.data.configuration.auth_console_enabled(),
+            __secured.data.configuration.auth_enabled()
+        );
+
         if __auth_enabled {
             // Server identity check for InnerApi/AdminApi
             let __skip_auth = if __secured.api_type == $crate::ApiType::InnerApi

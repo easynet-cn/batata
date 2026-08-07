@@ -477,7 +477,7 @@ func TestAgentCheckHTTP(t *testing.T) {
 		ID:   checkID,
 		Name: "HTTP Check",
 		AgentServiceCheck: api.AgentServiceCheck{
-			HTTP:     "http://localhost:8080/health",
+			HTTP:     "http://localhost:1/health",
 			Interval: "10s",
 			Timeout:  "5s",
 		},
@@ -509,7 +509,7 @@ func TestAgentCheckTCP(t *testing.T) {
 		ID:   checkID,
 		Name: "TCP Check",
 		AgentServiceCheck: api.AgentServiceCheck{
-			TCP:      "localhost:8080",
+			TCP:      "localhost:1",
 			Interval: "10s",
 			Timeout:  "5s",
 		},
@@ -585,13 +585,14 @@ func TestAgentCheckDeregisterCritical(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Get service to verify deregister setting
-	services, err := agent.Services()
+	// Get health checks to verify deregister setting
+	// (Check field removed from AgentService in SDK v1.33+)
+	health, err := agent.Checks()
 	require.NoError(t, err)
 
-	svc, ok := services[serviceID]
-	require.True(t, ok, "Service %s should be registered", serviceID)
-	require.NotNil(t, svc.Check, "Service should have a check")
-	assert.Equal(t, "1m", svc.Check.DeregisterCriticalServiceAfter,
-		"DeregisterCriticalServiceAfter should be '1m'")
+	checkID := "service:" + serviceID
+	chk, ok := health[checkID]
+	require.True(t, ok, "Health check for service %s should exist", serviceID)
+	assert.Equal(t, time.Minute, time.Duration(chk.Definition.DeregisterCriticalServiceAfter),
+		"DeregisterCriticalServiceAfter should be 1 minute")
 }

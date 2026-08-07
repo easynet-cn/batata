@@ -337,6 +337,10 @@ impl AclService {
     ///
     /// If the bootstrap token is not already in RocksDB, it is created and persisted.
     pub fn with_rocks(db: Arc<DB>) -> Self {
+        Self::with_rocks_and_token(db, None)
+    }
+
+    pub fn with_rocks_and_token(db: Arc<DB>, initial_management_token: Option<String>) -> Self {
         let store = AclStore::persistent(db);
 
         // Check if bootstrap token already exists in RocksDB
@@ -351,7 +355,7 @@ impl AclService {
 
         // Only create bootstrap token/policy if not already in RocksDB
         if !loaded_bootstrap {
-            svc.init_bootstrap(None);
+            svc.init_bootstrap(initial_management_token);
         }
 
         let counts = svc.store_counts();
@@ -366,6 +370,12 @@ impl AclService {
     /// Create an enabled ACL service with Raft-replicated storage (cluster mode).
     pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
         let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
+        svc
+    }
+
+    pub fn with_raft_and_token(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>, initial_management_token: Option<String>) -> Self {
+        let mut svc = Self::with_rocks_and_token(db, initial_management_token);
         svc.raft_node = Some(raft_node);
         svc
     }

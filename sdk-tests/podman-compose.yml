@@ -76,7 +76,8 @@ services:
       dockerfile: Containerfile
     container_name: consul-sdk-tests
     environment:
-      - CONSUL_HTTP_ADDR=batata:8848
+      - CONSUL_HTTP_ADDR=batata:8500
+      - CONSUL_HTTP_TOKEN=root
     depends_on:
       batata:
         condition: service_healthy

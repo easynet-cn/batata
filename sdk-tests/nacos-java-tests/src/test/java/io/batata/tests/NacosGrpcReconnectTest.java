@@ -96,7 +96,11 @@ public class NacosGrpcReconnectTest {
             public void receiveConfigInfo(String configInfo) {
                 System.out.println("Listener received after reconnect: " + configInfo);
                 receivedContent.set(configInfo);
-                latch.countDown();
+                // Only count down when the updated content (phase=2) is received,
+                // not the initial config fetch (phase=1) that happens on listener registration
+                if ("phase=2".equals(configInfo)) {
+                    latch.countDown();
+                }
             }
         });
         Thread.sleep(500);

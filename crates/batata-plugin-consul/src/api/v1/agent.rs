@@ -30,6 +30,7 @@ async fn get_agent_self(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
+    health_service: web::Data<crate::health::ConsulHealthService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::agent::get_agent_self(
@@ -38,6 +39,7 @@ async fn get_agent_self(
         acl_service,
         dc_config,
         member_manager,
+        health_service,
         index_provider,
     )
     .await

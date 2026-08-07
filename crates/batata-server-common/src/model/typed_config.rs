@@ -1,80 +1,23 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 // ============================================================================
 // Module-level default functions
 // ============================================================================
 
+/// Deserialize a nullable string: YAML null → None, string → Some(s).
+/// This allows `batata.console.context_path:` (with no value) to deserialize
+/// as None instead of causing a type error.
+fn deserialize_null_to_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt)
+}
+
 // --- Common bool default ---
 fn default_true() -> bool {
     true
-}
-
-// --- String defaults ---
-fn default_deployment_type() -> String {
-    "merged".to_string()
-}
-fn default_server_context_path() -> String {
-    "nacos".to_string()
-}
-fn default_server_address() -> String {
-    "0.0.0.0".to_string()
-}
-fn default_console_remote_server_addr() -> String {
-    "http://127.0.0.1:8848".to_string()
-}
-fn default_console_remote_username() -> String {
-    "batata".to_string()
-}
-fn default_console_remote_password() -> String {
-    "batata".to_string()
-}
-fn default_auth_system_type() -> String {
-    "default".to_string()
-}
-fn default_ldap_filter_prefix() -> String {
-    "uid".to_string()
-}
-fn default_oauth_user_creation() -> String {
-    "auto".to_string()
-}
-fn default_oauth_role_sync() -> String {
-    "on_login".to_string()
-}
-fn default_address_server_domain() -> String {
-    "jmenv.tbsite.net".to_string()
-}
-fn default_address_server_url() -> String {
-    "/nacos/serverlist".to_string()
-}
-fn default_visibility_type() -> String {
-    "nacos".to_string()
-}
-fn default_encryption_plugin_type() -> String {
-    "aes-gcm".to_string()
-}
-fn default_otel_endpoint() -> String {
-    "http://localhost:4317".to_string()
-}
-fn default_otel_service_name() -> String {
-    "batata".to_string()
-}
-fn default_log_level() -> String {
-    "info".to_string()
-}
-fn default_xds_server_id() -> String {
-    "batata-xds-server".to_string()
-}
-fn default_rocksdb_bottommost_compression() -> String {
-    "zstd".to_string()
-}
-fn default_rocksdb_compression() -> String {
-    "lz4".to_string()
-}
-fn default_persistence_data_dir() -> String {
-    "data".to_string()
-}
-fn default_persistence_db_name() -> String {
-    "batata_rocksdb".to_string()
 }
 
 // --- i64 defaults ---
@@ -577,14 +520,14 @@ pub struct BatataTypedConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeploymentConfig {
-    #[serde(default = "default_deployment_type", rename = "type")]
-    pub type_: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    pub type_: Option<String>,
 }
 
 impl Default for DeploymentConfig {
     fn default() -> Self {
         Self {
-            type_: default_deployment_type(),
+            type_: None,
         }
     }
 }
@@ -597,10 +540,10 @@ impl Default for DeploymentConfig {
 pub struct ServerConfig {
     #[serde(default)]
     pub main: ServerMainConfig,
-    #[serde(default = "default_server_context_path")]
-    pub context_path: String,
-    #[serde(default = "default_server_address")]
-    pub address: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub context_path: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub address: Option<String>,
     #[serde(default)]
     pub ip: Option<String>,
     #[serde(default)]
@@ -615,8 +558,8 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             main: ServerMainConfig::default(),
-            context_path: default_server_context_path(),
-            address: default_server_address(),
+            context_path: None,
+            address: None,
             ip: None,
             http: ServerHttpConfig::default(),
             shutdown: ServerShutdownConfig::default(),
@@ -792,8 +735,8 @@ impl Default for ServerGrpcConfig {
 pub struct ConsoleConfig {
     #[serde(default = "default_console_port")]
     pub port: i64,
-    #[serde(default)]
-    pub context_path: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub context_path: Option<String>,
     #[serde(default)]
     pub ui: ConsoleUiConfig,
     #[serde(default)]
@@ -806,7 +749,7 @@ impl Default for ConsoleConfig {
     fn default() -> Self {
         Self {
             port: default_console_port(),
-            context_path: String::new(),
+            context_path: None,
             ui: ConsoleUiConfig::default(),
             remote: ConsoleRemoteConfig::default(),
             http: ConsoleHttpConfig::default(),
@@ -820,6 +763,9 @@ pub struct ConsoleUiConfig {
     pub enabled: bool,
     #[serde(default)]
     pub default: Option<String>,
+    /// Directory containing the built frontend (batata-ui) static assets.
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub dir: Option<String>,
 }
 
 impl Default for ConsoleUiConfig {
@@ -827,24 +773,25 @@ impl Default for ConsoleUiConfig {
         Self {
             enabled: true,
             default: None,
+            dir: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConsoleRemoteConfig {
-    #[serde(default = "default_console_remote_server_addr")]
-    pub server_addr: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub server_addr: Option<String>,
     #[serde(default)]
     pub server_context_path: Option<String>,
     #[serde(default = "default_console_remote_refresh_interval_secs")]
     pub refresh_interval_secs: i64,
     #[serde(default = "default_console_remote_initial_delay_secs")]
     pub initial_delay_secs: i64,
-    #[serde(default = "default_console_remote_username")]
-    pub username: String,
-    #[serde(default = "default_console_remote_password")]
-    pub password: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub username: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub password: Option<String>,
     #[serde(default = "default_console_remote_connect_timeout_ms")]
     pub connect_timeout_ms: i64,
     #[serde(default = "default_console_remote_read_timeout_ms")]
@@ -854,12 +801,12 @@ pub struct ConsoleRemoteConfig {
 impl Default for ConsoleRemoteConfig {
     fn default() -> Self {
         Self {
-            server_addr: default_console_remote_server_addr(),
+            server_addr: None,
             server_context_path: None,
             refresh_interval_secs: default_console_remote_refresh_interval_secs(),
             initial_delay_secs: default_console_remote_initial_delay_secs(),
-            username: default_console_remote_username(),
-            password: default_console_remote_password(),
+            username: None,
+            password: None,
             connect_timeout_ms: default_console_remote_connect_timeout_ms(),
             read_timeout_ms: default_console_remote_read_timeout_ms(),
         }
@@ -950,8 +897,8 @@ pub struct SqlConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SqlInitConfig {
-    #[serde(default)]
-    pub platform: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub platform: Option<String>,
 }
 
 // ============================================================================
@@ -1032,14 +979,14 @@ impl Default for CoreAuthCachingConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoreAuthSystemConfig {
-    #[serde(default = "default_auth_system_type", rename = "type")]
-    pub type_: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    pub type_: Option<String>,
 }
 
 impl Default for CoreAuthSystemConfig {
     fn default() -> Self {
         Self {
-            type_: default_auth_system_type(),
+            type_: None,
         }
     }
 }
@@ -1052,10 +999,10 @@ pub struct CoreAuthServerConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CoreAuthServerIdentityConfig {
-    #[serde(default)]
-    pub key: String,
-    #[serde(default)]
-    pub value: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub key: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1096,8 +1043,8 @@ impl Default for CoreAuthPluginDefaultTokenExpireConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CoreAuthPluginDefaultTokenSecretConfig {
-    #[serde(default)]
-    pub key: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1112,14 +1059,14 @@ pub struct CoreAuthPluginDefaultTokenCacheConfig {
 pub struct CoreAuthLdapConfig {
     #[serde(default)]
     pub url: Option<String>,
-    #[serde(default)]
-    pub base_dc: String,
-    #[serde(default)]
-    pub bind_dn: String,
-    #[serde(default)]
-    pub password: String,
-    #[serde(default)]
-    pub user_dn_pattern: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub base_dc: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub bind_dn: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub password: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub user_dn_pattern: Option<String>,
     #[serde(default)]
     pub filter: CoreAuthLdapFilterConfig,
     #[serde(default = "default_ldap_timeout")]
@@ -1134,10 +1081,10 @@ impl Default for CoreAuthLdapConfig {
     fn default() -> Self {
         Self {
             url: None,
-            base_dc: String::new(),
-            bind_dn: String::new(),
-            password: String::new(),
-            user_dn_pattern: String::new(),
+            base_dc: None,
+            bind_dn: None,
+            password: None,
+            user_dn_pattern: None,
             filter: CoreAuthLdapFilterConfig::default(),
             timeout: default_ldap_timeout(),
             case: CoreAuthLdapCaseConfig::default(),
@@ -1148,14 +1095,14 @@ impl Default for CoreAuthLdapConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoreAuthLdapFilterConfig {
-    #[serde(default = "default_ldap_filter_prefix")]
-    pub prefix: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub prefix: Option<String>,
 }
 
 impl Default for CoreAuthLdapFilterConfig {
     fn default() -> Self {
         Self {
-            prefix: default_ldap_filter_prefix(),
+            prefix: None,
         }
     }
 }
@@ -1223,28 +1170,28 @@ impl Default for CoreAuthOauthConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoreAuthOauthUserConfig {
-    #[serde(default = "default_oauth_user_creation")]
-    pub creation: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub creation: Option<String>,
 }
 
 impl Default for CoreAuthOauthUserConfig {
     fn default() -> Self {
         Self {
-            creation: default_oauth_user_creation(),
+            creation: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoreAuthOauthRoleConfig {
-    #[serde(default = "default_oauth_role_sync")]
-    pub sync: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub sync: Option<String>,
 }
 
 impl Default for CoreAuthOauthRoleConfig {
     fn default() -> Self {
         Self {
-            sync: default_oauth_role_sync(),
+            sync: None,
         }
     }
 }
@@ -1375,21 +1322,21 @@ pub struct CoreMemberMetaConfig {
 pub struct CoreAddressServerConfig {
     #[serde(default = "default_address_server_retry")]
     pub retry: i64,
-    #[serde(default = "default_address_server_domain")]
-    pub domain: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub domain: Option<String>,
     #[serde(default = "default_address_server_port")]
     pub port: i64,
-    #[serde(default = "default_address_server_url")]
-    pub url: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub url: Option<String>,
 }
 
 impl Default for CoreAddressServerConfig {
     fn default() -> Self {
         Self {
             retry: default_address_server_retry(),
-            domain: default_address_server_domain(),
+            domain: None,
             port: default_address_server_port(),
-            url: default_address_server_url(),
+            url: None,
         }
     }
 }
@@ -1674,15 +1621,15 @@ pub struct PluginApolloHttpConfig {
 pub struct PluginVisibilityConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_visibility_type", rename = "type")]
-    pub type_: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    pub type_: Option<String>,
 }
 
 impl Default for PluginVisibilityConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            type_: default_visibility_type(),
+            type_: None,
         }
     }
 }
@@ -1888,14 +1835,14 @@ pub struct ConfigEncryptionConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigEncryptionPluginConfig {
-    #[serde(default = "default_encryption_plugin_type", rename = "type")]
-    pub type_: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    pub type_: Option<String>,
 }
 
 impl Default for ConfigEncryptionPluginConfig {
     fn default() -> Self {
         Self {
-            type_: default_encryption_plugin_type(),
+            type_: None,
         }
     }
 }
@@ -2067,10 +2014,10 @@ impl Default for NamingEmptyServiceCleanConfig {
 pub struct OtelConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_otel_endpoint")]
-    pub endpoint: String,
-    #[serde(default = "default_otel_service_name")]
-    pub service_name: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub service_name: Option<String>,
     #[serde(default = "default_otel_sampling_ratio")]
     pub sampling_ratio: f64,
     #[serde(default = "default_otel_export_timeout_secs")]
@@ -2081,8 +2028,8 @@ impl Default for OtelConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            endpoint: default_otel_endpoint(),
-            service_name: default_otel_service_name(),
+            endpoint: None,
+            service_name: None,
             sampling_ratio: default_otel_sampling_ratio(),
             export_timeout_secs: default_otel_export_timeout_secs(),
         }
@@ -2101,8 +2048,8 @@ pub struct LogsConfig {
     pub console: LogsConsoleConfig,
     #[serde(default)]
     pub file: LogsFileConfig,
-    #[serde(default = "default_log_level")]
-    pub level: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub level: Option<String>,
 }
 
 impl Default for LogsConfig {
@@ -2111,7 +2058,7 @@ impl Default for LogsConfig {
             path: None,
             console: LogsConsoleConfig::default(),
             file: LogsFileConfig::default(),
-            level: default_log_level(),
+            level: None,
         }
     }
 }
@@ -2184,14 +2131,14 @@ impl Default for MeshXdsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshXdsServerConfig {
-    #[serde(default = "default_xds_server_id")]
-    pub id: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub id: Option<String>,
 }
 
 impl Default for MeshXdsServerConfig {
     fn default() -> Self {
         Self {
-            id: default_xds_server_id(),
+            id: None,
         }
     }
 }
@@ -2656,17 +2603,17 @@ pub struct PersistenceConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PersistenceEmbeddedConfig {
-    #[serde(default = "default_persistence_data_dir")]
-    pub data_dir: String,
-    #[serde(default = "default_persistence_db_name")]
-    pub db_name: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub data_dir: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub db_name: Option<String>,
 }
 
 impl Default for PersistenceEmbeddedConfig {
     fn default() -> Self {
         Self {
-            data_dir: default_persistence_data_dir(),
-            db_name: default_persistence_db_name(),
+            data_dir: None,
+            db_name: None,
         }
     }
 }
@@ -2689,10 +2636,10 @@ pub struct RocksdbConfig {
     pub bloom_filter_bits: f64,
     #[serde(default = "default_true")]
     pub level_compaction_dynamic: bool,
-    #[serde(default = "default_rocksdb_bottommost_compression")]
-    pub bottommost_compression: String,
-    #[serde(default = "default_rocksdb_compression")]
-    pub compression: String,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub bottommost_compression: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    pub compression: Option<String>,
     #[serde(default)]
     pub enable_statistics: bool,
     #[serde(default = "default_true")]
@@ -2718,8 +2665,8 @@ impl Default for RocksdbConfig {
             block_cache_mb: default_rocksdb_block_cache_mb(),
             bloom_filter_bits: default_rocksdb_bloom_filter_bits(),
             level_compaction_dynamic: true,
-            bottommost_compression: default_rocksdb_bottommost_compression(),
-            compression: default_rocksdb_compression(),
+            bottommost_compression: None,
+            compression: None,
             enable_statistics: false,
             whole_key_filtering: true,
             data_block_hash_ratio: default_rocksdb_data_block_hash_ratio(),

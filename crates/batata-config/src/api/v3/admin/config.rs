@@ -1071,6 +1071,71 @@ async fn get_beta_config(
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
 }
 
+/// GET /v3/admin/cs/config/gray/info
+///
+/// Query gray config info by dataId, groupName, and namespaceId.
+/// Returns the gray config details including gray name and rule.
+#[get("gray/info")]
+async fn get_gray_config_info(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let result = match data
+        .persistence()
+        .config_find_gray_one(&params.data_id, &params.group_name, &namespace_id)
+        .await
+    {
+        Ok(config) => config.map(|gray| ConfigGrayInfo {
+            config_detail_info: ConfigDetailInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: 0,
+                    namespace_id: gray.tenant.clone(),
+                    group_name: gray.group.clone(),
+                    data_id: gray.data_id.clone(),
+                    md5: gray.md5.clone(),
+                    r#type: String::new(),
+                    app_name: gray.app_name.clone(),
+                    create_time: gray.created_time,
+                    modify_time: gray.modified_time,
+                },
+                content: gray.content.clone(),
+                desc: String::new(),
+                encrypted_data_key: gray.encrypted_data_key.clone(),
+                create_user: gray.src_user.clone(),
+                create_ip: gray.src_ip.clone(),
+                config_tags: String::new(),
+            },
+            gray_name: gray.gray_name,
+            gray_rule: gray.gray_rule,
+        }),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
+    };
+
+    model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
+}
+
 /// POST /v3/admin/cs/config/beta
 #[post("beta")]
 async fn publish_beta_config(
@@ -1827,4 +1892,5 @@ pub fn routes() -> actix_web::Scope {
         .service(stop_beta_config)
         .service(publish_gray_config)
         .service(stop_gray_config)
+        .service(get_gray_config_info)
 }

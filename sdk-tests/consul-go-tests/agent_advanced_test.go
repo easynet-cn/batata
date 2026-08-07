@@ -103,23 +103,28 @@ func TestAgentServiceMaintenance(t *testing.T) {
 	err = client.Agent().EnableServiceMaintenance(serviceID, "Testing maintenance mode")
 	assert.NoError(t, err, "Enable maintenance should succeed")
 
-	// Check service is in maintenance
-	services, err := client.Agent().Services()
+	// Check service is in maintenance (Maintenance field removed in SDK v1.33+)
+	// Verify by checking health checks instead
+	// Consul creates maintenance checks with ID "_service_maintenance:{serviceID}"
+	health, err := client.Agent().Checks()
 	require.NoError(t, err)
-	svc, ok := services[serviceID]
-	require.True(t, ok, "Service %s should exist", serviceID)
-	assert.True(t, svc.Maintenance, "Service should be in maintenance mode")
+	checkID := "_service_maintenance:" + serviceID
+	chk, ok := health[checkID]
+	require.True(t, ok, "Health check for service %s should exist", serviceID)
+	assert.Equal(t, api.HealthCritical, chk.Status, "Service should be in maintenance mode (critical)")
 
 	// Disable maintenance
 	err = client.Agent().DisableServiceMaintenance(serviceID)
 	assert.NoError(t, err, "Disable maintenance should succeed")
 
 	// Verify maintenance is disabled
-	services, err = client.Agent().Services()
+	time.Sleep(200 * time.Millisecond)
+	health, err = client.Agent().Checks()
 	require.NoError(t, err)
-	svc, ok = services[serviceID]
-	require.True(t, ok, "Service %s should still exist after disabling maintenance", serviceID)
-	assert.False(t, svc.Maintenance, "Service should not be in maintenance mode after disable")
+	chk, ok = health[checkID]
+	if ok {
+		assert.NotEqual(t, api.HealthCritical, chk.Status, "Service should not be in maintenance mode after disable")
+	}
 }
 
 // CAA-007: Test node maintenance mode
@@ -140,7 +145,8 @@ func TestAgentNodeMaintenance(t *testing.T) {
 	require.NoError(t, err)
 	config, ok := self["Config"]
 	require.True(t, ok)
-	assert.True(t, config["MaintenanceMode"], "Node should be in maintenance mode")
+	maintenanceMode, _ := config["MaintenanceMode"].(bool)
+	assert.True(t, maintenanceMode, "Node should be in maintenance mode")
 
 	// Disable node maintenance
 	err = client.Agent().DisableNodeMaintenance()
@@ -151,7 +157,8 @@ func TestAgentNodeMaintenance(t *testing.T) {
 	require.NoError(t, err)
 	config, ok = self["Config"]
 	require.True(t, ok)
-	assert.False(t, config["MaintenanceMode"], "Node should not be in maintenance mode after disable")
+	maintenanceMode, _ = config["MaintenanceMode"].(bool)
+	assert.False(t, maintenanceMode, "Node should not be in maintenance mode after disable")
 }
 
 // CAA-008: Test warn TTL check status

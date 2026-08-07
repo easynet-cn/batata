@@ -56,6 +56,10 @@ batata.console.context_path:
 # Enable/disable console UI
 #batata.console.ui.enabled: true
 
+# Directory containing the built batata-ui assets (SPA served by console server).
+# Defaults to 'console-ui' relative to the working directory.
+#batata.console.ui.dir: console-ui
+
 # Default console UI version: 'next' (new UI) or 'legacy' (old UI)
 # Not yet implemented
 #batata.console.ui.default: next
@@ -291,10 +295,10 @@ batata.plugin.control.max_connections: 50000
 #batata.config.gray.version.max_count: 10
 
 # --- Config Encryption ---
-batata.config.encryption.enabled: false
+batata.config.encryption.enabled: true
 batata.config.encryption.plugin.type: aes-gcm
 # Encryption key (32-byte Base64-encoded). Generate with: openssl rand -base64 32
-#batata.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
+batata.config.encryption.key: Twf/SGivomhSOtD7XPpsKZyxMSHMTalhh7EfmjVhSS0=
 # Hot reload interval in ms (0 = disabled)
 batata.config.encryption.reload.interval.ms: 0
 
@@ -538,14 +542,15 @@ batata.config.encryption.reload.interval.ms: 0
 # Logging
 # =============================================================================
 
-# Log directory path
+# Log directory path (relative to CWD)
 batata.logs.path: logs
 
 # Console output (stdout)
 batata.logs.console.enabled: true
 
 # File logging (creates per-module log files: batata.log, naming-server.log, etc.)
-batata.logs.file.enabled: true
+# Disabled in test environment (tracing-appender EPERM in sandbox)
+batata.logs.file.enabled: false
 
 # Log level: trace, debug, info, warn, error
 batata.logs.level: info

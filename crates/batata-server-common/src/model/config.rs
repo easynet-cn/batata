@@ -155,9 +155,12 @@ impl Configuration {
         }
 
         // Priority 1 (highest): --dotted.key=value property overrides
+        // Use try_parse_env_value to coerce string values into proper types
+        // (bool/int/float), otherwise the entire BatataTypedConfig deserialization
+        // fails because config::ValueKind::String cannot be deserialized into i32/bool.
         for (key, value) in property_overrides {
             config_builder = config_builder
-                .set_override(&key, value)
+                .set_override(&key, try_parse_env_value(&value))
                 .map_err(|e| anyhow::anyhow!("Failed to set override for {key}: {e}"))?;
         }
 
@@ -165,8 +168,8 @@ impl Configuration {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build configuration: {e}"))?;
 
-        let typed: typed_config::BatataTypedConfig = app_config
-            .get("batata")
+        let typed = app_config
+            .get::<typed_config::BatataTypedConfig>("batata")
             .unwrap_or_default();
 
         Ok(Configuration { config: app_config, typed })
@@ -177,7 +180,7 @@ impl Configuration {
     // ========================================================================
 
     pub fn deployment_type(&self) -> String {
-        self.typed.deployment.type_.clone()
+        self.typed.deployment.type_.clone().unwrap_or_else(|| "merged".to_string())
     }
 
     pub fn is_standalone(&self) -> bool {
@@ -213,7 +216,7 @@ impl Configuration {
     // ========================================================================
 
     pub fn server_address(&self) -> String {
-        self.typed.server.address.clone()
+        self.typed.server.address.clone().unwrap_or_else(|| "0.0.0.0".to_string())
     }
 
     pub fn server_main_port(&self) -> u16 {
@@ -221,7 +224,7 @@ impl Configuration {
     }
 
     pub fn server_context_path(&self) -> String {
-        self.typed.server.context_path.clone()
+        self.typed.server.context_path.clone().unwrap_or_else(|| "nacos".to_string())
     }
 
     pub fn sdk_server_port(&self) -> u16 {
@@ -278,11 +281,15 @@ impl Configuration {
     }
 
     pub fn console_server_context_path(&self) -> String {
-        self.typed.console.context_path.clone()
+        self.typed.console.context_path.clone().unwrap_or_default()
     }
 
     pub fn console_ui_enabled(&self) -> bool {
         self.typed.console.ui.enabled
+    }
+
+    pub fn console_ui_dir(&self) -> Option<String> {
+        self.typed.console.ui.dir.clone().or_else(|| Some("console-ui".to_string()))
     }
 
     /// Check if console is in remote mode.
@@ -292,7 +299,7 @@ impl Configuration {
     }
 
     pub fn console_remote_server_addr(&self) -> String {
-        self.typed.console.remote.server_addr.clone()
+        self.typed.console.remote.server_addr.clone().unwrap_or_else(|| "http://127.0.0.1:8848".to_string())
     }
 
     /// Resolve remote server addresses for console remote mode.
@@ -354,11 +361,11 @@ impl Configuration {
     }
 
     pub fn console_remote_username(&self) -> String {
-        self.typed.console.remote.username.clone()
+        self.typed.console.remote.username.clone().unwrap_or_else(|| "batata".to_string())
     }
 
     pub fn console_remote_password(&self) -> String {
-        self.typed.console.remote.password.clone()
+        self.typed.console.remote.password.clone().unwrap_or_else(|| "batata".to_string())
     }
 
     pub fn console_remote_connect_timeout_ms(&self) -> u64 {
@@ -391,15 +398,15 @@ impl Configuration {
     }
 
     pub fn server_identity_key(&self) -> String {
-        self.typed.core.auth.server.identity.key.clone()
+        self.typed.core.auth.server.identity.key.clone().unwrap_or_default()
     }
 
     pub fn server_identity_value(&self) -> String {
-        self.typed.core.auth.server.identity.value.clone()
+        self.typed.core.auth.server.identity.value.clone().unwrap_or_default()
     }
 
     pub fn auth_system_type(&self) -> String {
-        self.typed.core.auth.system.type_.clone()
+        self.typed.core.auth.system.type_.clone().unwrap_or_else(|| "default".to_string())
     }
 
     pub fn auth_console_enabled(&self) -> bool {
@@ -407,7 +414,7 @@ impl Configuration {
     }
 
     pub fn token_secret_key(&self) -> String {
-        self.typed.core.auth.plugin.default.token.secret.key.clone()
+        self.typed.core.auth.plugin.default.token.secret.key.clone().unwrap_or_default()
     }
 
     pub fn auth_token_expire_seconds(&self) -> i64 {
@@ -426,27 +433,27 @@ impl Configuration {
 
     /// Get LDAP base DN
     pub fn ldap_base_dn(&self) -> String {
-        self.typed.core.auth.ldap.base_dc.clone()
+        self.typed.core.auth.ldap.base_dc.clone().unwrap_or_default()
     }
 
     /// Get LDAP bind DN (admin user)
     pub fn ldap_bind_dn(&self) -> String {
-        self.typed.core.auth.ldap.bind_dn.clone()
+        self.typed.core.auth.ldap.bind_dn.clone().unwrap_or_default()
     }
 
     /// Get LDAP bind password
     pub fn ldap_bind_password(&self) -> String {
-        self.typed.core.auth.ldap.password.clone()
+        self.typed.core.auth.ldap.password.clone().unwrap_or_default()
     }
 
     /// Get LDAP user DN pattern
     pub fn ldap_user_dn_pattern(&self) -> String {
-        self.typed.core.auth.ldap.user_dn_pattern.clone()
+        self.typed.core.auth.ldap.user_dn_pattern.clone().unwrap_or_default()
     }
 
     /// Get LDAP filter prefix (default: uid)
     pub fn ldap_filter_prefix(&self) -> String {
-        self.typed.core.auth.ldap.filter.prefix.clone()
+        self.typed.core.auth.ldap.filter.prefix.clone().unwrap_or_else(|| "uid".to_string())
     }
 
     /// Get LDAP connection timeout in milliseconds
@@ -490,12 +497,12 @@ impl Configuration {
 
     /// Get OAuth user creation mode (auto or manual)
     pub fn oauth_user_creation(&self) -> String {
-        self.typed.core.auth.oauth.user.creation.clone()
+        self.typed.core.auth.oauth.user.creation.clone().unwrap_or_else(|| "auto".to_string())
     }
 
     /// Get OAuth role sync mode (on_login or periodic)
     pub fn oauth_role_sync(&self) -> String {
-        self.typed.core.auth.oauth.role.sync.clone()
+        self.typed.core.auth.oauth.role.sync.clone().unwrap_or_else(|| "on_login".to_string())
     }
 
     /// Get default OAuth redirect URI template
@@ -571,12 +578,12 @@ impl Configuration {
     /// Get the base data directory for embedded modes.
     /// This is the root directory for all persistent data (RocksDB, node-id, etc.)
     pub fn embedded_data_dir(&self) -> String {
-        self.typed.persistence.embedded.data_dir.clone()
+        self.typed.persistence.embedded.data_dir.clone().unwrap_or_else(|| "data".to_string())
     }
 
     /// Get the RocksDB database name (subdirectory under data_dir).
     pub fn embedded_db_name(&self) -> String {
-        self.typed.persistence.embedded.db_name.clone()
+        self.typed.persistence.embedded.db_name.clone().unwrap_or_else(|| "batata_rocksdb".to_string())
     }
 
     /// Get the full RocksDB storage path: {data_dir}/{db_name}
@@ -591,7 +598,7 @@ impl Configuration {
     // ========================================================================
 
     pub fn datasource_platform(&self) -> String {
-        self.typed.sql.init.platform.clone()
+        self.typed.sql.init.platform.clone().unwrap_or_default()
     }
 
     pub fn plugin_datasource_log(&self) -> bool {
@@ -747,11 +754,11 @@ impl Configuration {
     }
 
     pub fn otel_endpoint(&self) -> String {
-        self.typed.otel.endpoint.clone()
+        self.typed.otel.endpoint.clone().unwrap_or_else(|| "http://localhost:4317".to_string())
     }
 
     pub fn otel_service_name(&self) -> String {
-        self.typed.otel.service_name.clone()
+        self.typed.otel.service_name.clone().unwrap_or_else(|| "batata".to_string())
     }
 
     pub fn otel_sampling_ratio(&self) -> f64 {
@@ -867,7 +874,7 @@ impl Configuration {
 
     /// Get the encryption plugin type
     pub fn encryption_plugin_type(&self) -> String {
-        self.typed.config.encryption.plugin.type_.clone()
+        self.typed.config.encryption.plugin.type_.clone().unwrap_or_else(|| "aes-gcm".to_string())
     }
 
     /// Get the encryption key (Base64-encoded)
@@ -957,7 +964,7 @@ impl Configuration {
 
     /// Get xDS server ID
     pub fn xds_server_id(&self) -> String {
-        self.typed.mesh.xds.server.id.clone()
+        self.typed.mesh.xds.server.id.clone().unwrap_or_else(|| "batata-xds-server".to_string())
     }
 
     /// Get xDS sync interval in milliseconds
@@ -1046,7 +1053,7 @@ impl Configuration {
 
     /// Get log level
     pub fn log_level(&self) -> String {
-        self.typed.logs.level.clone()
+        self.typed.logs.level.clone().unwrap_or_else(|| "info".to_string())
     }
 
     // NOTE: logging_config() is provided as an extension in batata-server/src/startup/logging.rs
@@ -1282,12 +1289,12 @@ impl Configuration {
 
     /// RocksDB bottommost level compression type (zstd or lz4)
     pub fn rocksdb_bottommost_compression(&self) -> String {
-        self.typed.rocksdb.bottommost_compression.clone()
+        self.typed.rocksdb.bottommost_compression.clone().unwrap_or_else(|| "zstd".to_string())
     }
 
     /// RocksDB default compression type (lz4, zstd, snappy, none)
     pub fn rocksdb_compression(&self) -> String {
-        self.typed.rocksdb.compression.clone()
+        self.typed.rocksdb.compression.clone().unwrap_or_else(|| "lz4".to_string())
     }
 
     /// Whether RocksDB internal statistics are enabled
@@ -2523,7 +2530,7 @@ mod tests {
     fn test_typed_visibility_plugin_defaults() {
         let cfg = build_config(vec![]);
         assert!(cfg.typed.plugin.visibility.enabled);
-        assert_eq!(cfg.typed.plugin.visibility.type_, "nacos");
+        assert_eq!(cfg.typed.plugin.visibility.type_, Some("nacos".to_string()));
     }
 
     #[test]
@@ -2941,7 +2948,7 @@ batata.db.pool.max_connections: 42
         assert_eq!(typed.server.main.port, 9999);
         assert!(!typed.standalone);
         assert!(typed.core.auth.enabled);
-        assert_eq!(typed.core.auth.system.type_, "ldap");
+        assert_eq!(typed.core.auth.system.type_, Some("ldap".to_string()));
         assert_eq!(typed.console.port, 7777);
         assert_eq!(typed.db.pool.max_connections, 42);
     }
@@ -2962,9 +2969,9 @@ batata.server.main.port: 8888
         // Set value
         assert_eq!(typed.server.main.port, 8888);
         // Default values for missing keys
-        assert_eq!(typed.server.context_path, "nacos");
+        assert_eq!(typed.server.context_path, None);
         assert!(!typed.standalone);
-        assert_eq!(typed.deployment.type_, "merged");
+        assert_eq!(typed.deployment.type_, Some("merged".to_string()));
         assert_eq!(typed.console.port, 8081);
     }
 
@@ -3003,11 +3010,11 @@ batata.server.main.port: 8888
 
         // Server
         assert_eq!(typed.server.main.port, 8849);
-        assert_eq!(typed.server.context_path, "nacos");
-        assert_eq!(typed.server.address, "0.0.0.0");
+        assert_eq!(typed.server.context_path, None);
+        assert_eq!(typed.server.address, None);
         // Console
         assert_eq!(typed.console.port, 8081);
-        assert_eq!(typed.console.context_path, "");
+        assert_eq!(typed.console.context_path, None);
         assert!(typed.console.ui.enabled);
         // DB
         assert_eq!(typed.db.pool.max_connections, 200);
@@ -3016,7 +3023,7 @@ batata.server.main.port: 8888
         assert!(!typed.core.auth.enabled);
         assert!(!typed.core.auth.admin.enabled);
         assert!(typed.core.auth.console.enabled);
-        assert_eq!(typed.core.auth.system.type_, "default");
+        assert_eq!(typed.core.auth.system.type_, Some("default".to_string()));
         // RateLimit
         assert!(!typed.ratelimit.enabled);
         assert_eq!(typed.ratelimit.max_requests, 100);
@@ -3027,13 +3034,13 @@ batata.server.main.port: 8888
         assert!(typed.plugin.visibility.enabled);
         // Otel
         assert!(!typed.otel.enabled);
-        assert_eq!(typed.otel.service_name, "batata");
+        assert_eq!(typed.otel.service_name, Some("batata".to_string()));
         // Logs
         assert!(typed.logs.console.enabled);
-        assert_eq!(typed.logs.level, "info");
+        assert_eq!(typed.logs.level, Some("info".to_string()));
         // RocksDB
         assert_eq!(typed.rocksdb.write_buffer_mb, 128);
-        assert_eq!(typed.rocksdb.compression, "lz4");
+        assert_eq!(typed.rocksdb.compression, Some("lz4".to_string()));
     }
 
     // ========================================================================
@@ -3218,7 +3225,7 @@ batata.server.main.port: 8888
     #[test]
     fn test_consistency_server_context_path() {
         let cfg = build_config(vec![("batata.server.context_path", "/custom".into())]);
-        assert_eq!(cfg.typed.server.context_path, "/custom");
+        assert_eq!(cfg.typed.server.context_path, Some("/custom".to_string()));
         assert_eq!(cfg.server_context_path(), "/custom");
     }
 
@@ -3246,14 +3253,14 @@ batata.server.main.port: 8888
     #[test]
     fn test_consistency_deployment_type() {
         let cfg = build_config(vec![("batata.deployment.type", "console".into())]);
-        assert_eq!(cfg.typed.deployment.type_, "console");
+        assert_eq!(cfg.typed.deployment.type_, Some("console".to_string()));
         assert_eq!(cfg.deployment_type(), "console");
     }
 
     #[test]
     fn test_consistency_auth_system_type() {
         let cfg = build_config(vec![("batata.core.auth.system.type", "ldap".into())]);
-        assert_eq!(cfg.typed.core.auth.system.type_, "ldap");
+        assert_eq!(cfg.typed.core.auth.system.type_, Some("ldap".to_string()));
         assert_eq!(cfg.auth_system_type(), "ldap");
     }
 
@@ -3299,7 +3306,7 @@ batata.server.main.port: 8888
     #[test]
     fn test_consistency_log_level() {
         let cfg = build_config(vec![("batata.logs.level", "debug".into())]);
-        assert_eq!(cfg.typed.logs.level, "debug");
+        assert_eq!(cfg.typed.logs.level, Some("debug".to_string()));
         assert_eq!(cfg.log_level(), "debug");
     }
 
@@ -3313,7 +3320,7 @@ batata.server.main.port: 8888
     #[test]
     fn test_consistency_server_address() {
         let cfg = build_config(vec![("batata.server.address", "10.0.0.1".into())]);
-        assert_eq!(cfg.typed.server.address, "10.0.0.1");
+        assert_eq!(cfg.typed.server.address, Some("10.0.0.1".to_string()));
         assert_eq!(cfg.server_address(), "10.0.0.1");
     }
 

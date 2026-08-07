@@ -278,7 +278,7 @@ impl ConsulPlugin {
             catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
                 .with_index_provider(index_provider.clone()),
             acl: if self.config.acl_enabled {
-                AclService::with_raft(db.clone(), consul_raft.clone())
+                AclService::with_raft_and_token(db.clone(), consul_raft.clone(), self.config.initial_management_token.clone())
             } else {
                 AclService::disabled()
             },

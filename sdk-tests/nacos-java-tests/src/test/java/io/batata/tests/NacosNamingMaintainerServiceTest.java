@@ -352,7 +352,7 @@ public class NacosNamingMaintainerServiceTest {
      */
     @Test
     @Order(7)
-    @Disabled("SDK-side: NacosNamingMaintainerServiceImpl.listSelectorTypes() tries to deserialize Result wrapper as List<String>")
+    @Disabled("SDK-side: NacosNamingMaintainerServiceImpl.listSelectorTypes() uses TypeReference<List<String>> instead of Result<List<String>>")
     void testListSelectorTypes() throws Exception {
         List<String> selectorTypes = maintainerService.listSelectorTypes();
         assertNotNull(selectorTypes, "Selector types list should not be null");

@@ -378,8 +378,8 @@ pub struct AgentServiceRegistration {
     #[serde(rename = "ID", alias = "Id", default)]
     pub id: Option<String>,
 
-    /// Service name (required)
-    #[serde(rename = "Name", alias = "name")]
+    /// Service name (required for top-level, defaults to empty for SidecarService)
+    #[serde(rename = "Name", alias = "name", default)]
     pub name: String,
 
     /// Service tags for filtering and metadata
@@ -433,6 +433,10 @@ pub struct AgentServiceRegistration {
     /// Namespace (Consul Enterprise, maps to Batata namespace)
     #[serde(rename = "Namespace", alias = "namespace", default)]
     pub namespace: Option<String>,
+
+    /// Unix socket path for the service
+    #[serde(rename = "SocketPath", alias = "socket_path", default)]
+    pub socket_path: Option<String>,
 }
 
 impl AgentServiceRegistration {
@@ -973,6 +977,10 @@ pub struct AgentService {
         default
     )]
     pub modify_index: Option<u64>,
+
+    /// Unix socket path for the service
+    #[serde(rename = "SocketPath", skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<String>,
 }
 
 /// Agent health service response combining service info with aggregated check status
@@ -1658,6 +1666,7 @@ impl From<&AgentServiceRegistration> for AgentService {
             peer_name: Some(String::new()),
             create_index: Some(1),
             modify_index: Some(1),
+            socket_path: reg.socket_path.clone(),
         }
     }
 }
@@ -1702,6 +1711,10 @@ pub struct AgentConfig {
     pub version: String,
     #[serde(rename = "PrimaryDatacenter")]
     pub primary_datacenter: String,
+
+    /// Whether node is in maintenance mode
+    #[serde(rename = "MaintenanceMode", default)]
+    pub maintenance_mode: bool,
 }
 
 /// Network coordinate

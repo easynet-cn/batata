@@ -181,6 +181,23 @@ async fn internal_login(
         );
     }
 
+    // When auth is disabled, return a mock token to allow tests and clients
+    // to proceed with a valid token structure (mirrors Nacos behavior)
+    if !data.configuration.auth_enabled() {
+        let login_result = LoginResult {
+            access_token: "mock-token-auth-disabled".to_string(),
+            token_ttl: 18000,
+            global_admin: true,
+            username: username.clone(),
+        };
+        return HttpResponse::Ok()
+            .append_header((
+                AUTHORIZATION_HEADER,
+                format!("{}{}", TOKEN_PREFIX, login_result.access_token),
+            ))
+            .json(login_result);
+    }
+
     // Delegate to auth plugin for login
     let auth_plugin = match data.auth_plugin.as_ref() {
         Some(p) => p,

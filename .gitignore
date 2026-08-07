@@ -39,3 +39,6 @@ Cargo.lock
 
 *.pid
 *.log
+
+# Built frontend assets (produced by batata-ui: npm run build:ui)
+/console-ui/
