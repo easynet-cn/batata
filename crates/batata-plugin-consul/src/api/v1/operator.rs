@@ -92,9 +92,9 @@ async fn keyring_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
-    _query: web::Query<KeyringParams>,
+    query: web::Query<KeyringParams>,
 ) -> HttpResponse {
-    crate::operator::keyring_list(req, acl_service, operator_service, _query).await
+    crate::operator::keyring_list(req, acl_service, operator_service, query).await
 }
 
 #[post("/keyring")]
@@ -102,9 +102,10 @@ async fn keyring_install(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
+    query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    crate::operator::keyring_install(req, acl_service, operator_service, body).await
+    crate::operator::keyring_install(req, acl_service, operator_service, query, body).await
 }
 
 #[put("/keyring")]
@@ -112,9 +113,10 @@ async fn keyring_use(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
+    query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    crate::operator::keyring_use(req, acl_service, operator_service, body).await
+    crate::operator::keyring_use(req, acl_service, operator_service, query, body).await
 }
 
 #[delete("/keyring")]
@@ -122,9 +124,10 @@ async fn keyring_remove(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
+    query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    crate::operator::keyring_remove(req, acl_service, operator_service, body).await
+    crate::operator::keyring_remove(req, acl_service, operator_service, query, body).await
 }
 
 #[get("/usage")]

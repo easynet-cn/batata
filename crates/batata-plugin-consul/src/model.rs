@@ -983,6 +983,60 @@ pub struct AgentService {
     pub socket_path: Option<String>,
 }
 
+/// Filter support for AgentService — enables `?filter=` on `/v1/agent/services`.
+///
+/// Upstream Consul uses `bexpr` (go-bexpr) on the `api.AgentService` JSON schema.
+/// Field names match the PascalCase JSON keys (e.g., `Service`, `Tags`, `Meta`).
+impl crate::filter::Filterable for AgentService {
+    fn resolve_field(&self, path: &str) -> Option<String> {
+        match path {
+            "ID" | "Service.ID" => return Some(self.id.clone()),
+            "Service" | "Service.Service" => return Some(self.service.clone()),
+            "Port" | "Service.Port" => return Some(self.port.to_string()),
+            "Address" | "Service.Address" => return Some(self.address.clone()),
+            "Kind" | "Service.Kind" => return self.kind.clone(),
+            "Namespace" | "Service.Namespace" => return self.namespace.clone(),
+            "EnableTagOverride" | "Service.EnableTagOverride" => {
+                return Some(self.enable_tag_override.to_string());
+            }
+            "Datacenter" => return self.datacenter.clone(),
+            "PeerName" | "Service.PeerName" => return self.peer_name.clone(),
+            "SocketPath" | "Service.SocketPath" => return self.socket_path.clone(),
+            "Weights.Passing" | "Service.Weights.Passing" => {
+                return Some(self.weights.passing.to_string());
+            }
+            "Weights.Warning" | "Service.Weights.Warning" => {
+                return Some(self.weights.warning.to_string());
+            }
+            "CreateIndex" | "Service.CreateIndex" => return self.create_index.map(|i| i.to_string()),
+            "ModifyIndex" | "Service.ModifyIndex" => return self.modify_index.map(|i| i.to_string()),
+            _ => {}
+        }
+        // Dotted map access: Meta.env, Service.Meta.env
+        if let Some(key) = path.strip_prefix("Meta.") {
+            return self.meta.as_ref()?.get(key).cloned();
+        }
+        if let Some(key) = path.strip_prefix("Service.Meta.") {
+            return self.meta.as_ref()?.get(key).cloned();
+        }
+        None
+    }
+
+    fn resolve_list(&self, path: &str) -> Vec<String> {
+        match path {
+            "Tags" | "Service.Tags" => self.tags.clone().unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn resolve_map(&self, path: &str) -> Option<&HashMap<String, String>> {
+        match path {
+            "Meta" | "Service.Meta" => self.meta.as_ref(),
+            _ => None,
+        }
+    }
+}
+
 /// Agent health service response combining service info with aggregated check status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -1567,6 +1621,43 @@ impl Default for HealthCheck {
             create_index: 1,
             modify_index: 1,
         }
+    }
+}
+
+/// Filter support for HealthCheck — enables `?filter=` on `/v1/agent/checks`.
+///
+/// Upstream Consul uses `bexpr` on the `api.AgentCheck` JSON schema.
+/// Field names match the PascalCase JSON keys.
+impl crate::filter::Filterable for HealthCheck {
+    fn resolve_field(&self, path: &str) -> Option<String> {
+        match path {
+            "Node" => return Some(self.node.clone()),
+            "CheckID" => return Some(self.check_id.clone()),
+            "Name" => return Some(self.name.clone()),
+            "Status" => return Some(self.status.clone()),
+            "Notes" => return Some(self.notes.clone()),
+            "Output" => return Some(self.output.clone()),
+            "ServiceID" => return Some(self.service_id.clone()),
+            "ServiceName" => return Some(self.service_name.clone()),
+            "Type" => return Some(self.check_type.clone()),
+            "ExposedPort" => return Some(self.exposed_port.to_string()),
+            "Interval" => return self.interval.clone(),
+            "Timeout" => return self.timeout.clone(),
+            "CreateIndex" => return Some(self.create_index.to_string()),
+            "ModifyIndex" => return Some(self.modify_index.to_string()),
+            _ => None,
+        }
+    }
+
+    fn resolve_list(&self, path: &str) -> Vec<String> {
+        match path {
+            "ServiceTags" => self.service_tags.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn resolve_map(&self, _path: &str) -> Option<&HashMap<String, String>> {
+        None
     }
 }
 

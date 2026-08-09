@@ -49,7 +49,9 @@ pub mod log_broadcast;
 pub mod model;
 pub mod namespace;
 pub mod naming_store;
+pub mod oidc;
 pub mod operator;
+pub mod partition;
 pub mod peering;
 pub mod query;
 pub mod result_handler;
@@ -91,6 +93,7 @@ pub use coordinate::{ConsulCoordinateService, ConsulCoordinateServicePersistent}
 pub use index_provider::ConsulIndexProvider;
 pub use namespace::ConsulNamespaceService;
 pub use naming_store::ConsulNamingStore;
+pub use partition::ConsulPartitionService;
 pub use peering::ConsulPeeringService;
 pub use raft::plugin_handler::{CONSUL_PLUGIN_ID, ConsulRaftPluginHandler, ConsulRaftWriter};
 pub use result_handler::ConsulResultHandler;

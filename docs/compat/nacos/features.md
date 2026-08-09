@@ -76,8 +76,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 |----|----------------------|-----------|-------------|--------|-------|-------|
 | F-NAC-CLUSTER-001 | `DistroDataRequest` | S↔S | batata-core | 🟢 | | distro sync |
 | F-NAC-CLUSTER-002 | `MemberReportRequest/Response` | S→S | batata-core | 🟢 | | |
-| F-NAC-CLUSTER-003 | `PluginAvailabilityRequest/Response` | S→S | | ⚪ | | |
-| F-NAC-CLUSTER-004 | `PluginConfigStorageTypeRequest` | S→S | | ⚪ | | |
+| F-NAC-CLUSTER-003 | `PluginAvailabilityRequest/Response` | S→S | batata-core/handler/cluster.rs | 🟢 | | cluster-internal plugin status query |
+| F-NAC-CLUSTER-004 | `PluginConfigStorageTypeRequest` | S→S | | ⛔ | | not in upstream Nacos; batata extension not needed |
 | F-NAC-CLUSTER-005 | `ConfigChangeClusterSyncRequest/Response` | S→S | batata-config | 🟢 | | |
 
 ## A.5. Lock Service (`LOCK`)
@@ -94,7 +94,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-LOCK-006 | Non-reentrant lock | C→S | batata-core/lock.rs | 🟢 | | |
 | F-NAC-LOCK-007 | Wait queue (FIFO, timeout, cancel) | C↔S | batata-consistency/raft | 🟢 | | server-side waiter queue |
 | F-NAC-LOCK-008 | Connection cleanup releases locks | S→C | batata-core | 🟢 | | disconnect → force release |
-| F-NAC-LOCK-009 | Watchdog auto-renew | C↔S | | 🟡 | | SDK-side, needs server support |
+| F-NAC-LOCK-009 | Watchdog auto-renew | C↔S | batata-core/handler/lock.rs | 🟢 | | RENEW op + owner field + LockResult |
 | F-NAC-LOCK-010 | Backward compat (old client without owner) | C→S | batata-core | 🟢 | | uses connectionId fallback |
 | F-NAC-LOCK-011 | HTTP admin `GET /v3/admin/core/lock/list` | — | batata-server/api/v3/admin/core/lock.rs | 🟢 | | lock list endpoint |
 
@@ -111,9 +111,9 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-AISDK-005 | `QueryAgentCardRequest` | C→S | batata-ai/handler | 🟢 | | A2A agent card query |
 | F-NAC-AISDK-006 | `AgentEndpointRequest` | C→S | batata-ai/handler | 🟢 | | A2A endpoint register/deregister |
 | F-NAC-AISDK-007 | `QueryPromptRequest` | C→S | batata-ai/handler | 🟢 | | prompt query |
-| F-NAC-AISDK-008 | Agent search/discover/subscribe | C→S | | ⚪ | | not implemented in gRPC |
-| F-NAC-AISDK-009 | Skill download (gRPC) | C→S | | ⚪ | | not implemented in gRPC |
-| F-NAC-AISDK-010 | AgentSpec query (gRPC) | C→S | | ⚪ | | not implemented in gRPC |
+| F-NAC-AISDK-008 | Agent search/discover/subscribe | C→S | batata-ai/handler | 🟢 | | RAD protocol: AgentSearchRpcRequest + AgentDiscoveryRpcRequest + EndpointRegister/Deregister gRPC handlers |
+| F-NAC-AISDK-009 | Skill download (gRPC) | C→S | | ⛔ | | HTTP-only; upstream gRPC throws SERVER_NOT_IMPLEMENTED |
+| F-NAC-AISDK-010 | AgentSpec query (gRPC) | C→S | | ⛔ | | HTTP-only; upstream gRPC throws SERVER_NOT_IMPLEMENTED |
 
 ---
 
@@ -127,7 +127,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-CORE-002 | GET `v3/console/core/namespace` (namespaceId) | batata-console | 🟢 | | detail |
 | F-NAC-CORE-003 | POST/PUT/DELETE `v3/console/core/namespace` | batata-console | 🟢 | | create/update/delete |
 | F-NAC-CORE-004 | GET `v3/console/core/cluster/nodes?keyword=` | batata-console | 🟢 | | nodes |
-| F-NAC-CORE-005 | POST `v3/console/core/cluster/server/leave` | | 🟡 | | route not confirmed in console |
+| F-NAC-CORE-005 | POST `v3/console/core/cluster/server/leave` | batata-console/v3/cluster.rs | 🟢 | | member leave + self-protection |
 | F-NAC-CORE-006 | GET `v3/console/server/state` | batata-console | 🟢 | | server/version |
 | F-NAC-CORE-007 | GET `v3/console/server/announcement?language=` | batata-console | 🟢 | | |
 | F-NAC-CORE-008 | GET `v3/console/server/guide` | batata-console | 🟢 | | |
@@ -190,8 +190,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-AUTH-003 | GET/POST/PUT/DELETE `v3/auth/user(/list)` | batata-auth | 🟢 | | list/create/reset/delete |
 | F-NAC-AUTH-004 | GET/POST/DELETE `v3/auth/role(/list)` | batata-auth | 🟢 | | |
 | F-NAC-AUTH-005 | GET/POST/DELETE `v3/auth/permission(/list)` | batata-auth | 🟢 | | grant/revoke |
-| F-NAC-AUTH-006 | GET `v1/auth/oidc/login` | | ⚪ | | OIDC redirect |
-| F-NAC-AUTH-007 | GET `v1/auth/oidc/logout?redirect=` | | ⚪ | | OIDC logout |
+| F-NAC-AUTH-006 | GET `v1/auth/oidc/login` | batata-server-common/auth/v3/oidc.rs | 🟢 | | OIDC redirect + callback + cookie |
+| F-NAC-AUTH-007 | GET `v1/auth/oidc/logout?redirect=` | batata-server-common/auth/v3/oidc.rs | 🟢 | | OIDC logout + optional IdP redirect |
 
 ## B.5. AI management — console (`F-NAC-AI-`)
 
@@ -204,7 +204,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-AI-003 | Skill CRUD + upload `v3/console/ai/skills` | batata-console/v3/ai_skill.rs | 🟢 | | upload/precheck/batch/draft/publish |
 | F-NAC-AI-004 | Prompt CRUD `v3/console/ai/prompt` | batata-console/v3/ai_prompt.rs | 🟢 | | draft/publish/governance/download/labels |
 | F-NAC-AI-005 | MCP server CRUD `v3/console/ai/mcp` | batata-console/v3/ai_mcp.rs | 🟢 | | create/update/list/get/delete + import tools |
-| F-NAC-AI-006 | AI resource import `v3/console/ai/import` | batata-console/v3/ai_mcp.rs | 🟡 | | MCP-specific import only; generic sources/search/validate/execute not impl |
+| F-NAC-AI-006 | AI resource import `v3/console/ai/import` | batata-console/v3/ai_import.rs | 🟢 | | generic importer: sources/search/validate/execute |
 | F-NAC-AI-007 | A2A agent card `v3/console/ai/a2a` | batata-console/v3/ai_a2a.rs | 🟢 | | register/update/list/version-list/delete |
 | F-NAC-AI-008 | Pipeline `v3/console/ai/pipelines` | batata-console/v3/ai_pipeline.rs | 🟢 | | list/detail |
 | F-NAC-AI-009 | Copilot `v3/console/copilot` | batata-copilot | 🟢 | | config + SSE (skill optimize/generate, prompt optimize/debug) |
@@ -226,8 +226,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-CLIENT-007 | GET `/v3/client/ai/skills` | batata-ai (skill_client_routes) | 🟢 | | skill download |
 | F-NAC-CLIENT-008 | GET `/v3/client/ai/agentspecs` | batata-ai (agentspec_client_routes) | 🟢 | | agentspec query |
 | F-NAC-CLIENT-009 | GET `/v3/client/ai/agentspecs/search` | batata-ai | 🟢 | | agentspec search |
-| F-NAC-CLIENT-010 | GET `/v3/client/ai/agents/search` | | ⚪ | | agent discovery — not impl |
-| F-NAC-CLIENT-011 | POST/DELETE/PUT `/v3/client/ai/agents/endpoints` | | ⚪ | | agent endpoint publisher — not impl |
+| F-NAC-CLIENT-010 | GET `/v3/client/ai/agents/search` | batata-ai/api/agent_client.rs | 🟢 | | agent discovery |
+| F-NAC-CLIENT-011 | POST/DELETE/PUT `/v3/client/ai/agents/endpoints` | batata-ai/api/agent_client.rs | 🟢 | | agent endpoint publisher + heartbeat |
 
 ## B.7. Admin HTTP API (`F-NAC-ADM-`)
 
@@ -286,7 +286,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action | batata impl | Status | Tests | Notes |
 |----|-------------|-------------|--------|-------|-------|
-| F-NAC-ADM-AUTH-001 | POST/DELETE `/v3/admin/auth/visibility/grant` | | ⚪ | | visibility grant — not impl |
+| F-NAC-ADM-AUTH-001 | POST/DELETE `/v3/auth/visibility` | batata-auth/service/visibility_grant.rs | 🟢 | | visibility grant/revoke via RBAC |
 
 ### B.7.5. AI admin (`ADM-AI`)
 
@@ -299,7 +299,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-ADM-AI-005 | POST/PUT/DELETE `/v3/admin/ai/skills/draft` + `/force-publish` + `/online` + `/offline` + `/submit` + `/labels` + GET `/list` + `/versions` + POST `/upload` + `/upload/batch` + `/upload/precheck` | batata-console/v3/ai_skill | 🟢 | | Skill admin |
 | F-NAC-ADM-AI-006 | POST/PUT/DELETE `/v3/admin/ai/prompt/draft` + `/force-publish` + `/online` + `/offline` + `/submit` + `/labels` + GET `/list` + `/versions` + `/governance` + `/version/download` | batata-console/v3/ai_prompt | 🟢 | | Prompt admin |
 | F-NAC-ADM-AI-007 | GET `/v3/admin/ai/pipelines` + `/list` + `/detail` + `/{pipelineId}` | batata-ai/api/pipeline | 🟢 | | Pipeline admin |
-| F-NAC-ADM-AI-008 | GET `/v3/admin/ai/import/sources` + POST `/search` + `/validate` + `/execute` | | ⚪ | | generic AI importer — not impl |
+| F-NAC-ADM-AI-008 | GET `/v3/admin/ai/import/sources` + POST `/search` + `/validate` + `/execute` | batata-console/v3/ai_import | 🟢 | | generic AI importer: sources/search/validate/execute |
 
 ### B.7.6. Legacy / misc (`ADM-LEGACY`)
 
@@ -330,22 +330,22 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | A.1 SDK Conn | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | A.2 Config gRPC | 10 | 0 | 0 | 0 | 0 | 10 | 100% |
 | A.3 Naming gRPC | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
-| A.4 Cluster gRPC | 3 | 0 | 0 | 2 | 0 | 5 | 60% |
-| A.5 Lock gRPC | 10 | 1 | 0 | 0 | 0 | 11 | 95% |
-| A.6 AI gRPC SDK | 7 | 0 | 0 | 3 | 0 | 10 | 70% |
+| A.4 Cluster gRPC | 4 | 0 | 0 | 0 | 1 | 5 | 80% |
+| A.5 Lock gRPC | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
+| A.6 AI gRPC SDK | 8 | 0 | 0 | 0 | 2 | 10 | 80% |
 | B.1 Console core | 15 | 0 | 0 | 0 | 0 | 15 | 100% |
 | B.2 Config console | 19 | 0 | 0 | 0 | 0 | 19 | 100% |
 | B.3 Naming console | 9 | 0 | 0 | 0 | 0 | 9 | 100% |
-| B.4 Auth | 5 | 0 | 0 | 2 | 0 | 7 | 71% |
+| B.4 Auth | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
 | B.5 AI console | 10 | 1 | 0 | 0 | 0 | 11 | 95% |
-| B.6 Client HTTP | 9 | 0 | 0 | 2 | 0 | 11 | 82% |
+| B.6 Client HTTP | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | B.7.1 Admin Config | 16 | 0 | 0 | 0 | 0 | 16 | 100% |
 | B.7.2 Admin Naming | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | B.7.3 Admin Core | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
-| B.7.4 Admin Auth | 0 | 0 | 0 | 1 | 0 | 1 | 0% |
-| B.7.5 Admin AI | 7 | 0 | 0 | 1 | 0 | 8 | 88% |
+| B.7.4 Admin Auth | 1 | 0 | 0 | 0 | 0 | 1 | 100% |
+| B.7.5 Admin AI | 8 | 0 | 0 | 0 | 0 | 8 | 100% |
 | B.7.6 Admin Legacy | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | B.8 Maintainer SDK | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
-| **Total** | 168 | 2 | 0 | 11 | 0 | 181 | 94% |
+| **Total** | 178 | 0 | 0 | 0 | 3 | 181 | 98% |
 
 > Status verified against batata source code on 2025-08-08. gRPC type names must stay exact for interop. HTTP rows verified against `console-ui-next` (`src/api/*.ts`) and upstream test suite. Update statuses per actual implementation and sync this table.

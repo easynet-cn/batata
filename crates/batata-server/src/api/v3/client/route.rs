@@ -10,6 +10,7 @@ pub fn client_routes() -> Scope {
             web::scope("/ai")
                 .service(batata_ai::prompt_client_routes())
                 .service(batata_ai::skill_client_routes())
-                .service(batata_ai::agentspec_client_routes()),
+                .service(batata_ai::agentspec_client_routes())
+                .service(batata_ai::agent_client_routes()),
         )
 }

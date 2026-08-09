@@ -42,6 +42,8 @@ pub enum ConsulTable {
     Queries,
     /// Namespaces
     Namespaces,
+    /// Partitions (simplified Enterprise feature)
+    Partitions,
     /// User events
     Events,
 }
@@ -82,6 +84,7 @@ pub struct ConsulTableIndex {
     operator: Arc<TableState>,
     queries: Arc<TableState>,
     namespaces: Arc<TableState>,
+    partitions: Arc<TableState>,
     events: Arc<TableState>,
 }
 
@@ -100,6 +103,7 @@ impl ConsulTableIndex {
             operator: Arc::new(TableState::new(1)),
             queries: Arc::new(TableState::new(1)),
             namespaces: Arc::new(TableState::new(1)),
+            partitions: Arc::new(TableState::new(1)),
             events: Arc::new(TableState::new(1)),
         }
     }
@@ -118,6 +122,7 @@ impl ConsulTableIndex {
             ConsulTable::Operator => &self.operator,
             ConsulTable::Queries => &self.queries,
             ConsulTable::Namespaces => &self.namespaces,
+            ConsulTable::Partitions => &self.partitions,
             ConsulTable::Events => &self.events,
         }
     }

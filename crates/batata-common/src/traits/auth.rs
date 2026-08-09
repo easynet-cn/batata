@@ -232,6 +232,19 @@ pub trait OAuthProvider: Send + Sync {
         provider_name: &str,
         access_token: &str,
     ) -> anyhow::Result<OAuthUserProfile>;
+
+    /// Build an IdP RP-initiated logout URL (OIDC `end_session_endpoint`).
+    ///
+    /// Returns `Ok(None)` when the provider does not support RP-initiated
+    /// logout (no discovery document or no `end_session_endpoint`).
+    async fn build_logout_url(
+        &self,
+        _provider_name: &str,
+        _id_token_hint: Option<&str>,
+        _post_logout_redirect_uri: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 /// OAuth token response (provider-agnostic)

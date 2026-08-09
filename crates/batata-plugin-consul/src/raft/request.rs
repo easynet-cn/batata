@@ -255,6 +255,17 @@ pub enum ConsulRaftRequest {
     /// Delete a namespace
     NamespaceDelete { name: String },
 
+    // ==================== Partition Operations ====================
+    /// Create or update a partition
+    PartitionUpsert {
+        name: String,
+        /// JSON-serialized Partition
+        partition_json: String,
+    },
+
+    /// Delete a partition (soft delete - sets DeletedAt)
+    PartitionDelete { name: String },
+
     // ==================== Catalog Operations ====================
     /// Register a service in the catalog
     CatalogRegister {
@@ -339,6 +350,9 @@ impl ConsulRaftRequest {
             // Namespace
             Self::NamespaceUpsert { .. } => "NamespaceUpsert",
             Self::NamespaceDelete { .. } => "NamespaceDelete",
+            // Partition
+            Self::PartitionUpsert { .. } => "PartitionUpsert",
+            Self::PartitionDelete { .. } => "PartitionDelete",
             // Catalog
             Self::CatalogRegister { .. } => "CatalogRegister",
             Self::CatalogDeregister { .. } => "CatalogDeregister",

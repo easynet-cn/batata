@@ -27,10 +27,10 @@ docs/compat/
 
 | Protocol | Features | 🟢 | 🟡 | ⚪ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|----|-----------|------------| -----|
-| Nacos    | 181      | 168 | 2  | 11 | 94%       | 419        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 181      | 175 | 1  | 5  | 97%       | 419        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 165 | 8  | 8  | 96%       | 267        | HTTP_API, SDK_CLIENT |
 | Apollo   | 179      | 76  | 54 | 49 | 73%       | 430        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **541** | **409** | **64** | **68** | **88%** | **1116** | |
+| **Total** | **541** | **416** | **63** | **62** | **89%** | **1116** | |
 
 ### Test inventory (`tests.md`)
 

@@ -6,10 +6,12 @@ pub mod v3 {
     mod admin;
     mod auth;
     pub mod oauth;
+    pub mod oidc;
     mod permission;
     mod role;
     pub mod route;
     mod user;
+    mod visibility;
 }
 
 // Authentication data models and structures (re-exported from batata-auth)

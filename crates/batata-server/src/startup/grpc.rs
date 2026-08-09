@@ -29,11 +29,14 @@ use crate::{
     model::common::AppState,
     service::{
         ai_handler::{
-            AgentEndpointHandler, McpServerEndpointHandler, QueryAgentCardHandler,
-            QueryMcpServerHandler, QueryPromptHandler, ReleaseAgentCardHandler,
-            ReleaseMcpServerHandler,
+            AgentDiscoveryRpcHandler, AgentEndpointDeregisterRpcHandler,
+            AgentEndpointHandler, AgentEndpointRegisterRpcHandler, AgentSearchRpcHandler,
+            McpServerEndpointHandler, QueryAgentCardHandler, QueryMcpServerHandler,
+            QueryPromptHandler, ReleaseAgentCardHandler, ReleaseMcpServerHandler,
         },
-        cluster_handler::MemberReportHandler,
+        cluster_handler::{
+            MemberReportHandler, PluginAvailabilityHandler, PluginAvailabilityProvider,
+        },
         config_fuzzy_watch::ConfigFuzzyWatchManager,
         config_handler::{
             ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
@@ -291,10 +294,11 @@ fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc
     registry.register_handler(Arc::new(DistroDataSnapshotHandler { distro_protocol }));
 }
 
-/// Registers the cluster member report handler.
+/// Registers the cluster member report handler and plugin availability handler.
 fn register_cluster_handlers(
     registry: &mut HandlerRegistry,
     server_member_manager: &Option<Arc<batata_core::cluster::ServerMemberManager>>,
+    app_state: &Arc<AppState>,
 ) {
     if let Some(member_manager) = server_member_manager {
         registry.register_handler(Arc::new(MemberReportHandler {
@@ -308,6 +312,12 @@ fn register_cluster_handlers(
             invalidator: Arc::new(AuthCacheInvalidatorImpl),
         },
     ));
+
+    // Plugin availability handler — answers plugin availability queries from peers
+    let provider = Arc::new(PluginAvailabilityProviderImpl {
+        app_state: app_state.clone(),
+    });
+    registry.register_handler(Arc::new(PluginAvailabilityHandler { provider }));
 }
 
 /// Concrete implementation of AuthCacheInvalidator that calls batata_auth functions.
@@ -342,6 +352,46 @@ impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalid
                 tracing::warn!("Unknown auth cache invalidation type: {}", other);
             }
         }
+    }
+}
+
+/// Concrete implementation of PluginAvailabilityProvider.
+///
+/// Lives in batata-server because this is where `AppState` (with configuration
+/// and plugin manager) is available. Mirrors the built-in plugin list exposed
+/// by the console `/v3/console/plugin/list` endpoint, plus any registered
+/// protocol adapters from the plugin manager.
+struct PluginAvailabilityProviderImpl {
+    app_state: Arc<AppState>,
+}
+
+impl PluginAvailabilityProvider for PluginAvailabilityProviderImpl {
+    fn plugin_availability(&self) -> std::collections::HashMap<String, bool> {
+        let mut map = std::collections::HashMap::new();
+
+        // Built-in auth plugin
+        map.insert(
+            "auth:nacos".to_string(),
+            self.app_state.configuration.auth_enabled(),
+        );
+
+        // Built-in config-encryption plugin (always available)
+        map.insert("config-encryption:default".to_string(), true);
+
+        // Control plugin (only if initialized)
+        if self.app_state.control_plugin.is_some() {
+            map.insert("control:default".to_string(), true);
+        }
+
+        // Protocol adapters registered via PluginManager
+        if let Some(ref pm) = self.app_state.plugin_manager {
+            for adapter in pm.protocol_adapters() {
+                let plugin_id = format!("protocol:{}", adapter.protocol());
+                map.insert(plugin_id, adapter.is_enabled());
+            }
+        }
+
+        map
     }
 }
 
@@ -392,6 +442,26 @@ fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices
     registry.register_handler(Arc::new(ReleaseAgentCardHandler {
         agent_registry: ai_services.agent_registry.clone(),
         a2a_service: ai_services.a2a_service.clone(),
+    }));
+
+    // AI-RAD: Agent Search, Discovery, Endpoint Register/Deregister
+    registry.register_handler(Arc::new(AgentSearchRpcHandler {
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
+    }));
+    registry.register_handler(Arc::new(AgentDiscoveryRpcHandler {
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
+        endpoint_service: ai_services.endpoint_service.clone(),
+    }));
+    registry.register_handler(Arc::new(AgentEndpointRegisterRpcHandler {
+        agent_registry: ai_services.agent_registry.clone(),
+        endpoint_service: ai_services.endpoint_service.clone(),
+    }));
+    registry.register_handler(Arc::new(AgentEndpointDeregisterRpcHandler {
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
+        endpoint_service: ai_services.endpoint_service.clone(),
     }));
 
     // Prompt handler
@@ -714,7 +784,7 @@ pub fn start_grpc_servers(
     register_distro_handlers(&mut handler_registry, distro_protocol.clone());
 
     // Register cluster handlers
-    register_cluster_handlers(&mut handler_registry, &server_member_manager);
+    register_cluster_handlers(&mut handler_registry, &server_member_manager, &app_state);
 
     // Register lock handlers. In cluster mode, pass raft_node so locks go
     // through Raft consensus (for Nacos SDK compatibility).

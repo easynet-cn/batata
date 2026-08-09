@@ -868,6 +868,82 @@ impl From<AuthCacheInvalidateResponse> for Any {
 }
 
 // =============================================================================
+// Cluster: Plugin Availability (cluster-internal)
+// =============================================================================
+
+/// Plugin availability query request (cluster-internal gRPC).
+///
+/// Mirrors Nacos `PluginAvailabilityRequest`. Sent between cluster nodes to
+/// query which plugins are available (enabled) on the target node.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PluginAvailabilityRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+    /// Plugin ID to query (format: `type:name`). Required when `query_all` is false.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub plugin_id: String,
+    /// If true, return availability for all plugins.
+    #[serde(default)]
+    pub query_all: bool,
+}
+
+impl PluginAvailabilityRequest {
+    pub fn new() -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            ..Default::default()
+        }
+    }
+}
+
+impl_request_trait!(PluginAvailabilityRequest, internal_request);
+
+impl From<&Payload> for PluginAvailabilityRequest {
+    fn from(value: &Payload) -> Self {
+        PluginAvailabilityRequest::from_payload(value)
+    }
+}
+
+/// Plugin availability query response.
+///
+/// Mirrors Nacos `PluginAvailabilityResponse`. In single-plugin mode
+/// (`query_all == false`), `plugin_id` and `available` are populated. In
+/// `query_all` mode, `plugin_availability_map` contains the full mapping.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginAvailabilityResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    /// Queried plugin ID (single-plugin mode).
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub plugin_id: String,
+    /// Whether the plugin is available (single-plugin mode).
+    #[serde(default)]
+    pub available: bool,
+    /// Plugin ID -> enabled mapping (query_all mode).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub plugin_availability_map: Option<HashMap<String, bool>>,
+}
+
+impl PluginAvailabilityResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            ..Default::default()
+        }
+    }
+}
+
+impl_response_trait!(PluginAvailabilityResponse);
+
+impl From<PluginAvailabilityResponse> for Any {
+    fn from(val: PluginAvailabilityResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
 // Consul: Event Broadcast (cluster-internal)
 // =============================================================================
 
@@ -1325,6 +1401,310 @@ impl_response_trait!(ReleaseAgentCardResponse);
 
 impl From<ReleaseAgentCardResponse> for Any {
     fn from(val: ReleaseAgentCardResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
+// AI-RAD: AgentSearch, AgentDiscovery, AgentEndpointRegister/Deregister
+// (Nacos 3.x Remote Agent Discovery protocol via gRPC)
+// =============================================================================
+
+// --- Agent Search ---
+
+/// Inner search request (Nacos `AgentSearchRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSearchRequest {
+    pub namespace_id: String,
+    pub agent_name_contains: String,
+    pub tags_all: Vec<String>,
+    pub protocols_any: Vec<String>,
+    pub page_no: u32,
+    pub page_size: u32,
+}
+
+/// gRPC request for agent search (Nacos `AgentSearchRpcRequest`).
+///
+/// Wire-compatible: `module` = "ai", wraps inner `AgentSearchRequest`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSearchRpcRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_request: Option<AgentSearchRequest>,
+}
+
+impl_request_trait!(AgentSearchRpcRequest, request);
+
+impl From<&Payload> for AgentSearchRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentSearchRpcRequest::from_payload(value)
+    }
+}
+
+/// Catalog version entry in search results (Nacos `AgentCatalogVersion`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentCatalogVersion {
+    pub version: String,
+    pub labels: Vec<String>,
+    pub protocols: Vec<String>,
+}
+
+/// Catalog entry for one agent in search results (Nacos `AgentCatalogEntry`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentCatalogEntry {
+    pub agent_name: String,
+    pub display_name: String,
+    pub description: String,
+    pub icon_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<serde_json::Value>,
+    pub tags: Vec<String>,
+    pub latest_version: String,
+    pub versions: Vec<AgentCatalogVersion>,
+}
+
+/// Page wrapper for search results (Nacos `Page<AgentCatalogEntry>`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSearchPage {
+    pub total_count: u64,
+    pub page_number: u64,
+    pub pages_available: u64,
+    pub page_items: Vec<AgentCatalogEntry>,
+}
+
+/// gRPC response for agent search (Nacos `AgentSearchResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSearchResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<AgentSearchPage>,
+}
+
+impl AgentSearchResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            page: None,
+        }
+    }
+}
+
+impl_response_trait!(AgentSearchResponse);
+
+impl From<AgentSearchResponse> for Any {
+    fn from(val: AgentSearchResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// --- Agent Discovery ---
+
+/// Reference to a specific agent version (Nacos `AgentReference`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentReference {
+    pub agent_name: String,
+    pub version: String,
+    pub label: String,
+}
+
+/// Optional filter for discovery (Nacos `AgentDiscoveryFilter`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDiscoveryFilter {
+    pub protocols: Vec<String>,
+    pub protocol_version: String,
+    pub transports: Vec<String>,
+    pub endpoint_sources: Vec<String>,
+    pub metadata_selector: HashMap<String, String>,
+}
+
+/// Inner discovery request (Nacos `AgentDiscoveryRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDiscoveryRequest {
+    pub namespace_id: String,
+    pub reference: AgentReference,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<AgentDiscoveryFilter>,
+}
+
+/// gRPC request for agent discovery (Nacos `AgentDiscoveryRpcRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDiscoveryRpcRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_request: Option<AgentDiscoveryRequest>,
+}
+
+impl_request_trait!(AgentDiscoveryRpcRequest, request);
+
+impl From<&Payload> for AgentDiscoveryRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentDiscoveryRpcRequest::from_payload(value)
+    }
+}
+
+/// A discovered call interface with endpoints (Nacos `AgentDiscoveryCallInterface`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDiscoveryCallInterface {
+    pub protocol: String,
+    pub protocol_version: String,
+    pub descriptor_media_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_descriptor: Option<serde_json::Value>,
+    pub endpoint_sets: Vec<EndpointSet>,
+}
+
+/// A set of endpoints from a specific source (Nacos `EndpointSet`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EndpointSet {
+    pub source: String,
+    pub source_revision: String,
+    pub endpoints: Vec<AgentEndpointInfo>,
+}
+
+/// Endpoint info in discovery results (Nacos `Endpoint`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentEndpointInfo {
+    pub address: String,
+    pub port: u16,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub transport: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub healthy: Option<bool>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Discovery result for one agent version (Nacos `AgentDiscoveryResult`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentDiscoveryResult {
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub version: String,
+    pub content_digest: String,
+    pub call_interfaces: Vec<AgentDiscoveryCallInterface>,
+}
+
+/// gRPC response for agent discovery (Nacos `AgentDiscoveryResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDiscoveryResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_result: Option<AgentDiscoveryResult>,
+}
+
+impl AgentDiscoveryResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            discovery_result: None,
+        }
+    }
+}
+
+impl_response_trait!(AgentDiscoveryResponse);
+
+impl From<AgentDiscoveryResponse> for Any {
+    fn from(val: AgentDiscoveryResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// --- Agent Endpoint Register / Deregister ---
+
+/// Batch of endpoint registrations (Nacos `AgentEndpointRegistrationBatch`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentEndpointRegistrationBatch {
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub runtime_version: String,
+    pub version_range: String,
+    pub protocol: String,
+    pub endpoints: Vec<AgentEndpointInfo>,
+}
+
+/// gRPC request to register agent endpoints (Nacos `AgentEndpointRegisterRpcRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentEndpointRegisterRpcRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_batch: Option<AgentEndpointRegistrationBatch>,
+}
+
+impl_request_trait!(AgentEndpointRegisterRpcRequest, request);
+
+impl From<&Payload> for AgentEndpointRegisterRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentEndpointRegisterRpcRequest::from_payload(value)
+    }
+}
+
+/// gRPC request to deregister agent endpoints (Nacos `AgentEndpointDeregisterRpcRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentEndpointDeregisterRpcRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub protocol: String,
+}
+
+impl_request_trait!(AgentEndpointDeregisterRpcRequest, request);
+
+impl From<&Payload> for AgentEndpointDeregisterRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentEndpointDeregisterRpcRequest::from_payload(value)
+    }
+}
+
+/// gRPC response for endpoint register/deregister (Nacos `AgentEndpointOperationResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEndpointOperationResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl AgentEndpointOperationResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl_response_trait!(AgentEndpointOperationResponse);
+
+impl From<AgentEndpointOperationResponse> for Any {
+    fn from(val: AgentEndpointOperationResponse) -> Self {
         val.to_any()
     }
 }

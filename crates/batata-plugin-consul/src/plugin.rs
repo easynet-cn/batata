@@ -105,6 +105,7 @@ pub struct ConsulPluginInner {
     pub coordinate: ConsulCoordinateService,
     pub snapshot: ConsulSnapshotService,
     pub namespace_service: crate::namespace::ConsulNamespaceService,
+    pub partition_service: crate::partition::ConsulPartitionService,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
     pub registry: Arc<InstanceCheckRegistry>,
@@ -195,6 +196,9 @@ impl ConsulPlugin {
             catalog: ConsulCatalogService::with_dc_config(naming_store.clone(), &self.dc_config)
                 .with_index_provider(index_provider.clone()),
             namespace_service: crate::namespace::ConsulNamespaceService::new(
+                index_provider.clone(),
+            ),
+            partition_service: crate::partition::ConsulPartitionService::new(
                 index_provider.clone(),
             ),
             event: ConsulEventService::new(index_provider.clone()),
@@ -302,6 +306,10 @@ impl ConsulPlugin {
             .with_node_name(self.dc_config.node_name.clone()),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
+                consul_raft.clone(),
+                index_provider.clone(),
+            ),
+            partition_service: crate::partition::ConsulPartitionService::with_raft(
                 consul_raft.clone(),
                 index_provider.clone(),
             ),
@@ -460,6 +468,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             CF_CONSUL_OPERATOR.to_string(),
             CF_CONSUL_EVENTS.to_string(),
             CF_CONSUL_NAMESPACES.to_string(),
+            CF_CONSUL_PARTITIONS.to_string(),
             CF_CONSUL_CATALOG.to_string(),
         ]
     }
@@ -565,9 +574,11 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
         // ConsulOperatorService is ClusterManager-backed; construct fresh per
         // configure() call so each actix worker gets its own Data instance.
-        let operator = crate::operator::ConsulOperatorService::with_datacenter(
+        // Pass the RaftNode handle so transfer_leader can trigger elections.
+        let operator = crate::operator::ConsulOperatorService::with_datacenter_and_raft(
             cm.clone(),
             inner.dc_config.datacenter.clone(),
+            inner.raft_node_for_health.clone(),
         );
 
         cfg.app_data(actix_web::web::Data::from(inner.naming_store.clone()))
@@ -587,6 +598,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(inner.snapshot.clone()))
             .app_data(actix_web::web::Data::new(operator))
             .app_data(actix_web::web::Data::new(inner.namespace_service.clone()))
+            .app_data(actix_web::web::Data::new(inner.partition_service.clone()))
             .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
             .app_data(actix_web::web::Data::new(inner.index_provider.clone()))
             .app_data(actix_web::web::Data::new(cm))

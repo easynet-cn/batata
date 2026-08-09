@@ -12,11 +12,15 @@ use batata_core::{GrpcResource, PermissionAction, ResourceType, model::Connectio
 use batata_api::{
     grpc::Payload,
     remote::model::{
-        AgentEndpointRequest, AgentEndpointResponse, McpServerEndpointRequest,
-        McpServerEndpointResponse, QueryAgentCardRequest, QueryAgentCardResponse,
-        QueryMcpServerRequest, QueryMcpServerResponse, ReleaseAgentCardRequest,
-        ReleaseAgentCardResponse, ReleaseMcpServerRequest, ReleaseMcpServerResponse, RequestTrait,
-        ResponseTrait,
+        AgentCatalogEntry, AgentCatalogVersion, AgentDiscoveryCallInterface,
+        AgentDiscoveryResponse, AgentDiscoveryResult, AgentDiscoveryRpcRequest, AgentEndpointInfo,
+        AgentEndpointOperationResponse, AgentEndpointRegisterRpcRequest,
+        AgentEndpointDeregisterRpcRequest, AgentSearchPage, AgentSearchResponse,
+        AgentSearchRpcRequest, EndpointSet, AgentEndpointRequest, AgentEndpointResponse,
+        McpServerEndpointRequest, McpServerEndpointResponse, QueryAgentCardRequest,
+        QueryAgentCardResponse, QueryMcpServerRequest, QueryMcpServerResponse,
+        ReleaseAgentCardRequest, ReleaseAgentCardResponse, ReleaseMcpServerRequest,
+        ReleaseMcpServerResponse, RequestTrait, ResponseTrait,
     },
 };
 
@@ -749,6 +753,584 @@ impl PayloadHandler for ReleaseAgentCardHandler {
 }
 
 // =============================================================================
+// AI-RAD: Agent Search, Discovery, Endpoint Register/Deregister
+// (Nacos 3.x Remote Agent Discovery protocol via gRPC)
+// =============================================================================
+
+/// Handler for AgentSearchRpcRequest — search visible agent catalog entries.
+///
+/// Mirrors Nacos `AgentSearchRpcRequestHandler`. Calls `A2aAgentService.list_agents()`
+/// and converts results to `AgentCatalogEntry` page.
+#[derive(Clone)]
+pub struct AgentSearchRpcHandler {
+    pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentSearchRpcHandler {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
+        let request = AgentSearchRpcRequest::from(payload);
+        let request_id = request.request_id();
+
+        // Extract inner search request (fallback to empty default)
+        let search = request.search_request.unwrap_or_default();
+        let namespace_id = if search.namespace_id.is_empty() {
+            "public"
+        } else {
+            &search.namespace_id
+        };
+        let page_no = if search.page_no == 0 { 1 } else { search.page_no };
+        let page_size = if search.page_size == 0 {
+            20
+        } else {
+            search.page_size
+        };
+
+        debug!(
+            namespace = %namespace_id,
+            name_contains = %search.agent_name_contains,
+            page_no,
+            page_size,
+            "Processing AgentSearchRpcRequest"
+        );
+
+        // Try operation service first
+        let agent_name_filter = if search.agent_name_contains.is_empty() {
+            None
+        } else {
+            Some(search.agent_name_contains.as_str())
+        };
+
+        if let Some(ref svc) = self.a2a_service {
+            match svc
+                .list_agents(namespace_id, agent_name_filter, "blur", page_no, page_size)
+                .await
+            {
+                Ok(page) => {
+                    let entries: Vec<AgentCatalogEntry> = page
+                        .page_items
+                        .iter()
+                        .map(|v| AgentCatalogEntry {
+                            agent_name: v.name.clone(),
+                            display_name: v.name.clone(),
+                            description: String::new(),
+                            icon_url: String::new(),
+                            provider: None,
+                            tags: vec![],
+                            latest_version: v.latest_published_version.clone(),
+                            versions: v
+                                .version_details
+                                .iter()
+                                .map(|vd| AgentCatalogVersion {
+                                    version: vd.version.clone(),
+                                    labels: if vd.is_latest {
+                                        vec!["latest".to_string()]
+                                    } else {
+                                        vec![]
+                                    },
+                                    protocols: vec!["a2a".to_string()],
+                                })
+                                .collect(),
+                        })
+                        .collect();
+
+                    let total = page.total_count;
+                    let pages_available = if page_size > 0 {
+                        (total + page_size as u64 - 1) / page_size as u64
+                    } else {
+                        1
+                    };
+
+                    let mut response = AgentSearchResponse::new();
+                    response.response.request_id = request_id;
+                    response.page = Some(AgentSearchPage {
+                        total_count: total,
+                        page_number: page_no as u64,
+                        pages_available,
+                        page_items: entries,
+                    });
+                    return Ok(response.build_payload());
+                }
+                Err(e) => {
+                    warn!("AgentSearchRpcRequest error: {}", e);
+                    let response = batata_core::error_response!(
+                        AgentSearchResponse,
+                        request_id,
+                        &e.to_string()
+                    );
+                    return Ok(response.build_payload());
+                }
+            }
+        }
+
+        // Fall back to in-memory registry
+        let query = batata_common::model::ai::a2a::AgentQuery {
+            namespace: Some(namespace_id.to_string()),
+            name_pattern: if search.agent_name_contains.is_empty() {
+                None
+            } else {
+                Some(search.agent_name_contains.clone())
+            },
+            page: page_no,
+            page_size,
+            ..Default::default()
+        };
+        let result = self.agent_registry.list(&query);
+
+        let entries: Vec<AgentCatalogEntry> = result
+            .agents
+            .iter()
+            .map(|a| AgentCatalogEntry {
+                agent_name: a.card.name.clone(),
+                display_name: a.card.display_name.clone(),
+                description: a.card.description.clone(),
+                icon_url: a.card.icon_url.clone().unwrap_or_default(),
+                provider: None,
+                tags: a.card.tags.clone(),
+                latest_version: a.card.version.clone(),
+                versions: vec![AgentCatalogVersion {
+                    version: a.card.version.clone(),
+                    labels: vec!["latest".to_string()],
+                    protocols: vec!["a2a".to_string()],
+                }],
+            })
+            .collect();
+
+        let total = result.total;
+        let pages_available = if page_size > 0 {
+            (total + page_size as u64 - 1) / page_size as u64
+        } else {
+            1
+        };
+
+        let mut response = AgentSearchResponse::new();
+        response.response.request_id = request_id;
+        response.page = Some(AgentSearchPage {
+            total_count: total,
+            page_number: page_no as u64,
+            pages_available,
+            page_items: entries,
+        });
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentSearchRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+}
+
+/// Handler for AgentDiscoveryRpcRequest — discover one exact agent version and its endpoints.
+///
+/// Mirrors Nacos `AgentDiscoveryRpcRequestHandler`. Resolves `AgentReference`
+/// (version or label), queries endpoints via `AiEndpointService`, and assembles
+/// `AgentDiscoveryResult` with `callInterfaces` + `endpointSets`.
+#[derive(Clone)]
+pub struct AgentDiscoveryRpcHandler {
+    pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+    pub endpoint_service: Option<Arc<AiEndpointService>>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentDiscoveryRpcHandler {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
+        let request = AgentDiscoveryRpcRequest::from(payload);
+        let request_id = request.request_id();
+
+        // Extract inner discovery request
+        let discovery = request.discovery_request.unwrap_or_default();
+        let reference = discovery.reference;
+        let namespace_id = if discovery.namespace_id.is_empty() {
+            "public"
+        } else {
+            &discovery.namespace_id
+        };
+
+        if reference.agent_name.is_empty() {
+            let response = batata_core::error_response!(
+                AgentDiscoveryResponse,
+                request_id,
+                "agentName is required in reference"
+            );
+            return Ok(response.build_payload());
+        }
+
+        debug!(
+            namespace = %namespace_id,
+            agent_name = %reference.agent_name,
+            version = %reference.version,
+            label = %reference.label,
+            "Processing AgentDiscoveryRpcRequest"
+        );
+
+        // Resolve version: explicit > label "latest" > query service
+        let resolved_version = if !reference.version.is_empty() {
+            reference.version.clone()
+        } else {
+            // Try to resolve via service
+            let mut version = String::new();
+            if let Some(ref svc) = self.a2a_service {
+                if let Ok(versions) = svc.list_versions(namespace_id, &reference.agent_name).await {
+                    // If label is "latest" or empty, find the latest version
+                    let label = if reference.label.is_empty() {
+                        "latest"
+                    } else {
+                        &reference.label
+                    };
+                    if label == "latest" {
+                        if let Some(latest) = versions.iter().find(|v| v.is_latest) {
+                            version = latest.version.clone();
+                        } else if let Some(first) = versions.first() {
+                            version = first.version.clone();
+                        }
+                    } else {
+                        // Try to match by label (not yet supported; fallback to latest)
+                        if let Some(latest) = versions.iter().find(|v| v.is_latest) {
+                            version = latest.version.clone();
+                        } else if let Some(first) = versions.first() {
+                            version = first.version.clone();
+                        }
+                    }
+                }
+            }
+            // Fall back to in-memory registry
+            if version.is_empty() {
+                if let Some(agent) = self
+                    .agent_registry
+                    .get(namespace_id, &reference.agent_name)
+                {
+                    version = agent.card.version.clone();
+                }
+            }
+            version
+        };
+
+        if resolved_version.is_empty() {
+            let response = batata_core::error_response!(
+                AgentDiscoveryResponse,
+                request_id,
+                format!(
+                    "Cannot resolve version for agent '{}' in namespace '{}'",
+                    reference.agent_name, namespace_id
+                )
+            );
+            return Ok(response.build_payload());
+        }
+
+        // Gather endpoints from NamingService
+        let mut endpoint_list: Vec<AgentEndpointInfo> = Vec::new();
+        if let Some(ref ep_svc) = self.endpoint_service {
+            let endpoints = ep_svc.get_agent_endpoints(
+                namespace_id,
+                &reference.agent_name,
+                &resolved_version,
+            );
+            endpoint_list = endpoints
+                .iter()
+                .map(|ep| AgentEndpointInfo {
+                    address: ep.address.clone(),
+                    port: ep.port,
+                    transport: String::new(),
+                    path: String::new(),
+                    healthy: Some(ep.healthy),
+                    metadata: ep.metadata.clone(),
+                })
+                .collect();
+        }
+
+        // Compute a simple content digest for change detection
+        let digest_input = format!("{}:{}:{}", reference.agent_name, resolved_version, endpoint_list.len());
+        let content_digest = format!("{:x}", md5_hash(digest_input.as_bytes()));
+
+        // Build call interface with endpoint set (DECLARED source)
+        let call_interface = AgentDiscoveryCallInterface {
+            protocol: "a2a".to_string(),
+            protocol_version: "1.0".to_string(),
+            descriptor_media_type: "application/json".to_string(),
+            native_descriptor: None,
+            endpoint_sets: vec![EndpointSet {
+                source: "DECLARED".to_string(),
+                source_revision: resolved_version.clone(),
+                endpoints: endpoint_list,
+            }],
+        };
+
+        let result = AgentDiscoveryResult {
+            namespace_id: namespace_id.to_string(),
+            agent_name: reference.agent_name.clone(),
+            version: resolved_version,
+            content_digest,
+            call_interfaces: vec![call_interface],
+        };
+
+        let mut response = AgentDiscoveryResponse::new();
+        response.response.request_id = request_id;
+        response.discovery_result = Some(result);
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentDiscoveryRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+}
+
+/// Handler for AgentEndpointRegisterRpcRequest — register agent endpoints (batch replace).
+///
+/// Mirrors Nacos `AgentEndpointRegisterRpcRequestHandler`. Parses the
+/// `AgentEndpointRegistrationBatch` and registers each endpoint via
+/// `AiEndpointService.create_agent_endpoint()`.
+#[derive(Clone)]
+pub struct AgentEndpointRegisterRpcHandler {
+    pub agent_registry: Arc<AgentRegistry>,
+    pub endpoint_service: Option<Arc<AiEndpointService>>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentEndpointRegisterRpcHandler {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
+        let request = AgentEndpointRegisterRpcRequest::from(payload);
+        let request_id = request.request_id();
+
+        let batch = match request.registration_batch {
+            Some(b) => b,
+            None => {
+                let response = batata_core::error_response!(
+                    AgentEndpointOperationResponse,
+                    request_id,
+                    "registrationBatch is required"
+                );
+                return Ok(response.build_payload());
+            }
+        };
+
+        let namespace_id = if batch.namespace_id.is_empty() {
+            "public"
+        } else {
+            &batch.namespace_id
+        };
+
+        debug!(
+            namespace = %namespace_id,
+            agent_name = %batch.agent_name,
+            version = %batch.runtime_version,
+            protocol = %batch.protocol,
+            endpoint_count = batch.endpoints.len(),
+            "Processing AgentEndpointRegisterRpcRequest"
+        );
+
+        // Register each endpoint via endpoint service
+        if let Some(ref ep_svc) = self.endpoint_service {
+            for endpoint in &batch.endpoints {
+                ep_svc.create_agent_endpoint(
+                    namespace_id,
+                    &batch.agent_name,
+                    &batch.runtime_version,
+                    &endpoint.address,
+                    endpoint.port,
+                );
+            }
+        }
+
+        // Also update in-memory registry for fallback queries
+        for endpoint in &batch.endpoints {
+            let scheme = if endpoint.path.starts_with("https") || false {
+                "https"
+            } else {
+                "http"
+            };
+            let url = if endpoint.path.is_empty() {
+                format!("{}://{}:{}", scheme, endpoint.address, endpoint.port)
+            } else {
+                format!("{}://{}:{}{}", scheme, endpoint.address, endpoint.port, endpoint.path)
+            };
+            let card = AgentCard {
+                name: batch.agent_name.clone(),
+                url,
+                version: batch.runtime_version.clone(),
+                ..default_agent_card()
+            };
+            let reg = AgentRegistrationRequest {
+                card,
+                namespace: namespace_id.to_string(),
+            };
+            let _ = self.agent_registry.register(reg);
+        }
+
+        let mut response = AgentEndpointOperationResponse::new();
+        response.response.request_id = request_id;
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentEndpointRegisterRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = AgentEndpointRegisterRpcRequest::from(payload);
+        if let Some(ref batch) = request.registration_batch {
+            Some((
+                GrpcResource::ai(&batch.namespace_id, &batch.agent_name),
+                PermissionAction::Write,
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+/// Handler for AgentEndpointDeregisterRpcRequest — deregister agent endpoints.
+///
+/// Mirrors Nacos `AgentEndpointDeregisterRpcRequestHandler`. Lists all versions
+/// for the agent, then removes all registered endpoints for each version via
+/// `AiEndpointService.delete_agent_endpoint()`.
+#[derive(Clone)]
+pub struct AgentEndpointDeregisterRpcHandler {
+    pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+    pub endpoint_service: Option<Arc<AiEndpointService>>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
+        let request = AgentEndpointDeregisterRpcRequest::from(payload);
+        let request_id = request.request_id();
+
+        let namespace_id = if request.namespace_id.is_empty() {
+            "public"
+        } else {
+            &request.namespace_id
+        };
+
+        debug!(
+            namespace = %namespace_id,
+            agent_name = %request.agent_name,
+            protocol = %request.protocol,
+            "Processing AgentEndpointDeregisterRpcRequest"
+        );
+
+        // List all versions and delete endpoints for each
+        if let Some(ref svc) = self.a2a_service {
+            if let Ok(versions) = svc.list_versions(namespace_id, &request.agent_name).await {
+                if let Some(ref ep_svc) = self.endpoint_service {
+                    for vd in &versions {
+                        let endpoints = ep_svc.get_agent_endpoints(
+                            namespace_id,
+                            &request.agent_name,
+                            &vd.version,
+                        );
+                        for ep in &endpoints {
+                            ep_svc.delete_agent_endpoint(
+                                namespace_id,
+                                &request.agent_name,
+                                &vd.version,
+                                &ep.address,
+                                ep.port,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also deregister from in-memory registry
+        let _ = self
+            .agent_registry
+            .deregister(namespace_id, &request.agent_name);
+
+        let mut response = AgentEndpointOperationResponse::new();
+        response.response.request_id = request_id;
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentEndpointDeregisterRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = AgentEndpointDeregisterRpcRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.agent_name),
+            PermissionAction::Write,
+        ))
+    }
+}
+
+/// Simple MD5 hash for content digest (used for change detection).
+fn md5_hash(data: &[u8]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
+}
+
+// =============================================================================
 // Helper functions
 // =============================================================================
 
@@ -971,6 +1553,48 @@ mod tests {
             a2a_service: None,
         };
         assert_eq!(handler.can_handle(), "ReleaseAgentCardRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+    }
+
+    #[test]
+    fn test_agent_search_rpc_handler_can_handle() {
+        let handler = AgentSearchRpcHandler {
+            agent_registry: test_agent_registry(),
+            a2a_service: None,
+        };
+        assert_eq!(handler.can_handle(), "AgentSearchRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
+    }
+
+    #[test]
+    fn test_agent_discovery_rpc_handler_can_handle() {
+        let handler = AgentDiscoveryRpcHandler {
+            agent_registry: test_agent_registry(),
+            a2a_service: None,
+            endpoint_service: None,
+        };
+        assert_eq!(handler.can_handle(), "AgentDiscoveryRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
+    }
+
+    #[test]
+    fn test_agent_endpoint_register_rpc_handler_can_handle() {
+        let handler = AgentEndpointRegisterRpcHandler {
+            agent_registry: test_agent_registry(),
+            endpoint_service: None,
+        };
+        assert_eq!(handler.can_handle(), "AgentEndpointRegisterRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+    }
+
+    #[test]
+    fn test_agent_endpoint_deregister_rpc_handler_can_handle() {
+        let handler = AgentEndpointDeregisterRpcHandler {
+            agent_registry: test_agent_registry(),
+            a2a_service: None,
+            endpoint_service: None,
+        };
+        assert_eq!(handler.can_handle(), "AgentEndpointDeregisterRpcRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 }

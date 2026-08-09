@@ -5,6 +5,7 @@
 
 pub mod ai_a2a;
 pub mod ai_agentspec;
+pub mod ai_import;
 pub mod ai_mcp;
 pub mod ai_pipeline;
 pub mod ai_plugin;

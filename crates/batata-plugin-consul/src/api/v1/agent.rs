@@ -372,10 +372,10 @@ async fn list_agent_checks(
     req: HttpRequest,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
-    _query: web::Query<ServiceQueryParams>,
+    query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::health::list_agent_checks(req, health_service, acl_service, _query, index_provider).await
+    crate::health::list_agent_checks(req, health_service, acl_service, query, index_provider).await
 }
 
 // ============================================================================

@@ -14,8 +14,9 @@ use batata_api::raft::{
     ChangeMembershipResponse, ClientWriteRequest, ClientWriteResponse, Entry as ProtoEntry,
     GetMetricsRequest, GetMetricsResponse, InstallSnapshotRequest as ProtoInstallSnapshotRequest,
     InstallSnapshotResponse as ProtoInstallSnapshotResponse, LogId as ProtoLogId,
-    RaftNodeInfo as ProtoRaftNodeInfo, VoteRequest as ProtoVoteRequest,
-    VoteResponse as ProtoVoteResponse, raft_management_service_server::RaftManagementService,
+    RaftNodeInfo as ProtoRaftNodeInfo, TriggerElectionRequest, TriggerElectionResponse,
+    VoteRequest as ProtoVoteRequest, VoteResponse as ProtoVoteResponse,
+    raft_management_service_server::RaftManagementService,
     raft_service_server::RaftService,
 };
 
@@ -392,5 +393,37 @@ impl RaftManagementService for RaftManagementGrpcService {
             applied_index: metrics.last_applied.map(|l| l.index).unwrap_or(0),
             members,
         }))
+    }
+
+    async fn trigger_election(
+        &self,
+        request: Request<TriggerElectionRequest>,
+    ) -> Result<Response<TriggerElectionResponse>, Status> {
+        let raft_node = self.get_raft().await?;
+        let _req = request.into_inner();
+
+        // Call openraft's trigger().elect() to start a new election.
+        // This causes this node (a follower) to become a candidate and start
+        // a new election term, which is the mechanism used to implement
+        // leader transfer on openraft 0.9 (which lacks transfer_leader()).
+        match raft_node.raft().trigger().elect().await {
+            Ok(_) => {
+                info!(
+                    "Election triggered successfully on node {}",
+                    raft_node.node_id()
+                );
+                Ok(Response::new(TriggerElectionResponse {
+                    success: true,
+                    message: "Election triggered".to_string(),
+                }))
+            }
+            Err(e) => {
+                error!("Failed to trigger election: {}", e);
+                Ok(Response::new(TriggerElectionResponse {
+                    success: false,
+                    message: format!("Failed to trigger election: {}", e),
+                }))
+            }
+        }
     }
 }

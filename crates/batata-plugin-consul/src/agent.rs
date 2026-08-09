@@ -645,7 +645,32 @@ pub async fn list_services(
         }
     }
 
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    // Apply bexpr filter expression if present (?filter=)
+    // Upstream Consul: ACL filtering happens BEFORE bexpr filtering (security:
+    // prevents users from inferring properties of ACL-denied services).
+    // batata's ACL check is already done above (blanket allow/deny), so here
+    // we only apply the expression filter on the ACL-approved result set.
+    if let Some(ref filter_expr) = query.filter {
+        let filter_expr = filter_expr.trim();
+        if !filter_expr.is_empty() {
+            match crate::filter::parse(filter_expr) {
+                Ok(expr) => {
+                    services.retain(|_, svc| crate::filter::evaluate(&expr, svc));
+                }
+                Err(err) => {
+                    tracing::debug!("filter parse error '{}': {}", filter_expr, err);
+                }
+            }
+        }
+    }
+
+    let mut meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    // Mark if ACL filtering reduced results (set when token was provided but
+    // not all services were accessible — batata currently uses blanket ACL,
+    // so this is false unless ACL denied the request entirely)
+    if !authz.allowed {
+        meta = meta.with_acl_filtered();
+    }
     consul_ok(&meta).json(services)
 }
 

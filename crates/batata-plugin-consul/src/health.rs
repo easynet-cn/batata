@@ -1063,7 +1063,7 @@ pub async fn list_agent_checks(
     req: HttpRequest,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
-    _query: web::Query<ServiceQueryParams>,
+    query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
@@ -1075,12 +1075,32 @@ pub async fn list_agent_checks(
     let checks = health_service.get_all_checks().await;
 
     // Return as a map keyed by check ID
-    let checks_map: std::collections::HashMap<String, HealthCheck> = checks
+    let mut checks_map: std::collections::HashMap<String, HealthCheck> = checks
         .into_iter()
         .map(|c| (c.check_id.clone(), c))
         .collect();
 
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    // Apply bexpr filter expression if present (?filter=)
+    // Upstream Consul: ACL filtering happens BEFORE bexpr filtering (security:
+    // prevents users from inferring properties of ACL-denied checks).
+    if let Some(ref filter_expr) = query.filter {
+        let filter_expr = filter_expr.trim();
+        if !filter_expr.is_empty() {
+            match crate::filter::parse(filter_expr) {
+                Ok(expr) => {
+                    checks_map.retain(|_, chk| crate::filter::evaluate(&expr, chk));
+                }
+                Err(err) => {
+                    tracing::debug!("filter parse error '{}': {}", filter_expr, err);
+                }
+            }
+        }
+    }
+
+    let mut meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    if !authz.allowed {
+        meta = meta.with_acl_filtered();
+    }
     consul_ok(&meta).json(checks_map)
 }
 

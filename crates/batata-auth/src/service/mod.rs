@@ -6,3 +6,6 @@ pub mod oauth;
 pub mod permission;
 pub mod role;
 pub mod user;
+pub mod visibility_grant;
+
+pub use visibility_grant::{DefaultVisibilityGrantService, VisibilityGrantService};

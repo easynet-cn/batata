@@ -561,6 +561,69 @@ impl RaftNode {
         }
     }
 
+    /// Trigger an election on a remote node (for leader transfer).
+    ///
+    /// This sends a gRPC `TriggerElection` request to the specified node,
+    /// causing it to call `raft.trigger().elect()` and start a new election.
+    /// Used by the `transfer_leader` HTTP handler to implement leader transfer
+    /// when openraft 0.9 doesn't have a native `transfer_leader()` API.
+    pub async fn trigger_remote_election(&self, addr: &str) -> Result<(), String> {
+        use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
+        use batata_api::raft::TriggerElectionRequest;
+
+        let endpoint = format!("http://{}", addr);
+        let mut client = RaftManagementServiceClient::connect(endpoint)
+            .await
+            .map_err(|e| format!("Failed to connect to node {}: {}", addr, e))?;
+
+        let request = tonic::Request::new(TriggerElectionRequest { node_id: 0 });
+        let response = client
+            .trigger_election(request)
+            .await
+            .map_err(|e| format!("TriggerElection RPC to {} failed: {}", addr, e))?
+            .into_inner();
+
+        if response.success {
+            info!("Remote election triggered on {}", addr);
+            Ok(())
+        } else {
+            Err(format!(
+                "Remote election failed on {}: {}",
+                addr, response.message
+            ))
+        }
+    }
+
+    /// Wait for the leader to change from the current leader ID.
+    ///
+    /// Returns `Ok(())` if the leader changes within the timeout, `Err` otherwise.
+    /// Used by the `transfer_leader` HTTP handler to confirm that the election
+    /// triggered on the target follower actually resulted in a new leader.
+    pub async fn wait_for_leader_change(
+        &self,
+        old_leader: NodeId,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() >= timeout {
+                return Err(format!(
+                    "Leader transfer timed out after {}s",
+                    timeout.as_secs()
+                ));
+            }
+
+            let metrics = self.metrics();
+            if let Some(new_leader) = metrics.current_leader {
+                if new_leader != old_leader {
+                    return Ok(());
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Perform a linearizable read
     /// This ensures the read sees all committed data up to the point of the read
     pub async fn linearizable_read(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

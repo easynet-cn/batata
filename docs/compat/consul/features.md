@@ -44,7 +44,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-AGNT-023 | PUT `/v1/agent/maintenance?enable=&reason=` | | 🟢 | | node maintenance |
 | F-CON-AGNT-024 | PUT `/v1/agent/reload` | | 🟡 | | reload config (no-op: batata has no config file to reload) |
 | F-CON-AGNT-025 | PUT `/v1/agent/token/{target}` | | 🟡 | | set agent token (stored, not applied to gossip) |
-| F-CON-AGNT-026 | GET `/v1/agent/monitor?loglevel=` | | 🟡 | | long-lived log stream (returns recent logs, no continuous stream) |
+| F-CON-AGNT-026 | GET `/v1/agent/monitor?loglevel=` | | 🟢 | | continuous log stream via broadcast channel + MonitorLayer |
 
 ## 2. Catalog — central directory (`F-CON-CAT-`)
 
@@ -153,11 +153,11 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-ACL-031 | GET `/v1/acl/binding-rule/{id}` | | 🟢 | | read |
 | F-CON-ACL-032 | PUT `/v1/acl/binding-rule/{id}` | | 🟢 | | update (Raft-replicated) |
 | F-CON-ACL-033 | DELETE `/v1/acl/binding-rule/{id}` | | 🟢 | | delete (Raft-replicated) |
-| F-CON-ACL-034 | GET `/v1/acl/templated-policies` | | 🟡 | | list built-in templates (service/node/dns) |
-| F-CON-ACL-035 | GET `/v1/acl/templated-policy/name/{name}` | | 🟡 | | read built-in template |
-| F-CON-ACL-036 | POST `/v1/acl/templated-policy/preview/{name}` | | 🟡 | | preview rendered template |
-| F-CON-ACL-037 | POST `/v1/acl/oidc/auth-url` | | ⚪ | | OIDC auth URL |
-| F-CON-ACL-038 | POST `/v1/acl/oidc/callback` | | ⚪ | | OIDC callback |
+| F-CON-ACL-034 | GET `/v1/acl/templated-policies` | | 🟢 | | list all 6 built-in templates (service/node/dns/nomad-server/api-gateway/nomad-client) |
+| F-CON-ACL-035 | GET `/v1/acl/templated-policy/name/{name}` | | 🟢 | | read built-in template (exact schema/template/description) |
+| F-CON-ACL-036 | POST `/v1/acl/templated-policy/preview/{name}` | | 🟢 | | preview rendered template (JSON Schema validation + synthetic policy) |
+| F-CON-ACL-037 | POST `/v1/acl/oidc/auth-url` | | 🟢 | | OIDC auth URL |
+| F-CON-ACL-038 | POST `/v1/acl/oidc/callback` | | 🟢 | | OIDC callback |
 | F-CON-ACL-039 | GET `/v1/acl/replication` | | 🟢 | | |
 
 > Legacy `/v1/acl/create|update|destroy|clone|info|list` (pre-1.4) are dead — do **not** implement.
@@ -176,9 +176,9 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-OP-001 | GET `/v1/operator/raft/configuration?stale=` | | 🟢 | | |
-| F-CON-OP-002 | POST `/v1/operator/raft/transfer-leader` | | 🟡 | | validation only (openraft 0.9 no transfer) |
+| F-CON-OP-002 | POST `/v1/operator/raft/transfer-leader` | | 🟢 | | real leader transfer via TriggerElection gRPC |
 | F-CON-OP-003 | DELETE `/v1/operator/raft/peer?address=&id=` | | 🟢 | | |
-| F-CON-OP-004 | GET/POST/DELETE/PUT `/v1/operator/keyring` | | 🟡 | | stub (keyring not implemented) |
+| F-CON-OP-004 | GET/POST/DELETE/PUT `/v1/operator/keyring` | | 🟢 | | key format validation, relay-factor/local-only, KeyringResponses |
 | F-CON-OP-005 | GET `/v1/operator/autopilot/configuration` | | 🟢 | | |
 | F-CON-OP-006 | PUT `/v1/operator/autopilot/configuration?cas=` | | 🟢 | | CAS supported |
 | F-CON-OP-007 | GET `/v1/operator/autopilot/health` | | 🟢 | | |
@@ -232,11 +232,11 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-PEER-010 | GET `/v1/namespace/{name}` | | 🟢 | | read |
 | F-CON-PEER-011 | DELETE `/v1/namespace/{name}` | | 🟢 | | delete |
 | F-CON-PEER-012 | GET `/v1/namespaces` | | 🟢 | | list |
-| F-CON-PEER-013 | PUT `/v1/partition` | | ⚪ | | create partition |
-| F-CON-PEER-014 | PUT `/v1/partition/{name}` | | ⚪ | | update |
-| F-CON-PEER-015 | GET `/v1/partition/{name}` | | ⚪ | | read |
-| F-CON-PEER-016 | DELETE `/v1/partition/{name}` | | ⚪ | | delete |
-| F-CON-PEER-017 | GET `/v1/partitions` | | ⚪ | | list |
+| F-CON-PEER-013 | PUT `/v1/partition` | | 🟢 | | create partition, Raft-replicated |
+| F-CON-PEER-014 | PUT `/v1/partition/{name}` | | 🟢 | | update, Raft-replicated |
+| F-CON-PEER-015 | GET `/v1/partition/{name}` | | 🟢 | | read |
+| F-CON-PEER-016 | DELETE `/v1/partition/{name}` | | 🟢 | | soft delete, Raft-replicated |
+| F-CON-PEER-017 | GET `/v1/partitions` | | 🟢 | | list |
 
 ## 13. Internal API (`F-CON-INT-`)
 
@@ -268,7 +268,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 |----|------------------------------|-------------|--------|-------|-------|
 | F-CON-FILT-001 | `?filter=` on health endpoints | | 🟢 | | health/service, health/checks, health/node, health/state |
 | F-CON-FILT-002 | `?filter=` on catalog endpoints | | 🟢 | | catalog/nodes, catalog/service, catalog/node |
-| F-CON-FILT-003 | `?filter=` on agent endpoints | | ⚪ | | agent/services, agent/checks — not supported |
+| F-CON-FILT-003 | `?filter=` on agent endpoints | | 🟢 | | agent/services, agent/checks — bexpr filter via filter.rs |
 
 ## 15. Blocking query contract (`F-CON-CORE-`)
 
@@ -289,21 +289,21 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | Module | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Total | Impl rate |
 |--------|----|----|----|----|----|-------|-----------|
-| Agent | 23 | 3 | 0 | 0 | 0 | 26 | 94% |
+| Agent | 24 | 2 | 0 | 0 | 0 | 26 | 96% |
 | Catalog | 10 | 0 | 0 | 0 | 0 | 10 | 100% |
 | Health | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
 | KV | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | Session | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
 | OTH (status/coord/event/snap/query/txn) | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| ACL | 34 | 3 | 0 | 2 | 0 | 39 | 95% |
+| ACL | 39 | 0 | 0 | 0 | 0 | 39 | 100% |
 | Config entries | 4 | 0 | 0 | 0 | 0 | 4 | 100% |
-| Operator | 8 | 2 | 0 | 0 | 0 | 10 | 90% |
+| Operator | 10 | 0 | 0 | 0 | 0 | 10 | 100% |
 | Connect mesh | 16 | 0 | 0 | 0 | 0 | 16 | 100% |
 | Discovery Chain | 2 | 0 | 0 | 0 | 0 | 2 | 100% |
-| Peering/Partition/NS | 12 | 0 | 0 | 5 | 0 | 17 | 71% |
+| Peering/Partition/NS | 17 | 0 | 0 | 0 | 0 | 17 | 100% |
 | Internal API | 15 | 0 | 0 | 0 | 0 | 15 | 100% |
-| Filter expressions | 2 | 0 | 0 | 1 | 0 | 3 | 67% |
+| Filter expressions | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | Blocking contract | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
-| **Total** | 165 | 8 | 0 | 8 | 0 | 181 | 96% |
+| **Total** | 179 | 2 | 0 | 0 | 0 | 181 | 99% |
 
 > HTTP paths verified against `api/*.go`; blocking-query + header contract is the hard interop dependency for Consul SDKs. gRPC/8502 + gossip out of scope. Update statuses per actual implementation and sync this table.

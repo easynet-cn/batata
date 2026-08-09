@@ -12,7 +12,7 @@ use moka::sync::Cache;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::acl_store::AclStore;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
@@ -246,6 +246,7 @@ impl RulePolicy {
 pub enum ResourceType {
     Agent,
     Key,
+    Keyring,
     Node,
     Operator,
     Service,
@@ -1120,7 +1121,9 @@ query_prefix "" { policy = "write" }
 
         // Select rules based on resource type
         let rules = match resource_type {
-            ResourceType::Agent | ResourceType::Operator => &all_rules.agent_rules,
+            ResourceType::Agent | ResourceType::Operator | ResourceType::Keyring => {
+                &all_rules.agent_rules
+            }
             ResourceType::Key => &all_rules.key_rules,
             ResourceType::Node => &all_rules.node_rules,
             ResourceType::Service => &all_rules.service_rules,
@@ -2021,24 +2024,183 @@ pub struct AclReplicationStatus {
     pub last_error_message: Option<String>,
 }
 
-/// Templated policy definition
+/// Templated policy response — matches Consul's `ACLTemplatedPolicyResponse`.
+///
+/// All fields are always serialized (even when empty) to match Consul
+/// behavior, where `Schema`/`Template`/`Description` are plain `string`
+/// fields without `omitempty`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TemplatedPolicy {
     pub template_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub template: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub schema: String,
+    pub template: String,
+    pub description: String,
 }
 
-/// Templated policy preview request
+/// Templated policy variables — matches Consul's `ACLTemplatedPolicyVariables`.
+///
+/// Sent as the request body to the preview endpoint. `Name` is optional:
+/// templates without a JSON schema (dns, nomad-server, nomad-client) do not
+/// require it. The JSON field is lowercase `name` to match Consul's
+/// `json:"name,omitempty"` tag.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct TemplatedPolicyPreviewRequest {
+pub struct TemplatedPolicyVariables {
+    #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Synthetic policy — matches the `ACLPolicy` returned by Consul's preview
+/// endpoint. Only the fields populated by `SyntheticPolicy()` are included.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SyntheticPolicy {
+    #[serde(rename = "ID")]
+    pub id: String,
     pub name: String,
+    pub description: String,
+    pub rules: String,
+}
+
+// ============================================================================
+// Built-in templated policy templates (byte-identical to Consul's .hcl files)
+// ============================================================================
+
+/// JSON schema for templated policies that require a `name` variable
+/// (service, node, api-gateway). Byte-identical to Consul's embedded
+/// `service.json` / `node.json` / `api-gateway.json` schema files.
+const NAME_VARIABLE_SCHEMA: &str = "{\n\t\"type\": \"object\",\n\t\"properties\": {\n\t\t\"name\": { \"type\": \"string\", \"$ref\": \"#/definitions/min-length-one\" }\n\t},\n\t\"required\": [\"name\"],\n\t\"definitions\": {\n\t\t\"min-length-one\": {\n\t\t\t\t\"type\": \"string\",\n\t\t\t\t\"minLength\": 1\n\t\t}\n\t}\n}";
+
+/// builtin/service template — byte-identical to Consul's `service.hcl`.
+const SERVICE_TEMPLATE: &str = "\nservice \"{{.Name}}\" {\n\tpolicy = \"write\"\n}\nservice \"{{.Name}}-sidecar-proxy\" {\n\tpolicy = \"write\"\n}\nservice_prefix \"\" {\n\tpolicy = \"read\"\n}\nnode_prefix \"\" {\n\tpolicy = \"read\"\n}";
+const SERVICE_DESCRIPTION: &str = "Gives the token or role permissions to register a service and discover services in the Consul catalog. It also gives the specified service's sidecar proxy the permission to discover and route traffic to other services.";
+
+/// builtin/node template — byte-identical to Consul's `node.hcl`.
+const NODE_TEMPLATE: &str = "\nnode \"{{.Name}}\" {\n\tpolicy = \"write\"\n}\nservice_prefix \"\" {\n\tpolicy = \"read\"\n}";
+const NODE_DESCRIPTION: &str = "Gives the token or role permissions for a register an agent/node into the catalog. A node is typically a consul agent but can also be a physical server, cloud instance or a container.";
+
+/// builtin/dns template — byte-identical to Consul's `dns.hcl`.
+const DNS_TEMPLATE: &str = "\nnode_prefix \"\" {\n\tpolicy = \"read\"\n}\nservice_prefix \"\" {\n\tpolicy = \"read\"\n}\nquery_prefix \"\" {\n\tpolicy = \"read\"\n}";
+const DNS_DESCRIPTION: &str = "Gives the token or role permissions for the Consul DNS to query services in the network.";
+
+/// builtin/nomad-server template — byte-identical to Consul's `nomad-server.hcl`.
+const NOMAD_SERVER_TEMPLATE: &str = "\nacl = \"write\"\nagent_prefix \"\" {\n  policy = \"read\"\n}\nnode_prefix \"\" {\n  policy = \"read\"\n}\nservice_prefix \"\" {\n  policy = \"write\"\n}";
+const NOMAD_SERVER_DESCRIPTION: &str = "Gives the token or role permissions required for integration with a nomad server.";
+
+/// builtin/api-gateway template — byte-identical to Consul's `api-gateway.hcl`.
+const API_GATEWAY_TEMPLATE: &str = "mesh = \"read\"\nnode_prefix \"\" {\n\tpolicy = \"read\"\n}\nservice_prefix \"\" {\n\tpolicy = \"read\"\n}\nservice \"{{.Name}}\" {\n\tpolicy = \"write\"\n}";
+const API_GATEWAY_DESCRIPTION: &str = "Gives the token or role permissions for a Consul api gateway";
+
+/// builtin/nomad-client template — byte-identical to Consul's `nomad-client.hcl`.
+const NOMAD_CLIENT_TEMPLATE: &str = "agent_prefix \"\" {\n  policy = \"read\"\n}\nnode_prefix \"\" {\n  policy = \"read\"\n}\nservice_prefix \"\" {\n  policy = \"write\"\n}\nkey_prefix \"\" {\n  policy = \"read\"\n}";
+const NOMAD_CLIENT_DESCRIPTION: &str = "Gives the token or role permissions required for integration with a nomad client.";
+
+/// Returns all 6 built-in templated policies as `(template_name, schema,
+/// template, description)` tuples, matching Consul's
+/// `aclTemplatedPoliciesList` map.
+fn builtin_templates() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    vec![
+        (
+            "builtin/service",
+            NAME_VARIABLE_SCHEMA,
+            SERVICE_TEMPLATE,
+            SERVICE_DESCRIPTION,
+        ),
+        (
+            "builtin/node",
+            NAME_VARIABLE_SCHEMA,
+            NODE_TEMPLATE,
+            NODE_DESCRIPTION,
+        ),
+        ("builtin/dns", "", DNS_TEMPLATE, DNS_DESCRIPTION),
+        (
+            "builtin/nomad-server",
+            "",
+            NOMAD_SERVER_TEMPLATE,
+            NOMAD_SERVER_DESCRIPTION,
+        ),
+        (
+            "builtin/api-gateway",
+            NAME_VARIABLE_SCHEMA,
+            API_GATEWAY_TEMPLATE,
+            API_GATEWAY_DESCRIPTION,
+        ),
+        (
+            "builtin/nomad-client",
+            "",
+            NOMAD_CLIENT_TEMPLATE,
+            NOMAD_CLIENT_DESCRIPTION,
+        ),
+    ]
+}
+
+/// Render a template by substituting `{{.Name}}` with the provided name.
+///
+/// Mirrors Consul's Go `text/template` execution: when no name is supplied
+/// the template is returned verbatim (the `{{.Name}}` placeholder is left
+/// untouched for schema-less templates that never reference it).
+fn render_template(template: &str, name: Option<&str>) -> String {
+    match name {
+        Some(n) => template.replace("{{.Name}}", n),
+        None => template.to_string(),
+    }
+}
+
+/// Validate templated policy variables against the template's JSON schema.
+///
+/// Mirrors Consul's `ACLTemplatedPolicy.ValidateTemplatedPolicy`:
+/// - Empty schema → no validation required.
+/// - Non-empty schema requires `name` (minLength 1).
+/// - `builtin/service` and `builtin/node` additionally require a valid
+///   identity name (lowercase alphanumeric, `-` and `_` only).
+fn validate_template_variables(
+    template_name: &str,
+    schema: &str,
+    variables: &TemplatedPolicyVariables,
+) -> Result<(), String> {
+    if schema.is_empty() {
+        return Ok(());
+    }
+
+    let name = variables.name.as_deref().unwrap_or("");
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+
+    // Additional identity-name validation for service and node templates.
+    // Only lowercase alphanumeric characters, '-' and '_' are allowed.
+    if template_name == "builtin/service" || template_name == "builtin/node" {
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        {
+            let kind = if template_name == "builtin/service" {
+                "service"
+            } else {
+                "node"
+            };
+            return Err(format!(
+                "{} identity \"{}\" has an invalid name. Only lowercase alphanumeric characters, '-' and '_' are allowed",
+                kind, name
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate a deterministic synthetic policy ID from the rendered rules.
+///
+/// Consul uses FNV-128a; batata uses SHA-256 (first 32 hex chars) since a
+/// 128-bit FNV implementation is not readily available. The ID only needs to
+/// be deterministic for a given rules string, not byte-compatible with
+/// Consul.
+fn synthetic_policy_id(rules: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(rules.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 /// Token update request
@@ -2323,107 +2485,105 @@ pub async fn delete_binding_rule(
 }
 
 /// GET /v1/acl/templated-policies - List templated policies
+///
+/// Returns a `map[string]ACLTemplatedPolicyResponse` with all 6 built-in
+/// templates, matching Consul's `ACLTemplatedPolicyList` handler.
 pub async fn list_templated_policies(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let mut policies = HashMap::new();
-    policies.insert(
-        "builtin/service".to_string(),
-        TemplatedPolicy {
-            template_name: "builtin/service".to_string(),
-            schema: Some(
-                r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string(),
-            ),
-            template: None,
-            description: Some(
-                "Gives the token or role permissions for a service and its sidecar proxy"
-                    .to_string(),
-            ),
-        },
-    );
-    policies.insert(
-        "builtin/node".to_string(),
-        TemplatedPolicy {
-            template_name: "builtin/node".to_string(),
-            schema: Some(
-                r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string(),
-            ),
-            template: None,
-            description: Some("Gives the token or role permissions for a node".to_string()),
-        },
-    );
-    policies.insert(
-        "builtin/dns".to_string(),
-        TemplatedPolicy {
-            template_name: "builtin/dns".to_string(),
-            schema: None,
-            template: None,
-            description: Some(
-                "Gives the token or role permissions for the DNS catalog".to_string(),
-            ),
-        },
-    );
+    for (name, schema, template, description) in builtin_templates() {
+        policies.insert(
+            name.to_string(),
+            TemplatedPolicy {
+                template_name: name.to_string(),
+                schema: schema.to_string(),
+                template: template.to_string(),
+                description: description.to_string(),
+            },
+        );
+    }
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(policies)
 }
 
 /// GET /v1/acl/templated-policy/name/{name} - Get templated policy by name
+///
+/// Returns a single `ACLTemplatedPolicyResponse` with `TemplateName`,
+/// `Schema`, `Template`, and `Description` (all strings, even when empty).
 pub async fn get_templated_policy(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    match name.as_str() {
-        "builtin/service" => consul_ok(&meta).json(TemplatedPolicy {
-            template_name: "builtin/service".to_string(),
-            schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
-            template: Some(r#"service "{{.Name}}" { policy = "write" } service "{{.Name}}-sidecar-proxy" { policy = "write" }"#.to_string()),
-            description: Some("Gives the token or role permissions for a service and its sidecar proxy".to_string()),
-        }),
-        "builtin/node" => consul_ok(&meta).json(TemplatedPolicy {
-            template_name: "builtin/node".to_string(),
-            schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
-            template: Some(r#"node "{{.Name}}" { policy = "write" }"#.to_string()),
-            description: Some("Gives the token or role permissions for a node".to_string()),
-        }),
-        "builtin/dns" => consul_ok(&meta).json(TemplatedPolicy {
-            template_name: "builtin/dns".to_string(),
-            schema: None,
-            template: Some(r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#.to_string()),
-            description: Some("Gives the token or role permissions for the DNS catalog".to_string()),
-        }),
-        _ => HttpResponse::BadRequest().consul_error(format!("Unknown templated policy: {}", name)),
+
+    for (tpl_name, schema, template, description) in builtin_templates() {
+        if tpl_name == name {
+            return consul_ok(&meta).json(TemplatedPolicy {
+                template_name: tpl_name.to_string(),
+                schema: schema.to_string(),
+                template: template.to_string(),
+                description: description.to_string(),
+            });
+        }
     }
+
+    HttpResponse::BadRequest().consul_error(format!("Invalid templated policy Name: {}", name))
 }
 
 /// POST /v1/acl/templated-policy/preview/{name} - Preview rendered template
+///
+/// Validates the supplied variables against the template's JSON schema,
+/// renders the template, and returns a synthetic `ACLPolicy` with a
+/// deterministic ID derived from the rendered rules.
 pub async fn preview_templated_policy(
     path: web::Path<String>,
-    body: web::Json<TemplatedPolicyPreviewRequest>,
+    body: web::Json<TemplatedPolicyVariables>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let template_name = path.into_inner();
-    let var_name = &body.name;
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
 
-    let rules = match template_name.as_str() {
-        "builtin/service" => format!(
-            r#"service "{}" {{ policy = "write" }} service "{}-sidecar-proxy" {{ policy = "write" }}"#,
-            var_name, var_name
+    // Find the template by name.
+    let (schema, template, _description) =
+        match builtin_templates()
+            .iter()
+            .find(|(n, _, _, _)| *n == template_name)
+        {
+            Some(&(_, schema, template, desc)) => (schema, template, desc),
+            None => {
+                return HttpResponse::BadRequest().consul_error(format!(
+                    "templated policy \"{}\" does not exist",
+                    template_name
+                ));
+            }
+        };
+
+    // Validate template variables against the schema.
+    if let Err(err) = validate_template_variables(&template_name, schema, &body) {
+        return HttpResponse::BadRequest().consul_error(format!(
+            "validation error for templated policy: \"{}\": {}",
+            template_name, err
+        ));
+    }
+
+    // Render the template by substituting {{.Name}}.
+    let rules = render_template(template, body.name.as_deref());
+
+    // Generate the synthetic policy.
+    let id = synthetic_policy_id(&rules);
+    let policy = SyntheticPolicy {
+        id: id.clone(),
+        name: format!("synthetic-policy-{}", id),
+        description: format!(
+            "synthetic policy generated from templated policy: {}",
+            template_name
         ),
-        "builtin/node" => format!(r#"node "{}" {{ policy = "write" }}"#, var_name),
-        "builtin/dns" => {
-            r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#
-                .to_string()
-        }
-        _ => {
-            return HttpResponse::BadRequest()
-                .consul_error(format!("Unknown templated policy: {}", template_name));
-        }
+        rules,
     };
 
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    consul_ok(&meta).json(serde_json::json!({ "Rules": rules }))
+    consul_ok(&meta).json(policy)
 }
 
 // ============================================================================
@@ -2502,6 +2662,348 @@ pub async fn acl_authorize(
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(responses)
+}
+
+// ============================================================================
+// OIDC 认证端点
+// ============================================================================
+
+/// POST /v1/acl/oidc/auth-url 请求体
+///
+/// 对应 Consul 的 `ACLOIDCAuthURLParams` 结构体。
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OidcAuthUrlRequest {
+    /// 认证方法名（必须是 type=oidc 的 auth method）
+    pub auth_method: String,
+    /// 回调 URI（必须在 auth method 配置的 AllowedRedirectURIs 中）
+    #[serde(rename = "RedirectURI")]
+    pub redirect_uri: String,
+    /// 客户端 nonce（可选，用于额外的请求验证）
+    #[serde(default)]
+    pub client_nonce: Option<String>,
+    /// 客户端元数据（可选）
+    #[serde(default)]
+    pub meta: Option<HashMap<String, String>>,
+}
+
+/// POST /v1/acl/oidc/auth-url 响应体
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OidcAuthUrlResponse {
+    /// 生成的 OIDC 授权 URL
+    #[serde(rename = "AuthURL")]
+    pub auth_url: String,
+}
+
+/// POST /v1/acl/oidc/callback 请求体
+///
+/// 对应 Consul 的 `ACLOIDCCallbackParams` 结构体。
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OidcCallbackRequest {
+    /// 认证方法名
+    pub auth_method: String,
+    /// 授权 URL 返回时携带的 state
+    pub state: String,
+    /// OIDC provider 返回的授权码
+    pub code: String,
+    /// 客户端 nonce（可选，必须与 auth-url 请求时提供的一致）
+    #[serde(default)]
+    pub client_nonce: Option<String>,
+}
+
+/// POST /v1/acl/oidc/auth-url
+/// 生成 OIDC 授权 URL
+///
+/// 流程：
+/// 1. 查找 auth method，验证类型为 oidc
+/// 2. 从 auth method 配置创建或获取缓存的 OidcAuthenticator
+/// 3. 调用 authenticator.get_auth_url 生成授权 URL
+/// 4. 返回 AuthURL
+pub async fn oidc_auth_url(
+    acl_service: web::Data<AclService>,
+    body: web::Json<OidcAuthUrlRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    // 查找 auth method
+    let auth_method = match acl_service.get_auth_method(&body.auth_method) {
+        Some(m) => m,
+        None => {
+            return HttpResponse::NotFound()
+                .consul_error(format!("Auth method '{}' not found", body.auth_method));
+        }
+    };
+
+    // 验证类型为 oidc
+    if auth_method.method_type != "oidc" {
+        return HttpResponse::BadRequest().consul_error(format!(
+            "Auth method '{}' is not of type 'oidc' (got '{}')",
+            body.auth_method, auth_method.method_type
+        ));
+    }
+
+    // 从配置创建或获取缓存的 OidcAuthenticator
+    let authenticator = match crate::oidc::get_or_create_authenticator(
+        &body.auth_method,
+        &auth_method.config,
+    ) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("Failed to create OIDC authenticator for '{}': {}", body.auth_method, e);
+            return HttpResponse::BadRequest().consul_error(format!(
+                "Invalid OIDC configuration for auth method '{}': {}",
+                body.auth_method, e
+            ));
+        }
+    };
+
+    // 生成授权 URL
+    match authenticator
+        .get_auth_url(
+            &body.redirect_uri,
+            &body.auth_method,
+            body.client_nonce.as_deref(),
+            body.meta.clone(),
+        )
+        .await
+    {
+        Ok(auth_url) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
+            consul_ok(&meta).json(OidcAuthUrlResponse { auth_url })
+        }
+        Err(e) => {
+            warn!(
+                "Failed to generate OIDC auth URL for '{}': {}",
+                body.auth_method, e
+            );
+            HttpResponse::BadRequest().consul_error(e)
+        }
+    }
+}
+
+/// POST /v1/acl/oidc/callback
+/// 交换授权码获取 token
+///
+/// 流程：
+/// 1. 查找 auth method，验证类型为 oidc
+/// 2. 从配置创建或获取缓存的 OidcAuthenticator
+/// 3. 调用 authenticator.exchange_code 交换授权码
+/// 4. 验证 client_nonce（如果请求中提供了）
+/// 5. 应用 binding rules 确定 policies 和 roles
+/// 6. 创建 ACL token
+/// 7. 返回 token
+pub async fn oidc_callback(
+    acl_service: web::Data<AclService>,
+    body: web::Json<OidcCallbackRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    // 验证必填字段
+    if body.state.is_empty() {
+        return HttpResponse::BadRequest().consul_error("State parameter is required");
+    }
+    if body.code.is_empty() {
+        return HttpResponse::BadRequest().consul_error("Code parameter is required");
+    }
+
+    // 查找 auth method
+    let auth_method = match acl_service.get_auth_method(&body.auth_method) {
+        Some(m) => m,
+        None => {
+            return HttpResponse::NotFound()
+                .consul_error(format!("Auth method '{}' not found", body.auth_method));
+        }
+    };
+
+    // 验证类型为 oidc
+    if auth_method.method_type != "oidc" {
+        return HttpResponse::BadRequest().consul_error(format!(
+            "Auth method '{}' is not of type 'oidc' (got '{}')",
+            body.auth_method, auth_method.method_type
+        ));
+    }
+
+    // 从配置创建或获取缓存的 OidcAuthenticator
+    let authenticator = match crate::oidc::get_or_create_authenticator(
+        &body.auth_method,
+        &auth_method.config,
+    ) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("Failed to create OIDC authenticator for '{}': {}", body.auth_method, e);
+            return HttpResponse::BadRequest().consul_error(format!(
+                "Invalid OIDC configuration for auth method '{}': {}",
+                body.auth_method, e
+            ));
+        }
+    };
+
+    // 交换授权码获取 claims
+    let oidc_claims = match authenticator.exchange_code(&body.state, &body.code).await {
+        Ok(claims) => claims,
+        Err(e) => {
+            warn!(
+                "OIDC code exchange failed for '{}': {}",
+                body.auth_method, e
+            );
+            return HttpResponse::BadRequest().consul_error(e);
+        }
+    };
+
+    // 验证 client_nonce（如果请求中提供了）
+    if let Some(ref request_nonce) = body.client_nonce {
+        if oidc_claims.client_nonce.as_ref() != Some(request_nonce) {
+            return HttpResponse::BadRequest()
+                .consul_error("Client nonce mismatch");
+        }
+    }
+
+    // 应用 binding rules 确定 policies 和 roles
+    let (policies, roles) = apply_oidc_binding_rules(
+        &acl_service,
+        &body.auth_method,
+        &oidc_claims.claims,
+    );
+
+    // 计算 token 过期时间
+    let expiration_ttl = auth_method.max_token_ttl.as_deref();
+
+    // 确定 token locality
+    let local = auth_method.token_locality.as_deref() == Some("local");
+
+    // 创建 ACL token
+    let token = acl_service
+        .create_token(
+            &format!("OIDC token via {}", body.auth_method),
+            policies,
+            roles,
+            local,
+            expiration_ttl,
+        )
+        .await;
+
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
+    consul_ok(&meta).json(token)
+}
+
+/// 应用 OIDC binding rules，根据 claims 确定要赋予的 policies 和 roles。
+///
+/// 遍历指定 auth method 的所有 binding rules，对每条规则：
+/// - 如果 selector 为 None 或空字符串，匹配所有
+/// - 否则尝试简单评估 selector 表达式
+///
+/// 返回 (policies, roles) 两个列表。
+fn apply_oidc_binding_rules(
+    acl_service: &AclService,
+    auth_method: &str,
+    claims: &HashMap<String, serde_json::Value>,
+) -> (Vec<String>, Vec<String>) {
+    let mut policies = Vec::new();
+    let mut roles = Vec::new();
+
+    // 获取该 auth method 的所有 binding rules
+    let rules: Vec<BindingRule> = acl_service
+        .list_binding_rules()
+        .into_iter()
+        .filter(|r| r.auth_method == auth_method)
+        .collect();
+
+    for rule in &rules {
+        // 评估 selector
+        let matched = if rule.selector.as_ref().is_none_or(|s| s.is_empty()) {
+            // 无 selector，匹配所有
+            true
+        } else {
+            // 有 selector，尝试简单评估
+            evaluate_binding_rule_selector(rule.selector.as_deref().unwrap_or(""), claims)
+        };
+
+        if matched {
+            match rule.bind_type.as_str() {
+                "policy" => {
+                    policies.push(rule.bind_name.clone());
+                }
+                "role" => {
+                    roles.push(rule.bind_name.clone());
+                }
+                // service, node-identity 等其他类型暂不处理
+                _ => {
+                    debug!("OIDC binding rule bind_type '{}' not supported, skipping", rule.bind_type);
+                }
+            }
+        }
+    }
+
+    (policies, roles)
+}
+
+/// 简单评估 binding rule selector 表达式。
+///
+/// 支持的格式：
+/// - `key == "value"` - 字符串相等比较
+/// - `key in ["a", "b"]` - 列表包含检查
+///
+/// 不支持的格式返回 false。
+fn evaluate_binding_rule_selector(
+    selector: &str,
+    claims: &HashMap<String, serde_json::Value>,
+) -> bool {
+    let selector = selector.trim();
+
+    // 尝试解析 `key == "value"` 格式
+    if let Some(eq_pos) = selector.find("==") {
+        let key = selector[..eq_pos].trim();
+        let value_str = selector[eq_pos + 2..].trim();
+
+        // 去掉引号
+        let value = value_str.trim_matches('"');
+
+        if let Some(claim_value) = claims.get(key) {
+            // 字符串比较
+            if let Some(s) = claim_value.as_str() {
+                return s == value;
+            }
+            // 其他类型的字符串比较
+            return claim_value.to_string().trim_matches('"') == value;
+        }
+        return false;
+    }
+
+    // 尝试解析 `key in [...]` 格式
+    if let Some(in_pos) = selector.find(" in ") {
+        let key = selector[..in_pos].trim();
+        let list_str = selector[in_pos + 4..].trim();
+
+        // 解析列表
+        let list_str = list_str.trim_start_matches('[').trim_end_matches(']');
+        let values: Vec<&str> = list_str
+            .split(',')
+            .map(|v| v.trim().trim_matches('"'))
+            .collect();
+
+        if let Some(claim_value) = claims.get(key) {
+            // 如果 claim 是数组，检查是否有交集
+            if let Some(arr) = claim_value.as_array() {
+                return arr.iter().any(|v| {
+                    if let Some(s) = v.as_str() {
+                        values.contains(&s)
+                    } else {
+                        let s = v.to_string();
+                        let trimmed = s.trim_matches('"');
+                        values.contains(&trimmed)
+                    }
+                });
+            }
+            // 如果 claim 是字符串，检查是否在列表中
+            if let Some(s) = claim_value.as_str() {
+                return values.contains(&s);
+            }
+        }
+        return false;
+    }
+
+    // 不支持的格式，不匹配
+    false
 }
 
 #[cfg(test)]
@@ -2896,6 +3398,7 @@ mod tests {
         let types = vec![
             ResourceType::Service,
             ResourceType::Key,
+            ResourceType::Keyring,
             ResourceType::Node,
             ResourceType::Session,
             ResourceType::Query,

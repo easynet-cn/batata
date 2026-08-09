@@ -222,6 +222,9 @@ pub struct OidcDiscovery {
     pub response_types_supported: Vec<String>,
     #[serde(default)]
     pub grant_types_supported: Vec<String>,
+    /// OIDC RP-initiated logout endpoint (optional, per OIDC Discovery spec)
+    #[serde(default)]
+    pub end_session_endpoint: Option<String>,
 }
 
 /// OAuth2 token response
@@ -625,6 +628,45 @@ impl OAuthService {
 
         Ok(claims)
     }
+
+    /// Build an IdP RP-initiated logout URL (OIDC end_session_endpoint).
+    ///
+    /// Returns `Ok(None)` when the provider does not advertise an
+    /// `end_session_endpoint` in its discovery document or when no OIDC
+    /// discovery is configured (e.g. generic OAuth2 providers).
+    pub async fn build_logout_url(
+        &self,
+        provider_name: &str,
+        id_token_hint: Option<&str>,
+        post_logout_redirect_uri: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let provider = self
+            .config
+            .get_provider(provider_name)
+            .ok_or_else(|| anyhow::anyhow!("OAuth provider not found: {}", provider_name))?;
+
+        let discovery_url = match &provider.discovery_url {
+            Some(url) => url,
+            None => return Ok(None),
+        };
+
+        let discovery = self.get_oidc_discovery(discovery_url).await?;
+        let end_session_endpoint = match &discovery.end_session_endpoint {
+            Some(ep) => ep.clone(),
+            None => return Ok(None),
+        };
+
+        let mut url = url::Url::parse(&end_session_endpoint)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("post_logout_redirect_uri", post_logout_redirect_uri);
+            if let Some(hint) = id_token_hint {
+                query.append_pair("id_token_hint", hint);
+            }
+        }
+
+        Ok(Some(url.to_string()))
+    }
 }
 
 #[async_trait::async_trait]
@@ -685,6 +727,16 @@ impl batata_common::OAuthProvider for OAuthService {
             name: info.name,
             groups: info.groups,
         })
+    }
+
+    async fn build_logout_url(
+        &self,
+        provider_name: &str,
+        id_token_hint: Option<&str>,
+        post_logout_redirect_uri: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.build_logout_url(provider_name, id_token_hint, post_logout_redirect_uri)
+            .await
     }
 }
 
@@ -906,12 +958,17 @@ mod tests {
             "jwks_uri": "https://auth.example.com/.well-known/jwks.json",
             "scopes_supported": ["openid", "profile", "email"],
             "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code"]
+            "grant_types_supported": ["authorization_code"],
+            "end_session_endpoint": "https://auth.example.com/logout"
         }"#;
 
         let discovery: OidcDiscovery = serde_json::from_str(json).unwrap();
 
         assert_eq!(discovery.issuer, "https://auth.example.com");
         assert_eq!(discovery.scopes_supported.len(), 3);
+        assert_eq!(
+            discovery.end_session_endpoint.as_deref(),
+            Some("https://auth.example.com/logout")
+        );
     }
 }

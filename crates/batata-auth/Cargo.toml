@@ -40,6 +40,9 @@ regex = { workspace = true }
 moka = { workspace = true }
 dashmap = { workspace = true }
 
+# Hashing (SHA-256 for visibility grant role names)
+sha2 = { workspace = true }
+
 # Concurrency
 parking_lot = { workspace = true }
 

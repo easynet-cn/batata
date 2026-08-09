@@ -1795,6 +1795,7 @@ mod tests {
             enable_tag_override: None,
             tagged_addresses: None,
             namespace: None,
+            ..Default::default()
         }
     }
 
@@ -1816,6 +1817,7 @@ mod tests {
             enable_tag_override: None,
             tagged_addresses: None,
             namespace: None,
+            ..Default::default()
         };
 
         let catalog_service =
@@ -1938,6 +1940,7 @@ mod tests {
             enable_tag_override: None,
             tagged_addresses: None,
             namespace: None,
+            ..Default::default()
         };
         register_reg(&store, &web_reg);
 
@@ -1958,6 +1961,7 @@ mod tests {
             enable_tag_override: None,
             tagged_addresses: None,
             namespace: None,
+            ..Default::default()
         };
         register_reg(&store, &db_reg);
         // Mark db instance as unhealthy

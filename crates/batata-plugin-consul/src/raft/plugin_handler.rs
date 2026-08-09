@@ -21,8 +21,8 @@ use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use crate::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
     CF_CONSUL_COORDINATES, CF_CONSUL_EVENTS, CF_CONSUL_HEALTH_CHECKS, CF_CONSUL_INTENTIONS,
-    CF_CONSUL_KV, CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
-    CF_CONSUL_SESSIONS,
+    CF_CONSUL_KV, CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PARTITIONS,
+    CF_CONSUL_PEERING, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
 use crate::index_provider::{ConsulTable, ConsulTableIndex};
 
@@ -100,6 +100,7 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             CF_CONSUL_OPERATOR.to_string(),
             CF_CONSUL_EVENTS.to_string(),
             CF_CONSUL_NAMESPACES.to_string(),
+            CF_CONSUL_PARTITIONS.to_string(),
             CF_CONSUL_CATALOG.to_string(),
             CF_CONSUL_HEALTH_CHECKS.to_string(),
         ]
@@ -323,6 +324,9 @@ fn apply_consul_request(
             // Namespace
             ConsulRaftRequest::NamespaceUpsert { .. }
             | ConsulRaftRequest::NamespaceDelete { .. } => ConsulTable::Namespaces,
+            // Partition
+            ConsulRaftRequest::PartitionUpsert { .. }
+            | ConsulRaftRequest::PartitionDelete { .. } => ConsulTable::Partitions,
             // Catalog
             ConsulRaftRequest::CatalogRegister { .. }
             | ConsulRaftRequest::CatalogDeregister { .. } => ConsulTable::Catalog,
@@ -552,6 +556,15 @@ fn apply_consul_request(
         } => apply_generic_put(db, CF_CONSUL_NAMESPACES, &name, &namespace_json, log_index),
         ConsulRaftRequest::NamespaceDelete { name } => {
             apply_generic_delete(db, CF_CONSUL_NAMESPACES, &name, log_index)
+        }
+
+        // === Partition: write to CF_CONSUL_PARTITIONS ===
+        ConsulRaftRequest::PartitionUpsert {
+            name,
+            partition_json,
+        } => apply_generic_put(db, CF_CONSUL_PARTITIONS, &name, &partition_json, log_index),
+        ConsulRaftRequest::PartitionDelete { name } => {
+            apply_generic_delete(db, CF_CONSUL_PARTITIONS, &name, log_index)
         }
 
         // === Catalog: write to CF_CONSUL_CATALOG ===

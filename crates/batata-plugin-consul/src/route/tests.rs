@@ -3,6 +3,10 @@ use std::sync::Arc;
 use actix_web::{App, test, web};
 
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo, MemberState};
+
+// wiremock for OIDC provider mock in integration tests
+#[cfg(test)]
+use wiremock;
 use batata_naming::service::NamingService;
 
 use crate::acl::AclService;
@@ -145,6 +149,11 @@ async fn create_test_app() -> impl actix_web::dev::Service<
             .app_data(web::Data::new(crate::peering::ConsulPeeringService::new()))
             .app_data(web::Data::new(
                 crate::namespace::ConsulNamespaceService::new(
+                    crate::index_provider::ConsulIndexProvider::new(),
+                ),
+            ))
+            .app_data(web::Data::new(
+                crate::partition::ConsulPartitionService::new(
                     crate::index_provider::ConsulIndexProvider::new(),
                 ),
             ))
@@ -2004,4 +2013,1298 @@ async fn test_http_event_fire_and_list_multiple() {
     let body: serde_json::Value = test::read_body_json(resp).await;
     let events = body.as_array().unwrap();
     assert!(events.len() >= 3);
+}
+
+// ========================================================================
+// Agent Filter Expression Tests (?filter= on /agent/services and /agent/checks)
+// ========================================================================
+
+#[actix_web::test]
+async fn test_http_agent_services_filter_by_name() {
+    let app = create_test_app().await;
+
+    // Register two services with different names
+    for (id, name) in &[("flt-svc-1", "web"), ("flt-svc-2", "api")] {
+        let svc_json = serde_json::json!({
+            "ID": id,
+            "Name": name,
+            "Port": 8080,
+            "Address": "10.0.0.1",
+            "Tags": ["v1"]
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc_json)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // Filter by Service == "web"
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/services?filter=Service%20%3D%3D%20%22web%22")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(body.is_object());
+    let obj = body.as_object().unwrap();
+    // Should only have the "web" service
+    assert_eq!(obj.len(), 1);
+    assert!(obj.contains_key("flt-svc-1"));
+}
+
+#[actix_web::test]
+async fn test_http_agent_services_filter_by_tag() {
+    let app = create_test_app().await;
+
+    // Register services with different tags
+    for (id, tags) in &[
+        ("flt-tag-1", vec!["v1", "prod"]),
+        ("flt-tag-2", vec!["v2", "staging"]),
+        ("flt-tag-3", vec!["v1", "staging"]),
+    ] {
+        let svc_json = serde_json::json!({
+            "ID": id,
+            "Name": format!("svc-{}", id),
+            "Port": 8080,
+            "Address": "10.0.0.1",
+            "Tags": tags
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc_json)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // Filter by "v1" in Tags
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/services?filter=%22v1%22%20in%20Tags")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().unwrap();
+    // Should have flt-tag-1 and flt-tag-3 (both have "v1" tag)
+    assert_eq!(obj.len(), 2);
+    assert!(obj.contains_key("flt-tag-1"));
+    assert!(obj.contains_key("flt-tag-3"));
+}
+
+#[actix_web::test]
+async fn test_http_agent_services_filter_no_match() {
+    let app = create_test_app().await;
+
+    // Register a service
+    let svc_json = serde_json::json!({
+        "ID": "flt-none-1",
+        "Name": "web",
+        "Port": 8080,
+        "Address": "10.0.0.1",
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/service/register")
+        .set_json(&svc_json)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // Filter that matches nothing
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/services?filter=Service%20%3D%3D%20%22nonexistent%22")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().unwrap();
+    assert_eq!(obj.len(), 0);
+}
+
+#[actix_web::test]
+async fn test_http_agent_services_no_filter_returns_all() {
+    let app = create_test_app().await;
+
+    // Register two services
+    for id in &["flt-all-1", "flt-all-2"] {
+        let svc_json = serde_json::json!({
+            "ID": id,
+            "Name": format!("svc-{}", id),
+            "Port": 8080,
+            "Address": "10.0.0.1",
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc_json)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // No filter = return all
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/services")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().unwrap();
+    assert!(obj.len() >= 2);
+}
+
+#[actix_web::test]
+async fn test_http_agent_checks_filter_by_status() {
+    let app = create_test_app().await;
+
+    // Register checks with different statuses
+    for (id, name, status) in &[
+        ("flt-chk-pass", "passing-check", "passing"),
+        ("flt-chk-warn", "warning-check", "warning"),
+        ("flt-chk-fail", "critical-check", "critical"),
+    ] {
+        let check_json = serde_json::json!({
+            "ID": id,
+            "Name": name,
+            "Status": status,
+            "Notes": "test check",
+            "ServiceID": "",
+            "ServiceName": ""
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/check/register")
+            .set_json(&check_json)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // Filter checks by Status == "passing"
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/checks?filter=Status%20%3D%3D%20%22passing%22")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().unwrap();
+    // Should only have the passing check
+    assert!(obj.len() >= 1);
+    assert!(obj.contains_key("flt-chk-pass"));
+}
+
+#[actix_web::test]
+async fn test_http_agent_checks_filter_by_name() {
+    let app = create_test_app().await;
+
+    // Register checks
+    for (id, name) in &[
+        ("flt-cn-1", "web-health"),
+        ("flt-cn-2", "db-health"),
+    ] {
+        let check_json = serde_json::json!({
+            "ID": id,
+            "Name": name,
+            "Status": "passing",
+            "ServiceID": "",
+            "ServiceName": ""
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/check/register")
+            .set_json(&check_json)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // Filter by Name contains "web"
+    let req = test::TestRequest::get()
+        .uri("/v1/agent/checks?filter=Name%20contains%20%22web%22")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().unwrap();
+    assert!(obj.len() >= 1);
+    assert!(obj.contains_key("flt-cn-1"));
+    assert!(!obj.contains_key("flt-cn-2"));
+}
+
+// ========================================================================
+// ACL Templated Policy HTTP Tests
+// ========================================================================
+
+/// All six built-in template names.
+const ALL_TEMPLATES: &[&str] = &[
+    "builtin/service",
+    "builtin/node",
+    "builtin/dns",
+    "builtin/nomad-server",
+    "builtin/api-gateway",
+    "builtin/nomad-client",
+];
+
+/// Templates that require a `name` variable (non-empty JSON schema).
+const NAME_TEMPLATES: &[&str] = &["builtin/service", "builtin/node", "builtin/api-gateway"];
+
+#[actix_web::test]
+async fn test_http_acl_templated_policies_list() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/templated-policies")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let obj = body.as_object().expect("templated policies should be a map");
+    assert_eq!(obj.len(), 6, "all 6 built-in templates should be present");
+
+    for name in ALL_TEMPLATES {
+        let entry = obj
+            .get(*name)
+            .unwrap_or_else(|| panic!("missing template {}", name));
+        assert_eq!(entry["TemplateName"], *name);
+        // Schema, Template, Description must always be present (string).
+        assert!(
+            entry["Schema"].is_string(),
+            "Schema for {} should be a string",
+            name
+        );
+        assert!(
+            entry["Template"].is_string(),
+            "Template for {} should be a string",
+            name
+        );
+        assert!(
+            entry["Description"].is_string(),
+            "Description for {} should be a string",
+            name
+        );
+        assert!(
+            !entry["Description"].as_str().unwrap().is_empty(),
+            "Description for {} should not be empty",
+            name
+        );
+    }
+
+    // Templates with a schema should have a non-empty Schema.
+    for name in NAME_TEMPLATES {
+        assert!(
+            !obj[*name]["Schema"].as_str().unwrap().is_empty(),
+            "Schema for {} should be non-empty",
+            name
+        );
+    }
+
+    // Templates without a schema should have an empty Schema string.
+    for name in &["builtin/dns", "builtin/nomad-server", "builtin/nomad-client"] {
+        assert_eq!(
+            obj[*name]["Schema"], "",
+            "Schema for {} should be empty",
+            name
+        );
+    }
+}
+
+async fn read_templated_policy(name: &str) -> serde_json::Value {
+    let app = create_test_app().await;
+    let req = test::TestRequest::get()
+        .uri(&format!("/v1/acl/templated-policy/name/{}", name))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "read {} should return 200", name);
+    test::read_body_json(resp).await
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_service() {
+    let body = read_templated_policy("builtin/service").await;
+    assert_eq!(body["TemplateName"], "builtin/service");
+    assert!(!body["Schema"].as_str().unwrap().is_empty());
+    assert!(body["Template"].as_str().unwrap().contains("{{.Name}}"));
+    assert!(body["Template"]
+        .as_str()
+        .unwrap()
+        .contains("{{.Name}}-sidecar-proxy"));
+    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_node() {
+    let body = read_templated_policy("builtin/node").await;
+    assert_eq!(body["TemplateName"], "builtin/node");
+    assert!(!body["Schema"].as_str().unwrap().is_empty());
+    assert!(body["Template"].as_str().unwrap().contains("node \"{{.Name}}\""));
+    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_dns() {
+    let body = read_templated_policy("builtin/dns").await;
+    assert_eq!(body["TemplateName"], "builtin/dns");
+    assert_eq!(body["Schema"], "");
+    assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("query_prefix"));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_nomad_server() {
+    let body = read_templated_policy("builtin/nomad-server").await;
+    assert_eq!(body["TemplateName"], "builtin/nomad-server");
+    assert_eq!(body["Schema"], "");
+    assert!(body["Template"].as_str().unwrap().contains("acl = \"write\""));
+    assert!(body["Template"].as_str().unwrap().contains("agent_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_api_gateway() {
+    let body = read_templated_policy("builtin/api-gateway").await;
+    assert_eq!(body["TemplateName"], "builtin/api-gateway");
+    assert!(!body["Schema"].as_str().unwrap().is_empty());
+    assert!(body["Template"].as_str().unwrap().contains("mesh = \"read\""));
+    assert!(body["Template"].as_str().unwrap().contains("service \"{{.Name}}\""));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_nomad_client() {
+    let body = read_templated_policy("builtin/nomad-client").await;
+    assert_eq!(body["TemplateName"], "builtin/nomad-client");
+    assert_eq!(body["Schema"], "");
+    assert!(body["Template"].as_str().unwrap().contains("agent_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(body["Template"].as_str().unwrap().contains("key_prefix"));
+    assert!(!body["Description"].as_str().unwrap().is_empty());
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_read_unknown() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/acl/templated-policy/name/builtin/unknown")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+/// Preview a templated policy and return the HTTP status plus the raw body
+/// as a string (works for both JSON success bodies and plain-text errors).
+async fn preview_templated_policy(name: &str, body: serde_json::Value) -> (u16, String) {
+    let app = create_test_app().await;
+    let req = test::TestRequest::post()
+        .uri(&format!("/v1/acl/templated-policy/preview/{}", name))
+        .set_json(&body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let status = resp.status().as_u16();
+    let bytes = test::read_body(resp).await;
+    (
+        status,
+        String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+    )
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_service() {
+    let (status, body_str) =
+        preview_templated_policy("builtin/service", serde_json::json!({"name": "api"})).await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(body["ID"].is_string());
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    assert!(
+        body["Description"]
+            .as_str()
+            .unwrap()
+            .contains("builtin/service")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("service \"api\""));
+    assert!(rules.contains("service \"api-sidecar-proxy\""));
+    assert!(rules.contains("service_prefix"));
+    assert!(rules.contains("node_prefix"));
+    // ID should be the hash of the rules.
+    assert_eq!(
+        body["ID"],
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("synthetic-policy-")
+    );
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_node() {
+    let (status, body_str) =
+        preview_templated_policy("builtin/node", serde_json::json!({"name": "web"})).await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("node \"web\""));
+    assert!(rules.contains("service_prefix"));
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_dns() {
+    let (status, body_str) =
+        preview_templated_policy("builtin/dns", serde_json::json!({})).await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("node_prefix"));
+    assert!(rules.contains("service_prefix"));
+    assert!(rules.contains("query_prefix"));
+    // DNS has no {{.Name}} placeholder — rules should not contain it.
+    assert!(!rules.contains("{{.Name}}"));
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_nomad_server() {
+    let (status, body_str) =
+        preview_templated_policy("builtin/nomad-server", serde_json::json!({})).await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("acl = \"write\""));
+    assert!(rules.contains("agent_prefix"));
+    assert!(rules.contains("service_prefix"));
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_api_gateway() {
+    let (status, body_str) = preview_templated_policy(
+        "builtin/api-gateway",
+        serde_json::json!({"name": "my-gateway"}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("mesh = \"read\""));
+    assert!(rules.contains("service \"my-gateway\""));
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_nomad_client() {
+    let (status, body_str) =
+        preview_templated_policy("builtin/nomad-client", serde_json::json!({})).await;
+    assert_eq!(status, 200);
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    assert!(
+        body["Name"]
+            .as_str()
+            .unwrap()
+            .starts_with("synthetic-policy-")
+    );
+    let rules = body["Rules"].as_str().unwrap();
+    assert!(rules.contains("agent_prefix"));
+    assert!(rules.contains("key_prefix"));
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_service_missing_name() {
+    // Service template requires a name; omitting it should fail validation.
+    let (status, body_str) =
+        preview_templated_policy("builtin/service", serde_json::json!({})).await;
+    assert_eq!(status, 400);
+    assert!(
+        body_str.contains("name is required") || body_str.contains("validation error"),
+        "expected validation error, got: {}",
+        body_str
+    );
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_service_invalid_name() {
+    // Uppercase characters are not allowed in service identity names.
+    let (status, body_str) = preview_templated_policy(
+        "builtin/service",
+        serde_json::json!({"name": "InvalidName"}),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(
+        body_str.contains("invalid name"),
+        "expected invalid name error, got: {}",
+        body_str
+    );
+}
+
+#[actix_web::test]
+async fn test_http_acl_templated_policy_preview_unknown() {
+    let (status, _body_str) =
+        preview_templated_policy("builtin/unknown", serde_json::json!({})).await;
+    assert_eq!(status, 400);
+}
+
+// ========================================================================
+// Partition HTTP Tests
+// ========================================================================
+
+#[actix_web::test]
+async fn test_http_partition_create() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "test-partition",
+            "Description": "A test partition"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["Name"], "test-partition");
+    assert_eq!(body["Description"], "A test partition");
+    assert!(body["CreateIndex"].as_u64().unwrap_or(0) > 0);
+    assert!(body["ModifyIndex"].as_u64().unwrap_or(0) > 0);
+}
+
+#[actix_web::test]
+async fn test_http_partition_create_default_fails() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "default",
+            "Description": "Trying to recreate default"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_http_partition_create_duplicate_fails() {
+    let app = create_test_app().await;
+
+    // First create succeeds
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "dup-partition",
+            "Description": "First"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // Second create with same name fails
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "dup-partition",
+            "Description": "Second"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_http_partition_read() {
+    let app = create_test_app().await;
+
+    // Create a partition first
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "read-test",
+            "Description": "Readable partition"
+        }))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // Read it back
+    let req = test::TestRequest::get()
+        .uri("/v1/partition/read-test")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["Name"], "read-test");
+    assert_eq!(body["Description"], "Readable partition");
+}
+
+#[actix_web::test]
+async fn test_http_partition_read_not_found() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/partition/nonexistent")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_http_partition_update() {
+    let app = create_test_app().await;
+
+    // Create a partition first
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "update-test",
+            "Description": "Original"
+        }))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // Update it
+    let req = test::TestRequest::put()
+        .uri("/v1/partition/update-test")
+        .set_json(serde_json::json!({
+            "Name": "update-test",
+            "Description": "Updated description"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["Name"], "update-test");
+    assert_eq!(body["Description"], "Updated description");
+}
+
+#[actix_web::test]
+async fn test_http_partition_delete() {
+    let app = create_test_app().await;
+
+    // Create a partition first
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({
+            "Name": "delete-test",
+            "Description": "Will be deleted"
+        }))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // Delete it (soft delete)
+    let req = test::TestRequest::delete()
+        .uri("/v1/partition/delete-test")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // Read it back — should still exist with DeletedAt set
+    let req = test::TestRequest::get()
+        .uri("/v1/partition/delete-test")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["Name"], "delete-test");
+    assert!(
+        body["DeletedAt"].as_str().is_some(),
+        "DeletedAt should be set after soft delete"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_partition_delete_default_fails() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::delete()
+        .uri("/v1/partition/default")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_http_partition_list() {
+    let app = create_test_app().await;
+
+    // Create some partitions
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({"Name": "list-alpha"}))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({"Name": "list-beta"}))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // List all partitions
+    let req = test::TestRequest::get().uri("/v1/partitions").to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let partitions = body.as_array().unwrap();
+    // default + list-alpha + list-beta = 3
+    assert_eq!(partitions.len(), 3);
+
+    let names: Vec<&str> = partitions
+        .iter()
+        .map(|p| p["Name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"default"));
+    assert!(names.contains(&"list-alpha"));
+    assert!(names.contains(&"list-beta"));
+}
+
+#[actix_web::test]
+async fn test_http_partition_list_excludes_deleted() {
+    let app = create_test_app().await;
+
+    // Create a partition
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({"Name": "will-delete"}))
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // Delete it (soft delete)
+    let req = test::TestRequest::delete()
+        .uri("/v1/partition/will-delete")
+        .to_request();
+    let _ = test::call_service(&app, req).await;
+
+    // List should not include the deleted partition
+    let req = test::TestRequest::get().uri("/v1/partitions").to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let partitions = body.as_array().unwrap();
+    // Only default should remain
+    assert_eq!(partitions.len(), 1);
+    assert_eq!(partitions[0]["Name"], "default");
+}
+
+// ========================================================================
+// OIDC HTTP Tests
+// ========================================================================
+
+/// 辅助函数：创建一个 OIDC auth method
+async fn create_oidc_auth_method(app: &impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+>, name: &str, discovery_url: &str) {
+    let req = test::TestRequest::put()
+        .uri("/v1/acl/auth-method")
+        .set_json(serde_json::json!({
+            "Name": name,
+            "Type": "oidc",
+            "Config": {
+                "OIDCDiscoveryURL": discovery_url,
+                "OIDCClientID": "test-client-id",
+                "OIDCClientSecret": "test-client-secret",
+                "AllowedRedirectURIs": ["http://localhost:8500/callback"]
+            }
+        }))
+        .to_request();
+    let resp = test::call_service(app, req).await;
+    assert_eq!(resp.status(), 200, "Creating OIDC auth method should return 200");
+}
+
+/// POST /v1/acl/oidc/auth-url - auth method 不存在时返回 404
+#[actix_web::test]
+async fn test_http_oidc_auth_url_no_auth_method() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/oidc/auth-url")
+        .set_json(serde_json::json!({
+            "AuthMethod": "nonexistent-oidc-method",
+            "RedirectURI": "http://localhost:8500/callback"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
+}
+
+/// POST /v1/acl/oidc/auth-url - auth method 类型不是 oidc 时返回 400
+#[actix_web::test]
+async fn test_http_oidc_auth_url_invalid_method_type() {
+    let app = create_test_app().await;
+
+    // 创建一个 jwt 类型的 auth method（不是 oidc）
+    let req = test::TestRequest::put()
+        .uri("/v1/acl/auth-method")
+        .set_json(serde_json::json!({
+            "Name": "test-jwt-method",
+            "Type": "jwt",
+            "Config": {
+                "BoundAudiences": ["test-audience"]
+            }
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 使用 jwt 类型的 auth method 请求 oidc auth-url，应该返回 400
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/oidc/auth-url")
+        .set_json(serde_json::json!({
+            "AuthMethod": "test-jwt-method",
+            "RedirectURI": "http://localhost:8500/callback"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+/// POST /v1/acl/oidc/auth-url - 成功生成授权 URL
+#[actix_web::test]
+async fn test_http_oidc_auth_url_success() {
+    // 启动 mock OIDC provider
+    let mock_server = wiremock::MockServer::start().await;
+
+    // Mock OIDC discovery 端点
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/openid-configuration"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "issuer": mock_server.uri(),
+            "authorization_endpoint": format!("{}/oauth2/authorize", mock_server.uri()),
+            "token_endpoint": format!("{}/oauth2/token", mock_server.uri()),
+            "jwks_uri": format!("{}/.well-known/jwks.json", mock_server.uri()),
+            "userinfo_endpoint": format!("{}/userinfo", mock_server.uri())
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let app = create_test_app().await;
+
+    // 创建 OIDC auth method
+    let discovery_url = format!("{}/.well-known/openid-configuration", mock_server.uri());
+    create_oidc_auth_method(&app, "test-oidc-auth-url-success", &discovery_url).await;
+
+    // 请求 auth URL
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/oidc/auth-url")
+        .set_json(serde_json::json!({
+            "AuthMethod": "test-oidc-auth-url-success",
+            "RedirectURI": "http://localhost:8500/callback"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let auth_url = body["AuthURL"]
+        .as_str()
+        .expect("Response should contain AuthURL field");
+    assert!(
+        auth_url.contains("/oauth2/authorize"),
+        "AuthURL should contain the authorization endpoint: {}",
+        auth_url
+    );
+    assert!(
+        auth_url.contains("client_id=test-client-id"),
+        "AuthURL should contain client_id: {}",
+        auth_url
+    );
+    assert!(
+        auth_url.contains("response_type=code"),
+        "AuthURL should contain response_type=code: {}",
+        auth_url
+    );
+    assert!(
+        auth_url.contains("code_challenge_method=S256"),
+        "AuthURL should contain PKCE challenge method: {}",
+        auth_url
+    );
+}
+
+/// POST /v1/acl/oidc/callback - 无效的 state 返回 400
+#[actix_web::test]
+async fn test_http_oidc_callback_invalid_state() {
+    let app = create_test_app().await;
+
+    // 创建 OIDC auth method（不需要 mock provider，因为 state 验证在请求 provider 之前）
+    let req = test::TestRequest::put()
+        .uri("/v1/acl/auth-method")
+        .set_json(serde_json::json!({
+            "Name": "test-oidc-callback-invalid-state",
+            "Type": "oidc",
+            "Config": {
+                "OIDCDiscoveryURL": "http://localhost:0/.well-known/openid-configuration",
+                "OIDCClientID": "test-client-id",
+                "OIDCClientSecret": "test-client-secret",
+                "AllowedRedirectURIs": ["http://localhost:8500/callback"]
+            }
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 使用不存在的 state 调用 callback
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/oidc/callback")
+        .set_json(serde_json::json!({
+            "AuthMethod": "test-oidc-callback-invalid-state",
+            "State": "nonexistent-state-id",
+            "Code": "test-auth-code"
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+/// POST /v1/acl/oidc/callback - 缺少 code 参数返回 400
+#[actix_web::test]
+async fn test_http_oidc_callback_missing_code() {
+    let app = create_test_app().await;
+
+    // 创建 OIDC auth method
+    let req = test::TestRequest::put()
+        .uri("/v1/acl/auth-method")
+        .set_json(serde_json::json!({
+            "Name": "test-oidc-callback-missing-code",
+            "Type": "oidc",
+            "Config": {
+                "OIDCDiscoveryURL": "http://localhost:0/.well-known/openid-configuration",
+                "OIDCClientID": "test-client-id",
+                "OIDCClientSecret": "test-client-secret",
+                "AllowedRedirectURIs": ["http://localhost:8500/callback"]
+            }
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 使用空 code 调用 callback
+    let req = test::TestRequest::post()
+        .uri("/v1/acl/oidc/callback")
+        .set_json(serde_json::json!({
+            "AuthMethod": "test-oidc-callback-missing-code",
+            "State": "some-state",
+            "Code": ""
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+// ========================================================================
+// Keyring HTTP Tests
+// ========================================================================
+
+/// 生成有效的AES-256密钥（base64编码的32字节），用于HTTP测试
+fn http_test_key(seed: u8) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode([seed; 32])
+}
+
+/// GET /v1/operator/keyring - 返回KeyringResponses格式
+#[actix_web::test]
+async fn test_http_keyring_list() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/operator/keyring")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 验证返回KeyringResponses格式（包含Responses数组）
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(
+        body.is_object(),
+        "keyring list should return a JSON object"
+    );
+    let responses = body["Responses"]
+        .as_array()
+        .expect("should have Responses array");
+    assert!(
+        responses.len() >= 1,
+        "should have at least one keyring response"
+    );
+
+    // 默认返回LAN和WAN两个response
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["WAN"], false);
+    assert_eq!(responses[1]["WAN"], true);
+    assert_eq!(responses[0]["Datacenter"], "dc1");
+    assert_eq!(responses[0]["NumNodes"], 1);
+    assert!(
+        responses[0]["Keys"].is_object(),
+        "Keys should be a map"
+    );
+    assert!(
+        responses[0]["PrimaryKeys"].is_object(),
+        "PrimaryKeys should be a map"
+    );
+}
+
+/// GET /v1/operator/keyring?local-only=true - local_only只返回LAN response
+#[actix_web::test]
+async fn test_http_keyring_list_local_only() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/operator/keyring?local-only=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let responses = body["Responses"]
+        .as_array()
+        .expect("should have Responses array");
+    assert_eq!(
+        responses.len(),
+        1,
+        "local-only should return only LAN response"
+    );
+    assert_eq!(responses[0]["WAN"], false);
+}
+
+/// POST /v1/operator/keyring - 安装key
+#[actix_web::test]
+async fn test_http_keyring_install() {
+    let app = create_test_app().await;
+    let key = http_test_key(0x42);
+
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 验证返回KeyringResponses
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let responses = body["Responses"]
+        .as_array()
+        .expect("should have Responses array");
+    assert!(responses.len() >= 1);
+
+    // 验证新key出现在Keys中
+    let keys = &responses[0]["Keys"];
+    assert!(
+        keys.get(&key).is_some(),
+        "installed key should appear in keyring"
+    );
+}
+
+/// PUT /v1/operator/keyring - 切换primary key
+#[actix_web::test]
+async fn test_http_keyring_use() {
+    let app = create_test_app().await;
+    let key = http_test_key(0x99);
+
+    // 先安装key
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 切换primary key
+    let req = test::TestRequest::put()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 验证primary key已切换
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let responses = body["Responses"]
+        .as_array()
+        .expect("should have Responses array");
+    let primary_keys = &responses[0]["PrimaryKeys"];
+    assert!(
+        primary_keys.get(&key).is_some(),
+        "new key should be in PrimaryKeys after use"
+    );
+}
+
+/// DELETE /v1/operator/keyring - 移除非primary key
+#[actix_web::test]
+async fn test_http_keyring_remove() {
+    let app = create_test_app().await;
+
+    // 获取初始primary key
+    let req = test::TestRequest::get()
+        .uri("/v1/operator/keyring")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let initial_primary = body["Responses"][0]["PrimaryKeys"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .cloned()
+        .unwrap();
+
+    // 安装一个新key（非primary）
+    let new_key = http_test_key(0x55);
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": new_key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 移除新key（非primary，应成功）
+    let req = test::TestRequest::delete()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": new_key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // 验证key已被移除
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let keys = &body["Responses"][0]["Keys"];
+    assert!(
+        keys.get(&new_key).is_none(),
+        "removed key should not be in keyring"
+    );
+    // primary key应仍然存在
+    assert!(
+        keys.get(&initial_primary).is_some(),
+        "primary key should still be present"
+    );
+}
+
+/// DELETE /v1/operator/keyring - 移除primary key返回400
+#[actix_web::test]
+async fn test_http_keyring_remove_primary_fails() {
+    let app = create_test_app().await;
+
+    // 获取初始primary key
+    let req = test::TestRequest::get()
+        .uri("/v1/operator/keyring")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let primary_key = body["Responses"][0]["PrimaryKeys"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .cloned()
+        .unwrap();
+
+    // 尝试移除primary key应返回400
+    let req = test::TestRequest::delete()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": primary_key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "removing primary key should return 400"
+    );
+}
+
+/// POST /v1/operator/keyring - 无效key格式返回400
+#[actix_web::test]
+async fn test_http_keyring_invalid_key_format() {
+    let app = create_test_app().await;
+
+    // 无效base64 key
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": "not-a-valid-key!!!" }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+
+    // 长度不对的key（16字节而非32字节）
+    use base64::Engine;
+    let short_key = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring")
+        .set_json(serde_json::json!({ "Key": short_key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+/// POST /v1/operator/keyring?relay-factor=6 - relay_factor超出范围返回400
+#[actix_web::test]
+async fn test_http_keyring_relay_factor_out_of_range() {
+    let app = create_test_app().await;
+    let key = http_test_key(0x33);
+
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring?relay-factor=6")
+        .set_json(serde_json::json!({ "Key": key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+/// POST /v1/operator/keyring?local-only=true - local_only对非list操作返回400
+#[actix_web::test]
+async fn test_http_keyring_local_only_on_install_fails() {
+    let app = create_test_app().await;
+    let key = http_test_key(0x44);
+
+    let req = test::TestRequest::post()
+        .uri("/v1/operator/keyring?local-only=true")
+        .set_json(serde_json::json!({ "Key": key }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "local-only should be rejected for non-list operations"
+    );
 }

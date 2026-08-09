@@ -6,8 +6,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    audit, cluster, config, control, health, history, metrics, namespace, plugin, server_state,
-    service, sync, tracing_api,
+    ai_import, audit, cluster, config, control, health, history, metrics, namespace, plugin,
+    server_state, service, sync, tracing_api,
 };
 
 /// Create the v3 console routes (non-AI only)
@@ -26,4 +26,6 @@ pub fn routes() -> Scope {
         .service(tracing_api::routes())
         .service(control::routes())
         .service(plugin::routes())
+        // AI resource importer (console mirror of admin endpoints)
+        .service(web::scope("/ai").service(ai_import::routes()))
 }

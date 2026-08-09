@@ -78,9 +78,15 @@ rcgen = { workspace = true }
 # Temp directory for tests
 tempfile = { workspace = true }
 
+# OIDC authentication
+reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
+url = { workspace = true }
+
 [dev-dependencies]
 actix-http = { workspace = true }
 criterion = { workspace = true }
+wiremock = { workspace = true }
 
 [[bench]]
 name = "consul_store_bench"

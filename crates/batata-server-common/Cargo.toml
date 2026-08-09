@@ -66,6 +66,9 @@ regex = { workspace = true }
 # HTML escaping (for error responses)
 html-escape = { workspace = true }
 
+# URL parsing/encoding (for OAuth/OIDC redirect URLs)
+url = { workspace = true }
+
 # gRPC (for TLS config)
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 

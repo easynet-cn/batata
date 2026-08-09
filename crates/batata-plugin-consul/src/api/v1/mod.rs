@@ -11,6 +11,7 @@ pub mod internal;
 pub mod kv;
 pub mod namespace;
 pub mod operator;
+pub mod partition;
 pub mod peering;
 pub mod query;
 pub mod session;
@@ -42,6 +43,8 @@ pub fn routes() -> actix_web::Scope {
         .service(namespace::namespace_routes())
         .service(namespace::namespaces_routes())
         .service(operator::routes())
+        .service(partition::partition_routes())
+        .service(partition::partitions_routes())
         .service(peering::routes())
         .service(peering::list_resource())
         .service(query::routes())

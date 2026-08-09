@@ -35,6 +35,9 @@ pub const CF_CONSUL_EVENTS: &str = "consul_events";
 // Namespaces
 pub const CF_CONSUL_NAMESPACES: &str = "consul_namespaces";
 
+// Partitions (simplified Enterprise feature)
+pub const CF_CONSUL_PARTITIONS: &str = "consul_partitions";
+
 // Catalog (service registrations)
 pub const CF_CONSUL_CATALOG: &str = "consul_catalog";
 

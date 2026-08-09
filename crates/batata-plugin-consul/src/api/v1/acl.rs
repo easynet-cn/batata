@@ -6,8 +6,8 @@ use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::{
     AclService, AuthMethodRequest, BindingRuleRequest, CloneTokenRequest, CreatePolicyRequest,
-    CreateTokenRequest, LoginRequest, PolicyUpdateRequest, RoleRequest,
-    TemplatedPolicyPreviewRequest, TokenUpdateRequest,
+    CreateTokenRequest, LoginRequest, OidcAuthUrlRequest, OidcCallbackRequest,
+    PolicyUpdateRequest, RoleRequest, TemplatedPolicyVariables, TokenUpdateRequest,
 };
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;
@@ -360,7 +360,7 @@ async fn list_templated_policies(index_provider: web::Data<ConsulIndexProvider>)
     crate::acl::list_templated_policies(index_provider).await
 }
 
-#[get("/templated-policy/name/{name}")]
+#[get("/templated-policy/name/{name:.*}")]
 async fn get_templated_policy(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -368,13 +368,35 @@ async fn get_templated_policy(
     crate::acl::get_templated_policy(path, index_provider).await
 }
 
-#[post("/templated-policy/preview/{name}")]
+#[post("/templated-policy/preview/{name:.*}")]
 async fn preview_templated_policy(
     path: web::Path<String>,
-    body: web::Json<TemplatedPolicyPreviewRequest>,
+    body: web::Json<TemplatedPolicyVariables>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::acl::preview_templated_policy(path, body, index_provider).await
+}
+
+// ============================================================================
+// OIDC authentication
+// ============================================================================
+
+#[post("/oidc/auth-url")]
+async fn oidc_auth_url_handler(
+    acl_service: web::Data<AclService>,
+    body: web::Json<OidcAuthUrlRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    crate::acl::oidc_auth_url(acl_service, body, index_provider).await
+}
+
+#[post("/oidc/callback")]
+async fn oidc_callback_handler(
+    acl_service: web::Data<AclService>,
+    body: web::Json<OidcCallbackRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    crate::acl::oidc_callback(acl_service, body, index_provider).await
 }
 
 // ============================================================================
@@ -387,6 +409,9 @@ pub fn routes() -> Scope {
         .service(acl_bootstrap)
         .service(acl_login)
         .service(acl_logout)
+        // OIDC authentication
+        .service(oidc_auth_url_handler)
+        .service(oidc_callback_handler)
         // Replication
         .service(acl_replication)
         // Authorization
