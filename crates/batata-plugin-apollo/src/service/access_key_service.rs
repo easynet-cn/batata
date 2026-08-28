@@ -46,13 +46,36 @@ impl AccessKeyService {
         Ok(())
     }
 
+    pub async fn enable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+        let stored_list = self.persistence.get_by_app(app_id).await?;
+        let mut stored = stored_list
+            .into_iter()
+            .find(|k| k.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Access key not found: {}", id))?;
+        stored.is_enabled = true;
+        stored.data_change_last_modified_by = Some(operator.to_string());
+        stored.data_change_last_time = Some(Utc::now().timestamp_millis());
+        let updated = self.persistence.update(stored).await?;
+        Ok(updated.into())
+    }
+
+    pub async fn disable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+        let stored_list = self.persistence.get_by_app(app_id).await?;
+        let mut stored = stored_list
+            .into_iter()
+            .find(|k| k.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Access key not found: {}", id))?;
+        stored.is_enabled = false;
+        stored.data_change_last_modified_by = Some(operator.to_string());
+        stored.data_change_last_time = Some(Utc::now().timestamp_millis());
+        let updated = self.persistence.update(stored).await?;
+        Ok(updated.into())
+    }
+
     fn generate_secret() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        format!("{:x}", now)
+        // Upstream generates a random UUID-style secret; use a 128-bit
+        // CSPRNG value (OS-seeded) instead of a time-derived one.
+        format!("{:032x}", rand::random::<u128>())
     }
 }
 

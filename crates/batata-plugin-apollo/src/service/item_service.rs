@@ -151,6 +151,17 @@ impl ItemService {
         ItemPersistence::delete(&self.persistence, stored.id).await?;
         Ok(())
     }
+
+    /// List items that have been soft-deleted for the namespace.
+    pub async fn list_deleted(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ItemDTO>, anyhow::Error> {
+        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+        let namespace_id = match namespace {
+            Some(n) => n.id,
+            None => return Ok(vec![]),
+        };
+        let stored = self.persistence.list_deleted_items(namespace_id).await?;
+        Ok(stored.into_iter().map(|s| s.into()).collect())
+    }
 }
 
 impl From<StoredItem> for ItemDTO {

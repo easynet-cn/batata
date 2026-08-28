@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, ColumnTrait};
-use crate::entity::apollo_consumer;
 use crate::api::dto::ConsumerDTO;
-use crate::persistence::traits::ApolloPersistenceService;
-use chrono::Utc;
+use crate::entity::apollo_consumer;
+use crate::persistence::traits::{ApolloPersistenceService, ConsumerPersistence};
 
 pub struct ConsumerService {
     persistence: Arc<dyn ApolloPersistenceService>,
@@ -15,55 +13,23 @@ impl ConsumerService {
         Self { persistence }
     }
 
-    fn db(&self) -> Result<DatabaseConnection, anyhow::Error> {
-        self.persistence.get_db_connection().ok_or_else(|| anyhow::anyhow!("Database connection not available"))
-    }
-
     pub async fn create(&self, dto: ConsumerDTO) -> Result<ConsumerDTO, anyhow::Error> {
-        let db = self.db()?;
-        let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
-
-        let active_model = apollo_consumer::ActiveModel {
-            app_id: Set(dto.app_id),
-            name: Set(dto.name),
-            org_id: Set(dto.org_id),
-            org_name: Set(dto.org_name),
-            owner_name: Set(dto.owner_name),
-            owner_email: Set(dto.owner_email),
-            data_change_created_by: Set(created_by),
-            data_change_created_time: Set(now),
-            data_change_last_modified_by: Set(None),
-            data_change_last_time: Set(Some(now)),
-            ..Default::default()
-        };
-
-        let model = active_model.insert(&db).await?;
+        let model = self.persistence.create_consumer(dto).await?;
         Ok(self.model_to_dto(&model))
     }
 
     pub async fn get(&self, id: i32) -> Result<Option<ConsumerDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let model = apollo_consumer::Entity::find_by_id(id)
-            .one(&db)
-            .await?;
+        let model = self.persistence.get_consumer(id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 
     pub async fn get_by_app(&self, app_id: &str) -> Result<Option<ConsumerDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let model = apollo_consumer::Entity::find()
-            .filter(apollo_consumer::Column::AppId.eq(app_id))
-            .one(&db)
-            .await?;
+        let model = self.persistence.get_consumer_by_app(app_id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 
     pub async fn list(&self) -> Result<Vec<ConsumerDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let models = apollo_consumer::Entity::find()
-            .all(&db)
-            .await?;
+        let models = self.persistence.list_consumers().await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 

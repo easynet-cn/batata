@@ -14,7 +14,7 @@
 services:
   # MySQL test database
   mysql-test:
-    image: docker.io/library/mysql:latest
+    image: docker.io/library/mysql:8.0
     container_name: batata-mysql-test
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -26,7 +26,6 @@ services:
     volumes:
       - mysql-test-data:/var/lib/mysql
       - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -42,7 +41,7 @@ services:
 
   # PostgreSQL test database
   postgres-test:
-    image: docker.io/library/postgres:latest
+    image: docker.io/library/postgres:16
     container_name: batata-postgres-test
     environment:
       POSTGRES_DB: batata_test
@@ -52,8 +51,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres-test-data:/var/lib/postgresql/data
-      - ./conf/postgresql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./conf/consul-postgresql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
+      - ./conf/pg-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U batata -d batata_test"]
       interval: 10s

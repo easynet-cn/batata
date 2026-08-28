@@ -2,8 +2,9 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-const APOLLO_ADMIN_URL: &str = "http://localhost:8080/admin";
-const APOLLO_CONFIG_URL: &str = "http://localhost:8080/config";
+const APOLLO_ADMIN_URL: &str = "http://localhost:8080";
+const APOLLO_CONFIG_URL: &str = "http://localhost:8080";
+const BASE_URL: &str = "http://localhost:8080";
 
 fn unique_test_id(prefix: &str) -> String {
     format!("{}_test_{}", prefix, Uuid::new_v4().to_string().split('-').next().unwrap())
@@ -44,7 +45,12 @@ async fn test_config_service_gray_release() {
         .send()
         .await
         .expect("Create namespace failed");
-    assert!(create_ns_resp.status().is_success(), "Create namespace failed: {:?}", create_ns_resp.text().await);
+    // The `application` namespace now exists via app-bootstrap (upstream
+    // semantics) — a duplicate create must not fail the scenario.
+    if !create_ns_resp.status().is_success() {
+        let body = create_ns_resp.text().await.unwrap_or_default();
+        assert!(body.contains("already exists"), "Create namespace failed: {}", body);
+    }
 
     let create_item_resp = client
         .post(format!("{}/apps/{}/clusters/default/namespaces/application/items", APOLLO_ADMIN_URL, app_id))
@@ -76,8 +82,32 @@ async fn test_config_service_gray_release() {
         .expect("Parse config failed");
     assert_eq!(config_resp["configurations"]["test.key"], "default_value", "Default config mismatch");
 
+    // Resolve the item's real row id (ids are not stable across runs).
+    let items_list: serde_json::Value = client
+        .get(format!(
+            "{}/apps/{}/clusters/default/namespaces/application/items",
+            APOLLO_ADMIN_URL, app_id
+        ))
+        .send()
+        .await
+        .expect("List items failed")
+        .json()
+        .await
+        .expect("Parse items failed");
+    let item_id = items_list
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .find(|i| i["key"] == "test.key")
+                .and_then(|i| i["id"].as_i64())
+        })
+        .expect("test.key item should exist");
+
     let update_item_resp = client
-        .put(format!("{}/apps/{}/clusters/default/namespaces/application/items/1", APOLLO_ADMIN_URL, app_id))
+        .put(format!(
+            "{}/apps/{}/clusters/default/namespaces/application/items/{}",
+            APOLLO_ADMIN_URL, app_id, item_id
+        ))
         .json(&json!({
             "key": "test.key",
             "value": "gray_value",
@@ -174,7 +204,10 @@ async fn test_namespace_lock() {
         .send()
         .await
         .expect("Create namespace failed");
-    assert!(create_ns_resp.status().is_success());
+    if !create_ns_resp.status().is_success() {
+        let body = create_ns_resp.text().await.unwrap_or_default();
+        assert!(body.contains("already exists"), "Create namespace failed: {}", body);
+    }
 
     let lock_resp = client
         .post(format!("{}/apps/{}/clusters/default/namespaces/application/lock?lockedBy=user1", APOLLO_ADMIN_URL, app_id))
@@ -250,11 +283,17 @@ async fn test_commit_openapi() {
         .send()
         .await
         .expect("Create namespace failed");
-    assert!(create_ns_resp.status().is_success());
+    if !create_ns_resp.status().is_success() {
+        let body = create_ns_resp.text().await.unwrap_or_default();
+        assert!(body.contains("already exists"), "Create namespace failed: {}", body);
+    }
 
     let create_commit_resp = client
-        .post(format!("/openapi/v1/envs/DEV/apps/{}/clusters/default/namespaces/application/commits", app_id))
+        .post(format!("{}/openapi/v1/envs/DEV/apps/{}/clusters/default/namespaces/application/commits", BASE_URL, app_id))
         .json(&json!({
+            "appId": app_id,
+            "clusterName": "default",
+            "namespaceName": "application",
             "changeSets": "[{\"key\":\"test.key\",\"value\":\"test.value\"}]",
             "comment": "test commit",
             "dataChangeCreatedBy": "admin"
@@ -268,7 +307,7 @@ async fn test_commit_openapi() {
     let commit_id = commit_info["id"].as_i64().expect("No commit id") as i32;
 
     let list_commits_resp: Value = client
-        .get(format!("/openapi/v1/envs/DEV/apps/{}/clusters/default/namespaces/application/commits", app_id))
+        .get(format!("{}/openapi/v1/envs/DEV/apps/{}/clusters/default/namespaces/application/commits", BASE_URL, app_id))
         .send()
         .await
         .expect("List commits failed")
@@ -278,7 +317,7 @@ async fn test_commit_openapi() {
     assert!(list_commits_resp.as_array().unwrap().len() >= 1, "Should have at least one commit");
 
     let get_commit_resp: Value = client
-        .get(format!("/openapi/v1/commits/{}", commit_id))
+        .get(format!("{}/openapi/v1/commits/{}", BASE_URL, commit_id))
         .send()
         .await
         .expect("Get commit failed")

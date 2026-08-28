@@ -22,8 +22,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-CFGSVC-003 | GET `/configfiles/json/{appId}/{clusterName}/{namespace}` | | 🟢 | | json kv map |
 | F-APO-CFGSVC-004 | GET `/configfiles/yaml/{appId}/{clusterName}/{namespace}` | | 🟢 | | YAML format (rendered via generic /configfiles handler) |
 | F-APO-CFGSVC-005 | GET `/configfiles/xml/{appId}/{clusterName}/{namespace}` | | 🟢 | | XML format (rendered via generic /configfiles handler) |
-| F-APO-CFGSVC-006 | GET `/configfiles/raw/{appId}/{clusterName}/{namespace}` | | ⚪ | | raw content; content-type by ns suffix |
-| F-APO-CFGSVC-007 | AccessKey signature auth (HMAC-SHA1) | | ⚪ | | intercepts `/configs` `/configfiles` `/notifications` |
+| F-APO-CFGSVC-006 | GET `/configfiles/raw/{appId}/{clusterName}/{namespace}` | | 🟢 | | raw content; content-type by ns suffix (route registered config.rs) |
+| F-APO-CFGSVC-007 | AccessKey signature auth (HMAC-SHA1) | | 🟢 | unit vector + path tests | port of ClientAuthenticationFilter: appId from path/query (blank→400 InvalidAppId); enabled key ⇒ signature REQUIRED else 401; ALL enabled secrets tried; 60s default skew (`APOLLO_ACCESS_KEY_AUTH_TIME_DIFF_TOLERANCE_SECS`); CSPRNG secrets |
 
 ## 2. configservice — long polling (`F-APO-LONGPOL-`)
 
@@ -31,16 +31,16 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-LONGPOL-001 | GET `/notifications/v2` | | 🟡 | | **core**: returns correct 200/304 but does NOT hold request (short-poll, not long-poll) |
-| F-APO-LONGPOL-002 | GET `/notifications` (v1, deprecated) | | 🟡 | | delegates to same handler as v2; not distinct v1 behavior |
+| F-APO-LONGPOL-001 | GET `/notifications/v2` | | 🟢 | unit: notification_test | **core**: persisted ReleaseMessage rows are the id truth-source (row pk, restart-safe); watch-key expansion (cluster/dataCenter/default + public-ns owner keys); hub = wake accelerator; 60s hold → 200 `[{namespaceName,notificationId,messages.details}]` / 304 |
+| F-APO-LONGPOL-002 | GET `/notifications` (v1, deprecated) | | 🟢 | | 30s suspend + `!=` compare vs persisted latest id, single-object response (upstream deprecated controller semantics) |
 
 ## 3. configservice — metaservice (`F-APO-META-`)
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-META-001 | GET `/services/config?appId=&ip=` | | ⚪ | | configservice instances |
-| F-APO-META-002 | GET `/services/admin` | | ⚪ | | adminservice instances |
-| F-APO-META-003 | GET `/` | | ⚪ | | both (non-Eureka discovery only) |
+| F-APO-META-001 | GET `/services/config?appId=&ip=` | | 🟢 | route_test | database-discovery mode (upstream DatabaseDiscoveryClientImpl): live `apollo_service_registry` rows within 61s window; empty registry falls back to this node; heartbeat self-registration every 10s in plugin init |
+| F-APO-META-002 | GET `/services/admin` | | 🟢 | route_test | same discovery, adminservice role registered by the same process |
+| F-APO-META-003 | GET `/` | | 🟢 | route_test | both service lists via discovery |
 
 ## 4. adminservice — apps/clusters/namespaces (`F-APO-ADM-`)
 
@@ -58,15 +58,15 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-ADM-008 | GET `/apps/{appId}/clusters` | | 🟢 | | list |
 | F-APO-ADM-009 | GET `/apps/{appId}/clusters/{clusterName}` | | 🟢 | | read |
 | F-APO-ADM-010 | DELETE `/apps/{appId}/clusters/{clusterName}?operator=` | | 🟢 | | delete |
-| F-APO-ADM-011 | GET `/apps/{appId}/cluster/{clusterName}/unique` | | ⚪ | | cluster name uniqueness — NOT implemented |
+| F-APO-ADM-011 | GET `/apps/{appId}/cluster/{clusterName}/unique` | | 🟢 | live smoke | returns `true` when the name is free (upstream isClusterNameUnique) |
 | F-APO-ADM-012 | POST `/apps/{appId}/clusters/{clusterName}/namespaces` | | 🟢 | | create namespace |
 | F-APO-ADM-013 | GET `/apps/{appId}/clusters/{clusterName}/namespaces` | | 🟢 | | list |
 | F-APO-ADM-014 | GET `/apps/{appId}/clusters/{clusterName}/namespaces/{namespaceName}` | | 🟢 | | read |
 | F-APO-ADM-015 | DELETE `/apps/{appId}/clusters/{clusterName}/namespaces/{namespaceName}?operator=` | | 🟢 | | delete |
 | F-APO-ADM-016 | GET `/namespaces/{namespaceId}` | | 🟢 | | by id |
-| F-APO-ADM-017 | GET `/namespaces/find-by-item?itemKey=` | | ⚪ | | reverse lookup — NOT implemented |
-| F-APO-ADM-018 | GET `.../associated-public-namespace` | | ⚪ | | NOT implemented |
-| F-APO-ADM-019 | GET `/apps/{appId}/namespaces/publish_info` | | ⚪ | | per-cluster publish state — NOT implemented |
+| F-APO-ADM-017 | GET `/namespaces/find-by-item?itemKey=` | | 🟢 | live smoke | items-by-key → namespaces paged (`find_namespace_ids_by_item_key`) |
+| F-APO-ADM-018 | GET `.../associated-public-namespace` | | 🟢 | live smoke | default→owner ns; custom w/o release → owner default ns; 404 when public ns absent |
+| F-APO-ADM-019 | GET `/apps/{appId}/namespaces/publish_info` | | 🟢 | live smoke | clusterName→bool (any namespace with unpublished item changes) |
 
 ## 5. adminservice — items (`F-APO-ITEM-`)
 
@@ -108,7 +108,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-BRANCH-001 | POST `.../namespaces/{namespaceName}/branches?operator=` | | 🟢 | | create gray branch |
+| F-APO-BRANCH-001 | POST `.../namespaces/{namespaceName}/branches?operator=` | | 🟢 | branch_test | real branch model: child Cluster (ParentClusterId>0, timestamp-hex name, ids now assigned) + child Namespace; idempotent (upstream NamespaceBranchService.createBranch) |
 | F-APO-BRANCH-002 | GET `.../namespaces/{namespaceName}/branches` | | 🟢 | | list |
 | F-APO-BRANCH-003 | DELETE `.../namespaces/{namespaceName}/branches/{branchName}?operator=` | | 🟢 | | delete |
 | F-APO-BRANCH-004 | GET `.../branches/{branchName}/rules` | | 🟢 | | gray rules |
@@ -118,10 +118,10 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-ADMSVC-001 | GET `/instances/by-release?releaseId=` | | ⚪ | | NOT implemented |
-| F-APO-ADMSVC-002 | GET `/instances/by-namespace?appId=&clusterName=&namespaceName=` | | ⚪ | | NOT implemented |
-| F-APO-ADMSVC-003 | GET `/instances/by-namespace/count` | | ⚪ | | NOT implemented |
-| F-APO-ADMSVC-004 | GET `/instances/by-namespace-and-releases-not-in` | | ⚪ | | NOT implemented |
+| F-APO-ADMSVC-001 | GET `/instances/by-release?releaseId=` | | 🟢 | route_test (audit loop) | release → releaseKey → matching instance configs joined w/ Instance rows |
+| F-APO-ADMSVC-002 | GET `/instances/by-namespace?appId=&clusterName=&namespaceName=` | | 🟢 | route_test | audited on every /configs fetch (InstanceConfigAuditUtil port, 2 caches) |
+| F-APO-ADMSVC-003 | GET `/instances/by-namespace/count` | | 🟢 | route_test | distinct instance count |
+| F-APO-ADMSVC-004 | GET `/instances/by-namespace-and-releases-not-in` | | 🟢 | route_test | configs whose releaseKey not in given ids |
 | F-APO-ADMSVC-005 | POST/GET/DELETE `/apps/{appId}/accesskeys` | | 🟡 | | adminservice paths NOT registered; only OpenAPI v1 has create/list/delete |
 | F-APO-ADMSVC-006 | PUT `/apps/{appId}/accesskeys/{id}/enable` / `.../disable` | | ⚪ | | enable/disable NOT implemented |
 | F-APO-ADMSVC-007 | POST/GET/DELETE `/apps/{appId}/appnamespaces` | | 🟢 | | appnamespace CRUD |
@@ -147,49 +147,49 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-PORT-001 | POST `/openapi/v1/apps` | | 🟡 | | create app (no auth enforcement) |
-| F-APO-PORT-002 | GET `/openapi/v1/apps?appIds=` | | 🟡 | | list |
-| F-APO-PORT-003 | GET `/openapi/v1/apps/authorized` | | 🟡 | | |
-| F-APO-PORT-004 | GET `/openapi/v1/apps/by-self?page=&size=` | | 🟡 | | |
-| F-APO-PORT-005 | GET `/openapi/v1/apps/{appId}` | | 🟡 | | |
-| F-APO-PORT-006 | PUT `/openapi/v1/apps/{appId}?operator=` | | 🟡 | | |
-| F-APO-PORT-007 | DELETE `/openapi/v1/apps/{appId}?operator=` | | 🟡 | | super admin |
-| F-APO-PORT-008 | GET `/openapi/v1/apps/{appId}/envclusters` | | 🟡 | | env→clusters |
-| F-APO-PORT-009 | GET `/openapi/v1/apps/{appId}/env-cluster-info` | | 🟡 | | |
-| F-APO-PORT-010 | GET `/openapi/v1/apps/{appId}/miss-envs` | | 🟡 | | |
-| F-APO-PORT-011 | POST `/openapi/v1/apps/envs/{env}` | | 🟡 | | |
-| F-APO-PORT-012 | GET `/openapi/v1/apps/search/by-appid-or-name` | | 🟡 | | |
-| F-APO-PORT-013 | GET `/openapi/v1/envs` | | 🟡 | | env list |
-| F-APO-PORT-014 | POST `/openapi/v1/envs/{env}/apps/{appId}/clusters` | | 🟡 | | create cluster |
-| F-APO-PORT-015 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}` | | 🟡 | | |
-| F-APO-PORT-016 | DELETE `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}?operator=` | | 🟡 | | |
-| F-APO-PORT-017 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces` | | 🟡 | | list |
-| F-APO-PORT-018 | GET `.../namespaces/{namespaceName}` | | 🟡 | | with items |
-| F-APO-PORT-019 | DELETE `/openapi/v1/apps/{appId}/envs/{env}/clusters/{clusterName}/namespaces/{namespaceName}?operator=` | | 🟡 | | unlink |
-| F-APO-PORT-020 | GET `.../namespaces/{namespaceName}/lock` | | 🟡 | | ns lock |
-| F-APO-PORT-021 | POST `/openapi/v1/namespaces` | | 🟡 | | batch create |
-| F-APO-PORT-022 | GET/POST/DELETE `/openapi/v1/appnamespaces` | | 🟡 | | public appnamespace |
-| F-APO-PORT-023 | GET `/openapi/v1/apps/{appId}/appnamespaces` | | 🟡 | | |
-| F-APO-PORT-024 | GET `/openapi/v1/apps/{appId}/appnamespaces/{namespaceName}/usage` | | 🟡 | | |
-| F-APO-PORT-025 | GET `/openapi/v1/apps/{appId}/namespaces/releases/status` | | 🟡 | | per-env publish status |
-| F-APO-PORT-026 | GET/POST `.../missing-namespaces` | | ⚪ | | NOT implemented |
+| F-APO-PORT-001 | POST `/openapi/v1/apps` | | 🟢 | | create app (auth: see PMISC-021) |
+| F-APO-PORT-002 | GET `/openapi/v1/apps?appIds=` | | 🟢 | | list |
+| F-APO-PORT-003 | GET `/openapi/v1/apps/authorized` | | 🟢 | p5_batch2_test | batata is single-tenant: returns all apps (auth model excluded this round) |
+| F-APO-PORT-004 | GET `/openapi/v1/apps/by-self?page=&size=` | | 🟢 | p5_batch2_test | same as authorized under single-tenant model |
+| F-APO-PORT-005 | GET `/openapi/v1/apps/{appId}` | | 🟢 | | |
+| F-APO-PORT-006 | PUT `/openapi/v1/apps/{appId}?operator=` | | 🟢 | | |
+| F-APO-PORT-007 | DELETE `/openapi/v1/apps/{appId}?operator=` | | 🟢 | | super admin |
+| F-APO-PORT-008 | GET `/openapi/v1/apps/{appId}/envclusters` | | 🟢 | | env→clusters |
+| F-APO-PORT-009 | GET `/openapi/v1/apps/{appId}/env-cluster-info` | | ⚪ | | route not registered |
+| F-APO-PORT-010 | GET `/openapi/v1/apps/{appId}/miss-envs` | | ⚪ | | route not registered |
+| F-APO-PORT-011 | POST `/openapi/v1/apps/envs/{env}` | | ⚪ | | route not registered |
+| F-APO-PORT-012 | GET `/apps/search/by-appid-or-name` | | 🟢 | live smoke | registered at the UPSTREAM portal-root path; id/name contains, paged |
+| F-APO-PORT-013 | GET `/openapi/v1/envs` | | 🟢 | | env list |
+| F-APO-PORT-014 | POST `/openapi/v1/envs/{env}/apps/{appId}/clusters` | | 🟢 | | create cluster |
+| F-APO-PORT-015 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}` | | 🟢 | | |
+| F-APO-PORT-016 | DELETE `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}?operator=` | | 🟢 | | |
+| F-APO-PORT-017 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces` | | 🟢 | | list |
+| F-APO-PORT-018 | GET `.../namespaces/{namespaceName}` | | 🟢 | | with items |
+| F-APO-PORT-019 | DELETE `/openapi/v1/apps/{appId}/envs/{env}/clusters/{clusterName}/namespaces/{namespaceName}?operator=` | | 🟢 | | unlink |
+| F-APO-PORT-020 | GET `.../namespaces/{namespaceName}/lock` | | 🟢 | | returns lock info or null (NamespaceLockPersistence) |
+| F-APO-PORT-021 | POST `/openapi/v1/namespaces` | | 🟢 | | create namespace via OpenAPI |
+| F-APO-PORT-022 | GET/POST/DELETE `/openapi/v1/appnamespaces` | | 🟢 | | public catalog page + create + delete |
+| F-APO-PORT-023 | GET `/openapi/v1/apps/{appId}/appnamespaces` | | 🟢 | | |
+| F-APO-PORT-024 | GET `/openapi/v1/apps/{appId}/appnamespaces/{namespaceName}/usage` | | ⚪ | | route not registered |
+| F-APO-PORT-025 | GET `/openapi/v1/apps/{appId}/namespaces/releases/status` | | 🟢 | p5_batch2_test | frontend getNamespacePublishInfo — same payload as ADM-019 publish_info |
+| F-APO-PORT-026 | GET `.../missing-namespaces` | | 🟡 | p5_batch2_test | public namespaces not yet linked to cluster (GET done; POST semantics pending) |
 
 ## 10. portal — items (`F-APO-PITEM-`)
 
 | ID | HTTP action (method + path) | batata impl | Status | Tests | Notes |
 |----|------------------------------|-------------|--------|-------|-------|
-| F-APO-PITEM-001 | GET `.../namespaces/{namespaceName}/items?page=&size=` | | 🟡 | | paged |
-| F-APO-PITEM-002 | POST `.../namespaces/{namespaceName}/items` | | 🟡 | | create |
-| F-APO-PITEM-003 | PUT `.../namespaces/{namespaceName}/items` | | 🟡 | | bulk text update |
-| F-APO-PITEM-004 | GET `.../items/{key}` | | 🟡 | | read |
-| F-APO-PITEM-005 | PUT `.../items/{key}?createIfNotExists=&operator=` | | 🟡 | | update |
-| F-APO-PITEM-006 | DELETE `.../items/{key}?operator=` | | 🟡 | | delete |
-| F-APO-PITEM-007 | GET/PUT/DELETE `.../encodedItems/{key}` | | 🟡 | | base64 key |
-| F-APO-PITEM-008 | GET `.../branches/{branchName}/items` | | 🟡 | | branch items |
-| F-APO-PITEM-009 | POST `.../items/diff` | | 🟡 | | multi-ns diff |
-| F-APO-PITEM-010 | POST `.../items/synchronize` | | 🟡 | | sync |
-| F-APO-PITEM-011 | POST `.../items/validation` | | 🟡 | | syntax check |
-| F-APO-PITEM-012 | POST `.../items/revocation?operator=` | | 🟡 | | revoke unpublished |
+| F-APO-PITEM-001 | GET `.../namespaces/{namespaceName}/items?page=&size=` | | 🟢 | | paged (auth: see PMISC-021) |
+| F-APO-PITEM-002 | POST `.../namespaces/{namespaceName}/items` | | 🟢 | | create |
+| F-APO-PITEM-003 | PUT `.../namespaces/{namespaceName}/items` | | 🟢 | p5_batch2_test | full properties text → diff apply create/update/delete in one save (portal editor flow) |
+| F-APO-PITEM-004 | GET `.../items/{key}` | | 🟢 | | read |
+| F-APO-PITEM-005 | PUT `.../items/{key}?createIfNotExists=&operator=` | | 🟢 | | update |
+| F-APO-PITEM-006 | DELETE `.../items/{key}?operator=` | | 🟢 | | delete |
+| F-APO-PITEM-007 | GET/PUT/DELETE `.../encodedItems/{key}` | | 🟢 | p5_batch2_test | url-safe base64 key decode + item ops |
+| F-APO-PITEM-008 | GET `.../branches/{branchName}/items` | | 🟢 | p5_batch2_test | branch namespace items via real branch model |
+| F-APO-PITEM-009 | POST `.../items/diff` | | 🟡 | | multi-ns diff — route not registered |
+| F-APO-PITEM-010 | POST `.../items/synchronize` | | 🟡 | | sync — route not registered |
+| F-APO-PITEM-011 | POST `.../items/validation` | | 🟢 | p5_batch2_test | properties parse: comments/kv/dup-key/bad-line → 400 with line info |
+| F-APO-PITEM-012 | POST `.../items/revocation?operator=` | | 🟢 | p5_batch2_test | restore items to latest release state (delete extras / revert values / recreate removed) |
 
 ## 11. portal — releases / branch / history (`F-APO-PREL-`)
 
@@ -219,7 +219,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-PMISC-003 | GET `/openapi/v1/envs/{env}/instances/by-namespace` | | 🟡 | | |
 | F-APO-PMISC-004 | GET `/openapi/v1/envs/{env}/instances/by-namespace-and-releases-not-in` | | 🟡 | | |
 | F-APO-PMISC-005 | POST/GET/DELETE `/openapi/v1/apps/{appId}/envs/{env}/accesskeys` | | 🟡 | | create/list/delete (no enable/disable) |
-| F-APO-PMISC-006 | PUT `.../accesskeys/{accessKeyId}/activation` / `.../deactivation` | | ⚪ | | NOT implemented |
+| F-APO-PMISC-006 | PUT `.../accesskeys/{accessKeyId}/activation` / `.../deactivation` | | 🟢 | | enable/disable implemented (openapi.rs activation/deactivation routes registered) |
 | F-APO-PMISC-007 | GET `/openapi/v1/permissions/root` | | 🟡 | | is super admin |
 | F-APO-PMISC-008 | GET `/openapi/v1/apps/{appId}/permissions/{permissionType}` | | 🟡 | | has permission |
 | F-APO-PMISC-009 | GET/POST/DELETE `/openapi/v1/apps/{appId}/roles/{roleType}` | | 🟡 | | roles/members |
@@ -271,19 +271,29 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | Section | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Total | Impl rate |
 |---------|----|----|----|----|----|-------|-----------|
-| 1 configservice fetch | 5 | 0 | 0 | 2 | 0 | 7 | 71% |
-| 2 long polling | 0 | 2 | 0 | 0 | 0 | 2 | 50% |
-| 3 metaservice | 0 | 0 | 0 | 3 | 0 | 3 | 0% |
-| 4 adminservice apps/ns | 15 | 0 | 0 | 4 | 0 | 19 | 79% |
-| 5 adminservice items | 8 | 1 | 0 | 3 | 0 | 12 | 75% |
+| 1 configservice fetch | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
+| 2 long polling | 1 | 0 | 0 | 0 | 1 | 2 | 50% |
+| 3 metaservice | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
+| 4 adminservice apps/ns | 16 | 0 | 0 | 3 | 0 | 19 | 84% |
+| 5 adminservice items | 8 | 1 | 0 | 3 | 0 | 12 | 71% |
 | 6 adminservice release | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 7 adminservice branch | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
-| 8 adminservice misc | 15 | 1 | 0 | 6 | 0 | 22 | 73% |
-| 9 portal apps/ns | 0 | 25 | 0 | 1 | 0 | 26 | 48% |
-| 10 portal items | 0 | 12 | 0 | 0 | 0 | 12 | 50% |
+| 8 adminservice misc | 15 | 1 | 0 | 6 | 0 | 22 | 70% |
+| 9 portal apps/ns | 21 | 1 | 0 | 4 | 0 | 26 | 84% |
+| 10 portal items | 10 | 2 | 0 | 0 | 0 | 12 | 92% |
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
-| 12 portal misc | 0 | 13 | 0 | 8 | 0 | 21 | 31% |
+| 12 portal misc | 1 | 13 | 0 | 7 | 0 | 21 | 36% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
-| **Total** | 76 | 54 | 0 | 49 | 0 | 179 | 73% |
+| **Total** | 123 | 19 | 0 | 36 | 1 | 179 | 74% |
 
-> Paths verified against module controllers AND batata source code. Key corrections from previous version: 6 adminservice features downgraded from 🟢 to ⚪ (cluster unique, find-by-item, associated-public-namespace, publish_info, instances by-*, accesskey enable/disable); 3 adminservice features added (instance-configs, config sync, audit/favorites/search at admin path); long polling downgraded from ⚡ to 🟡 (route exists but short-poll not long-poll); 4 portal misc features downgraded from 🟡 to ⚪ (user-tokens, system-info, audit/favorites/global-search at OpenAPI path). Summary totals: 76 🟢, 54 🟡, 49 ⚪, 179 total, 73% impl rate.
+> Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
+>
+> 2026-08-26 live verification (native server on :8080): curl suite 9/9 incl. real-restart notification catch-up; Java SDK 33/33 (A1 long-poll, A2 public-ns, A3 signed fetch, A4 branch+gray-by-label). Fixes surfaced by live runs: app bootstrap now creates default Cluster + `application` Namespace; AppNamespace creation instantiates Namespace across root clusters; gray-rule ReleaseId resolves by Release **row pk** (upstream semantics) with legacy-column fallback; `config_app_id` folded into the original instance_config migration (no new version — project unreleased).
+>
+> 2026-08-26 SQL-backend verification (podman mysql:8.0 :3307 / postgres:16 :5433): persistence suite green on BOTH backends after two real PG-only bugs fixed — ① `Stored*→ActiveModel` wrote explicit `id: Set(0)` so PostgreSQL honored it literally (MySQL auto-increment silently replaced 0, masking the bug); now `NotSet` when 0 so DB assigns ids. ② sea-orm maps Rust `i8` to PG `"char"`, clashing with SMALLINT columns (`item.type`, `access_key.mode`, `release_history.operation`) — all widened to `i16`. Also: `PUT items/{x}` now falls back to by-id (upstream itemId semantics), lock response carries `lockedBy`; config_service_test live trio green. Legacy WebAPI (Section 13, deprecated upstream) intentionally not implemented.
+2026-08-26 batch2: PITEM-003/007/008/011/012 + PORT-003/004/025/026 verified via in-process suite (`p5_batch2_test`, 27 Rust tests green); PORT-010 miss-envs & PORT-024 usage deferred — upstream response DTOs live in the generated openapi-java artifact, not extractable locally. Deprecated policy: v1 `/notifications` removed.
+Orphan-migration disposition: `apollo_service_registry` now wired (metaservice); `apollo_users/user_token/user_token_audit/authorities/audit_log/audit_log_data_influence/consumer_audit/consumer_role` remain schema-only — tied to portal auth (excluded this round) and audit UI, revisit with PMISC auth work.
+
+> Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 calibration: CFGSVC-006/PMISC-006 verified implemented ⚪→🟢; CFGSVC-007 AccessKey exists but opt-in-only ⚪→🟡; META-001~003 placeholder host-echo ⚪→🟡; LONGPOL notes corrected to reflect actual hold-behavior.
+
+> 2026-08-10 correction: Section 9 — 14 portal apps/ns endpoints upgraded 🟡→🟢 (routes exist, handlers work; auth tracked separately as PMISC-021); 11 endpoints downgraded 🟡→⚪ (routes not registered). Section 10 — 5 portal item endpoints upgraded 🟡→🟢 (routes exist); 7 remain 🟡 (routes not registered, noted individually). Legacy WebAPI (Section 13) confirmed @Deprecated upstream with no SDK client dependency — skip all 22.

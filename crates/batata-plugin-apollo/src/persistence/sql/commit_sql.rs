@@ -20,7 +20,7 @@ impl CommitSqlPersistence {
 impl From<StoredCommit> for apollo_commit::ActiveModel {
     fn from(commit: StoredCommit) -> Self {
         Self {
-            id: Set(commit.id),
+            id: if commit.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(commit.id) },
             change_sets: Set(commit.change_sets),
             app_id: Set(commit.app_id),
             cluster_name: Set(commit.cluster_name),

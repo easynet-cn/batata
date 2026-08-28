@@ -12,7 +12,7 @@ pub struct Model {
     pub branch_name: String,
     pub release_id: i32,
     pub previous_release_id: i32,
-    pub operation: i8,
+    pub operation: i16,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     pub operation_context: String,
     pub is_deleted: bool,

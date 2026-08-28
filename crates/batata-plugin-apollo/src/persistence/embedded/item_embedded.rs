@@ -4,6 +4,7 @@ use crate::bincode;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_ITEM;
@@ -162,22 +163,26 @@ impl ItemPersistence for ItemEmbedded {
 
     async fn delete(&self, id: i32) -> anyhow::Result<()> {
         let cf = self.cf()?;
-        // First get to find all keys
         let key_id = Self::key_by_id(id);
         if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let item: StoredItem = bincode::deserialize(&data)?;
+            let mut item: StoredItem = bincode::deserialize(&data)?;
+            // Soft delete so the item remains queryable via list_deleted_items
+            // (Apollo semantics: deleted items are tracked for the
+            // `.../items/deleted` endpoint).
+            item.is_deleted = true;
+            item.deleted_at = Utc::now().timestamp_millis();
+            let bytes = bincode::serialize(&item)?;
             let key_comp = Self::key(item.namespace_id, &item.key);
             let index_key = Self::index_key(item.namespace_id, item.id);
-            // Delete all keys
             self.db
-                .delete_cf(cf, key_id.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                .put_cf(cf, key_id.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
             self.db
-                .delete_cf(cf, key_comp.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                .put_cf(cf, key_comp.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
             self.db
-                .delete_cf(cf, index_key.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                .put_cf(cf, index_key.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
         }
         Ok(())
     }
@@ -202,5 +207,37 @@ impl ItemPersistence for ItemEmbedded {
             .write(batch)
             .map_err(|e| anyhow::anyhow!("RocksDB batch write error: {}", e))?;
         Ok(result_items)
+    }
+
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+        let cf = self.cf()?;
+        let mut ids = std::collections::HashSet::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let it: StoredItem = bincode::deserialize(&value)?;
+            if !it.is_deleted && it.key == key {
+                ids.insert(it.namespace_id);
+            }
+        }
+        Ok(ids.into_iter().collect())
+    }
+
+    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+        let prefix = Self::prefix_by_namespace(namespace_id);
+        let mut results = Vec::new();
+        let iter = self.db.prefix_iterator_cf(self.cf()?, prefix.as_bytes());
+        for item in iter {
+            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let stored: StoredItem = bincode::deserialize(&value)?;
+            if stored.is_deleted {
+                results.push(stored);
+            }
+        }
+        Ok(results)
     }
 }

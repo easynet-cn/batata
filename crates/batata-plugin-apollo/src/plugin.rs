@@ -70,6 +70,19 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             CF_APOLLO_RELEASE_MSG.to_string(),
             CF_APOLLO_NAMESPACE_LOCK.to_string(),
             CF_APOLLO_RELEASE_HISTORY.to_string(),
+            CF_APOLLO_APP_NAMESPACE.to_string(),
+            CF_APOLLO_AUDIT.to_string(),
+            CF_APOLLO_CONSUMER.to_string(),
+            CF_APOLLO_CONSUMER_TOKEN.to_string(),
+            CF_APOLLO_CONSUMER_AUDIT.to_string(),
+            CF_APOLLO_PERMISSION.to_string(),
+            CF_APOLLO_ROLE.to_string(),
+            CF_APOLLO_ROLE_PERMISSION.to_string(),
+            CF_APOLLO_USER_ROLE.to_string(),
+            CF_APOLLO_USERS.to_string(),
+            CF_APOLLO_FAVORITE.to_string(),
+            CF_APOLLO_SERVER_CONFIG.to_string(),
+            CF_APOLLO_INSTANCE_CONFIG.to_string(),
         ]
     }
 
@@ -103,10 +116,32 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             }
         };
 
-        let inner = ApolloPluginInner { persistence };
+        let inner = ApolloPluginInner { persistence: persistence.clone() };
         self.inner
             .set(inner)
             .map_err(|_| anyhow::anyhow!("ApolloPlugin::init() called more than once"))?;
+
+        // Upstream database-discovery mode: heartbeat self-registration every
+        // apollo.service.registry.heartbeatIntervalInSecond (default 10s).
+        // batata serves BOTH configservice and adminservice roles in one
+        // process, so both service names are registered.
+        let hb_persistence = persistence.clone();
+        let port = self.config.port;
+        tokio::spawn(async move {
+            let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
+                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
+            use crate::persistence::traits::ServiceRegistryPersistence;
+            loop {
+                for svc in ["apollo-configservice", "apollo-adminservice"] {
+                    if let Err(e) =
+                        ServiceRegistryPersistence::heartbeat(&*hb_persistence, svc, &uri, "default").await
+                    {
+                        tracing::warn!("service registry heartbeat failed for {}: {}", svc, e);
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        });
 
         tracing::info!("Apollo compatibility plugin initialized successfully");
         Ok(())
@@ -114,6 +149,16 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
 
     async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Apollo compatibility plugin shutting down");
+        // Deregister from the service registry on graceful shutdown.
+        if let Some(inner) = self.inner.get() {
+            use crate::persistence::traits::ServiceRegistryPersistence;
+            let port = self.config.port;
+            let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
+                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
+            for svc in ["apollo-configservice", "apollo-adminservice"] {
+                let _ = ServiceRegistryPersistence::deregister(&*inner.persistence, svc, &uri).await;
+            }
+        }
         Ok(())
     }
 

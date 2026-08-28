@@ -16,6 +16,7 @@ pub mod apollo_instance_config;
 pub mod apollo_namespace_lock;
 pub mod apollo_audit;
 pub mod apollo_server_config;
+pub mod apollo_service_registry;
 pub mod apollo_consumer;
 pub mod apollo_consumer_audit;
 pub mod apollo_consumer_role;

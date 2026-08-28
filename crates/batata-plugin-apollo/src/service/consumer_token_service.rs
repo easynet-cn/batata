@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, ColumnTrait};
-use crate::entity::apollo_consumer_token;
 use crate::api::dto::ConsumerTokenDTO;
-use crate::persistence::traits::ApolloPersistenceService;
-use chrono::Utc;
+use crate::entity::apollo_consumer_token;
+use crate::persistence::traits::{ApolloPersistenceService, ConsumerTokenPersistence};
 
 pub struct ConsumerTokenService {
     persistence: Arc<dyn ApolloPersistenceService>,
@@ -15,56 +13,23 @@ impl ConsumerTokenService {
         Self { persistence }
     }
 
-    fn db(&self) -> Result<DatabaseConnection, anyhow::Error> {
-        self.persistence.get_db_connection().ok_or_else(|| anyhow::anyhow!("Database connection not available"))
-    }
-
     pub async fn create(&self, consumer_id: i32, created_by: &str) -> Result<ConsumerTokenDTO, anyhow::Error> {
-        let db = self.db()?;
-        let now = Utc::now().naive_utc();
-        let token = format!("{}-{}", consumer_id, now.and_utc().timestamp_millis());
-
-        let active_model = apollo_consumer_token::ActiveModel {
-            consumer_id: Set(consumer_id),
-            token: Set(token),
-            data_change_created_by: Set(created_by.to_string()),
-            data_change_created_time: Set(now),
-            data_change_last_modified_by: Set(None),
-            data_change_last_time: Set(Some(now)),
-            ..Default::default()
-        };
-
-        let model = active_model.insert(&db).await?;
+        let model = ConsumerTokenPersistence::create_consumer_token(&self.persistence, consumer_id, created_by).await?;
         Ok(self.model_to_dto(&model))
     }
 
     pub async fn list_by_consumer(&self, consumer_id: i32) -> Result<Vec<ConsumerTokenDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let models = apollo_consumer_token::Entity::find()
-            .filter(apollo_consumer_token::Column::ConsumerId.eq(consumer_id))
-            .all(&db)
-            .await?;
+        let models = ConsumerTokenPersistence::list_tokens_by_consumer(&self.persistence, consumer_id).await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
     pub async fn delete(&self, id: i32) -> Result<(), anyhow::Error> {
-        let db = self.db()?;
-        let model = apollo_consumer_token::Entity::find_by_id(id)
-            .one(&db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Token not found: {}", id))?;
-
-        let active_model: apollo_consumer_token::ActiveModel = model.into();
-        active_model.delete(&db).await?;
+        ConsumerTokenPersistence::delete_consumer_token(&self.persistence, id).await?;
         Ok(())
     }
 
     pub async fn get_by_token(&self, token: &str) -> Result<Option<ConsumerTokenDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let model = apollo_consumer_token::Entity::find()
-            .filter(apollo_consumer_token::Column::Token.eq(token))
-            .one(&db)
-            .await?;
+        let model = ConsumerTokenPersistence::get_consumer_token_by_token(&self.persistence, token).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 

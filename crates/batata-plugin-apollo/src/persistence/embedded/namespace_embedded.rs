@@ -127,6 +127,17 @@ impl NamespacePersistence for NamespaceEmbedded {
         Ok(results)
     }
 
+    async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>> {
+        let cf = self.cf()?;
+        let mut seen: std::collections::HashMap<i32, StoredNamespace> = std::collections::HashMap::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let ns: StoredNamespace = bincode::deserialize(&value)?;
+            seen.insert(ns.id, ns);
+        }
+        Ok(seen.into_values().filter(|n| !n.is_deleted).collect())
+    }
+
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
         let cf = self.cf()?;
         // Check existence by id

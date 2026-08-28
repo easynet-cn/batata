@@ -70,7 +70,7 @@ impl GrayReleaseRuleService {
             .find(|s| s.cluster_name == cluster_name && s.namespace_name == namespace_name && s.branch_name == branch_name && !s.is_deleted)
             .ok_or_else(|| anyhow::anyhow!("Gray release rule not found"))?;
 
-        let now = Utc::now().timestamp_millis();
+        let _now = Utc::now().timestamp_millis();
 
         let rules = dto.rules.unwrap_or(existing.rules);
         self.persistence.update_rules(existing.id, rules, dto.release_id).await?;
@@ -120,7 +120,24 @@ impl GrayReleaseRuleService {
         Ok(None)
     }
 
-    pub async fn match_gray_release_rule_with_context(&self, app_id: &str, cluster_name: &str, namespace_name: &str, client_ip: &str, labels: Option<&HashMap<String, String>>, headers: Option<&HashMap<String, String>>) -> Result<Option<i64>, anyhow::Error> {
+    /// Match a gray rule using upstream semantics.
+    ///
+    /// Supports BOTH formats:
+    /// - upstream `GrayReleaseRuleItemDTO`:
+    ///   `[{"clientAppId":"a","clientIpList":["1.2.3.4","*"],"clientLabelList":["gray","*"]}]`
+    ///   matched as `(appMatch && ipMatch) || (appMatch && labelMatch)` with
+    ///   case-insensitive appId comparison and `"*"` wildcards;
+    /// - legacy typed items (`{"type":"IP|LABEL|HEADER", ...}`).
+    pub async fn match_gray_release_rule_with_context(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        client_ip: &str,
+        labels: Option<&HashMap<String, String>>,
+        headers: Option<&HashMap<String, String>>,
+        client_label: Option<&str>,
+    ) -> Result<Option<i64>, anyhow::Error> {
         let rules = self.persistence.list_by_app(app_id).await?;
         let active_rules: Vec<_> = rules.into_iter()
             .filter(|r| r.cluster_name == cluster_name && r.namespace_name == namespace_name && !r.is_deleted && r.branch_status == Some(1))
@@ -135,7 +152,7 @@ impl GrayReleaseRuleService {
         for rule in active_rules {
             let rules_json: Value = serde_json::from_str(&rule.rules).unwrap_or_default();
             if let Some(rules_array) = rules_json.as_array() {
-                if self.match_rules_array(&client_ip_addr, rules_array, labels, headers) {
+                if self.match_rules_array(&client_ip_addr, rules_array, app_id, labels, headers, client_label) {
                     return Ok(Some(rule.release_id));
                 }
             }
@@ -144,53 +161,124 @@ impl GrayReleaseRuleService {
         Ok(None)
     }
 
-    fn match_rules_array(&self, ip: &IpAddr, rules_array: &[Value], labels: Option<&HashMap<String, String>>, headers: Option<&HashMap<String, String>>) -> bool {
+    fn match_rules_array(
+        &self,
+        ip: &IpAddr,
+        rules_array: &[Value],
+        client_app_id: &str,
+        labels: Option<&HashMap<String, String>>,
+        headers: Option<&HashMap<String, String>>,
+        client_label: Option<&str>,
+    ) -> bool {
         for rule_item in rules_array {
-            if let Some(rule_type) = rule_item.get("type").and_then(|v| v.as_str()) {
-                match rule_type {
-                    "IP" | "ip" => {
-                        if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str()) {
-                            if self.is_ip_in_range(ip, ip_range) {
-                                return true;
-                            }
-                        }
-                        if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str()) {
-                            if self.is_ip_in_range(ip, ip_segment) {
-                                return true;
-                            }
-                        }
-                    }
-                    "LABEL" | "label" => {
-                        if let Some(label_key) = rule_item.get("label").and_then(|v| v.as_str()) {
-                            if let Some(label_value) = rule_item.get("value").and_then(|v| v.as_str()) {
-                                if let Some(labels) = labels {
-                                    if let Some(val) = labels.get(label_key) {
-                                        if val == label_value || label_value == "*" {
-                                            return true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "HEADER" | "header" => {
-                        if let Some(header_key) = rule_item.get("header").and_then(|v| v.as_str()) {
-                            if let Some(header_value) = rule_item.get("value").and_then(|v| v.as_str()) {
-                                if let Some(headers) = headers {
-                                    if let Some(val) = headers.get(header_key) {
-                                        if val == header_value || header_value == "*" {
-                                            return true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            // Upstream GrayReleaseRuleItemDTO format.
+            if self.matches_upstream_item(rule_item, client_app_id, ip, client_label) {
+                return true;
+            }
+            // Legacy typed format (kept for compatibility).
+            if self.matches_legacy_item(rule_item, ip, labels, headers) {
+                return true;
             }
         }
         false
+    }
+
+    /// Port of upstream `GrayReleaseRuleItemDTO.matches`:
+    /// `(appIdMatches && ipMatches) || (appIdMatches && labelMatches)`.
+    /// An absent/blank `clientAppId` acts as a wildcard.
+    fn matches_upstream_item(
+        &self,
+        item: &Value,
+        client_app_id: &str,
+        ip: &IpAddr,
+        client_label: Option<&str>,
+    ) -> bool {
+        let has_upstream_shape = item.get("clientIpList").is_some()
+            || item.get("clientLabelList").is_some()
+            || item.get("clientAppId").is_some();
+        if !has_upstream_shape {
+            return false;
+        }
+
+        let rule_app = item.get("clientAppId").and_then(|v| v.as_str()).unwrap_or("");
+        let app_matches = rule_app.trim().is_empty() || rule_app.eq_ignore_ascii_case(client_app_id);
+        if !app_matches {
+            return false;
+        }
+
+        let ip_list = item.get("clientIpList").and_then(|v| v.as_array());
+        let ip_matches = match ip_list {
+            Some(list) => list
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|entry| entry == "*" || self.is_ip_in_range(ip, entry)),
+            None => false,
+        };
+        if ip_matches {
+            return true;
+        }
+
+        let label_list = item.get("clientLabelList").and_then(|v| v.as_array());
+        let label_matches = match label_list {
+            Some(list) => list
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|entry| entry == "*" || client_label == Some(entry)),
+            None => false,
+        };
+        label_matches
+    }
+
+    fn matches_legacy_item(
+        &self,
+        rule_item: &Value,
+        ip: &IpAddr,
+        labels: Option<&HashMap<String, String>>,
+        headers: Option<&HashMap<String, String>>,
+    ) -> bool {
+        let Some(rule_type) = rule_item.get("type").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        match rule_type {
+            "IP" | "ip" => {
+                if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str()) {
+                    if self.is_ip_in_range(ip, ip_range) {
+                        return true;
+                    }
+                }
+                if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str()) {
+                    if self.is_ip_in_range(ip, ip_segment) {
+                        return true;
+                    }
+                }
+                false
+            }
+            "LABEL" | "label" => {
+                let Some(label_key) = rule_item.get("label").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                let Some(label_value) = rule_item.get("value").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                labels
+                    .and_then(|ls| ls.get(label_key))
+                    .map(|val| val == label_value || label_value == "*")
+                    .unwrap_or(false)
+            }
+            "HEADER" | "header" => {
+                let Some(header_key) = rule_item.get("header").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                let Some(header_value) = rule_item.get("value").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                headers
+                    .and_then(|hs| hs.get(header_key))
+                    .map(|val| val == header_value || header_value == "*")
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
     }
 
     fn is_ip_in_range(&self, ip: &IpAddr, ip_range: &str) -> bool {

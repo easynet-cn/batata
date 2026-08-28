@@ -266,7 +266,7 @@ impl ConfigPersistence for ExternalDbPersistService {
     ) -> anyhow::Result<bool> {
         let md5_hash = const_hex::encode(md5::Md5::digest(content));
         let tags = normalize_tags(config_tags);
-        let now = chrono::Local::now().naive_local();
+        let now = chrono::Utc::now().naive_utc();
 
         // Start transaction BEFORE reading so the CAS check and UPDATE are
         // atomic — prevents TOCTOU race where two concurrent requests both
@@ -522,7 +522,7 @@ impl ConfigPersistence for ExternalDbPersistService {
 
             // Record history
             let ext_info = build_ext_info(&tags, &entity);
-            let now = chrono::Local::now().naive_local();
+            let now = chrono::Utc::now().naive_utc();
             let his = his_config_info::ActiveModel {
                 id: Set(entity.id),
                 nid: NotSet,
@@ -595,7 +595,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let md5_hash = const_hex::encode(md5::Md5::digest(content));
-        let now = chrono::Local::now().naive_local();
+        let now = chrono::Utc::now().naive_utc();
 
         let existing = config_info_gray::Entity::find()
             .filter(config_info_gray::Column::DataId.eq(data_id))
@@ -737,7 +737,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         }
 
         let tx = self.db.begin().await?;
-        let now = chrono::Local::now().naive_local();
+        let now = chrono::Utc::now().naive_utc();
 
         // Bulk fetch all entities in a single query instead of N individual queries
         let entities: Vec<config_info::Model> = config_info::Entity::find()
@@ -907,8 +907,10 @@ impl ConfigPersistence for ExternalDbPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
-        let mut select = his_config_info::Entity::find()
-            .filter(his_config_info::Column::TenantId.eq(namespace_id));
+        let mut select = his_config_info::Entity::find();
+        if !namespace_id.is_empty() {
+            select = select.filter(his_config_info::Column::TenantId.eq(namespace_id));
+        }
 
         if !data_id.is_empty() {
             select = select.filter(his_config_info::Column::DataId.contains(data_id));
@@ -930,7 +932,11 @@ impl ConfigPersistence for ExternalDbPersistService {
         if let Some(end) = end_time
             && let Some(dt) = chrono::DateTime::from_timestamp_millis(end)
         {
-            select = select.filter(his_config_info::Column::GmtModified.lte(dt.naive_utc()));
+            // Include records up to the end of the second (whole-second boundaries
+            // would otherwise exclude sub-second records created at the boundary).
+            select = select.filter(
+                his_config_info::Column::GmtModified.lte(dt.naive_utc() + chrono::Duration::seconds(1)),
+            );
         }
 
         let count = select

@@ -20,7 +20,7 @@ impl ReleaseSqlPersistence {
 impl From<StoredRelease> for apollo_release::ActiveModel {
     fn from(release: StoredRelease) -> Self {
         Self {
-            id: Set(release.id),
+            id: if release.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(release.id) },
             release_key: Set(release.release_key),
             name: Set(release.name),
             comment: Set(release.comment),
@@ -151,5 +151,35 @@ impl ReleasePersistence for ReleaseSqlPersistence {
             .one(&self.db)
             .await?;
         Ok(result.map(|m| m.into()))
+    }
+
+    async fn update(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        let existing = apollo_release::Entity::find_by_id(release.id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Release not found: {}", release.id))?;
+        let mut active_model: apollo_release::ActiveModel = existing.into();
+        active_model.is_abandoned = Set(release.is_abandoned);
+        active_model.is_deleted = Set(release.is_deleted);
+        active_model.deleted_at = Set(release.deleted_at);
+        active_model.data_change_last_modified_by = Set(release.data_change_last_modified_by);
+        active_model.data_change_last_time = Set(
+            chrono::DateTime::from_timestamp_millis(
+                release.data_change_last_time.unwrap_or_default(),
+            )
+            .map(|t| t.naive_utc()),
+        );
+        let updated = active_model.update(&self.db).await?;
+        Ok(updated.into())
+    }
+
+    async fn list_active(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        // list_by_namespace already filters abandoned/deleted.
+        ReleasePersistence::list_by_namespace(self, app_id, cluster_name, namespace_name).await
     }
 }

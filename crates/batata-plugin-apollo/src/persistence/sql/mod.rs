@@ -13,7 +13,9 @@ mod item_sql;
 mod namespace_lock_sql;
 mod namespace_sql;
 mod release_message_sql;
+mod service_registry_sql;
 mod release_sql;
+mod portal;
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, EntityTrait};
@@ -35,6 +37,7 @@ pub use namespace_lock_sql::NamespaceLockSqlPersistence;
 pub use namespace_sql::NamespaceSqlPersistence;
 pub use release_message_sql::ReleaseMessageSqlPersistence;
 pub use release_sql::ReleaseSqlPersistence;
+use service_registry_sql::ServiceRegistrySqlPersistence;
 
 use crate::persistence::traits::ApolloPersistenceService;
 
@@ -55,6 +58,7 @@ pub struct SqlApolloPersistence {
     access_key: AccessKeySqlPersistence,
     release_message: ReleaseMessageSqlPersistence,
     namespace_lock: NamespaceLockSqlPersistence,
+    service_registry: ServiceRegistrySqlPersistence,
 }
 
 impl SqlApolloPersistence {
@@ -70,6 +74,7 @@ impl SqlApolloPersistence {
             instance: InstanceSqlPersistence::new(db.clone()),
             access_key: AccessKeySqlPersistence::new(db.clone()),
             release_message: ReleaseMessageSqlPersistence::new(db.clone()),
+            service_registry: ServiceRegistrySqlPersistence::new(db.clone()),
             namespace_lock: NamespaceLockSqlPersistence::new(db.clone()),
             db,
         }
@@ -145,6 +150,10 @@ impl NamespacePersistence for SqlApolloPersistence {
         self.namespace.list_by_app(app_id).await
     }
 
+    async fn list_all(&self) -> anyhow::Result<Vec<crate::persistence::shared::StoredNamespace>> {
+        self.namespace.list_all().await
+    }
+
     async fn update(&self, namespace: crate::persistence::shared::StoredNamespace) -> anyhow::Result<crate::persistence::shared::StoredNamespace> {
         self.namespace.update(namespace).await
     }
@@ -183,6 +192,13 @@ impl ItemPersistence for SqlApolloPersistence {
     async fn batch_create(&self, items: Vec<crate::persistence::shared::StoredItem>) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         self.item.batch_create(items).await
     }
+
+    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
+        self.item.list_deleted_items(namespace_id).await
+    }
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+        self.item.find_namespace_ids_by_item_key(key).await
+    }
 }
 
 #[async_trait]
@@ -219,6 +235,16 @@ impl ReleasePersistence for SqlApolloPersistence {
 
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
         self.release.get_by_release_id(release_id).await
+    }    async fn update(&self, release: crate::persistence::shared::StoredRelease) -> anyhow::Result<crate::persistence::shared::StoredRelease> {
+        self.release.update(release).await
+    }
+    async fn list_active(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<crate::persistence::shared::StoredRelease>> {
+        self.release.list_active(app_id, cluster_name, namespace_name).await
     }
 }
 
@@ -340,6 +366,14 @@ impl ReleaseMessagePersistence for SqlApolloPersistence {
         self.release_message.create(message).await
     }
 
+    async fn find_latest_by_message(&self, message: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredReleaseMessage>> {
+        self.release_message.find_latest_by_message(message).await
+    }
+
+    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+        self.release_message.delete_by_id(id).await
+    }
+
     async fn get_latest(&self) -> anyhow::Result<Option<crate::persistence::shared::StoredReleaseMessage>> {
         self.release_message.get_latest().await
     }
@@ -405,5 +439,23 @@ impl ApolloPersistenceService for SqlApolloPersistence {
 
     fn get_db_connection(&self) -> Option<DatabaseConnection> {
         Some(self.db.clone())
+    }
+}
+
+
+#[async_trait]
+impl crate::persistence::traits::service_registry::ServiceRegistryPersistence for SqlApolloPersistence {
+    async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
+        self.service_registry.heartbeat(service_name, uri, cluster).await
+    }
+    async fn deregister(&self, service_name: &str, uri: &str) -> anyhow::Result<()> {
+        self.service_registry.deregister(service_name, uri).await
+    }
+    async fn find_alive(
+        &self,
+        service_name: &str,
+        window_secs: i64,
+    ) -> anyhow::Result<Vec<crate::persistence::traits::service_registry::ServiceRegistryEntry>> {
+        self.service_registry.find_alive(service_name, window_secs).await
     }
 }

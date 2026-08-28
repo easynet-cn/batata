@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, ColumnTrait, QueryOrder};
-use crate::entity::apollo_instance_config;
 use crate::api::dto::InstanceConfigDTO;
-use crate::persistence::traits::ApolloPersistenceService;
-use chrono::Utc;
+use crate::entity::apollo_instance_config;
+use crate::persistence::traits::{ApolloPersistenceService, InstanceConfigPersistence};
 
 pub struct InstanceConfigService {
     persistence: Arc<dyn ApolloPersistenceService>,
@@ -15,77 +13,23 @@ impl InstanceConfigService {
         Self { persistence }
     }
 
-    fn db(&self) -> Result<DatabaseConnection, anyhow::Error> {
-        self.persistence.get_db_connection().ok_or_else(|| anyhow::anyhow!("Database connection not available"))
-    }
-
     pub async fn create_or_update(&self, dto: InstanceConfigDTO) -> Result<InstanceConfigDTO, anyhow::Error> {
-        let db = self.db()?;
-        let existing = apollo_instance_config::Entity::find()
-            .filter(apollo_instance_config::Column::InstanceId.eq(dto.instance_id))
-            .filter(apollo_instance_config::Column::NamespaceName.eq(&dto.namespace_name))
-            .filter(apollo_instance_config::Column::ClusterName.eq(&dto.cluster_name))
-            .one(&db)
-            .await?;
-
-        let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "system".to_string());
-
-        if let Some(model) = existing {
-            let mut active_model: apollo_instance_config::ActiveModel = model.into();
-            active_model.release_key = Set(dto.release_key);
-            active_model.configurations = Set(dto.configurations);
-            active_model.data_change_last_modified_by = Set(Some(created_by));
-            active_model.data_change_last_time = Set(Some(now));
-            let updated = active_model.update(&db).await?;
-            return Ok(self.model_to_dto(&updated));
-        }
-
-        let active_model = apollo_instance_config::ActiveModel {
-            instance_id: Set(dto.instance_id),
-            namespace_name: Set(dto.namespace_name),
-            cluster_name: Set(dto.cluster_name),
-            release_key: Set(dto.release_key),
-            configurations: Set(dto.configurations),
-            data_change_created_by: Set(created_by),
-            data_change_created_time: Set(now),
-            data_change_last_modified_by: Set(None),
-            data_change_last_time: Set(Some(now)),
-            ..Default::default()
-        };
-
-        let model = active_model.insert(&db).await?;
+        let model = self.persistence.create_or_update_instance_config(dto).await?;
         Ok(self.model_to_dto(&model))
     }
 
     pub async fn get_by_instance(&self, instance_id: i32) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let models = apollo_instance_config::Entity::find()
-            .filter(apollo_instance_config::Column::InstanceId.eq(instance_id))
-            .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
-            .all(&db)
-            .await?;
-
+        let models = self.persistence.get_instance_config_by_instance(instance_id).await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
-    pub async fn list_by_app_cluster(&self, _app_id: &str, cluster_name: &str, _namespace_name: &str) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
-        let db = self.db()?;
-        let models = apollo_instance_config::Entity::find()
-            .filter(apollo_instance_config::Column::ClusterName.eq(cluster_name))
-            .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
-            .all(&db)
-            .await?;
-
+    pub async fn list_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
+        let models = self.persistence.list_instance_config_by_app_cluster(app_id, cluster_name, namespace_name).await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
     pub async fn delete_by_instance(&self, instance_id: i32) -> Result<(), anyhow::Error> {
-        let db = self.db()?;
-        apollo_instance_config::Entity::delete_many()
-            .filter(apollo_instance_config::Column::InstanceId.eq(instance_id))
-            .exec(&db)
-            .await?;
+        self.persistence.delete_instance_config_by_instance(instance_id).await?;
         Ok(())
     }
 
@@ -93,6 +37,7 @@ impl InstanceConfigService {
         InstanceConfigDTO {
             id: Some(model.id),
             instance_id: model.instance_id,
+            config_app_id: Some(model.config_app_id.clone()),
             namespace_name: model.namespace_name.clone(),
             cluster_name: model.cluster_name.clone(),
             release_key: model.release_key.clone(),

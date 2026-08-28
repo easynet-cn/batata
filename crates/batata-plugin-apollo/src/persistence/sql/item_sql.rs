@@ -20,7 +20,7 @@ impl ItemSqlPersistence {
 impl From<StoredItem> for apollo_item::ActiveModel {
     fn from(item: StoredItem) -> Self {
         Self {
-            id: Set(item.id),
+            id: if item.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(item.id) },
             namespace_id: Set(item.namespace_id),
             key: Set(item.key),
             r#type: Set(item.r#type),
@@ -162,5 +162,27 @@ impl ItemPersistence for ItemSqlPersistence {
             .await?;
 
         Ok(created_items.into_iter().map(|m| m.into()).collect())
+    }
+
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+        let rows = apollo_item::Entity::find()
+            .filter(apollo_item::Column::Key.eq(key))
+            .filter(apollo_item::Column::IsDeleted.eq(false))
+            .all(&self.db)
+            .await?;
+        let mut ids: Vec<i32> = rows.into_iter().map(|m| m.namespace_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+        let results = apollo_item::Entity::find()
+            .filter(apollo_item::Column::NamespaceId.eq(namespace_id))
+            .filter(apollo_item::Column::IsDeleted.eq(true))
+            .order_by_desc(apollo_item::Column::DataChangeLastTime)
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().map(|m| m.into()).collect())
     }
 }

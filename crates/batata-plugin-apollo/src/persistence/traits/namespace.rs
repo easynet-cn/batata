@@ -13,6 +13,7 @@ pub trait NamespacePersistence: Send + Sync {
         namespace_name: &str,
     ) -> anyhow::Result<Option<StoredNamespace>>;
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredNamespace>>;
+    async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>>;
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace>;
     async fn delete(&self, id: i32) -> anyhow::Result<()>;
 }

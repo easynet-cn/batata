@@ -79,6 +79,20 @@ pub const CF_APOLLO_ACCESS_KEY: &str = "apollo_access_key";
 pub const CF_APOLLO_RELEASE_MSG: &str = "apollo_release_msg";
 pub const CF_APOLLO_NAMESPACE_LOCK: &str = "apollo_namespace_lock";
 pub const CF_APOLLO_RELEASE_HISTORY: &str = "apollo_release_history";
+pub const CF_APOLLO_APP_NAMESPACE: &str = "apollo_app_namespace";
+pub const CF_APOLLO_AUDIT: &str = "apollo_audit";
+pub const CF_APOLLO_CONSUMER: &str = "apollo_consumer";
+pub const CF_APOLLO_CONSUMER_TOKEN: &str = "apollo_consumer_token";
+pub const CF_APOLLO_CONSUMER_AUDIT: &str = "apollo_consumer_audit";
+pub const CF_APOLLO_PERMISSION: &str = "apollo_permission";
+pub const CF_APOLLO_ROLE: &str = "apollo_role";
+pub const CF_APOLLO_ROLE_PERMISSION: &str = "apollo_role_permission";
+pub const CF_APOLLO_USER_ROLE: &str = "apollo_user_role";
+pub const CF_APOLLO_USERS: &str = "apollo_users";
+pub const CF_APOLLO_FAVORITE: &str = "apollo_favorite";
+pub const CF_APOLLO_SERVER_CONFIG: &str = "apollo_server_config";
+pub const CF_APOLLO_SERVICE_REGISTRY: &str = "apollo_service_registry";
+pub const CF_APOLLO_INSTANCE_CONFIG: &str = "apollo_instance_config";
 
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
@@ -289,6 +303,21 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_APOLLO_RELEASE_MSG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_NAMESPACE_LOCK, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_RELEASE_HISTORY, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_APP_NAMESPACE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_AUDIT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER_TOKEN, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_CONSUMER_AUDIT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_PERMISSION, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_ROLE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_ROLE_PERMISSION, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_USER_ROLE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_USERS, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_FAVORITE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_SERVER_CONFIG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_INSTANCE_CONFIG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_SERVICE_REGISTRY, cf_opts.clone()),
+
             ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
         ];
 
@@ -1332,6 +1361,20 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_APOLLO_RELEASE_MSG,
             CF_APOLLO_NAMESPACE_LOCK,
             CF_APOLLO_RELEASE_HISTORY,
+            CF_APOLLO_APP_NAMESPACE,
+            CF_APOLLO_AUDIT,
+            CF_APOLLO_CONSUMER,
+            CF_APOLLO_CONSUMER_TOKEN,
+            CF_APOLLO_CONSUMER_AUDIT,
+            CF_APOLLO_PERMISSION,
+            CF_APOLLO_ROLE,
+            CF_APOLLO_ROLE_PERMISSION,
+            CF_APOLLO_USER_ROLE,
+            CF_APOLLO_USERS,
+            CF_APOLLO_FAVORITE,
+            CF_APOLLO_SERVER_CONFIG,
+            CF_APOLLO_INSTANCE_CONFIG,
+            CF_APOLLO_SERVICE_REGISTRY,
         ] {
             if let Some(cf) = self.db.cf_handle(cf_name) {
                 let mut cf_data = Vec::new();

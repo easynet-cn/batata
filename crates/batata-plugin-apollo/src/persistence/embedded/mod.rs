@@ -2,7 +2,6 @@
 //!
 //! Provides standalone single-node storage using RocksDB without an external database.
 
-use crate::bincode;
 mod app_embedded;
 mod cluster_embedded;
 mod namespace_embedded;
@@ -13,8 +12,11 @@ mod gray_release_embedded;
 mod instance_embedded;
 mod access_key_embedded;
 mod release_message_embedded;
+mod service_registry_embedded;
 mod namespace_lock_embedded;
 mod id_generator;
+mod portal;
+mod store;
 
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -23,6 +25,7 @@ use rocksdb::DB;
 use crate::persistence::traits::ApolloPersistenceService;
 use crate::persistence::shared::*;
 pub use id_generator::IdGenerator;
+pub use store::JsonStore;
 
 pub use app_embedded::AppEmbedded;
 pub use cluster_embedded::ClusterEmbedded;
@@ -34,6 +37,7 @@ pub use gray_release_embedded::GrayReleaseEmbedded;
 pub use instance_embedded::InstanceEmbedded;
 pub use access_key_embedded::AccessKeyEmbedded;
 pub use release_message_embedded::ReleaseMessageEmbedded;
+pub use service_registry_embedded::ServiceRegistryEmbedded;
 pub use namespace_lock_embedded::NamespaceLockEmbedded;
 
 /// Embedded (RocksDB) implementation of all Apollo persistence traits
@@ -53,15 +57,25 @@ pub struct EmbeddedApolloPersistence {
     instance: InstanceEmbedded,
     access_key: AccessKeyEmbedded,
     release_message: ReleaseMessageEmbedded,
+    service_registry: ServiceRegistryEmbedded,
     namespace_lock: NamespaceLockEmbedded,
+    portal_id_gen: Arc<IdGenerator>,
 }
 
 impl EmbeddedApolloPersistence {
     pub fn new(db: Arc<DB>) -> Self {
-        let id_gen = Arc::new(IdGenerator::new(1));
+        // Recover id counters from existing rows so ids stay unique and
+        // monotonic across restarts (upstream relies on DB AUTO_INCREMENT).
+        let core_gen = Arc::new(IdGenerator::new(
+            Self::recover_core_max_id(&db).map_or(1, |m| m + 1),
+        ));
+        let portal_id_gen = Arc::new(IdGenerator::new(
+            Self::recover_portal_max_id(&db).map_or(1, |m| m + 1),
+        ));
+        let id_gen = core_gen;
         Self {
             app: AppEmbedded::new(db.clone()),
-            cluster: ClusterEmbedded::new(db.clone()),
+            cluster: ClusterEmbedded::new(db.clone(), id_gen.clone()),
             namespace: NamespaceEmbedded::new(db.clone(), id_gen.clone()),
             item: ItemEmbedded::new(db.clone(), id_gen.clone()),
             release: ReleaseEmbedded::new(db.clone(), id_gen.clone()),
@@ -70,9 +84,73 @@ impl EmbeddedApolloPersistence {
             instance: InstanceEmbedded::new(db.clone(), id_gen.clone()),
             access_key: AccessKeyEmbedded::new(db.clone(), id_gen.clone()),
             release_message: ReleaseMessageEmbedded::new(db.clone(), id_gen.clone()),
+            service_registry: ServiceRegistryEmbedded::new(db.clone()),
             namespace_lock: NamespaceLockEmbedded::new(db.clone()),
+            portal_id_gen,
             db,
         }
+    }
+
+    /// Scan the by-id key prefixes of every core column family and return the
+    /// highest row id currently stored (None when the database is empty).
+    ///
+    /// Key layouts are defined next to each store (`{prefix}{id}`); keep this
+    /// list in sync when adding an entity (guarded by recovery round-trip test).
+    fn recover_core_max_id(db: &DB) -> Option<i32> {
+        const CF_PREFIXES: &[(&str, &str)] = &[
+            (batata_consistency::raft::state_machine::CF_APOLLO_NAMESPACE, "ns_id:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_ITEM, "item_id:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_RELEASE, "release:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_COMMIT, "commit:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_GRAY_RULE, "gray_id:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_ACCESS_KEY, "ak_id:"),
+            (batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG, "rm_id:"),
+        ];
+        let mut max: Option<i32> = None;
+        for (cf_name, prefix) in CF_PREFIXES {
+            let Some(cf) = db.cf_handle(cf_name) else { continue };
+            for item in db.prefix_iterator_cf(cf, prefix.as_bytes()).flatten() {
+                let Ok(key) = std::str::from_utf8(&item.0) else { continue };
+                let Some(rest) = key.strip_prefix(prefix) else { continue };
+                if let Ok(id) = rest.parse::<i32>() {
+                    max = Some(max.unwrap_or(0).max(id));
+                }
+            }
+        }
+        max
+    }
+
+    /// Portal stores key rows as `id:{n}` inside per-entity column families.
+    fn recover_portal_max_id(db: &DB) -> Option<i32> {
+        use batata_consistency::raft::state_machine as sm;
+        const PORTAL_CFS: &[&str] = &[
+            sm::CF_APOLLO_APP_NAMESPACE,
+            sm::CF_APOLLO_AUDIT,
+            sm::CF_APOLLO_CONSUMER,
+            sm::CF_APOLLO_CONSUMER_TOKEN,
+            sm::CF_APOLLO_CONSUMER_AUDIT,
+            sm::CF_APOLLO_PERMISSION,
+            sm::CF_APOLLO_ROLE,
+            sm::CF_APOLLO_ROLE_PERMISSION,
+            sm::CF_APOLLO_USER_ROLE,
+            sm::CF_APOLLO_USERS,
+            sm::CF_APOLLO_FAVORITE,
+            sm::CF_APOLLO_SERVER_CONFIG,
+            sm::CF_APOLLO_INSTANCE_CONFIG,
+            sm::CF_APOLLO_RELEASE_HISTORY,
+        ];
+        let mut max: Option<i32> = None;
+        for cf_name in PORTAL_CFS {
+            let Some(cf) = db.cf_handle(cf_name) else { continue };
+            for item in db.prefix_iterator_cf(cf, b"id:").flatten() {
+                let Ok(key) = std::str::from_utf8(&item.0) else { continue };
+                let Some(rest) = key.strip_prefix("id:") else { continue };
+                if let Ok(id) = rest.parse::<i32>() {
+                    max = Some(max.unwrap_or(0).max(id));
+                }
+            }
+        }
+        max
     }
 }
 
@@ -131,6 +209,9 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredNamespace>> {
         self.namespace.list_by_app(app_id).await
     }
+    async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>> {
+        self.namespace.list_all().await
+    }
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
         self.namespace.update(namespace).await
     }
@@ -162,6 +243,12 @@ impl crate::persistence::traits::ItemPersistence for EmbeddedApolloPersistence {
     async fn batch_create(&self, items: Vec<StoredItem>) -> anyhow::Result<Vec<StoredItem>> {
         self.item.batch_create(items).await
     }
+    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+        self.item.list_deleted_items(namespace_id).await
+    }
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+        self.item.find_namespace_ids_by_item_key(key).await
+    }
 }
 
 #[async_trait]
@@ -183,6 +270,17 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
     }
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>> {
         self.release.get_by_release_id(release_id).await
+    }
+    async fn update(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        self.release.update(release).await
+    }
+    async fn list_active(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        self.release.list_active(app_id, cluster_name, namespace_name).await
     }
 }
 
@@ -264,6 +362,15 @@ impl crate::persistence::traits::ReleaseMessagePersistence for EmbeddedApolloPer
     async fn create(&self, message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
         self.release_message.create(message).await
     }
+    async fn find_latest_by_message(
+        &self,
+        message: &str,
+    ) -> anyhow::Result<Option<StoredReleaseMessage>> {
+        self.release_message.find_latest_by_message(message).await
+    }
+    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+        self.release_message.delete_by_id(id).await
+    }
     async fn get_latest(&self) -> anyhow::Result<Option<StoredReleaseMessage>> {
         self.release_message.get_latest().await
     }
@@ -300,12 +407,35 @@ impl ApolloPersistenceService for EmbeddedApolloPersistence {
             CF_APOLLO_APP, CF_APOLLO_NAMESPACE, CF_APOLLO_ITEM,
             CF_APOLLO_RELEASE, CF_APOLLO_COMMIT, CF_APOLLO_GRAY_RULE,
             CF_APOLLO_INSTANCE, CF_APOLLO_ACCESS_KEY, CF_APOLLO_RELEASE_MSG,
-            CF_APOLLO_NAMESPACE_LOCK,
+            CF_APOLLO_NAMESPACE_LOCK, CF_APOLLO_RELEASE_HISTORY,
+            CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_CONSUMER,
+            CF_APOLLO_CONSUMER_TOKEN, CF_APOLLO_CONSUMER_AUDIT, CF_APOLLO_PERMISSION,
+            CF_APOLLO_ROLE, CF_APOLLO_ROLE_PERMISSION, CF_APOLLO_USER_ROLE,
+            CF_APOLLO_USERS, CF_APOLLO_FAVORITE, CF_APOLLO_SERVER_CONFIG,
+            CF_APOLLO_INSTANCE_CONFIG,
         ];
         for cf_name in cfs {
             self.db.cf_handle(cf_name)
                 .ok_or_else(|| anyhow::anyhow!("Column family {} not found", cf_name))?;
         }
         Ok(())
+    }
+}
+
+
+#[async_trait]
+impl crate::persistence::traits::service_registry::ServiceRegistryPersistence for EmbeddedApolloPersistence {
+    async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
+        self.service_registry.heartbeat(service_name, uri, cluster).await
+    }
+    async fn deregister(&self, service_name: &str, uri: &str) -> anyhow::Result<()> {
+        self.service_registry.deregister(service_name, uri).await
+    }
+    async fn find_alive(
+        &self,
+        service_name: &str,
+        window_secs: i64,
+    ) -> anyhow::Result<Vec<crate::persistence::traits::service_registry::ServiceRegistryEntry>> {
+        self.service_registry.find_alive(service_name, window_secs).await
     }
 }

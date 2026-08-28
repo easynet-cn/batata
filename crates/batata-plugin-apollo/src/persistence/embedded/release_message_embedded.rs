@@ -1,6 +1,14 @@
-//! Embedded implementation of ReleaseMessagePersistence trait
+//! Embedded implementation of ReleaseMessagePersistence trait.
+//!
+//! Layout inside `CF_APOLLO_RELEASE_MSG` (mirrors upstream `ReleaseMessage`
+//! table where a background cleaner keeps only the newest row per key):
+//!
+//! - `rm_id:{id}`              → StoredReleaseMessage (row index, drives scans)
+//! - `rm:{appId}+{cluster}+{namespace}` → StoredReleaseMessage (latest-per-key)
+//!
+//! `create` overwrites the composite key and prunes the previous row's
+//! `rm_id` index entry, so exactly one row per watch key is retained.
 
-use crate::bincode;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,76 +19,69 @@ use batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG;
 use crate::persistence::shared::StoredReleaseMessage;
 use crate::persistence::traits::ReleaseMessagePersistence;
 use super::id_generator::IdGenerator;
+use super::store::JsonStore;
 
-/// Embedded Release Message persistence using RocksDB
+const ROW_PREFIX: &str = "rm_id:";
+const KEY_PREFIX: &str = "rm:";
+
 pub struct ReleaseMessageEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl ReleaseMessageEmbedded {
-    /// Create from RocksDB
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }
 
-    /// Get column family handle
     fn cf(&self) -> anyhow::Result<&rocksdb::ColumnFamily> {
         self.db
             .cf_handle(CF_APOLLO_RELEASE_MSG)
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", CF_APOLLO_RELEASE_MSG))
     }
 
-    /// Build key for release message: "rm:{app_id}:{cluster}:{namespace}"
-    fn key(app_id: &str, cluster: &str, namespace: &str) -> String {
-        format!("rm:{}:{}:{}", app_id, cluster, namespace)
+    /// Composite key for one watch key: "rm:{app}+{cluster}+{namespace}".
+    fn key(message: &str) -> String {
+        format!("{}{}", KEY_PREFIX, message)
     }
 
-    /// Build key for release message by id: "rm_id:{id}"
-    fn key_by_id(id: i32) -> String {
-        format!("rm_id:{}", id)
+    fn row_key(id: i32) -> String {
+        format!("{}{}", ROW_PREFIX, id)
     }
 }
 
 #[async_trait]
 impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
-    async fn create(&self, message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
-        let cf = self.cf()?;
-        let mut message = message;
-        message.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&message)?;
+    async fn create(&self, mut message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
+        let store = JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG);
 
-        // Store by id
-        let key_id = Self::key_by_id(message.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Parse message to extract app_id, cluster, namespace (message format: "{app_id}+{cluster}+{namespace}")
-        let parts: Vec<&str> = message.message.split('+').collect();
-        if parts.len() == 3 {
-            let key_comp = Self::key(parts[0], parts[1], parts[2]);
-            self.db
-                .put_cf(cf, key_comp.as_bytes(), &bytes)
-                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        // Prune the previous row for this watch key before overwriting it.
+        let composite = Self::key(&message.message);
+        if let Some(old) = store.get::<StoredReleaseMessage>(composite.as_bytes())? {
+            store.delete(Self::row_key(old.id).as_bytes())?;
         }
 
+        message.id = self.id_gen.next_id();
+        store.put(composite.as_bytes(), &message)?;
+        store.put(Self::row_key(message.id).as_bytes(), &message)?;
         Ok(message)
     }
 
+    async fn find_latest_by_message(
+        &self,
+        message: &str,
+    ) -> anyhow::Result<Option<StoredReleaseMessage>> {
+        // O(1): the composite key always holds the newest row for this key.
+        JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG)
+            .get::<StoredReleaseMessage>(Self::key(message).as_bytes())
+    }
+
     async fn get_latest(&self) -> anyhow::Result<Option<StoredReleaseMessage>> {
-        let cf = self.cf()?;
-        // Iterate all and find the one with highest id
-        let mut latest: Option<StoredReleaseMessage> = None;
-        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        for item in iter {
-            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let msg: StoredReleaseMessage = bincode::deserialize(&value)?;
-            if latest.is_none() || msg.id > latest.as_ref().unwrap().id {
-                latest = Some(msg);
-            }
-        }
-        Ok(latest)
+        Ok(self
+            .list_all()
+            .await?
+            .into_iter()
+            .max_by_key(|m| m.id))
     }
 
     async fn list_all(&self) -> anyhow::Result<Vec<StoredReleaseMessage>> {
@@ -88,13 +89,19 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
         let mut results = Vec::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
-            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let msg: StoredReleaseMessage = bincode::deserialize(&value)?;
-            results.push(msg);
+            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !key.starts_with(ROW_PREFIX.as_bytes()) {
+                continue; // skip composite-key duplicates
+            }
+            results.push(serde_json::from_slice::<StoredReleaseMessage>(&value)?);
         }
-        // Sort by id descending
         results.sort_by(|a, b| b.id.cmp(&a.id));
         Ok(results)
+    }
+
+    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+        JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG)
+            .delete(Self::row_key(id).as_bytes())
     }
 
     async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
@@ -103,7 +110,10 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let msg: StoredReleaseMessage = bincode::deserialize(&value)?;
+            if !key.starts_with(ROW_PREFIX.as_bytes()) {
+                continue;
+            }
+            let msg: StoredReleaseMessage = serde_json::from_slice(&value)?;
             if msg.id < before_id {
                 keys_to_delete.push(key.to_vec());
             }

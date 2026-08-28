@@ -5,7 +5,7 @@ pub struct StoredAccessKey {
     pub id: i32,
     pub app_id: String,
     pub secret: String,
-    pub mode: i8,
+    pub mode: i16,
     pub is_enabled: bool,
     pub is_deleted: bool,
     pub deleted_at: i64,

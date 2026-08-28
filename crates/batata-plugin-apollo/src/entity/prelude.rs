@@ -14,6 +14,7 @@ pub use super::apollo_instance_config::Entity as ApolloInstanceConfig;
 pub use super::apollo_namespace_lock::Entity as ApolloNamespaceLock;
 pub use super::apollo_audit::Entity as ApolloAudit;
 pub use super::apollo_server_config::Entity as ApolloServerConfig;
+pub use super::apollo_service_registry::Entity as ApolloServiceRegistry;
 pub use super::apollo_consumer::Entity as ApolloConsumer;
 pub use super::apollo_consumer_audit::Entity as ApolloConsumerAudit;
 pub use super::apollo_consumer_role::Entity as ApolloConsumerRole;

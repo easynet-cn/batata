@@ -7,15 +7,17 @@ use rocksdb::DB;
 use batata_consistency::raft::state_machine::CF_APOLLO_CLUSTER;
 
 use crate::persistence::shared::StoredCluster;
+use super::id_generator::IdGenerator;
 use crate::persistence::traits::ClusterPersistence;
 
 pub struct ClusterEmbedded {
     db: Arc<DB>,
+    id_gen: Arc<IdGenerator>,
 }
 
 impl ClusterEmbedded {
-    pub fn new(db: Arc<DB>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
+        Self { db, id_gen }
     }
 
     fn cf(&self) -> anyhow::Result<&rocksdb::ColumnFamily> {
@@ -31,8 +33,11 @@ impl ClusterEmbedded {
 
 #[async_trait]
 impl ClusterPersistence for ClusterEmbedded {
-    async fn create(&self, cluster: StoredCluster) -> anyhow::Result<StoredCluster> {
+    async fn create(&self, mut cluster: StoredCluster) -> anyhow::Result<StoredCluster> {
         let cf = self.cf()?;
+        // Upstream Cluster.Id is a DB auto-increment consumed by
+        // ParentClusterId; without it branch relationships cannot work.
+        cluster.id = self.id_gen.next_id();
         let key = Self::key(&cluster.app_id, &cluster.name);
         let bytes = bincode::serialize(&cluster)?;
         self.db

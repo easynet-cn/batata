@@ -17,6 +17,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(unsigned_int(ApolloInstanceConfig::Id, backend).auto_increment().primary_key())
                     .col(unsigned_int(ApolloInstanceConfig::InstanceId, backend))
+                    .col(string_len_default(ApolloInstanceConfig::ConfigAppId, 128, ""))
                     .col(string_len_default(ApolloInstanceConfig::NamespaceName, 128, "default"))
                     .col(string_len_default(ApolloInstanceConfig::ClusterName, 32, "default"))
                     .col(string_len_default(ApolloInstanceConfig::ReleaseKey, 64, ""))
@@ -35,6 +36,7 @@ impl MigrationTrait for Migration {
                     .name("uk_apollo_instance_config_unique_key")
                     .table(ApolloInstanceConfig::Table)
                     .col(ApolloInstanceConfig::InstanceId)
+                    .col(ApolloInstanceConfig::ConfigAppId)
                     .col(ApolloInstanceConfig::NamespaceName)
                     .col(ApolloInstanceConfig::ClusterName)
                     .unique()
@@ -80,6 +82,7 @@ enum ApolloInstanceConfig {
     Table,
     Id,
     InstanceId,
+    ConfigAppId,
     NamespaceName,
     ClusterName,
     ReleaseKey,

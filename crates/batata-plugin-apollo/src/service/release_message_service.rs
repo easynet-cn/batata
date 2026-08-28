@@ -1,128 +1,93 @@
-use std::sync::{Arc, Mutex};
+//! Port of upstream `DatabaseMessageSender` + `ReleaseMessageServiceWithCache`.
+//!
+//! A publish inserts one `ReleaseMessage` row whose content is the plain
+//! `"appId+cluster+namespace"` watch key; the row's auto-increment id IS the
+//! client-visible `notificationId` (globally monotonic, survives restarts).
+//! The in-memory [`crate::service::notification_hub`] remains only as a
+//! process-local wake-up accelerator on top of this persisted truth.
+
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::persistence::shared::StoredReleaseMessage;
 use crate::persistence::traits::{ApolloPersistenceService, ReleaseMessagePersistence};
-use chrono::Utc;
-use serde_json::json;
+
+/// Upstream `ConfigConsts.CLUSTER_NAMESPACE_SEPARATOR`.
+pub const CLUSTER_NAMESPACE_SEPARATOR: char = '+';
 
 pub struct ReleaseMessageService {
     persistence: Arc<dyn ApolloPersistenceService>,
-    pending_messages: Arc<Mutex<HashMap<String, Vec<ReleaseMessage>>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleaseMessage {
-    pub app_id: String,
-    pub cluster: String,
-    pub namespace_name: String,
-    pub notification_id: i64,
-    pub message: String,
 }
 
 impl ReleaseMessageService {
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
-        Self {
-            persistence,
-            pending_messages: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { persistence }
     }
 
-    pub async fn publish(&self, app_id: &str, cluster: &str, namespace_name: &str, notification_id: i64) -> Result<(), anyhow::Error> {
-        let message_json = json!({
-            "appId": app_id,
-            "cluster": cluster,
-            "namespaceName": namespace_name,
-            "notificationId": notification_id,
-            "dataChangeCreatedTime": Utc::now().to_rfc3339(),
-        }).to_string();
+    /// Build the plain watch key: "appId+cluster+namespace".
+    pub fn generate_message(app_id: &str, cluster: &str, namespace_name: &str) -> String {
+        format!(
+            "{}{}{}{}{}",
+            app_id, CLUSTER_NAMESPACE_SEPARATOR, cluster, CLUSTER_NAMESPACE_SEPARATOR, namespace_name
+        )
+    }
 
+    /// Upstream `DatabaseMessageSender.sendMessage`: persist one row and
+    /// return it — `stored.id` is the notification id handed to clients.
+    pub async fn send_message(
+        &self,
+        app_id: &str,
+        cluster: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<StoredReleaseMessage> {
         let stored = StoredReleaseMessage {
             id: 0,
-            message: message_json.clone(),
-            data_change_created_time: Utc::now().timestamp_millis(),
+            message: Self::generate_message(app_id, cluster, namespace_name),
+            data_change_created_time: chrono::Utc::now().timestamp_millis(),
         };
-
-        self.persistence.create(stored).await?;
-
-        let cache_key = format!("{}_{}_{}", app_id, cluster, namespace_name);
-        let message = ReleaseMessage {
-            app_id: app_id.to_string(),
-            cluster: cluster.to_string(),
-            namespace_name: namespace_name.to_string(),
-            notification_id,
-            message: message_json,
-        };
-
-        let mut pending = self.pending_messages.lock().unwrap();
-        pending.entry(cache_key).or_insert_with(Vec::new).push(message);
-
-        Ok(())
+        self.persistence.create(stored).await
     }
 
-    pub async fn poll(&self, app_id: &str, cluster: &str, namespace_name: &str, last_notification_id: i64) -> Result<Option<ReleaseMessage>, anyhow::Error> {
-        let cache_key = format!("{}_{}_{}", app_id, cluster, namespace_name);
-        let mut pending = self.pending_messages.lock().unwrap();
-
-        if let Some(messages) = pending.get_mut(&cache_key) {
-            if let Some(index) = messages.iter().position(|m| m.notification_id > last_notification_id) {
-                let message = messages.remove(index);
-                return Ok(Some(message));
-            }
-        }
-
-        let latest = self.persistence.get_latest().await?;
-
-        if let Some(model) = latest {
-            let message: serde_json::Value = serde_json::from_str(&model.message).unwrap_or_default();
-            let msg_app_id = message.get("appId").and_then(|v| v.as_str());
-            let msg_cluster = message.get("cluster").and_then(|v| v.as_str());
-            let msg_namespace = message.get("namespaceName").and_then(|v| v.as_str());
-            let notification_id = message.get("notificationId").and_then(|v| v.as_i64()).unwrap_or(0);
-
-            if msg_app_id == Some(app_id) && msg_cluster == Some(cluster) && msg_namespace == Some(namespace_name) {
-                if notification_id > last_notification_id {
-                    return Ok(Some(ReleaseMessage {
-                        app_id: app_id.to_string(),
-                        cluster: cluster.to_string(),
-                        namespace_name: namespace_name.to_string(),
-                        notification_id,
-                        message: model.message,
-                    }));
-                }
-            }
-        }
-
-        Ok(None)
+    /// Latest persisted row for a single watch key.
+    pub async fn find_latest_by_key(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<StoredReleaseMessage>> {
+        self.persistence.find_latest_by_message(key).await
     }
 
-    pub async fn get_all_messages(&self, _limit: u64) -> Result<Vec<ReleaseMessage>, anyhow::Error> {
-        let stored_list = self.persistence.list_all().await?;
-
-        Ok(stored_list.into_iter().filter_map(|model| {
-            let message: serde_json::Value = serde_json::from_str(&model.message).unwrap_or_default();
-            Some(ReleaseMessage {
-                app_id: message.get("appId").and_then(|v| v.as_str())?.to_string(),
-                cluster: message.get("cluster").and_then(|v| v.as_str())?.to_string(),
-                namespace_name: message.get("namespaceName").and_then(|v| v.as_str())?.to_string(),
-                notification_id: message.get("notificationId").and_then(|v| v.as_i64()).unwrap_or(0),
-                message: model.message,
-            })
-        }).collect())
-    }
-
-    pub async fn cleanup_old_messages(&self, hours: i64) -> Result<u64, anyhow::Error> {
-        let cutoff_timestamp = Utc::now().timestamp_millis() - (hours * 3600 * 1000);
-        let stored_list = self.persistence.list_all().await?;
-        
-        let mut deleted_count = 0;
-        for stored in stored_list {
-            if stored.data_change_created_time < cutoff_timestamp {
-                self.persistence.delete_old(stored.id).await?;
-                deleted_count += 1;
+    /// Latest row per watch key (upstream
+    /// `releaseMessageService.findLatestReleaseMessagesGroupByMessages`).
+    pub async fn find_latest_by_keys(
+        &self,
+        keys: &[String],
+    ) -> anyhow::Result<HashMap<String, StoredReleaseMessage>> {
+        let mut out = HashMap::with_capacity(keys.len());
+        for key in keys {
+            if let Some(latest) = self.persistence.find_latest_by_message(key).await? {
+                out.insert(key.clone(), latest);
             }
         }
+        Ok(out)
+    }
 
-        Ok(deleted_count)
+    /// Retain only the newest row per watch key globally (upstream cleanup
+    /// thread keeps the last row per message). The embedded backend already
+    /// prunes per-key on write; SQL accumulates history until invoked.
+    pub async fn prune(&self) -> anyhow::Result<usize> {
+        let all = self.persistence.list_all().await?;
+        let mut newest_per_key: HashMap<&str, i32> = HashMap::new();
+        for m in &all {
+            let e = newest_per_key.entry(m.message.as_str()).or_insert(m.id);
+            *e = (*e).max(m.id);
+        }
+        let mut deleted = 0;
+        for m in &all {
+            if newest_per_key.get(m.message.as_str()).copied() != Some(m.id) {
+                self.persistence.delete_by_id(m.id).await?;
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
     }
 }

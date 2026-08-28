@@ -21,6 +21,7 @@ services:
     ports:
       - "8848:8848"   # Main HTTP API
       - "8081:8081"   # Console HTTP API
+      - "8080:8080"   # Apollo plugin HTTP API
       - "9848:9848"   # SDK gRPC
       - "9849:9849"   # Cluster gRPC
       - "8500:8500"   # Consul compatibility

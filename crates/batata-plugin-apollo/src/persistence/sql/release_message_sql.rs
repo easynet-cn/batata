@@ -20,7 +20,7 @@ impl ReleaseMessageSqlPersistence {
 impl From<StoredReleaseMessage> for apollo_release_message::ActiveModel {
     fn from(message: StoredReleaseMessage) -> Self {
         Self {
-            id: Set(message.id),
+            id: if message.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(message.id) },
             message: Set(message.message),
             data_change_created_time: Set(chrono::DateTime::from_timestamp_millis(
                 message.data_change_created_time,
@@ -55,6 +55,18 @@ impl ReleaseMessagePersistence for ReleaseMessageSqlPersistence {
         Ok(model.into())
     }
 
+    async fn find_latest_by_message(
+        &self,
+        message: &str,
+    ) -> anyhow::Result<Option<StoredReleaseMessage>> {
+        let result = apollo_release_message::Entity::find()
+            .filter(apollo_release_message::Column::Message.eq(message))
+            .order_by_desc(apollo_release_message::Column::Id)
+            .one(&self.db)
+            .await?;
+        Ok(result.map(|m| m.into()))
+    }
+
     async fn get_latest(&self) -> anyhow::Result<Option<StoredReleaseMessage>> {
         let result = apollo_release_message::Entity::find()
             .order_by_desc(apollo_release_message::Column::Id)
@@ -69,6 +81,13 @@ impl ReleaseMessagePersistence for ReleaseMessageSqlPersistence {
             .all(&self.db)
             .await?;
         Ok(results.into_iter().map(|m| m.into()).collect())
+    }
+
+    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+        apollo_release_message::Entity::delete_by_id(id)
+            .exec(&self.db)
+            .await?;
+        Ok(())
     }
 
     async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {

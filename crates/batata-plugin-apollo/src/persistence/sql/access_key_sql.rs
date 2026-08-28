@@ -20,7 +20,7 @@ impl AccessKeySqlPersistence {
 impl From<StoredAccessKey> for apollo_access_key::ActiveModel {
     fn from(access_key: StoredAccessKey) -> Self {
         Self {
-            id: Set(access_key.id),
+            id: if access_key.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(access_key.id) },
             app_id: Set(access_key.app_id),
             secret: Set(access_key.secret),
             mode: Set(access_key.mode),

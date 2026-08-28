@@ -8,7 +8,7 @@ pub struct Model {
     pub id: i32,
     pub namespace_id: i32,
     pub key: String,
-    pub r#type: i8,
+    pub r#type: i16,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     pub value: String,
     pub comment: Option<String>,

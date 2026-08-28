@@ -20,7 +20,7 @@ impl NamespaceSqlPersistence {
 impl From<StoredNamespace> for apollo_namespace::ActiveModel {
     fn from(namespace: StoredNamespace) -> Self {
         Self {
-            id: Set(namespace.id),
+            id: if namespace.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(namespace.id) },
             app_id: Set(namespace.app_id),
             cluster_name: Set(namespace.cluster_name),
             namespace_name: Set(namespace.namespace_name),
@@ -104,6 +104,15 @@ impl NamespacePersistence for NamespaceSqlPersistence {
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredNamespace>> {
         let results = apollo_namespace::Entity::find()
             .filter(apollo_namespace::Column::AppId.eq(app_id))
+            .filter(apollo_namespace::Column::IsDeleted.eq(false))
+            .order_by_asc(apollo_namespace::Column::Id)
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().map(|m| m.into()).collect())
+    }
+
+    async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>> {
+        let results = apollo_namespace::Entity::find()
             .filter(apollo_namespace::Column::IsDeleted.eq(false))
             .order_by_asc(apollo_namespace::Column::Id)
             .all(&self.db)

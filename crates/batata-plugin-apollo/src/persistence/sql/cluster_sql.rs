@@ -20,7 +20,7 @@ impl ClusterSqlPersistence {
 impl From<StoredCluster> for apollo_cluster::ActiveModel {
     fn from(cluster: StoredCluster) -> Self {
         Self {
-            id: Set(cluster.id),
+            id: if cluster.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(cluster.id) },
             name: Set(cluster.name),
             app_id: Set(cluster.app_id),
             parent_cluster_id: Set(cluster.parent_cluster_id),

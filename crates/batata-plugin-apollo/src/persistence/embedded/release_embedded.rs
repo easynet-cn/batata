@@ -179,6 +179,71 @@ impl ReleasePersistence for ReleaseEmbedded {
         Ok(())
     }
 
+    async fn update(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        let cf = self.cf()?;
+        let bytes = bincode::serialize(&release)?;
+
+        // Rewrite the row and its namespace index.
+        self.db
+            .put_cf(cf, Self::key_by_id(release.id).as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        self.db
+            .put_cf(
+                cf,
+                Self::index_key(&release.app_id, &release.cluster_name, &release.namespace_name, release.id)
+                    .as_bytes(),
+                &bytes,
+            )
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Refresh the latest pointer when the previously-latest row changed.
+        let latest_key = Self::key_latest(&release.app_id, &release.cluster_name, &release.namespace_name);
+        let is_current_latest = match self.db.get_cf(cf, latest_key.as_bytes())? {
+            Some(data) => bincode::deserialize::<StoredRelease>(&data)?.id == release.id,
+            None => false,
+        };
+        if is_current_latest {
+            if !release.is_deleted && !release.is_abandoned {
+                self.db
+                    .put_cf(cf, latest_key.as_bytes(), &bytes)
+                    .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+            } else {
+                // Fall back to the newest remaining active release.
+                let actives = ReleasePersistence::list_active(
+                    self,
+                    &release.app_id,
+                    &release.cluster_name,
+                    &release.namespace_name,
+                )
+                .await?;
+                match actives.into_iter().max_by_key(|r| r.id) {
+                    Some(newest) => {
+                        let b = bincode::serialize(&newest)?;
+                        self.db
+                            .put_cf(cf, latest_key.as_bytes(), &b)
+                            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+                    }
+                    None => {
+                        self.db
+                            .delete_cf(cf, latest_key.as_bytes())
+                            .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                    }
+                }
+            }
+        }
+        Ok(release)
+    }
+
+    async fn list_active(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        // list_by_namespace already filters abandoned/deleted.
+        ReleasePersistence::list_by_namespace(self, app_id, cluster_name, namespace_name).await
+    }
+
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>> {
         let cf = self.cf()?;
         let prefix = "release:";

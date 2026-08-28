@@ -20,7 +20,7 @@ impl GrayReleaseSqlPersistence {
 impl From<StoredGrayReleaseRule> for apollo_gray_release_rule::ActiveModel {
     fn from(rule: StoredGrayReleaseRule) -> Self {
         Self {
-            id: Set(rule.id),
+            id: if rule.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(rule.id) },
             app_id: Set(rule.app_id),
             cluster_name: Set(rule.cluster_name),
             namespace_name: Set(rule.namespace_name),

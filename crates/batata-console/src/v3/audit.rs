@@ -64,7 +64,7 @@ pub struct AuditStats {
 
 /// Map op_type code to human-readable operation type
 fn map_op_type(op_type: &str) -> &str {
-    match op_type {
+    match op_type.trim() {
         "I" => "CREATE",
         "U" => "UPDATE",
         "D" => "DELETE",

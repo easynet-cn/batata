@@ -6,7 +6,7 @@ pub struct StoredItem {
     pub namespace_id: i32,
     pub key: String,
     #[serde(rename = "type")]
-    pub r#type: i8,
+    pub r#type: i16,
     pub value: String,
     pub comment: Option<String>,
     pub line_num: i32,

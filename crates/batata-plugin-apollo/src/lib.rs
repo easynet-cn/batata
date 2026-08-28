@@ -7,6 +7,7 @@ pub mod entity;
 pub mod model;
 pub mod persistence;
 pub mod api;
+pub mod middleware;
 pub mod service;
 pub mod route;
 pub mod raft;

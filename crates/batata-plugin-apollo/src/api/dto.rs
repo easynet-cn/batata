@@ -49,7 +49,7 @@ pub struct ItemDTO {
     pub key: String,
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub r#type: Option<i8>,
+    pub r#type: Option<i16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -220,7 +220,7 @@ pub struct AccessKeyDTO {
     pub id: Option<i32>,
     pub app_id: String,
     pub secret: String,
-    pub mode: i8,
+    pub mode: i16,
     pub is_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_change_created_by: Option<String>,
@@ -239,7 +239,7 @@ pub struct ReleaseHistoryDTO {
     pub branch_name: String,
     pub release_id: i32,
     pub previous_release_id: i32,
-    pub operation: i8,
+    pub operation: i16,
     pub operation_context: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_change_created_by: Option<String>,
@@ -277,6 +277,8 @@ pub struct InstanceConfigDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<i32>,
     pub instance_id: i32,
+    #[serde(default)]
+    pub config_app_id: Option<String>,
     pub namespace_name: String,
     pub cluster_name: String,
     pub release_key: String,
@@ -440,4 +442,7 @@ pub struct NamespaceGrayReleaseDTO {
     /// 变更集（要应用到主分支的配置变更）
     #[serde(default)]
     pub change_sets: ItemChangeSets,
+    /// 合并后是否删除分支（上游 portal 默认 true）
+    #[serde(default)]
+    pub delete_branch: bool,
 }

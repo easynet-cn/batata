@@ -20,7 +20,7 @@ impl NamespaceLockSqlPersistence {
 impl From<StoredNamespaceLock> for apollo_namespace_lock::ActiveModel {
     fn from(lock: StoredNamespaceLock) -> Self {
         Self {
-            id: Set(lock.id),
+            id: if lock.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(lock.id) },
             app_id: Set(lock.app_id),
             cluster_name: Set(lock.cluster_name),
             namespace_name: Set(lock.namespace_name),

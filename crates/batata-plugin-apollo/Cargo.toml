@@ -31,7 +31,12 @@ sea-orm-migration = { workspace = true }
 config = { workspace = true }
 rocksdb = { workspace = true }
 base64 = "0.22.0"
+hmac = { workspace = true }
+rand = { workspace = true }
+sha1 = "0.10"
 
 [dev-dependencies]
 reqwest = { workspace = true }
 uuid = { workspace = true }
+tempfile = { workspace = true }
+actix-rt = { workspace = true }

@@ -20,7 +20,7 @@ impl AppSqlPersistence {
 impl From<StoredApp> for apollo_app::ActiveModel {
     fn from(app: StoredApp) -> Self {
         Self {
-            id: Set(0), // Will be auto-generated
+            id: sea_orm::ActiveValue::NotSet,
             app_id: Set(app.app_id),
             name: Set(app.name),
             org_id: Set(app.org_id),

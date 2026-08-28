@@ -20,7 +20,7 @@ impl InstanceSqlPersistence {
 impl From<StoredInstance> for apollo_instance::ActiveModel {
     fn from(instance: StoredInstance) -> Self {
         Self {
-            id: Set(instance.id),
+            id: if instance.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(instance.id) },
             app_id: Set(instance.app_id),
             cluster_name: Set(instance.cluster_name),
             data_center: Set(instance.data_center),
@@ -75,12 +75,12 @@ impl InstancePersistence for InstanceSqlPersistence {
                 // Create new instance
                 let active_model: apollo_instance::ActiveModel = instance.into();
                 let result = apollo_instance::Entity::insert(active_model)
-                    .exec(&self.db)
-                    .await?;
-                let model = apollo_instance::Entity::find_by_id(result.last_insert_id)
-                    .one(&self.db)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("Failed to fetch created instance"))?;
+            .exec(&self.db)
+            .await?;
+        let model = apollo_instance::Entity::find_by_id(result.last_insert_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Failed to fetch created instance"))?;
                 Ok(model.into())
             }
         }
