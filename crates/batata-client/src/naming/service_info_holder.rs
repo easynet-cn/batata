@@ -27,6 +27,7 @@ pub struct ServiceInfoHolder {
 }
 
 impl ServiceInfoHolder {
+    /// Create a new service info holder without failover persistence.
     pub fn new() -> Self {
         Self {
             service_info_map: DashMap::new(),

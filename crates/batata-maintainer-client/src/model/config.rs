@@ -1,4 +1,4 @@
-// Configuration management model types
+//! Configuration management model types
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,14 +7,23 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
+    /// The `id` field.
     pub id: i64,
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `md5` field.
     pub md5: String,
+    /// The `type` field.
     pub r#type: String,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `create_time` field.
     pub create_time: i64,
+    /// The `modify_time` field.
     pub modify_time: i64,
 }
 
@@ -23,12 +32,19 @@ pub struct ConfigBasicInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDetailInfo {
     #[serde(flatten)]
+    /// The `config_basic_info` field.
     pub config_basic_info: ConfigBasicInfo,
+    /// The `content` field.
     pub content: String,
+    /// The `desc` field.
     pub desc: String,
+    /// The `encrypted_data_key` field.
     pub encrypted_data_key: String,
+    /// The `create_user` field.
     pub create_user: String,
+    /// The `create_ip` field.
     pub create_ip: String,
+    /// The `config_tags` field.
     pub config_tags: String,
 }
 
@@ -36,8 +52,11 @@ pub struct ConfigDetailInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
+    /// The `config_detail_info` field.
     pub config_detail_info: ConfigDetailInfo,
+    /// The `gray_name` field.
     pub gray_name: String,
+    /// The `gray_rule` field.
     pub gray_rule: String,
 }
 
@@ -46,10 +65,15 @@ pub struct ConfigGrayInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
     #[serde(flatten)]
+    /// The `config_basic_info` field.
     pub config_basic_info: ConfigBasicInfo,
+    /// The `src_ip` field.
     pub src_ip: String,
+    /// The `src_user` field.
     pub src_user: String,
+    /// The `op_type` field.
     pub op_type: String,
+    /// The `publish_type` field.
     pub publish_type: String,
 }
 
@@ -58,10 +82,15 @@ pub struct ConfigHistoryBasicInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
     #[serde(flatten)]
+    /// The `config_history_basic_info` field.
     pub config_history_basic_info: ConfigHistoryBasicInfo,
+    /// The `content` field.
     pub content: String,
+    /// The `encrypted_data_key` field.
     pub encrypted_data_key: String,
+    /// The `gray_name` field.
     pub gray_name: String,
+    /// The `ext_info` field.
     pub ext_info: String,
 }
 
@@ -69,12 +98,16 @@ pub struct ConfigHistoryDetailInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigListenerInfo {
+    /// The `query_type` field.
     pub query_type: String,
+    /// The `listeners_status` field.
     pub listeners_status: HashMap<String, String>,
 }
 
 impl ConfigListenerInfo {
+    /// The `QUERY_TYPE_CONFIG` constant.
     pub const QUERY_TYPE_CONFIG: &str = "config";
+    /// The `QUERY_TYPE_IP` constant.
     pub const QUERY_TYPE_IP: &str = "ip";
 }
 
@@ -82,10 +115,13 @@ impl ConfigListenerInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigCloneInfo {
+    /// The `config_id` field.
     pub config_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `target_group_name` field.
     pub target_group_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `target_data_id` field.
     pub target_data_id: Option<String>,
 }
 

@@ -7,11 +7,13 @@ use crate::entity::apollo_commit;
 use crate::persistence::shared::StoredCommit;
 use crate::persistence::traits::CommitPersistence;
 
+/// Represents the `CommitSqlPersistence` entity.
 pub struct CommitSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl CommitSqlPersistence {
+    /// Creates a new `CommitSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

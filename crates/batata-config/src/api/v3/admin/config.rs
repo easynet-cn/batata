@@ -1875,6 +1875,7 @@ async fn clone_config(
     model::common::Result::<ImportResult>::http_success(result)
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/config")
         .service(get_config)

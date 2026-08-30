@@ -35,6 +35,7 @@ pub struct HealthCheckEnableInterceptor {
 }
 
 impl HealthCheckEnableInterceptor {
+    /// Creates a new instance.
     pub fn new(config: Arc<HealthCheckConfig>) -> Self {
         Self { config }
     }
@@ -62,6 +63,7 @@ pub struct HealthCheckResponsibleInterceptor {
 }
 
 impl HealthCheckResponsibleInterceptor {
+    /// Creates a new instance.
     pub fn new(distro_mapper: Arc<DistroMapper>, local_address: String) -> Self {
         Self {
             distro_mapper,

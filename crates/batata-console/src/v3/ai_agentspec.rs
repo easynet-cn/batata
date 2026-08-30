@@ -1,5 +1,6 @@
-// Console AgentSpec management API endpoints
-// Aligned with Batata V3 Console API contract
+//! Console AgentSpec management API endpoints.
+//!
+//! Aligned with Batata V3 Console API contract.
 // Mirrors admin endpoints under /v3/console/ai/agentspecs with ConsoleApi security
 
 use std::sync::Arc;
@@ -237,10 +238,14 @@ async fn list_agentspecs(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleAgentSpecUploadForm {
+    /// Namespace the agent spec belongs to.
     #[serde(default)]
     pub namespace_id: String,
+    /// Name of the agent spec.
     pub agent_spec_name: String,
+    /// JSON-encoded agent spec card body.
     pub agent_spec_card: Option<String>,
+    /// Whether to overwrite an existing agent spec with the same name.
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -717,6 +722,7 @@ async fn update_scope(
     }
 }
 
+/// Register the AgentSpec management routes under `/ai/agentspecs`.
 pub fn routes() -> Scope {
     web::scope("/ai/agentspecs")
         .service(list_agentspecs)

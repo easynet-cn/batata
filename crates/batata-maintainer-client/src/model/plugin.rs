@@ -1,4 +1,4 @@
-// Plugin management model types matching Nacos PluginInfoVO / PluginDetailVO
+//! Plugin management model types matching Nacos PluginInfoVO / PluginDetailVO
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

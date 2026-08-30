@@ -79,7 +79,9 @@ pub struct GrpcServers {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Per-server state trackers for health aggregation.
     pub sdk_state: batata_core::ServerStateTracker,
+    /// `cluster_state` field.
     pub cluster_state: batata_core::ServerStateTracker,
+    /// `raft_state` field.
     pub raft_state: batata_core::ServerStateTracker,
     /// The naming service used by handlers.
     naming_service: Arc<NamingService>,

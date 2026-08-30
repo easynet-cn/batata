@@ -28,37 +28,58 @@ where
 }
 
 // Instance type constants
+/// Instance type: ephemeral (auto-registered).
 pub const INSTANCE_TYPE_EPHEMERAL: &str = "ephemeral";
+/// Instance type: persistent (manually managed).
 pub const INSTANCE_TYPE_PERSISTENT: &str = "persistent";
 
 // Preserved metadata keys (Nacos stores heartbeat timeouts as metadata, not top-level fields)
+/// Preserved metadata key: heartbeat interval.
 pub const PRESERVED_HEART_BEAT_INTERVAL: &str = "preserved.heart.beat.interval";
+/// Preserved metadata key: heartbeat timeout.
 pub const PRESERVED_HEART_BEAT_TIMEOUT: &str = "preserved.heart.beat.timeout";
+/// Preserved metadata key: IP delete timeout.
 pub const PRESERVED_IP_DELETE_TIMEOUT: &str = "preserved.ip.delete.timeout";
+/// Preserved metadata key: instance ID generator.
 pub const PRESERVED_INSTANCE_ID_GENERATOR: &str = "preserved.instance.id.generator";
 /// Preserved metadata key: registration source (e.g., "Dubbo", "SpringCloud").
 /// Set by client SDK to identify the registration framework. Server does not enforce this.
 pub const PRESERVED_REGISTER_SOURCE: &str = "preserved.register.source";
 
 // Request type constants
+/// Request type: register an instance.
 pub const REGISTER_INSTANCE: &str = "registerInstance";
+/// Request type: deregister an instance.
 pub const DE_REGISTER_INSTANCE: &str = "deregisterInstance";
+/// Request type: batch register instances.
 pub const BATCH_REGISTER_INSTANCE: &str = "batchRegisterInstance";
+/// Request type: batch deregister instances.
 pub const BATCH_DE_REGISTER_INSTANCE: &str = "batchDeregisterInstance";
 
 // Service instance information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `Instance` struct.
 pub struct Instance {
+    /// The `instance_id` field.
     pub instance_id: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `weight` field.
     pub weight: f64,
+    /// The `healthy` field.
     pub healthy: bool,
+    /// The `enabled` field.
     pub enabled: bool,
+    /// The `ephemeral` field.
     pub ephemeral: bool,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `metadata` field.
     pub metadata: HashMap<String, String>,
 }
 
@@ -79,6 +100,7 @@ pub fn generate_instance_id(ip: &str, port: i32, cluster_name: &str, service_nam
 }
 
 impl Instance {
+    /// Creates a new instance.
     pub fn new(ip: String, port: i32) -> Self {
         Self {
             ip,
@@ -139,15 +161,25 @@ impl Instance {
 // Service information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `Service` struct.
 pub struct Service {
+    /// The `name` field.
     pub name: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `clusters` field.
     pub clusters: String,
+    /// The `cache_millis` field.
     pub cache_millis: i64,
+    /// The `hosts` field.
     pub hosts: Vec<Instance>,
+    /// The `last_ref_time` field.
     pub last_ref_time: i64,
+    /// The `checksum` field.
     pub checksum: String,
+    /// The `all_ips` field.
     pub all_ips: bool,
+    /// The `reach_protection_threshold` field.
     pub reach_protection_threshold: bool,
     /// Service-level metadata (set via service create/update API)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -159,6 +191,7 @@ pub struct Service {
 }
 
 impl Service {
+    /// Creates a new instance.
     pub fn new(name: String, group_name: String) -> Self {
         Self {
             name,
@@ -180,23 +213,35 @@ impl Service {
 // Service list item
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `ServiceInfo` struct.
 pub struct ServiceInfo {
+    /// The `name` field.
     pub name: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `cluster_count` field.
     pub cluster_count: i32,
+    /// The `ip_count` field.
     pub ip_count: i32,
+    /// The `healthy_instance_count` field.
     pub healthy_instance_count: i32,
+    /// The `trigger_flag` field.
     pub trigger_flag: bool,
 }
 
 // Base naming request structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `NamingRequest` struct.
 pub struct NamingRequest {
     #[serde(flatten)]
+    /// The `request` field.
     pub request: Request,
+    /// The `namespace` field.
     pub namespace: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `group_name` field.
     pub group_name: String,
     #[serde(
         serialize_with = "serialize_naming_module",
@@ -206,6 +251,7 @@ pub struct NamingRequest {
 }
 
 impl NamingRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             request: Request::new(),
@@ -219,14 +265,19 @@ impl_request_trait!(base NamingRequest, request);
 // Instance registration/deregistration request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `InstanceRequest` struct.
 pub struct InstanceRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `type` field.
     pub r#type: String, // registerInstance or deregisterInstance
+    /// The `instance` field.
     pub instance: Instance,
 }
 
 impl InstanceRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -246,14 +297,19 @@ impl From<&Payload> for InstanceRequest {
 // Batch instance request for multiple instances
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `BatchInstanceRequest` struct.
 pub struct BatchInstanceRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `type` field.
     pub r#type: String,
+    /// The `instances` field.
     pub instances: Vec<Instance>,
 }
 
 impl BatchInstanceRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -273,14 +329,19 @@ impl From<&Payload> for BatchInstanceRequest {
 // Persistent instance request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `PersistentInstanceRequest` struct.
 pub struct PersistentInstanceRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `type` field.
     pub r#type: String,
+    /// The `instance` field.
     pub instance: Instance,
 }
 
 impl PersistentInstanceRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -300,15 +361,21 @@ impl From<&Payload> for PersistentInstanceRequest {
 // Service list request for listing services
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `ServiceListRequest` struct.
 pub struct ServiceListRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `page_no` field.
     pub page_no: i32,
+    /// The `page_size` field.
     pub page_size: i32,
+    /// The `selector` field.
     pub selector: String,
 }
 
 impl ServiceListRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -328,15 +395,21 @@ impl From<&Payload> for ServiceListRequest {
 // Service query request for querying service details
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `ServiceQueryRequest` struct.
 pub struct ServiceQueryRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `cluster` field.
     pub cluster: String,
+    /// The `healthy_only` field.
     pub healthy_only: bool,
+    /// The `udp_port` field.
     pub udp_port: i32,
 }
 
 impl ServiceQueryRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -356,14 +429,19 @@ impl From<&Payload> for ServiceQueryRequest {
 // Subscribe service request for subscribing to service changes
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `SubscribeServiceRequest` struct.
 pub struct SubscribeServiceRequest {
     #[serde(flatten)]
+    /// The `naming_request` field.
     pub naming_request: NamingRequest,
+    /// The `subscribe` field.
     pub subscribe: bool,
+    /// The `clusters` field.
     pub clusters: String,
 }
 
 impl SubscribeServiceRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             naming_request: NamingRequest::new(),
@@ -384,12 +462,18 @@ impl From<&Payload> for SubscribeServiceRequest {
 // Notify subscriber request for pushing service changes to subscribers
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `NotifySubscriberRequest` struct.
 pub struct NotifySubscriberRequest {
     #[serde(flatten)]
+    /// The `server_request` field.
     pub server_request: ServerRequest,
+    /// The `namespace` field.
     pub namespace: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_info` field.
     pub service_info: Service,
     #[serde(
         serialize_with = "serialize_naming_module",
@@ -399,6 +483,7 @@ pub struct NotifySubscriberRequest {
 }
 
 impl NotifySubscriberRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
@@ -435,8 +520,10 @@ impl From<&Payload> for NotifySubscriberRequest {
 // Fuzzy watch notify request base
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `FuzzyWatchNotifyRequest` struct.
 pub struct FuzzyWatchNotifyRequest {
     #[serde(flatten)]
+    /// The `server_request` field.
     pub server_request: ServerRequest,
     #[serde(
         serialize_with = "serialize_naming_module",
@@ -448,6 +535,7 @@ pub struct FuzzyWatchNotifyRequest {
 }
 
 impl FuzzyWatchNotifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
@@ -462,16 +550,24 @@ impl_request_trait!(base FuzzyWatchNotifyRequest, server_request);
 // Naming fuzzy watch request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `NamingFuzzyWatchRequest` struct.
 pub struct NamingFuzzyWatchRequest {
     #[serde(flatten)]
+    /// The `request` field.
     pub request: Request,
+    /// The `namespace` field.
     pub namespace: String,
+    /// The `service_name_pattern` field.
     pub service_name_pattern: String,
+    /// The `group_name_pattern` field.
     pub group_name_pattern: String,
     #[serde(default, alias = "groupKeyPattern")]
+    /// The `group_key_pattern` field.
     pub group_key_pattern: String,
     #[serde(default, alias = "receivedGroupKeys")]
+    /// The `received_service_keys` field.
     pub received_service_keys: HashSet<String>,
+    /// The `watch_type` field.
     pub watch_type: String,
     /// Jackson serializes Java `boolean isInitializing` as `initializing` (strips `is` prefix)
     #[serde(alias = "isInitializing")]
@@ -484,6 +580,7 @@ pub struct NamingFuzzyWatchRequest {
 }
 
 impl NamingFuzzyWatchRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             request: Request::new(),
@@ -503,7 +600,9 @@ impl From<&Payload> for NamingFuzzyWatchRequest {
 // Naming fuzzy watch change notify context
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `NamingContext` struct.
 pub struct NamingContext {
+    /// The `service_key` field.
     pub service_key: String,
     /// Named "changedType" in Java SDK (not "changeType")
     #[serde(rename = "changedType")]
@@ -513,15 +612,20 @@ pub struct NamingContext {
 // Naming fuzzy watch change notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `NamingFuzzyWatchChangeNotifyRequest` struct.
 pub struct NamingFuzzyWatchChangeNotifyRequest {
     #[serde(flatten)]
+    /// The `fuzzy_watch_notify_request` field.
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
+    /// The `service_key` field.
     pub service_key: String,
     #[serde(rename = "changedType")]
+    /// The `changed_type` field.
     pub changed_type: String,
 }
 
 impl NamingFuzzyWatchChangeNotifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             fuzzy_watch_notify_request: FuzzyWatchNotifyRequest::new(),
@@ -544,8 +648,10 @@ impl From<&Payload> for NamingFuzzyWatchChangeNotifyRequest {
 // Naming fuzzy watch sync request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// The `NamingFuzzyWatchSyncRequest` struct.
 pub struct NamingFuzzyWatchSyncRequest {
     #[serde(flatten)]
+    /// The `fuzzy_watch_notify_request` field.
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
     /// Combined pattern in format "namespace>>group>>service" (Java SDK field name)
     pub group_key_pattern: String,
@@ -553,15 +659,21 @@ pub struct NamingFuzzyWatchSyncRequest {
     #[serde(skip_serializing)]
     pub pattern_namespace: String,
     #[serde(skip_serializing)]
+    /// The `pattern_service_name` field.
     pub pattern_service_name: String,
     #[serde(skip_serializing)]
+    /// The `pattern_group_name` field.
     pub pattern_group_name: String,
+    /// The `total_batch` field.
     pub total_batch: i32,
+    /// The `current_batch` field.
     pub current_batch: i32,
+    /// The `contexts` field.
     pub contexts: HashSet<NamingContext>,
 }
 
 impl NamingFuzzyWatchSyncRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             fuzzy_watch_notify_request: FuzzyWatchNotifyRequest::new(),
@@ -583,13 +695,17 @@ impl From<&Payload> for NamingFuzzyWatchSyncRequest {
 // Instance response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `InstanceResponse` struct.
 pub struct InstanceResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `type` field.
     pub r#type: String,
 }
 
 impl InstanceResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -609,13 +725,17 @@ impl From<InstanceResponse> for Any {
 // Batch instance response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `BatchInstanceResponse` struct.
 pub struct BatchInstanceResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `type` field.
     pub r#type: String,
 }
 
 impl BatchInstanceResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -635,14 +755,19 @@ impl From<BatchInstanceResponse> for Any {
 // Service list response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `ServiceListResponse` struct.
 pub struct ServiceListResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `count` field.
     pub count: i32,
+    /// The `service_names` field.
     pub service_names: Vec<String>,
 }
 
 impl ServiceListResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -662,13 +787,17 @@ impl From<ServiceListResponse> for Any {
 // Query service response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `QueryServiceResponse` struct.
 pub struct QueryServiceResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `service_info` field.
     pub service_info: Service,
 }
 
 impl QueryServiceResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -688,13 +817,17 @@ impl From<QueryServiceResponse> for Any {
 // Subscribe service response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `SubscribeServiceResponse` struct.
 pub struct SubscribeServiceResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `service_info` field.
     pub service_info: Service,
 }
 
 impl SubscribeServiceResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -714,12 +847,15 @@ impl From<SubscribeServiceResponse> for Any {
 // Notify subscriber response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `NotifySubscriberResponse` struct.
 pub struct NotifySubscriberResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl NotifySubscriberResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -738,12 +874,15 @@ impl From<NotifySubscriberResponse> for Any {
 // Naming fuzzy watch response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `NamingFuzzyWatchResponse` struct.
 pub struct NamingFuzzyWatchResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl NamingFuzzyWatchResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -762,12 +901,15 @@ impl From<NamingFuzzyWatchResponse> for Any {
 // Naming fuzzy watch change notify response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `NamingFuzzyWatchChangeNotifyResponse` struct.
 pub struct NamingFuzzyWatchChangeNotifyResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl NamingFuzzyWatchChangeNotifyResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -786,12 +928,15 @@ impl From<NamingFuzzyWatchChangeNotifyResponse> for Any {
 // Naming fuzzy watch sync response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `NamingFuzzyWatchSyncResponse` struct.
 pub struct NamingFuzzyWatchSyncResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl NamingFuzzyWatchSyncResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -813,10 +958,15 @@ impl From<NamingFuzzyWatchSyncResponse> for Any {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ServiceQuery {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `clusters` field.
     pub clusters: String,
+    /// The `healthy_only` field.
     pub healthy_only: bool,
 }
 
@@ -824,20 +974,32 @@ pub struct ServiceQuery {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct InstanceRegisterForm {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `weight` field.
     pub weight: f64,
+    /// The `enabled` field.
     pub enabled: bool,
+    /// The `healthy` field.
     pub healthy: bool,
+    /// The `ephemeral` field.
     pub ephemeral: bool,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `metadata` field.
     pub metadata: Option<String>,
 }
 
 impl InstanceRegisterForm {
+    /// Converts to instance.
     pub fn to_instance(&self) -> Instance {
         let metadata: HashMap<String, String> = self
             .metadata
@@ -875,12 +1037,19 @@ impl InstanceRegisterForm {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HeartbeatForm {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `beat` field.
     pub beat: Option<String>,
 }
 
@@ -889,15 +1058,21 @@ pub struct HeartbeatForm {
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateClusterForm {
     #[serde(alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(alias = "groupName")]
+    /// The `group_name` field.
     pub group_name: Option<String>,
     #[serde(alias = "serviceName")]
+    /// The `service_name` field.
     pub service_name: String,
     #[serde(alias = "clusterName")]
+    /// The `cluster_name` field.
     pub cluster_name: String,
     #[serde(alias = "healthChecker")]
+    /// The `health_checker` field.
     pub health_checker: Option<HealthCheckerConfigForm>,
+    /// The `metadata` field.
     pub metadata: Option<HashMap<String, String>>,
 }
 
@@ -906,14 +1081,20 @@ pub struct CreateClusterForm {
 #[serde(default, rename_all = "camelCase")]
 pub struct HealthCheckerConfigForm {
     #[serde(default = "default_health_check_type")]
+    /// The `type` field.
     pub r#type: String,
     #[serde(alias = "checkPort")]
+    /// The `check_port` field.
     pub check_port: Option<i32>,
     #[serde(alias = "useInstancePort")]
+    /// The `use_instance_port` field.
     pub use_instance_port: Option<bool>,
+    /// The `path` field.
     pub path: Option<String>,
+    /// The `headers` field.
     pub headers: Option<String>,
     #[serde(alias = "expectedCode")]
+    /// The `expected_code` field.
     pub expected_code: Option<String>,
 }
 

@@ -24,12 +24,14 @@ use super::store::JsonStore;
 const ROW_PREFIX: &str = "rm_id:";
 const KEY_PREFIX: &str = "rm:";
 
+/// Represents the `ReleaseMessageEmbedded` entity.
 pub struct ReleaseMessageEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl ReleaseMessageEmbedded {
+    /// Creates a new `ReleaseMessageEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

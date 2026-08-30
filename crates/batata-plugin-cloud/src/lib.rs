@@ -4,6 +4,8 @@
 //! - Kubernetes service sync (bidirectional)
 //! - Prometheus service discovery
 
+#![warn(missing_docs)]
+
 pub mod kubernetes;
 pub mod model;
 pub mod prometheus;

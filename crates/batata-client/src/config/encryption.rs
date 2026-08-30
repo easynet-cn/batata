@@ -19,6 +19,7 @@ pub struct LocalEncryptedDataKeyProcessor {
 }
 
 impl LocalEncryptedDataKeyProcessor {
+    /// Create a new encrypted data key processor for the given environment.
     pub fn new(env_name: String) -> Self {
         let base_path = Self::get_base_path();
         Self {
@@ -28,6 +29,7 @@ impl LocalEncryptedDataKeyProcessor {
         }
     }
 
+    /// Create a processor with an explicit snapshot switch.
     pub fn with_snapshot_switch(env_name: String, snapshot_switch: SnapshotSwitch) -> Self {
         let base_path = Self::get_base_path();
         Self {
@@ -178,6 +180,7 @@ pub struct SimpleEncryptionFilter {
 }
 
 impl SimpleEncryptionFilter {
+    /// Create a new encryption filter from a raw 32-byte-equivalent key.
     pub fn new(secret_key: Vec<u8>) -> Self {
         Self {
             secret_key,
@@ -185,6 +188,7 @@ impl SimpleEncryptionFilter {
         }
     }
 
+    /// Create a new encryption filter from a string key (padded/truncated to 32 bytes).
     pub fn new_from_string(key: &str) -> Self {
         let key_bytes = key.as_bytes().to_vec();
         // Pad or truncate to 32 bytes for AES-256

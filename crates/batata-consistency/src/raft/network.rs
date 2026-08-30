@@ -1,5 +1,6 @@
-// Raft network layer for gRPC-based inter-node communication
-// Implements openraft's network traits using tonic gRPC
+//! Raft network layer for gRPC-based inter-node communication.
+//!
+//! Implements openraft's network traits using tonic gRPC.
 
 use crate::bincode;
 use std::future::Future;
@@ -79,6 +80,7 @@ pub struct BatataRaftNetworkFactory {
 }
 
 impl BatataRaftNetworkFactory {
+    /// Create a factory using default network timeout configuration.
     pub fn new() -> Self {
         Self {
             network_config: RaftNetworkConfig::default(),
@@ -113,6 +115,7 @@ pub struct RaftNetworkConnection {
 }
 
 impl RaftNetworkConnection {
+    /// Create a new connection handle for the given remote address using default network timeouts.
     pub fn new(addr: String) -> Self {
         Self {
             addr,

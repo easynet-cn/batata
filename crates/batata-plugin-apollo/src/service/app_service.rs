@@ -5,11 +5,13 @@ use crate::persistence::shared::{StoredApp, StoredCluster, StoredNamespace};
 use crate::persistence::traits::{ApolloPersistenceService, AppPersistence, ClusterPersistence, NamespacePersistence};
 use chrono::Utc;
 
+/// Represents the `AppService` entity.
 pub struct AppService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl AppService {
+    /// Creates a new `AppService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
@@ -65,6 +67,7 @@ impl AppService {
         Ok(())
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, dto: AppDTO) -> Result<AppDTO, anyhow::Error> {
         let existing = AppPersistence::get(&*self.persistence, &dto.app_id).await?;
 
@@ -97,21 +100,25 @@ impl AppService {
         Ok(created.into())
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, app_id: &str) -> Result<Option<AppDTO>, anyhow::Error> {
         let stored = AppPersistence::get(&*self.persistence, app_id).await?;
         Ok(stored.map(|s| s.into()))
     }
 
+    /// Performs the `list` operation.
     pub async fn list(&self) -> Result<Vec<AppDTO>, anyhow::Error> {
         let stored_list = AppPersistence::list(&*self.persistence).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Returns the requested value.
     pub async fn get_by_ids(&self, app_ids: &[String]) -> Result<Vec<AppDTO>, anyhow::Error> {
         let stored_list = self.persistence.get_by_ids(app_ids).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Performs the `update` operation.
     pub async fn update(&self, app_id: &str, dto: AppDTO) -> Result<(), anyhow::Error> {
         let existing = AppPersistence::get(&*self.persistence, app_id).await?
             .ok_or_else(|| anyhow::anyhow!("App not found: {}", app_id))?;
@@ -137,6 +144,7 @@ impl AppService {
         Ok(())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, app_id: &str, _operator: &str) -> Result<(), anyhow::Error> {
         AppPersistence::delete(&*self.persistence, app_id).await?;
         Ok(())

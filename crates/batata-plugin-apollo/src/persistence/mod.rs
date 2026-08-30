@@ -1,7 +1,12 @@
+/// Embedded (in-memory) persistence backend.
 pub mod embedded;
+/// Shared storage types.
 pub mod shared;
+/// SQL persistence backend.
 pub mod sql;
+/// Trait implementations binding storage backends to the persistence traits.
 pub mod trait_impl;
+/// Persistence trait definitions.
 pub mod traits;
 
 pub use embedded::EmbeddedApolloPersistence;

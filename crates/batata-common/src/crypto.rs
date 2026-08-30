@@ -15,18 +15,23 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum CryptoError {
     #[error("Encryption failed: {0}")]
+    /// The `EncryptionFailed` variant.
     EncryptionFailed(String),
 
     #[error("Decryption failed: {0}")]
+    /// The `DecryptionFailed` variant.
     DecryptionFailed(String),
 
     #[error("Invalid key: {0}")]
+    /// The `InvalidKey` variant.
     InvalidKey(String),
 
     #[error("Invalid data: {0}")]
+    /// The `InvalidData` variant.
     InvalidData(String),
 
     #[error("Base64 decode error: {0}")]
+    /// The `Base64Error` variant.
     Base64Error(String),
 }
 

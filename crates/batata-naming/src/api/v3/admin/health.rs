@@ -164,6 +164,7 @@ async fn get_checkers(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
     Result::<Vec<CheckerInfo>>::http_success(checkers)
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/health")
         .service(update_health)

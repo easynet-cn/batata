@@ -36,9 +36,13 @@ use super::{
 /// - server_member_manager and persistence are None
 /// - console_datasource uses RemoteDataSource (HTTP calls to server)
 pub struct AppState {
+    /// The server configuration.
     pub configuration: Configuration,
+    /// Cluster membership manager, available in server/merged deployments.
     pub cluster_manager: Option<Arc<dyn ClusterManager>>,
+    /// Config subscription (long-poll) manager.
     pub config_subscriber_manager: Arc<dyn ConfigSubscriptionService>,
+    /// Data source backing the management console.
     pub console_datasource: Arc<dyn ConsoleDataSource>,
     /// OAuth2/OIDC provider for external authentication
     pub oauth_service: Option<Arc<dyn OAuthProvider>>,

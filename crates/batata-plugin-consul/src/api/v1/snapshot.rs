@@ -56,6 +56,7 @@ async fn restore_snapshot_persistent(
         .await
 }
 
+/// The `routes` function.
 pub fn routes() -> actix_web::Resource {
     web::resource("/snapshot")
         .route(web::get().to(save_snapshot))

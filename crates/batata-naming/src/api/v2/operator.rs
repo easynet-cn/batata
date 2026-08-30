@@ -28,6 +28,7 @@ use super::model::{NamingMetricsResponse, SwitchUpdateParam, SwitchesResponse};
 #[serde(rename_all = "camelCase")]
 pub struct MetricsParam {
     #[serde(default = "default_true", alias = "onlyStatus")]
+    /// The `only_status` value.
     pub only_status: bool,
 }
 
@@ -258,11 +259,13 @@ pub async fn get_metrics(
 // Plain handler functions for /v2/ns/ops/* dual-path registration (without attribute macros).
 // These delegate to the same logic as the macro-annotated handlers above.
 
+/// Returns the value of `get_switches_handler`.
 pub async fn get_switches_handler(data: web::Data<AppState>) -> impl Responder {
     let response = build_switches_response(&data.configuration);
     Result::<SwitchesResponse>::http_success(response)
 }
 
+/// Updates the `update_switches_handler` value.
 pub async fn update_switches_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
@@ -271,6 +274,7 @@ pub async fn update_switches_handler(
     do_update_switches(&req, &data, &form).await
 }
 
+/// Returns the value of `get_metrics_handler`.
 pub async fn get_metrics_handler(
     req: HttpRequest,
     data: web::Data<AppState>,

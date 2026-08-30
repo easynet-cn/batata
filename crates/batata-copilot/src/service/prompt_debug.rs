@@ -10,11 +10,13 @@ use crate::agent::CopilotAgentManager;
 use crate::model::{PromptDebugRequest, StreamChunk};
 use crate::stream;
 
+/// Service for debugging a prompt by simulating the model against it.
 pub struct PromptDebugService {
     agent_manager: Arc<CopilotAgentManager>,
 }
 
 impl PromptDebugService {
+    /// Create a new prompt debug service.
     pub fn new(agent_manager: Arc<CopilotAgentManager>) -> Self {
         Self { agent_manager }
     }

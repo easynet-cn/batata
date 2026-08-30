@@ -16,169 +16,297 @@ use serde_json::Value;
 pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
 
 // Client protocol version
+/// The client protocol version.
 pub const CLIENT_VERSION: &str = "3.0.0";
+/// The protocol version that transmits data in the request body.
 pub const DATA_IN_BODY_VERSION: i32 = 204;
 
 // Header and parameter keys
+/// Header key: application name.
 pub const APPNAME: &str = "AppName";
+/// Header key: client version.
 pub const CLIENT_VERSION_KEY: &str = "ClientVersion";
+/// Header key: client IP.
 pub const CLIENT_IP: &str = "ClientIp";
+/// Placeholder for an unknown application name.
 pub const UNKNOWN_APP: &str = "UnknownApp";
+/// Parameter key: data ID.
 pub const DATA_ID: &str = "dataId";
+/// Parameter key: tenant.
 pub const TENANT: &str = "tenant";
+/// Parameter key: group.
 pub const GROUP: &str = "group";
+/// Parameter key: group name (alternate key).
 pub const GROUP_NAME: &str = "groupName";
+/// Parameter key: namespace ID.
 pub const NAMESPACE_ID: &str = "namespaceId";
+/// Parameter key: target namespace ID.
 pub const TARGET_NAMESPACE_ID: &str = "targetNamespaceId";
 
 // HTTP headers
+/// HTTP header: last modified time.
 pub const LAST_MODIFIED: &str = "Last-Modified";
+/// HTTP header: accepted encodings.
 pub const ACCEPT_ENCODING: &str = "Accept-Encoding";
+/// HTTP header: content encoding.
 pub const CONTENT_ENCODING: &str = "Content-Encoding";
+/// HTTP header: config listening probe request.
 pub const PROBE_MODIFY_REQUEST: &str = "Listening-Configs";
+/// HTTP header: config probe modify response.
 pub const PROBE_MODIFY_RESPONSE: &str = "Probe-Modify-Response";
+/// HTTP header: new config probe modify response.
 pub const PROBE_MODIFY_RESPONSE_NEW: &str = "Probe-Modify-Response-New";
+/// Value indicating zipped (compressed) content.
 pub const USE_ZIP: &str = "true";
+/// HTTP header: content MD5 checksum.
 pub const CONTENT_MD5: &str = "Content-MD5";
+/// HTTP header: config version.
 pub const CONFIG_VERSION: &str = "Config-Version";
+/// HTTP header: config type.
 pub const CONFIG_TYPE: &str = "Config-Type";
+/// HTTP header: encrypted data key.
 pub const ENCRYPTED_DATA_KEY: &str = "Encrypted-Data-Key";
+/// HTTP header: if-modified-since.
 pub const IF_MODIFIED_SINCE: &str = "If-Modified-Since";
+/// HTTP header: client spacing interval.
 pub const SPACING_INTERVAL: &str = "client-spacing-interval";
+/// HTTP header: client application name.
 pub const CLIENT_APPNAME_HEADER: &str = "Client-AppName";
+/// HTTP header: client request timestamp.
 pub const CLIENT_REQUEST_TS_HEADER: &str = "Client-RequestTS";
+/// HTTP header: client request token.
 pub const CLIENT_REQUEST_TOKEN_HEADER: &str = "Client-RequestToken";
+/// HTTP header: VIP server tag.
 pub const VIPSERVER_TAG: &str = "Vipserver-Tag";
+/// HTTP header: Amory tag.
 pub const AMORY_TAG: &str = "Amory-Tag";
+/// HTTP header: location tag.
 pub const LOCATION_TAG: &str = "Location-Tag";
+/// HTTP header: charset.
 pub const CHARSET_KEY: &str = "charset";
+/// HTTP header: notify flag.
 pub const NOTIFY_HEADER: &str = "notify";
 
 // API paths
+/// Base path for config service APIs.
 pub const BASE_PATH: &str = "/v1/cs";
+/// Path for config controller APIs.
 pub const CONFIG_CONTROLLER_PATH: &str = "/v1/cs/configs";
 
 // Auth tokens
+/// Parameter key: token.
 pub const TOKEN: &str = "token";
+/// Parameter key: access token.
 pub const ACCESS_TOKEN: &str = "accessToken";
+/// Parameter key: token TTL.
 pub const TOKEN_TTL: &str = "tokenTtl";
+/// Parameter key: global admin flag.
 pub const GLOBAL_ADMIN: &str = "globalAdmin";
+/// Parameter key: username.
 pub const USERNAME: &str = "username";
+/// Parameter key: token refresh window.
 pub const TOKEN_REFRESH_WINDOW: &str = "tokenRefreshWindow";
 
 // Port offsets
+/// Default port offset for the SDK gRPC service.
 pub const SDK_GRPC_PORT_DEFAULT_OFFSET: u16 = 1000;
+/// Default port offset for the cluster gRPC service.
 pub const CLUSTER_GRPC_PORT_DEFAULT_OFFSET: u16 = 1001;
 
 // Timeouts and intervals
+/// Async address update interval in seconds.
 pub const ASYNC_UPDATE_ADDRESS_INTERVAL: i32 = 300;
+/// Polling interval time in seconds.
 pub const POLLING_INTERVAL_TIME: i32 = 15;
+/// One-time operation timeout in milliseconds.
 pub const ONCE_TIMEOUT: i64 = 2000;
+/// Socket timeout in milliseconds.
 pub const SO_TIMEOUT: i64 = 60000;
+/// Config long-poll timeout in milliseconds.
 pub const CONFIG_LONG_POLL_TIMEOUT: i64 = 30000;
+/// Minimum config long-poll timeout in milliseconds.
 pub const MIN_CONFIG_LONG_POLL_TIMEOUT: i64 = 10000;
+/// Config retry interval in milliseconds.
 pub const CONFIG_RETRY_TIME: i64 = 2000;
+/// Maximum retry count.
 pub const MAX_RETRY: i32 = 3;
+/// Receive wait timeout in milliseconds.
 pub const RECV_WAIT_TIMEOUT: i64 = ONCE_TIMEOUT * 5;
+/// Default heartbeat timeout in milliseconds.
 pub const DEFAULT_HEART_BEAT_TIMEOUT: i64 = 15 * 1000;
+/// Default IP delete timeout in milliseconds.
 pub const DEFAULT_IP_DELETE_TIMEOUT: i64 = 30 * 1000;
+/// Default heartbeat interval in milliseconds.
 pub const DEFAULT_HEART_BEAT_INTERVAL: i64 = 5 * 1000;
+/// Default redo delay in milliseconds.
 pub const DEFAULT_REDO_DELAY_TIME: i64 = 3000;
+/// Default redo thread count.
 pub const DEFAULT_REDO_THREAD_COUNT: i32 = 1;
 
 // Flow control
+/// Flow control threshold.
 pub const FLOW_CONTROL_THRESHOLD: i32 = 20;
+/// Flow control slot size.
 pub const FLOW_CONTROL_SLOT: i32 = 10;
+/// Flow control interval in milliseconds.
 pub const FLOW_CONTROL_INTERVAL: i32 = 1000;
+/// Default protection threshold for service health.
 pub const DEFAULT_PROTECT_THRESHOLD: f32 = 0.0;
+/// Maximum atomic batch size.
 pub const ATOMIC_MAX_SIZE: i32 = 1000;
 
 // Separators
+/// Line separator used in batched payloads.
 pub const LINE_SEPARATOR: &str = "\u{1}";
+/// Word separator used in batched payloads.
 pub const WORD_SEPARATOR: &str = "\u{2}";
+/// Line separator for long-polling responses.
 pub const LONGPOLLING_LINE_SEPARATOR: &str = "\r\n";
+/// Separator between service info fields.
 pub const SERVICE_INFO_SPLITER: &str = "@@";
+/// Expected number of segments when splitting service info.
 pub const SERVICE_INFO_SPLIT_COUNT: i32 = 2;
+/// Separator in naming instance IDs.
 pub const NAMING_INSTANCE_ID_SPLITTER: &str = "#";
+/// Expected number of segments in a naming instance ID.
 pub const NAMING_INSTANCE_ID_SEG_COUNT: i32 = 4;
+/// Separator in naming HTTP header values.
 pub const NAMING_HTTP_HEADER_SPLITTER: &str = "\\|";
+/// Separator between fuzzy watch patterns.
 pub const FUZZY_WATCH_PATTERN_SPLITTER: &str = ">>";
+/// Colon separator.
 pub const COLON: &str = ":";
+/// Line break.
 pub const LINE_BREAK: &str = "\n";
+/// Pound (hash) separator.
 pub const POUND: &str = "#";
+/// Dot separator.
 pub const DOT: &str = ".";
 
 // Weight validation constants
+/// Maximum allowed instance weight.
 pub const MAX_WEIGHT_VALUE: f64 = 10000.0;
+/// Minimum positive instance weight.
 pub const MIN_POSITIVE_WEIGHT_VALUE: f64 = 0.01;
+/// Minimum instance weight (zero).
 pub const MIN_WEIGHT_VALUE: f64 = 0.0;
+/// Default instance weight.
 pub const DEFAULT_INSTANCE_WEIGHT: f64 = 1.0;
 
 // Default values
+/// Default cluster name.
 pub const DEFAULT_CLUSTER_NAME: &str = "DEFAULT";
+/// Whether to parse cloud namespaces by default.
 pub const DEFAULT_USE_CLOUD_NAMESPACE_PARSING: bool = true;
+/// Default value for RAM info parsing.
 pub const DEFAULT_USE_RAM_INFO_PARSING: &str = "true";
+/// Default instance ID generator.
 pub const DEFAULT_INSTANCE_ID_GENERATOR: &str = "simple";
+/// Snowflake instance ID generator.
 pub const SNOWFLAKE_INSTANCE_ID_GENERATOR: &str = "snowflake";
 
 // Patterns
+/// Regex matching a positive integer.
 pub const NUMBER_PATTERN_STRING: &str = "^\\d+$";
+/// Regex matching any string.
 pub const ANY_PATTERN: &str = ".*";
+/// Pattern matching all values.
 pub const ALL_PATTERN: &str = "*";
+/// Regex validating a cluster name.
 pub const CLUSTER_NAME_PATTERN_STRING: &str = "^[0-9a-zA-Z-]+$";
 
 // Domain names
+/// Default config domain name.
 pub const DEFAULT_DOMAINNAME: &str = "commonconfig.config-host.taobao.com";
+/// Daily config domain name.
 pub const DAILY_DOMAINNAME: &str = "commonconfig.taobao.net";
+/// Empty string constant.
 pub const NULL: &str = "";
+/// String representation of null.
 pub const NULL_STRING: &str = "null";
+/// Default character encoding.
 pub const ENCODE: &str = "UTF-8";
+/// Map file name.
 pub const MAP_FILE: &str = "map-file.js";
+/// HTTP prefix.
 pub const HTTP_PREFIX: &str = "http";
 
 // Redirect codes
+/// HTTP redirect status code.
 pub const WRITE_REDIRECT_CODE: i32 = 307;
 
 // Module types
+/// Module type key: client module type.
 pub const CLIENT_MODULE_TYPE: &str = "clientModuleType";
+/// Module name: config.
 pub const CONFIG_MODULE: &str = "config";
+/// Module name: naming.
 pub const NAMING_MODULE: &str = "naming";
+/// Module name: lock.
 pub const LOCK_MODULE: &str = "lock";
+/// Module name: internal.
 pub const INTERNAL_MODULE: &str = "internal";
+/// Module name: AI.
 pub const AI_MODULE: &str = "ai";
+/// Context type: CMDB.
 pub const CMDB_CONTEXT_TYPE: &str = "CMDB";
 
 // Connection labels
+/// Label key for application connection labels.
 pub const APP_CONN_LABELS_KEY: &str = "batata.app.conn.labels";
+/// Label key for preferred connection labels.
 pub const APP_CONN_LABELS_PREFERRED: &str = "nacos_app_conn_labels_preferred";
+/// Prefix for application connection labels.
 pub const APP_CONN_PREFIX: &str = "app_";
+/// Label key for config gray.
 pub const CONFIG_GRAY_LABEL: &str = "batata.config.gray.label";
+/// Label key: instance weight.
 pub const WEIGHT: &str = "weight";
+/// Label key: properties.
 pub const PROPERTIES_KEY: &str = "properties";
+/// Label key: JVM info.
 pub const JVM_KEY: &str = "jvm";
+/// Label key: environment info.
 pub const ENV_KEY: &str = "env";
 
 // Fuzzy watch types
+/// Fuzzy watch event: initial notify.
 pub const FUZZY_WATCH_INIT_NOTIFY: &str = "FUZZY_WATCH_INIT_NOTIFY";
+/// Fuzzy watch event: finish initial notify.
 pub const FINISH_FUZZY_WATCH_INIT_NOTIFY: &str = "FINISH_FUZZY_WATCH_INIT_NOTIFY";
+/// Fuzzy watch event: diff sync notify.
 pub const FUZZY_WATCH_DIFF_SYNC_NOTIFY: &str = "FUZZY_WATCH_DIFF_SYNC_NOTIFY";
+/// Fuzzy watch event: resource changed.
 pub const FUZZY_WATCH_RESOURCE_CHANGED: &str = "FUZZY_WATCH_RESOURCE_CHANGED";
+/// Watch action: start watching.
 pub const WATCH_TYPE_WATCH: &str = "WATCH";
+/// Watch action: cancel watching.
 pub const WATCH_TYPE_CANCEL_WATCH: &str = "CANCEL_WATCH";
 
 // Event types
+/// Event: add config.
 pub const ADD_CONFIG: &str = "ADD_CONFIG";
+/// Event: delete config.
 pub const DELETE_CONFIG: &str = "DELETE_CONFIG";
+/// Event: config changed.
 pub const CONFIG_CHANGED: &str = "CONFIG_CHANGED";
+/// Event: add service.
 pub const ADD_SERVICE: &str = "ADD_SERVICE";
+/// Event: delete service.
 pub const DELETE_SERVICE: &str = "DELETE_SERVICE";
+/// Event: instance changed.
 pub const INSTANCE_CHANGED: &str = "INSTANCE_CHANGED";
+/// Event: heartbeat.
 pub const HEART_BEAT: &str = "HEART_BEAT";
 
 // Error codes
+/// Serialization error code.
 pub const SERIALIZE_ERROR_CODE: i32 = 100;
+/// Deserialization error code.
 pub const DESERIALIZE_ERROR_CODE: i32 = 101;
+/// Data source lookup error code.
 pub const FIND_DATASOURCE_ERROR_CODE: i32 = 102;
+/// Table lookup error code.
 pub const FIND_TABLE_ERROR_CODE: i32 = 103;
 
 /// Generic pagination wrapper for API responses (re-exported from batata-common)
@@ -188,15 +316,21 @@ pub use batata_common::model::Page;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum NodeState {
+    /// The `variant` variant.
     Starting,
     #[default]
+    /// The `variant` variant.
     Up,
+    /// The `variant` variant.
     Suspicious,
+    /// The `variant` variant.
     Down,
+    /// The `variant` variant.
     Isolation,
 }
 
 impl NodeState {
+    /// The `as_str` method.
     pub fn as_str(&self) -> &'static str {
         match self {
             NodeState::Starting => "STARTING",
@@ -207,6 +341,7 @@ impl NodeState {
         }
     }
 
+    /// Returns whether is healthy.
     pub fn is_healthy(&self) -> bool {
         matches!(self, NodeState::Up)
     }
@@ -237,43 +372,73 @@ impl FromStr for NodeState {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: u16,
+    /// The `state` field.
     pub state: NodeState,
     #[serde(skip)]
+    /// The `extend_info` field.
     pub extend_info: Arc<RwLock<BTreeMap<String, serde_json::Value>>>,
+    /// The `address` field.
     pub address: String,
+    /// The `fail_access_cnt` field.
     pub fail_access_cnt: i32,
 }
 
 impl Member {
+    /// The `RAFT_PORT` constant.
     pub const RAFT_PORT: &str = "raftPort";
+    /// The `SITE_KEY` constant.
     pub const SITE_KEY: &str = "site";
+    /// The `AD_WEIGHT` constant.
     pub const AD_WEIGHT: &str = "adWeight";
+    /// The `WEIGHT` constant.
     pub const WEIGHT: &str = "weight";
+    /// The `LAST_REFRESH_TIME` constant.
     pub const LAST_REFRESH_TIME: &str = "lastRefreshTime";
+    /// The `VERSION` constant.
     pub const VERSION: &str = "version";
+    /// The `SUPPORT_REMOTE_C_TYPE` constant.
     pub const SUPPORT_REMOTE_C_TYPE: &str = "remoteConnectType";
+    /// The `READY_TO_UPGRADE` constant.
     pub const READY_TO_UPGRADE: &str = "readyToUpgrade";
+    /// The `SUPPORT_GRAY_MODEL` constant.
     pub const SUPPORT_GRAY_MODEL: &str = "supportGrayModel";
 
     // Multi-datacenter support constants
+    /// The `DATACENTER` constant.
     pub const DATACENTER: &str = "datacenter";
+    /// The `REGION` constant.
     pub const REGION: &str = "region";
+    /// The `ZONE` constant.
     pub const ZONE: &str = "zone";
+    /// The `LOCALITY_WEIGHT` constant.
     pub const LOCALITY_WEIGHT: &str = "localityWeight";
+    /// The `CLUSTER_GROUP` constant.
     pub const CLUSTER_GROUP: &str = "clusterGroup";
+    /// The `DEFAULT_DATACENTER` constant.
     pub const DEFAULT_DATACENTER: &str = "default";
+    /// The `DEFAULT_REGION` constant.
     pub const DEFAULT_REGION: &str = "default";
+    /// The `DEFAULT_ZONE` constant.
     pub const DEFAULT_ZONE: &str = "default";
 
+    /// The `TARGET_MEMBER_CONNECT_REFUSE_ERRMSG` constant.
     pub const TARGET_MEMBER_CONNECT_REFUSE_ERRMSG: &str = "Connection refused";
+    /// The `SERVER_PORT_PROPERTY` constant.
     pub const SERVER_PORT_PROPERTY: &str = "batata.server.main.port";
+    /// The `DEFAULT_SERVER_PORT` constant.
     pub const DEFAULT_SERVER_PORT: u16 = 8848;
+    /// The `DEFAULT_RAFT_OFFSET_PORT` constant.
     pub const DEFAULT_RAFT_OFFSET_PORT: u16 = 1000;
+    /// The `MEMBER_FAIL_ACCESS_CNT_PROPERTY` constant.
     pub const MEMBER_FAIL_ACCESS_CNT_PROPERTY: &str = "batata.core.member.fail-access-cnt";
+    /// The `DEFAULT_MEMBER_FAIL_ACCESS_CNT` constant.
     pub const DEFAULT_MEMBER_FAIL_ACCESS_CNT: i16 = 3;
 
+    /// Creates a new instance.
     pub fn new(ip: String, port: u16) -> Self {
         Self {
             ip: ip.clone(),
@@ -285,10 +450,12 @@ impl Member {
         }
     }
 
+    /// The `calculate_raft_port` method.
     pub fn calculate_raft_port(&self) -> u16 {
         self.port - Member::DEFAULT_RAFT_OFFSET_PORT
     }
 
+    /// Returns whether is healthy.
     pub fn is_healthy(&self) -> bool {
         self.state.is_healthy()
     }
@@ -405,6 +572,7 @@ pub struct MemberBuilder {
 }
 
 impl MemberBuilder {
+    /// Creates a new instance.
     pub fn new(ip: String, port: u16) -> Self {
         MemberBuilder {
             ip,
@@ -414,21 +582,25 @@ impl MemberBuilder {
         }
     }
 
+    /// The `ip` method.
     pub fn ip(mut self, ip: String) -> Self {
         self.ip = ip;
         self
     }
 
+    /// The `port` method.
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
+    /// The `node_state` method.
     pub fn node_state(mut self, node_state: NodeState) -> Self {
         self.node_state = node_state;
         self
     }
 
+    /// The `extend_info` method.
     pub fn extend_info(mut self, info: BTreeMap<String, Value>) -> Self {
         self.extend_info = Arc::new(RwLock::new(info));
         self
@@ -486,6 +658,7 @@ impl MemberBuilder {
         self
     }
 
+    /// The `build` method.
     pub fn build(self) -> Member {
         Member {
             ip: self.ip.clone(),

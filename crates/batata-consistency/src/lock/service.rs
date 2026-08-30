@@ -87,6 +87,7 @@ impl Default for LockStatsCollector {
 }
 
 impl MemoryLockService {
+    /// Create a new in-memory lock service with no background cleanup task.
     pub fn new() -> Self {
         Self {
             locks: Arc::new(DashMap::new()),
@@ -476,6 +477,7 @@ pub struct AutoRenewalTask {
 }
 
 impl AutoRenewalTask {
+    /// Create and return the auto-renewal task along with a stop-signal receiver.
     pub fn start(
         service: Arc<dyn DistributedLockService>,
         namespace: String,
@@ -498,6 +500,7 @@ impl AutoRenewalTask {
         (task, stop_rx)
     }
 
+    /// Run the renewal loop until a stop signal is received or a renewal permanently fails.
     pub async fn run(self, mut stop_rx: mpsc::Receiver<()>) {
         let mut interval = interval(Duration::from_millis(self.interval_ms));
 
@@ -541,6 +544,7 @@ impl AutoRenewalTask {
         }
     }
 
+    /// Signal the running renewal loop to stop.
     pub fn stop(&self) {
         let _ = self.stop_tx.try_send(());
     }

@@ -2,6 +2,7 @@ use actix_web::{Scope, web};
 
 use super::{capacity, config, history, listener, metrics, ops};
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> Scope {
     web::scope("/cs")
         .service(config::routes())

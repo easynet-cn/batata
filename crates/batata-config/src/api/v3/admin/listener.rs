@@ -115,6 +115,7 @@ async fn get_listener_by_ip(
     }
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/listener")
         .service(get_listener_state)

@@ -12,15 +12,18 @@ use crate::model::{PromptOptimizationRequest, StreamChunk};
 use crate::prompt::prompt_optimization;
 use crate::stream;
 
+/// Service for optimizing a prompt via the LLM.
 pub struct PromptOptimizationService {
     agent_manager: Arc<CopilotAgentManager>,
 }
 
 impl PromptOptimizationService {
+    /// Create a new prompt optimization service.
     pub fn new(agent_manager: Arc<CopilotAgentManager>) -> Self {
         Self { agent_manager }
     }
 
+    /// Optimize the given prompt, returning a stream of `StreamChunk` events.
     pub async fn optimize_stream(
         &self,
         request: PromptOptimizationRequest,

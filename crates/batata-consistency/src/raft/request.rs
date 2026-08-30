@@ -1,5 +1,6 @@
-// Raft request and response types
-// These are the application-level commands that go through Raft consensus
+//! Raft request and response types.
+//!
+//! These are the application-level commands that go through Raft consensus.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,20 +13,30 @@ pub(crate) fn default_user_source() -> String {
 /// Config delete history metadata embedded in ConfigRemove for atomic delete+history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigDeleteHistoryInfo {
+    /// Raw config content captured for the delete history record.
     pub content: String,
+    /// MD5 checksum of the captured content.
     pub md5: String,
+    /// Owning application name.
     pub app_name: String,
+    /// User that performed the delete.
     pub src_user: String,
+    /// Source IP that performed the delete.
     pub src_ip: String,
+    /// Extra info blob associated with the delete.
     pub ext_info: String,
+    /// Encrypted data key for secure configs.
     pub encrypted_data_key: String,
 }
 
 /// Config history metadata embedded in ConfigPublish for atomic publish+history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigHistoryInfo {
+    /// Operation type (e.g. `"I"`, `"U"`, `"D"`).
     pub op_type: String,
+    /// Optional publish type (e.g. `"formal"`).
     pub publish_type: Option<String>,
+    /// Optional extra info blob.
     pub ext_info: Option<String>,
 }
 
@@ -34,28 +45,45 @@ pub struct ConfigHistoryInfo {
 /// ~400 bytes because of this 17-field struct).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigPublishPayload {
+    /// Configuration data ID.
     pub data_id: String,
+    /// Configuration group.
     pub group: String,
+    /// Configuration tenant.
     pub tenant: String,
+    /// Raw configuration content.
     pub content: String,
+    /// MD5 checksum of the content.
     pub md5: String,
+    /// Optional configuration type (e.g. `"properties"`).
     pub config_type: Option<String>,
+    /// Optional owning application name.
     pub app_name: Option<String>,
+    /// Optional tag.
     pub tag: Option<String>,
+    /// Optional description.
     pub desc: Option<String>,
+    /// Optional source user that published the config.
     pub src_user: Option<String>,
+    /// Optional source IP that published the config.
     #[serde(default)]
     pub src_ip: Option<String>,
+    /// Optional use field.
     #[serde(default)]
     pub r#use: Option<String>,
+    /// Optional effect field.
     #[serde(default)]
     pub effect: Option<String>,
+    /// Optional schema field.
     #[serde(default)]
     pub schema: Option<String>,
+    /// Optional encrypted data key for secure configs.
     #[serde(default)]
     pub encrypted_data_key: Option<String>,
+    /// Optional expected MD5 for a compare-and-swap publish.
     #[serde(default)]
     pub cas_md5: Option<String>,
+    /// Optional config history metadata to insert atomically with the publish.
     #[serde(default)]
     pub history: Option<ConfigHistoryInfo>,
 }
@@ -63,78 +91,127 @@ pub struct ConfigPublishPayload {
 /// Payload for `RaftRequest::ConfigGrayPublish`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigGrayPublishPayload {
+    /// Configuration data ID.
     pub data_id: String,
+    /// Configuration group.
     pub group: String,
+    /// Configuration tenant.
     pub tenant: String,
+    /// Raw gray (beta) configuration content.
     pub content: String,
+    /// Gray (beta) rule name.
     pub gray_name: String,
+    /// Gray (beta) rule content.
     pub gray_rule: String,
+    /// Optional owning application name.
     pub app_name: Option<String>,
+    /// Optional encrypted data key for secure configs.
     pub encrypted_data_key: Option<String>,
+    /// Optional source user that published the gray config.
     pub src_user: Option<String>,
+    /// Optional source IP that published the gray config.
     pub src_ip: Option<String>,
+    /// Optional expected MD5 for a compare-and-swap publish.
     pub cas_md5: Option<String>,
 }
 
 /// Payload for `RaftRequest::ConfigHistoryInsert`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigHistoryInsertPayload {
+    /// History entry ID.
     pub id: i64,
+    /// Configuration data ID.
     pub data_id: String,
+    /// Configuration group.
     pub group: String,
+    /// Configuration tenant.
     pub tenant: String,
+    /// Raw configuration content at the time of the change.
     pub content: String,
+    /// MD5 checksum of the content.
     pub md5: String,
+    /// Optional owning application name.
     #[serde(default)]
     pub app_name: Option<String>,
+    /// Optional source user that made the change.
     pub src_user: Option<String>,
+    /// Optional source IP that made the change.
     pub src_ip: Option<String>,
+    /// Operation type (e.g. `"I"`, `"U"`, `"D"`).
     pub op_type: String,
+    /// Optional publish type (e.g. `"formal"`).
     #[serde(default)]
     pub publish_type: Option<String>,
+    /// Optional gray (beta) rule name.
     #[serde(default)]
     pub gray_name: Option<String>,
+    /// Optional extra info blob.
     #[serde(default)]
     pub ext_info: Option<String>,
+    /// Optional encrypted data key for secure configs.
     #[serde(default)]
     pub encrypted_data_key: Option<String>,
+    /// Epoch millis when the history entry was created.
     pub created_time: i64,
+    /// Epoch millis when the history entry was last modified.
     pub last_modified_time: i64,
 }
 
 /// Payload for `RaftRequest::PersistentInstanceRegister`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PersistentInstanceRegisterPayload {
+    /// Namespace identifier the instance belongs to.
     pub namespace_id: String,
+    /// Group name the instance belongs to.
     pub group_name: String,
+    /// Service name the instance belongs to.
     pub service_name: String,
+    /// Unique instance identifier.
     pub instance_id: String,
+    /// Instance IP address.
     pub ip: String,
+    /// Instance port.
     pub port: u16,
+    /// Load-balancing weight.
     pub weight: f64,
+    /// Whether the instance is currently healthy.
     pub healthy: bool,
+    /// Whether the instance is currently enabled.
     pub enabled: bool,
+    /// Pre-serialized JSON metadata blob for the instance.
     pub metadata: String,
+    /// Cluster name the instance is registered under.
     pub cluster_name: String,
 }
 
 /// Payload for `RaftRequest::PersistentInstanceUpdate`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PersistentInstanceUpdatePayload {
+    /// Namespace identifier the instance belongs to.
     pub namespace_id: String,
+    /// Group name the instance belongs to.
     pub group_name: String,
+    /// Service name the instance belongs to.
     pub service_name: String,
+    /// Unique instance identifier.
     pub instance_id: String,
+    /// Optional new IP address.
     pub ip: Option<String>,
+    /// Optional new port.
     pub port: Option<u16>,
+    /// Optional new load-balancing weight.
     pub weight: Option<f64>,
+    /// Optional new health flag.
     pub healthy: Option<bool>,
+    /// Optional new enabled flag.
     pub enabled: Option<bool>,
+    /// Optional new metadata blob.
     pub metadata: Option<String>,
 }
 
-/// All operations that go through Raft consensus
-/// Each variant represents a state machine command
+/// All operations that go through Raft consensus.
+///
+/// Each variant represents a state machine command.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RaftRequest {
     // ==================== Config Operations ====================
@@ -143,8 +220,11 @@ pub enum RaftRequest {
 
     /// Remove a configuration
     ConfigRemove {
+        /// Configuration data ID.
         data_id: String,
+        /// Configuration group.
         group: String,
+        /// Configuration tenant.
         tenant: String,
         /// Optional: insert delete history in the same Raft entry.
         /// Boxed so the ConfigRemove variant stays compact (history info is ~170B).
@@ -155,26 +235,38 @@ pub enum RaftRequest {
     // ==================== Namespace Operations ====================
     /// Create a new namespace
     NamespaceCreate {
+        /// Namespace identifier.
         namespace_id: String,
+        /// Human-readable namespace name.
         namespace_name: String,
+        /// Optional namespace description.
         namespace_desc: Option<String>,
     },
 
     /// Update an existing namespace
     NamespaceUpdate {
+        /// Namespace identifier.
         namespace_id: String,
+        /// Human-readable namespace name.
         namespace_name: String,
+        /// Optional namespace description.
         namespace_desc: Option<String>,
     },
 
     /// Delete a namespace
-    NamespaceDelete { namespace_id: String },
+    NamespaceDelete {
+        /// Namespace identifier.
+        namespace_id: String,
+    },
 
     // ==================== User Operations ====================
     /// Create a new user
     UserCreate {
+        /// Username.
         username: String,
+        /// Hashed password.
         password_hash: String,
+        /// Whether the account is enabled.
         enabled: bool,
         /// Identity provider for this account: "local", "oauth", or "ldap".
         /// Defaults to "local" when deserializing legacy log entries that
@@ -185,33 +277,55 @@ pub enum RaftRequest {
 
     /// Update user information
     UserUpdate {
+        /// Username.
         username: String,
+        /// Optional new hashed password.
         password_hash: Option<String>,
+        /// Optional new enabled flag.
         enabled: Option<bool>,
     },
 
     /// Delete a user
-    UserDelete { username: String },
+    UserDelete {
+        /// Username.
+        username: String,
+    },
 
     // ==================== Role Operations ====================
     /// Create a new role
-    RoleCreate { role: String, username: String },
+    RoleCreate {
+        /// Granted role name.
+        role: String,
+        /// Username the role is granted to.
+        username: String,
+    },
 
     /// Delete a role assignment
-    RoleDelete { role: String, username: String },
+    RoleDelete {
+        /// Granted role name.
+        role: String,
+        /// Username the role is revoked from.
+        username: String,
+    },
 
     // ==================== Permission Operations ====================
     /// Grant a permission to a role
     PermissionGrant {
+        /// Granted role name.
         role: String,
+        /// Resource the permission applies to.
         resource: String,
+        /// Action the permission allows.
         action: String,
     },
 
     /// Revoke a permission from a role
     PermissionRevoke {
+        /// Granted role name.
         role: String,
+        /// Resource the permission applies to.
         resource: String,
+        /// Action the permission allows.
         action: String,
     },
 
@@ -221,8 +335,11 @@ pub enum RaftRequest {
 
     /// Remove gray (beta) configs for a data_id/group/tenant (optionally by gray_name)
     ConfigGrayRemove {
+        /// Configuration data ID.
         data_id: String,
+        /// Configuration group.
         group: String,
+        /// Configuration tenant.
         tenant: String,
         /// If non-empty, only delete the specific gray config with this name
         #[serde(default)]
@@ -236,19 +353,29 @@ pub enum RaftRequest {
     // ==================== Config Tags Operations ====================
     /// Create or update config tags
     ConfigTagsUpdate {
+        /// Configuration data ID.
         data_id: String,
+        /// Configuration group.
         group: String,
+        /// Configuration tenant.
         tenant: String,
+        /// Tag value to set.
         tag: String,
+        /// Optional source IP that updated the tags.
         tag_src_ip: Option<String>,
+        /// Optional source user that updated the tags.
         tag_src_user: Option<String>,
     },
 
     /// Delete config tags
     ConfigTagsDelete {
+        /// Configuration data ID.
         data_id: String,
+        /// Configuration group.
         group: String,
+        /// Configuration tenant.
         tenant: String,
+        /// Tag value to delete.
         tag: String,
     },
 
@@ -258,9 +385,13 @@ pub enum RaftRequest {
 
     /// Deregister a persistent service instance
     PersistentInstanceDeregister {
+        /// Namespace identifier the instance belongs to.
         namespace_id: String,
+        /// Group name the instance belongs to.
         group_name: String,
+        /// Service name the instance belongs to.
         service_name: String,
+        /// Unique instance identifier.
         instance_id: String,
     },
 
@@ -270,35 +401,59 @@ pub enum RaftRequest {
     // ==================== Distributed Lock Operations (ADV-005) ====================
     /// Acquire a distributed lock
     LockAcquire {
+        /// Lock namespace.
         namespace: String,
+        /// Lock name.
         name: String,
+        /// Owner (client ID) acquiring the lock.
         owner: String,
+        /// Time-to-live in milliseconds.
         ttl_ms: u64,
+        /// Fence token for the acquiring owner.
         fence_token: u64,
+        /// Optional owner metadata.
         owner_metadata: Option<String>,
     },
 
     /// Release a distributed lock
     LockRelease {
+        /// Lock namespace.
         namespace: String,
+        /// Lock name.
         name: String,
+        /// Owner (client ID) releasing the lock.
         owner: String,
+        /// Optional expected fence token for fencing.
         fence_token: Option<u64>,
     },
 
     /// Renew a distributed lock
     LockRenew {
+        /// Lock namespace.
         namespace: String,
+        /// Lock name.
         name: String,
+        /// Owner (client ID) renewing the lock.
         owner: String,
+        /// Optional new TTL in milliseconds.
         ttl_ms: Option<u64>,
     },
 
     /// Force release a distributed lock (admin operation)
-    LockForceRelease { namespace: String, name: String },
+    LockForceRelease {
+        /// Lock namespace.
+        namespace: String,
+        /// Lock name.
+        name: String,
+    },
 
     /// Expire a lock (internal operation)
-    LockExpire { namespace: String, name: String },
+    LockExpire {
+        /// Lock namespace.
+        namespace: String,
+        /// Lock name.
+        name: String,
+    },
 
     // ==================== Health Check Status Operations ====================
     /// Replicate an active health-check probe result so every cluster node
@@ -306,22 +461,29 @@ pub enum RaftRequest {
     /// the entry to their local `InstanceCheckRegistry`. See
     /// `project_health_status_raft_sync_plan.md`.
     HealthCheckStatusUpdate {
+        /// Composite check key identifying the probe.
         check_key: String,
         /// "passing" / "warning" / "critical" — keep as a string here so the
         /// raft crate doesn't have to depend on batata-naming's CheckStatus.
         status: String,
+        /// Probe output text.
         output: String,
+        /// Probe response time in milliseconds.
         response_time_ms: u64,
+        /// Epoch millis of the probe.
         timestamp_ms: i64,
     },
 
     /// TTL-style status update (no consecutive-success/failure thresholding).
     /// Used by Consul session-bound checks (`/v1/agent/check/pass|fail|warn`).
     HealthCheckTtlUpdate {
+        /// Composite check key identifying the probe.
         check_key: String,
+        /// Probe status string ("passing" / "warning" / "critical").
         status: String,
         /// `None` keeps the existing output; `Some` replaces it.
         output: Option<String>,
+        /// Epoch millis of the update.
         timestamp_ms: i64,
     },
 

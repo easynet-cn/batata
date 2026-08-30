@@ -12,12 +12,14 @@ use crate::persistence::shared::StoredCommit;
 use crate::persistence::traits::CommitPersistence;
 use super::id_generator::IdGenerator;
 
+/// Represents the `CommitEmbedded` entity.
 pub struct CommitEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl CommitEmbedded {
+    /// Creates a new `CommitEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

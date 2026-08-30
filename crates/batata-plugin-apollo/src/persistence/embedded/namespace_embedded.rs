@@ -12,12 +12,14 @@ use crate::persistence::shared::StoredNamespace;
 use crate::persistence::traits::NamespacePersistence;
 use super::id_generator::IdGenerator;
 
+/// Represents the `NamespaceEmbedded` entity.
 pub struct NamespaceEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl NamespaceEmbedded {
+    /// Creates a new `NamespaceEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

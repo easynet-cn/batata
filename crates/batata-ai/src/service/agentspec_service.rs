@@ -36,6 +36,10 @@ pub struct AgentSpecOperationService {
 }
 
 impl AgentSpecOperationService {
+    /// Creates a new `AgentSpecOperationService`.
+    ///
+    /// Registers a default visibility service (with the optional auth plugin and
+    /// auth enabled flag) if one is not already present.
     pub fn new(
         persistence: Arc<dyn PersistenceService>,
         auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
@@ -260,6 +264,7 @@ impl AgentSpecOperationService {
     // Admin operations
     // ========================================================================
 
+    /// Returns the full AgentSpec metadata (governance info plus all version summaries).
     pub async fn get_detail(
         &self,
         namespace_id: &str,
@@ -294,6 +299,7 @@ impl AgentSpecOperationService {
         }))
     }
 
+    /// Returns the full content of a specific AgentSpec version.
     pub async fn get_version_detail(
         &self,
         namespace_id: &str,
@@ -343,6 +349,7 @@ impl AgentSpecOperationService {
         }))
     }
 
+    /// Deletes an AgentSpec and all of its versions.
     pub async fn delete(
         &self,
         namespace_id: &str,
@@ -365,6 +372,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Lists AgentSpecs in a namespace with optional filtering and pagination.
     pub async fn list(
         &self,
         namespace_id: &str,
@@ -396,6 +404,7 @@ impl AgentSpecOperationService {
         Ok(Page::new(page.total_count, page_no, page_size, items))
     }
 
+    /// Uploads an AgentSpec (creates the resource and a draft version).
     pub async fn upload(
         &self,
         namespace_id: &str,
@@ -476,6 +485,7 @@ impl AgentSpecOperationService {
         Ok(name.to_string())
     }
 
+    /// Creates a new draft version, optionally forking from an existing version.
     pub async fn create_draft(
         &self,
         namespace_id: &str,
@@ -567,6 +577,7 @@ impl AgentSpecOperationService {
         Ok(version)
     }
 
+    /// Overwrites the content of the current editing (draft) version.
     pub async fn update_draft(
         &self,
         namespace_id: &str,
@@ -600,6 +611,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Deletes the current draft version and clears the editing marker.
     pub async fn delete_draft(
         &self,
         namespace_id: &str,
@@ -628,6 +640,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Submits a draft version for review (draft → reviewing).
     pub async fn submit(
         &self,
         namespace_id: &str,
@@ -666,6 +679,7 @@ impl AgentSpecOperationService {
         Ok(version.to_string())
     }
 
+    /// Publishes a version (reviewing → online).
     pub async fn publish(
         &self,
         namespace_id: &str,
@@ -711,6 +725,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Replaces the label → version routing for an AgentSpec.
     pub async fn update_labels(
         &self,
         namespace_id: &str,
@@ -748,6 +763,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Updates the business tags of an AgentSpec.
     pub async fn update_biz_tags(
         &self,
         namespace_id: &str,
@@ -763,6 +779,7 @@ impl AgentSpecOperationService {
             .await
     }
 
+    /// Changes the online/offline status of an AgentSpec or a specific version.
     pub async fn change_online_status(
         &self,
         namespace_id: &str,
@@ -822,6 +839,7 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Updates the visibility scope (PUBLIC/PRIVATE) of an AgentSpec.
     pub async fn update_scope(
         &self,
         namespace_id: &str,
@@ -844,6 +862,7 @@ impl AgentSpecOperationService {
     // Client operations
     // ========================================================================
 
+    /// Queries a single online AgentSpec by label/version/latest (client runtime).
     pub async fn query(
         &self,
         namespace_id: &str,
@@ -909,6 +928,7 @@ impl AgentSpecOperationService {
         }))
     }
 
+    /// Searches for enabled AgentSpecs with at least one online version.
     pub async fn search(
         &self,
         namespace_id: &str,

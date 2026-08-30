@@ -5,17 +5,26 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "config_tags_relation")]
+/// ORM model for a row in the `config_tags_relation` table.
 pub struct Model {
+    /// Auto-increment ID.
     pub id: i64,
+    /// Tag name.
     pub tag_name: String,
+    /// Optional tag type.
     pub tag_type: Option<String>,
+    /// Associated config data ID.
     pub data_id: String,
+    /// Associated config group.
     pub group_id: String,
+    /// Associated tenant ID (namespace).
     pub tenant_id: Option<String>,
+    /// Primary key (unique row ID).
     #[sea_orm(primary_key)]
     pub nid: i64,
 }
 
+/// Relation definitions for the `config_tags_relation` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

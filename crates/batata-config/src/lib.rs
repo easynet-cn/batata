@@ -9,6 +9,8 @@
 //! - HTTP API handlers (V2, V3 admin, V3 client)
 //! - Config fuzzy watch manager
 
+#![warn(missing_docs)]
+
 pub mod api;
 pub mod handler;
 pub mod model;

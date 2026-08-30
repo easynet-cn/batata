@@ -14,6 +14,7 @@ pub struct ConsulCheckIndex {
 }
 
 impl ConsulCheckIndex {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self {
             service_index: DashMap::new(),

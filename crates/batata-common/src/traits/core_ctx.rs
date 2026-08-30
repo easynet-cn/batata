@@ -37,17 +37,24 @@ pub trait ConfigContext: Send + Sync {
 /// Cluster member information
 #[derive(Debug, Clone)]
 pub struct MemberInfo {
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: u16,
+    /// The `address` field.
     pub address: String,
+    /// The `state` field.
     pub state: MemberState,
 }
 
 /// Member state in the cluster
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberState {
+    /// The `Up` variant.
     Up,
+    /// The `Down` variant.
     Down,
+    /// The `Suspicious` variant.
     Suspicious,
 }
 

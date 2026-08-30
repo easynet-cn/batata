@@ -175,7 +175,9 @@ pub async fn find_matching_gray_config(
 
 // Handler for ConfigQueryRequest - queries configuration by dataId, group, tenant
 #[derive(Clone)]
+/// `ConfigQueryHandler` data model.
 pub struct ConfigQueryHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -364,9 +366,13 @@ impl PayloadHandler for ConfigQueryHandler {
 
 // Handler for ConfigPublishRequest - publishes/updates configuration
 #[derive(Clone)]
+/// `ConfigPublishHandler` data model.
 pub struct ConfigPublishHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
+/// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+/// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config changes to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
@@ -931,9 +937,13 @@ impl ConfigPublishHandler {
 
 // Handler for ConfigRemoveRequest - removes configuration
 #[derive(Clone)]
+/// `ConfigRemoveHandler` data model.
 pub struct ConfigRemoveHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
+/// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+/// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config removals to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
@@ -1242,7 +1252,9 @@ impl ConfigRemoveHandler {
 
 // Handler for ConfigBatchListenRequest - batch listen for config changes
 #[derive(Clone)]
+/// `ConfigBatchListenHandler` data model.
 pub struct ConfigBatchListenHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1409,7 +1421,9 @@ impl PayloadHandler for ConfigBatchListenHandler {
 // Handler for ConfigChangeNotifyRequest - notifies clients of config changes
 // Note: This is typically a server-push request, handler acknowledges receipt
 #[derive(Clone)]
+/// `ConfigChangeNotifyHandler` data model.
 pub struct ConfigChangeNotifyHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1438,7 +1452,9 @@ impl PayloadHandler for ConfigChangeNotifyHandler {
 
 // Handler for ConfigChangeClusterSyncRequest - syncs config changes across cluster nodes
 #[derive(Clone)]
+/// `ConfigChangeClusterSyncHandler` data model.
 pub struct ConfigChangeClusterSyncHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
     /// Fuzzy watch manager for notifying local fuzzy watchers
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
@@ -1605,9 +1621,13 @@ impl ConfigChangeClusterSyncHandler {
 
 // Handler for ConfigFuzzyWatchRequest - handles fuzzy pattern watch for configs
 #[derive(Clone)]
+/// `ConfigFuzzyWatchHandler` data model.
 pub struct ConfigFuzzyWatchHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
+/// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+/// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
 }
 
@@ -1707,7 +1727,9 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
 
 // Handler for ConfigFuzzyWatchChangeNotifyRequest - notifies fuzzy watch changes
 #[derive(Clone)]
+/// `ConfigFuzzyWatchChangeNotifyHandler` data model.
 pub struct ConfigFuzzyWatchChangeNotifyHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1734,8 +1756,11 @@ impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
 
 // Handler for ConfigFuzzyWatchSyncRequest - syncs fuzzy watch state
 #[derive(Clone)]
+/// `ConfigFuzzyWatchSyncHandler` data model.
 pub struct ConfigFuzzyWatchSyncHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
+/// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
@@ -1794,8 +1819,11 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
 
 // Handler for ClientConfigMetricRequest - collects client config metrics
 #[derive(Clone)]
+/// `ClientConfigMetricHandler` data model.
 pub struct ClientConfigMetricHandler {
+/// The `app_state` value.
     pub app_state: Arc<AppState>,
+/// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 

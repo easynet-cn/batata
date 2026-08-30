@@ -13,8 +13,10 @@ use crate::model::{QueryMeta, WriteOptions};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AssignServiceManualVIPsRequest {
     #[serde(rename = "Service")]
+    /// The service name to assign VIPs to.
     pub service: String,
     #[serde(rename = "ManualVIPs")]
+    /// The manual VIPs to assign.
     pub manual_vips: Vec<String>,
 }
 
@@ -22,26 +24,35 @@ pub struct AssignServiceManualVIPsRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AssignServiceManualVIPsResponse {
     #[serde(rename = "Found", default)]
+    /// Whether the service was found.
     pub service_found: bool,
     #[serde(rename = "UnassignedFrom", default)]
+    /// Peered services whose VIPs were unassigned.
     pub unassigned_from: Vec<PeeredServiceName>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Represents a `PeeredServiceName`.
 pub struct PeeredServiceName {
     #[serde(rename = "ServiceName")]
+    /// The compound service name.
     pub service_name: CompoundServiceName,
     #[serde(rename = "Peer", default)]
+    /// The peer name.
     pub peer: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Represents a `CompoundServiceName`.
 pub struct CompoundServiceName {
     #[serde(rename = "Name")]
+    /// The service name.
     pub name: String,
     #[serde(rename = "Namespace", default)]
+    /// The namespace of the service.
     pub namespace: String,
     #[serde(rename = "Partition", default)]
+    /// The admin partition of the service.
     pub partition: String,
 }
 

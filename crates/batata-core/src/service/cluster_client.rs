@@ -179,9 +179,13 @@ impl ClusterClientConfig {
 
 /// A gRPC client connection to a cluster node
 pub struct ClusterConnection {
+    /// The `address` field.
     pub address: String,
+    /// The `grpc_address` field.
     pub grpc_address: String,
+    /// The `client` field.
     pub client: RequestClient<Channel>,
+    /// The `created_at` field.
     pub created_at: i64,
     /// Last used timestamp - uses AtomicI64 for lock-free access
     pub last_used: AtomicI64,
@@ -235,6 +239,7 @@ pub struct ClusterClientManager {
 }
 
 impl ClusterClientManager {
+    /// Creates a new instance.
     pub fn new(local_address: String, config: ClusterClientConfig) -> Self {
         Self {
             config,
@@ -592,6 +597,7 @@ pub struct ClusterRequestSender {
 }
 
 impl ClusterRequestSender {
+    /// Creates a new instance.
     pub fn new(client_manager: Arc<ClusterClientManager>) -> Self {
         Self { client_manager }
     }

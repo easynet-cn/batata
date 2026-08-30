@@ -149,6 +149,7 @@ async fn list_config_entries(
     consul_ok(&meta).json(entries)
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/config")
         .service(apply_config_entry)

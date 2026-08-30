@@ -5,15 +5,18 @@ use crate::persistence::shared::StoredCluster;
 use crate::persistence::traits::{ApolloPersistenceService, ClusterPersistence};
 use chrono::Utc;
 
+/// Represents the `ClusterService` entity.
 pub struct ClusterService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ClusterService {
+    /// Creates a new `ClusterService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, app_id: &str, dto: ClusterDTO) -> Result<ClusterDTO, anyhow::Error> {
         let existing = self.persistence.get(app_id, &dto.name).await?;
 
@@ -41,16 +44,19 @@ impl ClusterService {
         Ok(self.stored_to_dto(&created))
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, app_id: &str, cluster_name: &str) -> Result<Option<ClusterDTO>, anyhow::Error> {
         let stored = self.persistence.get(app_id, cluster_name).await?;
         Ok(stored.map(|s| self.stored_to_dto(&s)))
     }
 
+    /// Performs the `list` operation.
     pub async fn list(&self, app_id: &str) -> Result<Vec<ClusterDTO>, anyhow::Error> {
         let stored_list = self.persistence.list(app_id).await?;
         Ok(stored_list.iter().map(|s| self.stored_to_dto(s)).collect())
     }
 
+    /// Performs the `update` operation.
     pub async fn update(&self, app_id: &str, cluster_name: &str, dto: ClusterDTO) -> Result<(), anyhow::Error> {
         let existing = self.persistence.get(app_id, cluster_name).await?
             .ok_or_else(|| anyhow::anyhow!("Cluster not found: {}", cluster_name))?;
@@ -73,6 +79,7 @@ impl ClusterService {
         Ok(())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, app_id: &str, cluster_name: &str, _operator: &str) -> Result<(), anyhow::Error> {
         self.persistence.delete(app_id, cluster_name).await?;
         Ok(())

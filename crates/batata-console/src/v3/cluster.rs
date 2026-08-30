@@ -1,5 +1,6 @@
-// Console cluster management API endpoints
-// This module provides web console endpoints for cluster node management and monitoring
+//! Console cluster management API endpoints.
+//!
+//! This module provides web console endpoints for cluster node management and monitoring.
 
 use actix_web::{HttpRequest, Responder, Scope, get, post, put, web};
 use serde::{Deserialize, Serialize};
@@ -281,6 +282,7 @@ async fn get_leader(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
     model::common::Result::<LeaderResponse>::http_success(response)
 }
 
+/// Register the cluster management routes under `/core/cluster`.
 pub fn routes() -> Scope {
     web::scope("/core/cluster")
         .service(get_nodes)

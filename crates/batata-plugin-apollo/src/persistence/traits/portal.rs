@@ -23,85 +23,138 @@ use crate::entity::{
 };
 
 #[async_trait]
+/// Defines the `AppNamespacePersistence` trait.
 pub trait AppNamespacePersistence {
+    /// Creates a new resource.
     async fn create_app_namespace(&self, dto: AppNamespaceDTO) -> anyhow::Result<apollo_app_namespace::Model>;
+    /// Returns the requested value.
     async fn get_app_namespace(&self, app_id: &str, name: &str) -> anyhow::Result<Option<apollo_app_namespace::Model>>;
+    /// Returns the requested value.
     async fn list_app_namespace_by_app(&self, app_id: &str) -> anyhow::Result<Vec<apollo_app_namespace::Model>>;
+    /// Returns the requested value.
     async fn list_public_app_namespace(&self) -> anyhow::Result<Vec<apollo_app_namespace::Model>>;
+    /// Deletes the specified resource.
     async fn delete_app_namespace(&self, app_id: &str, name: &str, operator: &str) -> anyhow::Result<()>;
 }
 
 #[async_trait]
+/// Defines the `AuditPersistence` trait.
 pub trait AuditPersistence {
+    /// Creates a new resource.
     async fn create_audit(&self, dto: AuditDTO) -> anyhow::Result<apollo_audit::Model>;
+    /// Returns the requested value.
     async fn list_audit(&self, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)>;
+    /// Returns the requested value.
     async fn list_audit_by_entity(&self, entity_name: &str, entity_id: &str) -> anyhow::Result<Vec<apollo_audit::Model>>;
 }
 
 #[async_trait]
+/// Defines the `ConsumerPersistence` trait.
 pub trait ConsumerPersistence {
+    /// Creates a new resource.
     async fn create_consumer(&self, dto: ConsumerDTO) -> anyhow::Result<apollo_consumer::Model>;
+    /// Returns the requested value.
     async fn get_consumer(&self, id: i32) -> anyhow::Result<Option<apollo_consumer::Model>>;
+    /// Returns the requested value.
     async fn get_consumer_by_app(&self, app_id: &str) -> anyhow::Result<Option<apollo_consumer::Model>>;
+    /// Returns the requested value.
     async fn list_consumers(&self) -> anyhow::Result<Vec<apollo_consumer::Model>>;
 }
 
 #[async_trait]
+/// Defines the `ConsumerTokenPersistence` trait.
 pub trait ConsumerTokenPersistence: Send + Sync {
+    /// Creates a new resource.
     async fn create_consumer_token(&self, consumer_id: i32, created_by: &str) -> anyhow::Result<apollo_consumer_token::Model>;
+    /// Returns the requested value.
     async fn list_tokens_by_consumer(&self, consumer_id: i32) -> anyhow::Result<Vec<apollo_consumer_token::Model>>;
+    /// Deletes the specified resource.
     async fn delete_consumer_token(&self, id: i32) -> anyhow::Result<()>;
+    /// Returns the requested value.
     async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>>;
 }
 
 #[async_trait]
+/// Defines the `PermissionPersistence` trait.
 pub trait PermissionPersistence {
+    /// Creates a new resource.
     async fn create_permission(&self, permission_type: i32, target_id: &str, created_by: &str) -> anyhow::Result<apollo_permission::Model>;
+    /// Returns the requested value.
     async fn list_permission_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_permission::Model>>;
+    /// Returns the requested value.
     async fn list_permission_by_type(&self, permission_type: i32) -> anyhow::Result<Vec<apollo_permission::Model>>;
 }
 
 #[async_trait]
+/// Defines the `RolePersistence` trait.
 pub trait RolePersistence {
+    /// Creates a new resource.
     async fn create_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model>;
+    /// Returns the requested value.
     async fn get_role(&self, id: i32) -> anyhow::Result<Option<apollo_role::Model>>;
+    /// Returns the requested value.
     async fn list_role_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_role::Model>>;
+    /// Deletes the specified resource.
     async fn delete_role(&self, id: i32) -> anyhow::Result<()>;
+    /// Performs the `assign_role_permission` operation.
     async fn assign_role_permission(&self, role_id: i32, permission_id: i32, created_by: &str) -> anyhow::Result<()>;
+    /// Deletes the specified resource.
     async fn remove_role_permission(&self, role_id: i32, permission_id: i32) -> anyhow::Result<()>;
+    /// Returns the requested value.
     async fn list_role_permissions(&self, role_id: i32) -> anyhow::Result<Vec<i32>>;
+    /// Performs the `assign_role_to_user` operation.
     async fn assign_role_to_user(&self, user_id: &str, role_id: i32, created_by: &str) -> anyhow::Result<()>;
+    /// Deletes the specified resource.
     async fn remove_role_from_user(&self, user_id: &str, role_id: i32) -> anyhow::Result<()>;
+    /// Returns the requested value.
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>>;
 }
 
 #[async_trait]
+/// Defines the `FavoritePersistence` trait.
 pub trait FavoritePersistence {
+    /// Creates a new resource.
     async fn create_favorite(&self, dto: FavoriteDTO) -> anyhow::Result<apollo_favorite::Model>;
+    /// Returns the requested value.
     async fn list_favorite_by_user(&self, user_id: &str) -> anyhow::Result<Vec<apollo_favorite::Model>>;
+    /// Deletes the specified resource.
     async fn delete_favorite(&self, id: i32, user_id: &str) -> anyhow::Result<()>;
 }
 
 #[async_trait]
+/// Defines the `ServerConfigPersistence` trait.
 pub trait ServerConfigPersistence {
+    /// Returns the requested value.
     async fn get_server_config(&self, key: &str) -> anyhow::Result<Option<apollo_server_config::Model>>;
+    /// Returns the requested value.
     async fn list_server_config(&self) -> anyhow::Result<Vec<apollo_server_config::Model>>;
+    /// Creates a new resource.
     async fn create_server_config(&self, dto: ServerConfigDTO) -> anyhow::Result<apollo_server_config::Model>;
+    /// Updates an existing resource.
     async fn update_server_config(&self, key: &str, value: &str, operator: &str) -> anyhow::Result<()>;
+    /// Deletes the specified resource.
     async fn delete_server_config(&self, key: &str, operator: &str) -> anyhow::Result<()>;
 }
 
 #[async_trait]
+/// Defines the `InstanceConfigPersistence` trait.
 pub trait InstanceConfigPersistence {
+    /// Creates a new resource.
     async fn create_or_update_instance_config(&self, dto: InstanceConfigDTO) -> anyhow::Result<apollo_instance_config::Model>;
+    /// Returns the requested value.
     async fn get_instance_config_by_instance(&self, instance_id: i32) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
+    /// Returns the requested value.
     async fn list_instance_config_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
+    /// Deletes the specified resource.
     async fn delete_instance_config_by_instance(&self, instance_id: i32) -> anyhow::Result<()>;
 }
 
 #[async_trait]
+/// Defines the `ReleaseHistoryPersistence` trait.
 pub trait ReleaseHistoryPersistence {
+    /// Returns the requested value.
     async fn find_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)>;
+    /// Performs the `record_release_history` operation.
     async fn record_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, release_id: i32, previous_release_id: i32, operation: i16, operation_context: &str, operator: &str) -> anyhow::Result<apollo_release_history::Model>;
 }
 

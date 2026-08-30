@@ -7,30 +7,45 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub enum TokenError {
     #[error("token is missing")]
+    /// The `TokenMissing` variant.
     TokenMissing,
 
     #[error("token has expired at {expired_at}")]
-    TokenExpired { expired_at: DateTime<Utc> },
+    /// The `TokenExpired` variant.
+    TokenExpired {
+        /// The `expired_at` field.
+        expired_at: DateTime<Utc>,
+    },
 
     #[error("token is malformed")]
+    /// The `TokenMalformed` variant.
     TokenMalformed,
 
     #[error("token signature is invalid")]
+    /// The `TokenSignatureInvalid` variant.
     TokenSignatureInvalid,
 
     #[error("token audience mismatch")]
+    /// The `TokenAudienceMismatch` variant.
     TokenAudienceMismatch,
 
     #[error("token issuer mismatch")]
+    /// The `TokenIssuerMismatch` variant.
     TokenIssuerMismatch,
 
     #[error("token is not yet valid (valid from: {valid_from})")]
-    TokenNotYetValid { valid_from: DateTime<Utc> },
+    /// The `TokenNotYetValid` variant.
+    TokenNotYetValid {
+        /// The `valid_from` field.
+        valid_from: DateTime<Utc>,
+    },
 
     #[error("token has been revoked")]
+    /// The `TokenRevoked` variant.
     TokenRevoked,
 
     #[error("token decode error: {0}")]
+    /// The `DecodeError` variant.
     DecodeError(String),
 }
 
@@ -38,24 +53,37 @@ pub enum TokenError {
 #[derive(Error, Debug, Clone)]
 pub enum AuthError {
     #[error("token error: {0}")]
+    /// The `Token` variant.
     Token(#[from] TokenError),
 
     #[error("user not found: {username}")]
-    UserNotFound { username: String },
+    /// The `UserNotFound` variant.
+    UserNotFound {
+        /// The `username` field.
+        username: String,
+    },
 
     #[error("invalid credentials")]
+    /// The `InvalidCredentials` variant.
     InvalidCredentials,
 
     #[error("permission denied: {resource}")]
-    PermissionDenied { resource: String },
+    /// The `PermissionDenied` variant.
+    PermissionDenied {
+        /// The `resource` field.
+        resource: String,
+    },
 
     #[error("user not authenticated")]
+    /// The `NotAuthenticated` variant.
     NotAuthenticated,
 
     #[error("no roles found for user")]
+    /// The `NoRolesFound` variant.
     NoRolesFound,
 
     #[error("internal error: {0}")]
+    /// The `InternalError` variant.
     InternalError(String),
 }
 
@@ -63,15 +91,19 @@ pub enum AuthError {
 #[derive(Error, Debug, Clone)]
 pub enum LoginError {
     #[error("user not found")]
+    /// The `UserNotFound` variant.
     UserNotFound,
 
     #[error("password error")]
+    /// The `PasswordError` variant.
     PasswordError,
 
     #[error("user is managed by external identity provider: {0}")]
+    /// The `ExternalUser` variant.
     ExternalUser(String),
 
     #[error("internal error: {0}")]
+    /// The `Internal` variant.
     Internal(String),
 }
 
@@ -109,6 +141,7 @@ pub struct AuthPermission {
 /// Result of an authentication or authorization check
 #[derive(Debug, Clone)]
 pub struct AuthCheckResult {
+    /// The `success` field.
     pub success: bool,
     /// Structured error for precise error handling.
     /// Callers can use `.error.as_ref().map(|e| e.to_string())` for display messages.
@@ -116,6 +149,7 @@ pub struct AuthCheckResult {
 }
 
 impl AuthCheckResult {
+    /// Creates a successful `AuthCheckResult`.
     pub fn success() -> Self {
         Self {
             success: true,
@@ -250,21 +284,32 @@ pub trait OAuthProvider: Send + Sync {
 /// OAuth token response (provider-agnostic)
 #[derive(Debug, Clone)]
 pub struct OAuthTokenResponse {
+    /// The `access_token` field.
     pub access_token: String,
+    /// The `token_type` field.
     pub token_type: String,
+    /// The `expires_in` field.
     pub expires_in: Option<i64>,
+    /// The `refresh_token` field.
     pub refresh_token: Option<String>,
+    /// The `id_token` field.
     pub id_token: Option<String>,
+    /// The `scope` field.
     pub scope: Option<String>,
 }
 
 /// OAuth user profile (provider-agnostic)
 #[derive(Debug, Clone)]
 pub struct OAuthUserProfile {
+    /// The `provider_user_id` field.
     pub provider_user_id: String,
+    /// The `username` field.
     pub username: String,
+    /// The `email` field.
     pub email: Option<String>,
+    /// The `name` field.
     pub name: Option<String>,
+    /// The `groups` field.
     pub groups: Vec<String>,
 }
 

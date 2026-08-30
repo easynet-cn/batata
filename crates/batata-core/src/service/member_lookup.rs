@@ -67,6 +67,7 @@ pub struct FileMemberLookup {
 }
 
 impl FileMemberLookup {
+    /// Creates a new instance.
     pub fn new(config: Configuration) -> Self {
         Self {
             config,
@@ -76,6 +77,7 @@ impl FileMemberLookup {
         }
     }
 
+    /// With Path.
     pub fn with_path(config: Configuration, path: &str) -> Self {
         Self {
             config,
@@ -325,6 +327,7 @@ pub struct AddressServerMemberLookup {
 }
 
 impl AddressServerMemberLookup {
+    /// Creates a new instance.
     pub fn new(config: Configuration) -> Self {
         let domain = config
             .config

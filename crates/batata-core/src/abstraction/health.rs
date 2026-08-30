@@ -56,19 +56,27 @@ pub trait HealthCheckManager: Send + Sync {
 /// Service health summary
 #[derive(Debug, Clone)]
 pub struct ServiceHealthSummary {
+    /// The `service_id` field.
     pub service_id: String,
+    /// The `total_checks` field.
     pub total_checks: u32,
+    /// The `passing` field.
     pub passing: u32,
+    /// The `warning` field.
     pub warning: u32,
+    /// The `critical` field.
     pub critical: u32,
+    /// The `overall_status` field.
     pub overall_status: HealthStatus,
 }
 
 impl ServiceHealthSummary {
+    /// Returns `true` if healthy.
     pub fn is_healthy(&self) -> bool {
         self.critical == 0
     }
 
+    /// Computes the overall status.
     pub fn calculate_overall_status(&mut self) {
         if self.critical > 0 {
             self.overall_status = HealthStatus::Critical;
@@ -108,18 +116,26 @@ pub trait HeartbeatManager: Send + Sync {
 /// Heartbeat response
 #[derive(Debug, Clone)]
 pub struct HeartbeatResponse {
+    /// The `instance_id` field.
     pub instance_id: String,
+    /// The `light_beat_enabled` field.
     pub light_beat_enabled: bool,
+    /// The `client_beat_interval` field.
     pub client_beat_interval: i64,
 }
 
 /// Heartbeat status
 #[derive(Debug, Clone)]
 pub struct HeartbeatStatus {
+    /// The `instance_id` field.
     pub instance_id: String,
+    /// The `last_heartbeat` field.
     pub last_heartbeat: i64,
+    /// The `healthy` field.
     pub healthy: bool,
+    /// The `auto_enabled` field.
     pub auto_enabled: bool,
+    /// The `interval_ms` field.
     pub interval_ms: u64,
 }
 
@@ -127,28 +143,36 @@ pub struct HeartbeatStatus {
 #[derive(Debug, thiserror::Error)]
 pub enum HealthError {
     #[error("Check not found: {0}")]
+    /// The `CheckNotFound` variant.
     CheckNotFound(String),
 
     #[error("Service not found: {0}")]
+    /// The `ServiceNotFound` variant.
     ServiceNotFound(String),
 
     #[error("Instance not found: {0}")]
+    /// The `InstanceNotFound` variant.
     InstanceNotFound(String),
 
     #[error("Invalid check configuration: {0}")]
+    /// The `InvalidCheck` variant.
     InvalidCheck(String),
 
     #[error("Check type not supported: {0:?}")]
+    /// The `UnsupportedCheckType` variant.
     UnsupportedCheckType(HealthCheckType),
 
     #[error("Heartbeat timeout")]
+    /// The `HeartbeatTimeout` variant.
     HeartbeatTimeout,
 
     #[error("Internal error: {0}")]
+    /// The `InternalError` variant.
     InternalError(String),
 }
 
 impl HealthError {
+    /// Status Code.
     pub fn status_code(&self) -> u16 {
         match self {
             HealthError::CheckNotFound(_) => 404,

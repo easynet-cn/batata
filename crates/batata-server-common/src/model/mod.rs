@@ -10,6 +10,7 @@ pub mod constants;
 pub mod response;
 pub mod server_status;
 pub mod tls;
+/// Provides the `typed_config` module.
 pub mod typed_config;
 
 // Re-export commonly used types at the module level

@@ -1,16 +1,22 @@
-// Namespace model types
+//! Namespace model types for the maintainer client.
 
 use serde::{Deserialize, Serialize};
 
-/// Namespace information
+/// Namespace information.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Namespace {
+    /// The unique identifier of the namespace.
     pub namespace: String,
+    /// The display name of the namespace.
     pub namespace_show_name: String,
+    /// The description of the namespace.
     pub namespace_desc: String,
+    /// The maximum number of configs allowed in this namespace.
     pub quota: i32,
+    /// The current number of configs in this namespace.
     pub config_count: i64,
+    /// The namespace type (reserved for future use).
     #[serde(rename = "type")]
     pub type_: i32,
 }

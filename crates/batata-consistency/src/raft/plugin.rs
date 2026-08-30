@@ -1,7 +1,7 @@
-// Plugin handler trait for extending Raft state machine with plugin-specific operations.
-//
-// Plugins register handlers that receive PluginWrite requests after Raft consensus.
-// The core state machine routes requests by plugin_id — it never interprets the payload.
+//! Plugin handler trait for extending Raft state machine with plugin-specific operations.
+//!
+//! Plugins register handlers that receive `PluginWrite` requests after Raft consensus.
+//! The core state machine routes requests by `plugin_id` — it never interprets the payload.
 
 use std::sync::Arc;
 

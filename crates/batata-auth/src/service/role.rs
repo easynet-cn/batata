@@ -27,6 +27,7 @@ static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
 // Enables O(1) targeted cache invalidation instead of O(n) full scan
 static ROLE_USER_INDEX: LazyLock<DashMap<String, Vec<String>>> = LazyLock::new(DashMap::new);
 
+/// Return every role binding in the system.
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
     let roles = roles::Entity::find()
         .all(db)
@@ -38,6 +39,7 @@ pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> 
     Ok(roles)
 }
 
+/// Return the role bindings for a single username, using the cache when possible.
 pub async fn find_by_username(
     db: &DatabaseConnection,
     username: &str,
@@ -97,6 +99,7 @@ pub fn invalidate_all_roles_cache() {
     ROLE_USER_INDEX.clear();
 }
 
+/// Query role bindings with optional username/role filters, paginated.
 pub async fn search_page(
     db: &DatabaseConnection,
     username: &str,
@@ -157,6 +160,7 @@ pub async fn search_page(
     Ok(Page::<RoleInfo>::default())
 }
 
+/// Return the distinct role names that contain the given substring.
 pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<String>> {
     let roles = roles::Entity::find()
         .column(roles::Column::Role)
@@ -170,6 +174,7 @@ pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<S
     Ok(roles)
 }
 
+/// Bind a role to a user, rejecting unknown users and the global admin role.
 pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
     if users::Entity::find_by_id(username).one(db).await?.is_none() {
         return Err(BatataError::IllegalArgument(format!("user '{}' not found!", username)).into());
@@ -205,6 +210,7 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     Ok(())
 }
 
+/// Remove a role binding, or all bindings of a role when `username` is empty.
 pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
     if GLOBAL_ADMIN_ROLE == role {
         return Err(BatataError::IllegalArgument(format!(
@@ -234,6 +240,7 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     Ok(())
 }
 
+/// Return whether any user holds the global admin role.
 pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bool> {
     let result = roles::Entity::find()
         .select_only()
@@ -246,6 +253,7 @@ pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bo
     Ok(result.is_some())
 }
 
+/// Return whether the given username holds the global admin role.
 pub async fn has_global_admin_role_by_username(
     db: &DatabaseConnection,
     username: &str,

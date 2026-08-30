@@ -13,21 +13,30 @@ use batata_server_common::model::response::Result;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for listing distributed traces.
 pub struct TraceListQuery {
+    /// Page number (1-based).
     #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
+    /// Page size.
     #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
+    /// Optional service name filter.
     #[serde(default)]
     pub service: Option<String>,
+    /// Optional operation name filter.
     #[serde(default)]
     pub operation: Option<String>,
+    /// Optional trace ID filter.
     #[serde(default, alias = "traceId")]
     pub trace_id: Option<String>,
+    /// Optional minimum duration filter in milliseconds.
     #[serde(default, alias = "minDurationMs")]
     pub min_duration_ms: Option<u64>,
+    /// Optional start time filter.
     #[serde(default, alias = "startTime")]
     pub start_time: Option<String>,
+    /// Optional end time filter.
     #[serde(default, alias = "endTime")]
     pub end_time: Option<String>,
 }
@@ -89,6 +98,7 @@ pub async fn list_trace_services(data: web::Data<AppState>) -> impl Responder {
     Result::<()>::http_success(services)
 }
 
+/// Register the distributed tracing routes under `/trace`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/trace")
         .service(list_traces)

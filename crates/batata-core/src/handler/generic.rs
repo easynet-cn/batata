@@ -19,6 +19,7 @@ use crate::{
 };
 
 #[derive(Clone)]
+/// Represents Health Check Handler.
 pub struct HealthCheckHandler {}
 
 #[tonic::async_trait]
@@ -41,6 +42,7 @@ impl PayloadHandler for HealthCheckHandler {
 }
 
 #[derive(Clone)]
+/// Represents Server Check Handler.
 pub struct ServerCheckHandler {}
 
 #[tonic::async_trait]
@@ -61,6 +63,7 @@ impl PayloadHandler for ServerCheckHandler {
 }
 
 #[derive(Clone)]
+/// Represents Connection Setup Handler.
 pub struct ConnectionSetupHandler {}
 
 #[tonic::async_trait]
@@ -78,6 +81,7 @@ impl PayloadHandler for ConnectionSetupHandler {
 
 // Handler for ClientDetectionRequest - detects client status
 #[derive(Clone)]
+/// Represents Client Detection Handler.
 pub struct ClientDetectionHandler {}
 
 #[tonic::async_trait]
@@ -99,7 +103,9 @@ impl PayloadHandler for ClientDetectionHandler {
 
 // Handler for ServerLoaderInfoRequest - returns server load information
 #[derive(Clone)]
+/// Represents Server Loader Info Handler.
 pub struct ServerLoaderInfoHandler {
+    /// The `connection_manager` field.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
 }
 
@@ -166,6 +172,7 @@ impl PayloadHandler for ServerLoaderInfoHandler {
 
 // Handler for ServerReloadRequest - triggers server configuration reload
 #[derive(Clone)]
+/// Represents Server Reload Handler.
 pub struct ServerReloadHandler {
     /// Configuration file path (e.g., "conf/application.yml")
     pub config_path: String,
@@ -270,6 +277,7 @@ impl ServerReloadHandler {
 
 // Handler for ConnectResetRequest - handles connection reset
 #[derive(Clone)]
+/// Represents Connect Reset Handler.
 pub struct ConnectResetHandler {}
 
 #[tonic::async_trait]
@@ -312,6 +320,7 @@ impl PayloadHandler for ConnectResetHandler {
 
 // Handler for SetupAckRequest - acknowledges connection setup
 #[derive(Clone)]
+/// Represents Setup Ack Handler.
 pub struct SetupAckHandler {}
 
 #[tonic::async_trait]
@@ -333,6 +342,7 @@ impl PayloadHandler for SetupAckHandler {
 
 // Handler for PushAckRequest - acknowledges server push
 #[derive(Clone)]
+/// Represents Push Ack Handler.
 pub struct PushAckHandler {}
 
 #[tonic::async_trait]

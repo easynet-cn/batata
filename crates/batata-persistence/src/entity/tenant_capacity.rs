@@ -5,21 +5,33 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "tenant_capacity")]
+/// ORM model for a row in the `tenant_capacity` table.
 pub struct Model {
+    /// Primary key.
     #[sea_orm(primary_key)]
     pub id: i64,
+    /// Unique tenant ID this capacity row belongs to.
     #[sea_orm(unique)]
     pub tenant_id: String,
+    /// Maximum number of configs allowed.
     pub quota: i32,
+    /// Current usage count.
     pub usage: i32,
+    /// Maximum config size in bytes.
     pub max_size: i32,
+    /// Maximum aggregate config count.
     pub max_aggr_count: i32,
+    /// Maximum aggregate config size.
     pub max_aggr_size: i32,
+    /// Maximum history count.
     pub max_history_count: i32,
+    /// Creation timestamp.
     pub gmt_create: DateTime,
+    /// Last modification timestamp.
     pub gmt_modified: DateTime,
 }
 
+/// Relation definitions for the `tenant_capacity` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

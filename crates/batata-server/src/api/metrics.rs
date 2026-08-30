@@ -13,6 +13,7 @@ use metrics_exporter_prometheus::PrometheusHandle;
 /// This allows any code using `metrics::counter!()`, `metrics::gauge!()`,
 /// etc. to have their metrics automatically exported via Prometheus.
 pub struct PrometheusMetricsState {
+    /// `handle` field.
     pub handle: PrometheusHandle,
 }
 

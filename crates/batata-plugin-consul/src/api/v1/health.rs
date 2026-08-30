@@ -152,6 +152,7 @@ async fn get_ingress_health(
     .await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/health")
         .service(get_service_health)

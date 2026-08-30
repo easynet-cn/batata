@@ -40,6 +40,8 @@
 //! - [`error`]  — ConsulError / Result
 //! - [`metrics`] — client-side instrumentation
 
+#![warn(missing_docs)]
+
 pub mod acl;
 pub mod agent;
 pub mod catalog;

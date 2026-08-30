@@ -165,6 +165,7 @@ impl Default for ConsulQueryService {
 }
 
 impl ConsulQueryService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self {
             store: QueryStore::memory(),

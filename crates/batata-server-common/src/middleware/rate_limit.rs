@@ -90,6 +90,7 @@ pub struct RateLimiterState {
 }
 
 impl RateLimiterState {
+/// Performs the `new` operation.
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             buckets: DashMap::new(),
@@ -131,12 +132,14 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
+/// Performs the `new` operation.
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             state: Arc::new(RateLimiterState::new(config)),
         }
     }
 
+/// Performs the `with_defaults` operation.
     pub fn with_defaults() -> Self {
         Self::new(RateLimitConfig::default())
     }
@@ -162,6 +165,7 @@ where
     }
 }
 
+/// Middleware that rejects requests exceeding the configured rate limit.
 pub struct RateLimiterMiddleware<S> {
     service: S,
     state: Arc<RateLimiterState>,
@@ -339,6 +343,7 @@ pub struct AuthRateLimiter {
 }
 
 impl AuthRateLimiter {
+/// Performs the `new` operation.
     pub fn new(config: AuthRateLimitConfig) -> Self {
         Self {
             entries: DashMap::new(),
@@ -346,6 +351,7 @@ impl AuthRateLimiter {
         }
     }
 
+/// Performs the `with_defaults` operation.
     pub fn with_defaults() -> Self {
         Self::new(AuthRateLimitConfig::default())
     }
@@ -445,6 +451,7 @@ impl AuthRateLimiter {
 // Global auth rate limiter instance
 use std::sync::LazyLock;
 
+/// The `AUTH_RATE_LIMITER` static value.
 pub static AUTH_RATE_LIMITER: LazyLock<AuthRateLimiter> =
     LazyLock::new(AuthRateLimiter::with_defaults);
 

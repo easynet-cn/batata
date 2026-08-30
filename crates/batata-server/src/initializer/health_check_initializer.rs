@@ -14,6 +14,10 @@ use batata_naming::healthcheck::HealthCheckConfig;
 pub struct HealthCheckInitializer;
 
 impl HealthCheckInitializer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self
     }

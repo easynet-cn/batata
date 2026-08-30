@@ -4,16 +4,25 @@
 
 use std::collections::HashMap;
 
-/// Builder for configuration test data
+/// Builder for configuration test data.
 pub struct ConfigFixture {
+    /// Configuration data ID.
     pub data_id: String,
+    /// Configuration group name.
     pub group: String,
+    /// Configuration tenant (namespace) ID.
     pub tenant: String,
+    /// Configuration content.
     pub content: String,
+    /// Configuration type (e.g. `properties`, `yaml`, `json`).
     pub config_type: String,
+    /// Configuration description.
     pub desc: String,
+    /// Application name associated with the configuration.
     pub app_name: String,
+    /// Comma-separated configuration tags.
     pub tags: String,
+    /// Encrypted data key for encrypted configurations.
     pub encrypted_data_key: String,
 }
 
@@ -34,55 +43,66 @@ impl Default for ConfigFixture {
 }
 
 impl ConfigFixture {
+    /// Create a new `ConfigFixture` with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the configuration data ID.
     pub fn with_data_id(mut self, data_id: &str) -> Self {
         self.data_id = data_id.to_string();
         self
     }
 
+    /// Set the configuration group.
     pub fn with_group(mut self, group: &str) -> Self {
         self.group = group.to_string();
         self
     }
 
+    /// Set the configuration tenant (namespace) ID.
     pub fn with_tenant(mut self, tenant: &str) -> Self {
         self.tenant = tenant.to_string();
         self
     }
 
+    /// Set the configuration content.
     pub fn with_content(mut self, content: &str) -> Self {
         self.content = content.to_string();
         self
     }
 
+    /// Set the configuration type (e.g. `properties`, `yaml`, `json`).
     pub fn with_type(mut self, config_type: &str) -> Self {
         self.config_type = config_type.to_string();
         self
     }
 
+    /// Set the configuration description.
     pub fn with_desc(mut self, desc: &str) -> Self {
         self.desc = desc.to_string();
         self
     }
 
+    /// Set the application name associated with the configuration.
     pub fn with_app_name(mut self, app_name: &str) -> Self {
         self.app_name = app_name.to_string();
         self
     }
 
+    /// Set the comma-separated configuration tags.
     pub fn with_tags(mut self, tags: &str) -> Self {
         self.tags = tags.to_string();
         self
     }
 
+    /// Set the encrypted data key for an encrypted configuration.
     pub fn with_encryption(mut self, data_key: &str) -> Self {
         self.encrypted_data_key = data_key.to_string();
         self
     }
 
+    /// Configure the fixture as a YAML configuration.
     pub fn yaml(mut self) -> Self {
         self.config_type = "yaml".to_string();
         self.content = "server:\n  port: 8080\n  name: test".to_string();
@@ -90,6 +110,7 @@ impl ConfigFixture {
         self
     }
 
+    /// Configure the fixture as a JSON configuration.
     pub fn json(mut self) -> Self {
         self.config_type = "json".to_string();
         self.content = r#"{"server":{"port":8080}}"#.to_string();
@@ -97,6 +118,7 @@ impl ConfigFixture {
         self
     }
 
+    /// Configure the fixture as a properties configuration.
     pub fn properties(mut self) -> Self {
         self.config_type = "properties".to_string();
         self.content = "server.port=8080\nserver.name=test".to_string();
@@ -137,18 +159,29 @@ impl ConfigFixture {
     }
 }
 
-/// Builder for service instance test data
+/// Builder for service instance test data.
 pub struct InstanceFixture {
+    /// Service name.
     pub service_name: String,
+    /// Group name for the service.
     pub group_name: String,
+    /// Namespace (tenant) ID.
     pub namespace_id: String,
+    /// Instance IP address.
     pub ip: String,
+    /// Instance port.
     pub port: u16,
+    /// Instance weight.
     pub weight: f64,
+    /// Whether the instance is healthy.
     pub healthy: bool,
+    /// Whether the instance is enabled.
     pub enabled: bool,
+    /// Whether the instance is ephemeral (non-persistent).
     pub ephemeral: bool,
+    /// Cluster name for the instance.
     pub cluster_name: String,
+    /// Arbitrary metadata key-value pairs.
     pub metadata: HashMap<String, String>,
 }
 
@@ -171,60 +204,72 @@ impl Default for InstanceFixture {
 }
 
 impl InstanceFixture {
+    /// Create a new `InstanceFixture` with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the service name.
     pub fn with_service_name(mut self, name: &str) -> Self {
         self.service_name = name.to_string();
         self
     }
 
+    /// Set the group name for the service.
     pub fn with_group(mut self, group: &str) -> Self {
         self.group_name = group.to_string();
         self
     }
 
+    /// Set the namespace (tenant) ID.
     pub fn with_namespace(mut self, ns: &str) -> Self {
         self.namespace_id = ns.to_string();
         self
     }
 
+    /// Set the instance IP address.
     pub fn with_ip(mut self, ip: &str) -> Self {
         self.ip = ip.to_string();
         self
     }
 
+    /// Set the instance port.
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
+    /// Set the instance weight.
     pub fn with_weight(mut self, weight: f64) -> Self {
         self.weight = weight;
         self
     }
 
+    /// Mark the instance as unhealthy.
     pub fn unhealthy(mut self) -> Self {
         self.healthy = false;
         self
     }
 
+    /// Mark the instance as disabled.
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
         self
     }
 
+    /// Mark the instance as persistent (non-ephemeral).
     pub fn persistent(mut self) -> Self {
         self.ephemeral = false;
         self
     }
 
+    /// Set the cluster name for the instance.
     pub fn with_cluster(mut self, cluster: &str) -> Self {
         self.cluster_name = cluster.to_string();
         self
     }
 
+    /// Set a single metadata key-value pair.
     pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
         self.metadata.insert(key.to_string(), value.to_string());
         self
@@ -254,10 +299,13 @@ impl InstanceFixture {
     }
 }
 
-/// Builder for namespace test data
+/// Builder for namespace test data.
 pub struct NamespaceFixture {
+    /// Namespace ID.
     pub namespace_id: String,
+    /// Namespace display name.
     pub namespace_name: String,
+    /// Namespace description.
     pub namespace_desc: String,
 }
 
@@ -272,25 +320,30 @@ impl Default for NamespaceFixture {
 }
 
 impl NamespaceFixture {
+    /// Create a new `NamespaceFixture` with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the namespace ID.
     pub fn with_id(mut self, id: &str) -> Self {
         self.namespace_id = id.to_string();
         self
     }
 
+    /// Set the namespace display name.
     pub fn with_name(mut self, name: &str) -> Self {
         self.namespace_name = name.to_string();
         self
     }
 
+    /// Set the namespace description.
     pub fn with_desc(mut self, desc: &str) -> Self {
         self.namespace_desc = desc.to_string();
         self
     }
 
+    /// Convert to parameters for the namespace creation API.
     pub fn to_create_params(&self) -> Vec<(&str, &str)> {
         vec![
             ("customNamespaceId", &self.namespace_id),
@@ -300,10 +353,13 @@ impl NamespaceFixture {
     }
 }
 
-/// Builder for auth test data
+/// Builder for auth test data.
 pub struct AuthFixture {
+    /// Username for authentication.
     pub username: String,
+    /// Password for authentication.
     pub password: String,
+    /// Role assigned to the user.
     pub role: String,
 }
 
@@ -318,10 +374,12 @@ impl Default for AuthFixture {
 }
 
 impl AuthFixture {
+    /// Create a new `AuthFixture` with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Create an admin `AuthFixture` with default admin credentials.
     pub fn admin() -> Self {
         Self {
             username: "nacos".to_string(),
@@ -330,25 +388,30 @@ impl AuthFixture {
         }
     }
 
+    /// Set the username.
     pub fn with_username(mut self, username: &str) -> Self {
         self.username = username.to_string();
         self
     }
 
+    /// Set the password.
     pub fn with_password(mut self, password: &str) -> Self {
         self.password = password.to_string();
         self
     }
 
+    /// Set the role assigned to the user.
     pub fn with_role(mut self, role: &str) -> Self {
         self.role = role.to_string();
         self
     }
 
+    /// Convert to parameters for the login API.
     pub fn to_login_params(&self) -> Vec<(&str, &str)> {
         vec![("username", &self.username), ("password", &self.password)]
     }
 
+    /// Convert to parameters for the user creation API.
     pub fn to_create_params(&self) -> Vec<(&str, &str)> {
         vec![("username", &self.username), ("password", &self.password)]
     }

@@ -24,6 +24,7 @@ pub struct TrafficReviseFilter {
 }
 
 impl TrafficReviseFilter {
+/// Performs the `new` operation.
     pub fn new(status_manager: Arc<ServerStatusManager>) -> Self {
         Self { status_manager }
     }
@@ -49,6 +50,7 @@ where
     }
 }
 
+/// Middleware that adjusts request routing based on the current server status.
 pub struct TrafficReviseMiddleware<S> {
     service: S,
     status_manager: Arc<ServerStatusManager>,

@@ -114,12 +114,14 @@ pub struct GrpcClientConfig {
 }
 
 impl GrpcClientConfig {
+    /// Enable TLS with the given CA certificate path.
     pub fn with_tls(mut self, ca_cert: &str) -> Self {
         self.tls_enabled = true;
         self.tls_ca_cert = Some(ca_cert.to_string());
         self
     }
 
+    /// Enable mutual TLS with CA, client cert, and client key paths.
     pub fn with_mtls(mut self, ca_cert: &str, client_cert: &str, client_key: &str) -> Self {
         self.tls_enabled = true;
         self.tls_ca_cert = Some(ca_cert.to_string());
@@ -163,10 +165,15 @@ impl Default for GrpcClientConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ConnectionState {
+    /// Client is starting up.
     Starting = 0,
+    /// Connection is established and healthy.
     Running = 1,
+    /// Connection failed health checks.
     Unhealthy = 2,
+    /// Reconnection is in progress.
     Reconnecting = 3,
+    /// Client has been shut down.
     Shutdown = 4,
 }
 
@@ -443,6 +450,7 @@ impl GrpcClient {
         &self.connection
     }
 
+    /// Return whether the client currently holds a live connection.
     pub async fn is_connected(&self) -> bool {
         self.connection.read().await.is_some()
     }

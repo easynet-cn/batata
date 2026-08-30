@@ -7,11 +7,13 @@ use crate::entity::apollo_namespace;
 use crate::persistence::shared::StoredNamespace;
 use crate::persistence::traits::NamespacePersistence;
 
+/// Represents the `NamespaceSqlPersistence` entity.
 pub struct NamespaceSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl NamespaceSqlPersistence {
+    /// Creates a new `NamespaceSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

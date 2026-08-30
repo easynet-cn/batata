@@ -54,6 +54,7 @@ impl DiscoveryChainOptions {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryChainResponse {
+    /// The compiled discovery chain.
     pub chain: CompiledDiscoveryChain,
 }
 
@@ -61,16 +62,27 @@ pub struct DiscoveryChainResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CompiledDiscoveryChain {
+    /// The service name the chain was compiled for.
     pub service_name: String,
+    /// The namespace of the service.
     pub namespace: Option<String>,
+    /// The admin partition of the service.
     pub partition: Option<String>,
+    /// The datacenter the chain was compiled for.
     pub datacenter: String,
+    /// Whether the chain is the default chain.
     pub default: Option<bool>,
+    /// Whether a custom node was used.
     pub custom_node: Option<bool>,
+    /// The protocol used by the chain.
     pub protocol: String,
+    /// Metadata attached to the service.
     pub service_meta: Option<HashMap<String, String>>,
+    /// The name of the starting graph node.
     pub start_node: Option<String>,
+    /// The graph nodes keyed by name.
     pub nodes: Option<HashMap<String, DiscoveryGraphNode>>,
+    /// The chain targets keyed by name.
     pub targets: Option<HashMap<String, DiscoveryTarget>>,
 }
 
@@ -79,58 +91,90 @@ pub struct CompiledDiscoveryChain {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryGraphNode {
     #[serde(rename = "Type")]
+    /// The node type: resolver, splitter or router.
     pub node_type: String,
+    /// The name of the node.
     pub name: String,
+    /// Routes originating from this node.
     pub routes: Option<Vec<DiscoveryRoute>>,
+    /// Splits originating from this node.
     pub splits: Option<Vec<DiscoverySplit>>,
+    /// The resolver attached to this node.
     pub resolver: Option<DiscoveryResolver>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+/// Represents a `DiscoveryRoute`.
 pub struct DiscoveryRoute {
+    /// The raw route definition.
     pub definition: Option<serde_json::Value>,
+    /// The name of the next node to visit.
     pub next_node: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+/// Represents a `DiscoverySplit`.
 pub struct DiscoverySplit {
+    /// The traffic weight of this split.
     pub weight: f32,
+    /// The name of the next node to visit.
     pub next_node: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+/// Represents a `DiscoveryResolver`.
 pub struct DiscoveryResolver {
+    /// The connect timeout as a duration string.
     pub connect_timeout: Option<String>,
+    /// The request timeout as a duration string.
     pub request_timeout: Option<String>,
+    /// The name of the resolver target.
     pub target: String,
+    /// Whether this is the default resolver.
     pub default: Option<bool>,
+    /// The failover configuration.
     pub failover: Option<DiscoveryFailover>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+/// Represents a `DiscoveryFailover`.
 pub struct DiscoveryFailover {
+    /// Ordered list of failover targets.
     pub targets: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+/// Represents a `DiscoveryTarget`.
 pub struct DiscoveryTarget {
     #[serde(rename = "ID", default)]
+    /// The target ID.
     pub id: String,
+    /// The service the target points to.
     pub service: String,
+    /// The service subset name.
     pub service_subset: Option<String>,
+    /// The namespace of the target.
     pub namespace: Option<String>,
+    /// The admin partition of the target.
     pub partition: Option<String>,
+    /// The datacenter of the target.
     pub datacenter: Option<String>,
+    /// The mesh gateway configuration.
     pub mesh_gateway: Option<serde_json::Value>,
+    /// The subset configuration.
     pub subset: Option<serde_json::Value>,
+    /// The connect timeout as a duration string.
     pub connect_timeout: Option<String>,
+    /// The SNI name used for TLS.
     pub sni: Option<String>,
+    /// The display name of the target.
     pub name: Option<String>,
+    /// Whether the target is disabled.
     pub disabled: Option<bool>,
 }
 

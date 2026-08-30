@@ -1,7 +1,9 @@
+//! Module `config::model` of the `batata-server` crate.
 // Configuration data models and structures
 // Re-exports types from batata_config for backward compatibility
 
 // Re-export all config model types from batata_config
+/// Re-exported item.
 pub use batata_config::model::*;
 
 #[cfg(test)]

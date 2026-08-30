@@ -175,6 +175,7 @@ async fn operator_segment_list() -> HttpResponse {
     HttpResponse::Ok().json(Vec::<String>::new())
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/operator")
         .service(get_raft_configuration)

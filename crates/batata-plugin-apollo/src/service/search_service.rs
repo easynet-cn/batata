@@ -3,15 +3,18 @@ use std::sync::Arc;
 use crate::api::dto::SearchDTO;
 use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, NamespacePersistence};
 
+/// Represents the `SearchService` entity.
 pub struct SearchService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl SearchService {
+    /// Creates a new `SearchService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Returns the requested value.
     pub async fn search_items(&self, app_id: &str, cluster_name: &str, key: Option<&str>, value: Option<&str>) -> Result<Vec<SearchDTO>, anyhow::Error> {
         let namespaces = self.persistence.list_by_app(app_id).await?;
         let mut results = Vec::new();
@@ -46,6 +49,7 @@ impl SearchService {
         Ok(results)
     }
 
+    /// Returns the requested value.
     pub async fn search_across_apps(&self, key: Option<&str>, value: Option<&str>) -> Result<Vec<SearchDTO>, anyhow::Error> {
         let namespaces = self.persistence.list_all().await?;
         let mut results = Vec::new();

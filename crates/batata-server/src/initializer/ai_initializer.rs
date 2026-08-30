@@ -13,6 +13,10 @@ use crate::initializer::traits::{InitResult, ServiceInitializer};
 pub struct AiInitializer;
 
 impl AiInitializer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self
     }

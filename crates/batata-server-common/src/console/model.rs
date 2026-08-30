@@ -12,12 +12,18 @@ use batata_common::DEFAULT_NAMESPACE_ID;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Namespace {
+    /// The unique identifier of the namespace.
     pub namespace: String,
+    /// The display name of the namespace.
     pub namespace_show_name: String,
+    /// The description of the namespace.
     pub namespace_desc: String,
+    /// The maximum number of configs allowed in this namespace.
     pub quota: i32,
+    /// The current number of configs in this namespace.
     pub config_count: i64,
     #[serde(rename = "type")]
+    /// The namespace type (0 = public, 2 = custom).
     pub type_: i32,
 }
 
@@ -64,10 +70,13 @@ impl From<batata_persistence::NamespaceInfo> for Namespace {
 #[serde(default, rename_all = "camelCase")]
 pub struct NamespaceForm {
     #[serde(alias = "namespaceId")]
+    /// The namespace ID to create.
     pub namespace_id: String,
     #[serde(alias = "namespaceName")]
+    /// The display name of the namespace.
     pub namespace_name: String,
     #[serde(alias = "namespaceDesc")]
+    /// The description of the namespace.
     pub namespace_desc: String,
 }
 
@@ -75,7 +84,9 @@ pub struct NamespaceForm {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAbility {
+    /// Whether remote connections are supported.
     pub support_remote_connection: bool,
+    /// Whether gRPC health reporting is enabled.
     pub grpc_report_enabled: bool,
 }
 
@@ -92,6 +103,7 @@ impl Default for RemoteAbility {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigAbility {
+    /// Whether metrics can be collected remotely.
     pub support_remote_metrics: bool,
 }
 
@@ -99,6 +111,7 @@ pub struct ConfigAbility {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NamingAbility {
+    /// Whether the JRaft consensus protocol is supported.
     pub support_jraft: bool,
 }
 
@@ -114,8 +127,11 @@ impl Default for NamingAbility {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeAbilities {
+    /// Remote connection abilities.
     pub remote_ability: RemoteAbility,
+    /// Config management abilities.
     pub config_ability: ConfigAbility,
+    /// Service discovery abilities.
     pub naming_ability: NamingAbility,
 }
 
@@ -123,13 +139,21 @@ pub struct NodeAbilities {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
+    /// The member IP address.
     pub ip: String,
+    /// The member port.
     pub port: u16,
+    /// The member state (e.g. UP, DOWN).
     pub state: String,
+    /// Extended member information.
     pub extend_info: HashMap<String, serde_json::Value>,
+    /// The full address of the member.
     pub address: String,
+    /// The abilities advertised by the member.
     pub abilities: NodeAbilities,
+    /// Whether gRPC health reporting is enabled.
     pub grpc_report_enabled: bool,
+    /// Consecutive failed access count.
     pub fail_access_cnt: i32,
 }
 
@@ -177,11 +201,17 @@ impl From<batata_common::ExtendedMemberInfo> for Member {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterHealthSummary {
+    /// Total number of cluster members.
     pub total: usize,
+    /// Number of members that are up.
     pub up: usize,
+    /// Number of members that are down.
     pub down: usize,
+    /// Number of members in a suspicious state.
     pub suspicious: usize,
+    /// Number of members still starting.
     pub starting: usize,
+    /// Number of isolated members.
     pub isolation: usize,
 }
 
@@ -202,8 +232,11 @@ impl From<batata_core::cluster::ClusterHealthSummary> for ClusterHealthSummary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterHealthResponse {
+    /// Whether the cluster is healthy.
     pub is_healthy: bool,
+    /// The health summary of cluster members.
     pub summary: ClusterHealthSummary,
+    /// Whether the server runs in standalone mode.
     pub standalone: bool,
 }
 
@@ -211,11 +244,17 @@ pub struct ClusterHealthResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelfMemberResponse {
+    /// The IP address of this member.
     pub ip: String,
+    /// The port of this member.
     pub port: u16,
+    /// The full address of this member.
     pub address: String,
+    /// The state of this member.
     pub state: String,
+    /// Whether the server runs in standalone mode.
     pub is_standalone: bool,
+    /// The Batata version running on this member.
     pub version: String,
 }
 

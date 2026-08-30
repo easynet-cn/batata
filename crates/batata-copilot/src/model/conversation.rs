@@ -8,10 +8,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationHistory {
+    /// Messages in the conversation.
     #[serde(default)]
     pub messages: Vec<ConversationMessage>,
+    /// Optional free-form context describing the conversation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    /// Optional title of the conversation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }

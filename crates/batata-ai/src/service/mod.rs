@@ -1,11 +1,17 @@
 // AI service module - config-backed persistent services for MCP and A2A
 
+/// Config-backed operation service for A2A (Agent-to-Agent) agents.
 pub mod a2a_service;
+/// Persistence-backed operation service for AgentSpecs.
 pub mod agentspec_service;
+/// Shared constants for AI config groups, tags, and app names.
 pub mod constants;
+/// NamingService-backed registration for MCP/A2A endpoints.
 pub mod endpoint_service;
 pub mod mcp_client;
+/// DashMap-backed L1 cache index for MCP servers.
 pub mod mcp_index;
+/// Config-backed operation service for MCP servers.
 pub mod mcp_service;
 pub mod pipeline_service;
 pub mod prompt;

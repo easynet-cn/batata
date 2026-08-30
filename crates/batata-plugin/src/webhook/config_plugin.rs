@@ -16,6 +16,7 @@ pub struct WebhookConfigChangePlugin {
 }
 
 impl WebhookConfigChangePlugin {
+    /// Creates a new `WebhookConfigChangePlugin` backed by the given webhook plugin.
     pub fn new(webhook_plugin: Arc<dyn WebhookPlugin>) -> Self {
         Self { webhook_plugin }
     }

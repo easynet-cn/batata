@@ -142,6 +142,7 @@ pub struct ConsulEventService {
 }
 
 impl ConsulEventService {
+/// The `new` associated function.
     pub fn new(index_provider: ConsulIndexProvider) -> Self {
         Self {
             buffer: Arc::new(RwLock::new(EventRingBuffer::new())),

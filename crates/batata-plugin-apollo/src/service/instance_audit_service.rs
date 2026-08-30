@@ -35,6 +35,7 @@ impl<T> CachedEntry<T> {
     }
 }
 
+/// Represents the `InstanceAuditService` entity.
 pub struct InstanceAuditService {
     persistence: Arc<dyn ApolloPersistenceService>,
     instance_cache: std::sync::Mutex<HashMap<String, CachedEntry<i32>>>,
@@ -42,6 +43,7 @@ pub struct InstanceAuditService {
 }
 
 impl InstanceAuditService {
+    /// Creates a new `InstanceAuditService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self {
             persistence,

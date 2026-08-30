@@ -48,7 +48,9 @@ const METRIC_OP_UNLOCK: &str = "unlock";
 /// (standalone mode), falls back to the in-memory `LockService`.
 #[derive(Clone)]
 pub struct LockOperationHandler {
+    /// The `lock_service` field.
     pub lock_service: Arc<LockService>,
+    /// The `auth_service` field.
     pub auth_service: Arc<GrpcAuthService>,
     /// Optional Raft node. `Some` in cluster mode (CP), `None` in standalone.
     pub raft_node: Option<Arc<RaftNode>>,

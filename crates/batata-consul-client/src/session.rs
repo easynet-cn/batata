@@ -1,3 +1,4 @@
+//! Session creation, renewal, and invalidation.
 use std::sync::Arc;
 
 use tokio::sync::watch;

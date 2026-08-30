@@ -31,7 +31,9 @@ impl Default for BaseVisibilityPredicate {
 /// Mirrors `AuthorizedResources` in Nacos.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthorizedResources {
+    /// Type of resource this authorized set applies to (e.g. `"skill"`).
     pub resource_type: String,
+    /// Identifiers of resources the identity is explicitly authorized to access.
     pub resources: Vec<String>,
 }
 
@@ -41,20 +43,25 @@ pub struct AuthorizedResources {
 /// to guide the persistence layer on how to filter results.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryAdvisor {
+    /// Base filtering strategy applied to the query.
     pub base_predicate: BaseVisibilityPredicate,
+    /// Storage-neutral authorized resources used for additional filtering.
     pub authorized_predicate: AuthorizedResources,
 }
 
 impl QueryAdvisor {
+    /// Create a new, empty query advisor.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the base filtering strategy for the query.
     pub fn with_base_predicate(mut self, predicate: BaseVisibilityPredicate) -> Self {
         self.base_predicate = predicate;
         self
     }
 
+    /// Set the authorized resources used for additional filtering.
     pub fn with_authorized_resources(mut self, resource_type: &str, resources: Vec<String>) -> Self {
         self.authorized_predicate = AuthorizedResources {
             resource_type: resource_type.to_string(),
@@ -74,6 +81,7 @@ pub struct ValidationResult {
 }
 
 impl ValidationResult {
+    /// Create an allowed result with no reason.
     pub fn allow() -> Self {
         Self {
             allowed: true,
@@ -81,6 +89,7 @@ impl ValidationResult {
         }
     }
 
+    /// Create a denied result with the given reason.
     pub fn deny(reason: &str) -> Self {
         Self {
             allowed: false,
@@ -88,10 +97,12 @@ impl ValidationResult {
         }
     }
 
+    /// Whether the visibility check is allowed.
     pub fn is_allowed(&self) -> bool {
         self.allowed
     }
 
+    /// Optional reason explaining a denial, if any.
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
@@ -102,7 +113,9 @@ impl ValidationResult {
 /// Mirrors `VisibilityQueryContext` in Nacos.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VisibilityQueryContext {
+    /// Namespace the query is scoped to.
     pub namespace_id: String,
+    /// Type of resource the query targets (e.g. `"skill"`).
     pub resource_type: String,
 }
 
@@ -113,20 +126,30 @@ pub struct VisibilityQueryContext {
 /// Implementations should provide namespace, name, and type;
 /// scope and owner have default values.
 pub trait VisibilityResource: Send + Sync {
+    /// Namespace this resource belongs to.
     fn namespace_id(&self) -> &str;
+    /// Name identifying the resource.
     fn resource_name(&self) -> &str;
+    /// Type of the resource (e.g. `"skill"`).
     fn resource_type(&self) -> &str;
+    /// Visibility scope (`SCOPE_PUBLIC` or `SCOPE_PRIVATE`).
     fn scope(&self) -> &str;
+    /// Owner identity of the resource.
     fn owner(&self) -> &str;
 }
 
 /// A concrete visibility resource for general use.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericVisibilityResource {
+    /// Namespace this resource belongs to.
     pub namespace_id: String,
+    /// Name identifying the resource.
     pub resource_name: String,
+    /// Type of the resource (e.g. `"skill"`).
     pub resource_type: String,
+    /// Visibility scope (`SCOPE_PUBLIC` or `SCOPE_PRIVATE`).
     pub scope: String,
+    /// Owner identity of the resource.
     pub owner: String,
 }
 

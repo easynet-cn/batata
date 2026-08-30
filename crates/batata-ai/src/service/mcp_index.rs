@@ -12,26 +12,36 @@ use crate::model::McpServerVersionInfo;
 /// Cached index entry for an MCP server
 #[derive(Debug, Clone)]
 pub struct McpServerIndexData {
+    /// Server id.
     pub id: String,
+    /// Server name (identifier).
     pub name: String,
+    /// Namespace the server belongs to.
     pub namespace: String,
+    /// Protocol identifier (e.g. `"mcp"`).
     pub protocol: String,
+    /// Human-readable description.
     pub description: String,
+    /// Latest published version string.
     pub latest_published_version: String,
+    /// Number of stored versions.
     pub version_count: usize,
+    /// Creation time in epoch millis.
     pub create_time: i64,
+    /// Last modification time in epoch millis.
     pub modify_time: i64,
 }
 
 /// MCP Server Index with DashMap L1 cache
 pub struct McpServerIndex {
-    /// L1 cache: id -> McpServerIndexData
+    /// L1 cache mapping server id to its index entry.
     by_id: DashMap<String, McpServerIndexData>,
-    /// L1 cache: (namespace, name) -> id
+    /// L1 cache mapping `(namespace, name)` to server id.
     by_name: DashMap<String, DashMap<String, String>>,
 }
 
 impl McpServerIndex {
+    /// Creates an empty index.
     pub fn new() -> Self {
         Self {
             by_id: DashMap::new(),

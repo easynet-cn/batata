@@ -89,25 +89,45 @@ impl crate::raft::ConsulApplyHook for NamingStoreApplyHook {
 /// so that `configure()` can create `web::Data` instances for each HTTP worker.
 #[derive(Clone)]
 pub struct ConsulPluginInner {
+/// The `naming_store` field.
     pub naming_store: Arc<crate::naming_store::ConsulNamingStore>,
+/// The `agent` field.
     pub agent: ConsulAgentService,
+/// The `health` field.
     pub health: ConsulHealthService,
+/// The `kv` field.
     pub kv: ConsulKVService,
+/// The `catalog` field.
     pub catalog: ConsulCatalogService,
+/// The `acl` field.
     pub acl: AclService,
+/// The `session` field.
     pub session: ConsulSessionService,
+/// The `event` field.
     pub event: ConsulEventService,
+/// The `query` field.
     pub query: ConsulQueryService,
+/// The `peering` field.
     pub peering: Arc<ConsulPeeringService>,
+/// The `config_entry` field.
     pub config_entry: ConsulConfigEntryService,
+/// The `connect` field.
     pub connect: ConsulConnectService,
+/// The `connect_ca` field.
     pub connect_ca: ConsulConnectCAService,
+/// The `coordinate` field.
     pub coordinate: ConsulCoordinateService,
+/// The `snapshot` field.
     pub snapshot: ConsulSnapshotService,
+/// The `namespace_service` field.
     pub namespace_service: crate::namespace::ConsulNamespaceService,
+/// The `partition_service` field.
     pub partition_service: crate::partition::ConsulPartitionService,
+/// The `dc_config` field.
     pub dc_config: ConsulDatacenterConfig,
+/// The `index_provider` field.
     pub index_provider: ConsulIndexProvider,
+/// The `registry` field.
     pub registry: Arc<InstanceCheckRegistry>,
     /// Raft writer for routing Consul writes through the unified Raft
     /// group. `None` in standalone mode; `Some` in cluster mode. Used by

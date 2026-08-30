@@ -11,15 +11,18 @@ use crate::model::{SkillGenerationRequest, StreamChunk};
 use crate::prompt::skill_generation;
 use crate::stream;
 
+/// Service for generating a new Agent Skill via the LLM.
 pub struct SkillGenerationService {
     agent_manager: Arc<CopilotAgentManager>,
 }
 
 impl SkillGenerationService {
+    /// Create a new skill generation service.
     pub fn new(agent_manager: Arc<CopilotAgentManager>) -> Self {
         Self { agent_manager }
     }
 
+    /// Generate a skill from the request, returning a stream of `StreamChunk` events.
     pub async fn generate_stream(
         &self,
         request: SkillGenerationRequest,

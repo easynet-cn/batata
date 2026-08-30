@@ -14,9 +14,13 @@ use serde::{Deserialize, Serialize};
 
 /// Gray rule type constants
 pub mod rule_type {
+    /// Beta (IP-based) rule type.
     pub const BETA: &str = "beta";
+    /// Tag (label-based) rule type.
     pub const TAG: &str = "tag";
+    /// Percentage (traffic-based) rule type.
     pub const PERCENTAGE: &str = "percentage";
+    /// IP range (CIDR-based) rule type.
     pub const IP_RANGE: &str = "ip_range";
 }
 
@@ -25,9 +29,13 @@ pub const GRAY_RULE_VERSION: &str = "1.0.0";
 
 /// Label keys for client matching
 pub mod labels {
+    /// Label key for the client IP address.
     pub const CLIENT_IP: &str = "ClientIp";
+    /// Label key for the VIP server tag.
     pub const VIP_SERVER_TAG: &str = "vipServerTag";
+    /// Label key for the application name.
     pub const APP_NAME: &str = "appName";
+    /// Label key for the cluster name.
     pub const CLUSTER_NAME: &str = "clusterName";
 }
 
@@ -121,6 +129,7 @@ pub struct BetaGrayRule {
 }
 
 impl BetaGrayRule {
+    /// Default priority for beta rules (checked first).
     pub const PRIORITY: i32 = i32::MAX;
 
     pub fn new(expr: &str, priority: i32) -> Self {
@@ -168,6 +177,7 @@ pub struct TagGrayRule {
 }
 
 impl TagGrayRule {
+    /// Default priority for tag rules.
     pub const PRIORITY: i32 = i32::MAX - 1;
 
     pub fn new(expr: &str, priority: i32) -> Self {
@@ -211,6 +221,7 @@ pub struct PercentageGrayRule {
 }
 
 impl PercentageGrayRule {
+    /// Default priority for percentage rules.
     pub const PRIORITY: i32 = i32::MAX - 2;
 
     pub fn new(expr: &str, priority: i32) -> Self {
@@ -270,6 +281,7 @@ struct IpRange {
 }
 
 impl IpRangeGrayRule {
+    /// Default priority for IP range rules.
     pub const PRIORITY: i32 = i32::MAX - 3;
 
     pub fn new(expr: &str, priority: i32) -> Self {

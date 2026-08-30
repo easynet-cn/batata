@@ -1,3 +1,8 @@
+//! V3 Console config management API endpoints.
+//!
+//! Provides endpoints for browsing, querying, and exporting configurations
+//! across namespaces, groups, and data IDs.
+
 use std::str::FromStr;
 
 use actix_multipart::Multipart;
@@ -1009,6 +1014,7 @@ async fn clone_config(
     }
 }
 
+/// Register the config management routes under `/cs/config`.
 pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)

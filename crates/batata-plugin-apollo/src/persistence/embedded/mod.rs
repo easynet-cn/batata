@@ -63,6 +63,7 @@ pub struct EmbeddedApolloPersistence {
 }
 
 impl EmbeddedApolloPersistence {
+    /// Creates a new `EmbeddedApolloPersistence`.
     pub fn new(db: Arc<DB>) -> Self {
         // Recover id counters from existing rows so ids stay unique and
         // monotonic across restarts (upstream relies on DB AUTO_INCREMENT).

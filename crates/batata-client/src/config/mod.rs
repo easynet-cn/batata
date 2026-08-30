@@ -945,6 +945,7 @@ pub struct ConfigChangeNotifyHandler {
 }
 
 impl ConfigChangeNotifyHandler {
+    /// Create a new config-change push handler for the given service.
     pub fn new(config_service: Arc<BatataConfigService>) -> Self {
         Self { config_service }
     }

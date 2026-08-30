@@ -1,4 +1,6 @@
+/// AI-related model types.
 pub mod ai;
+/// Plugin model types.
 pub mod plugin;
 
 use serde::{Deserialize, Serialize};
@@ -11,10 +13,13 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     #[serde(alias = "count", default)]
+    /// The `total_count` field.
     pub total_count: u64,
     #[serde(default)]
+    /// The `page_number` field.
     pub page_number: u64,
     #[serde(default)]
+    /// The `pages_available` field.
     pub pages_available: u64,
     #[serde(
         alias = "serviceList",
@@ -24,6 +29,7 @@ pub struct Page<T> {
         alias = "list",
         default
     )]
+    /// The `page_items` field.
     pub page_items: Vec<T>,
 }
 
@@ -39,6 +45,7 @@ impl<T> Default for Page<T> {
 }
 
 impl<T> Page<T> {
+    /// Creates a new `Page` from the given counts and items.
     pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
         Self {
             total_count,
@@ -52,6 +59,7 @@ impl<T> Page<T> {
         }
     }
 
+    /// Creates an empty `Page`.
     pub fn empty() -> Self {
         Self::default()
     }

@@ -10,12 +10,14 @@ pub struct LoggingTraceSubscriber {
 }
 
 impl LoggingTraceSubscriber {
+    /// Creates a new `LoggingTraceSubscriber` with the default name `"logging"`.
     pub fn new() -> Self {
         Self {
             name: "logging".to_string(),
         }
     }
 
+    /// Creates a new `LoggingTraceSubscriber` with the given name.
     pub fn with_name(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }

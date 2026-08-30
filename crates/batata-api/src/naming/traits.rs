@@ -19,6 +19,7 @@ use super::model::{
 pub trait NamingServiceProvider: Send + Sync {
     // === Instance operations ===
 
+    /// The `register_instance` method.
     fn register_instance(
         &self,
         namespace: &str,
@@ -27,6 +28,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instance: Instance,
     ) -> bool;
 
+    /// The `deregister_instance` method.
     fn deregister_instance(
         &self,
         namespace: &str,
@@ -35,6 +37,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instance: &Instance,
     ) -> bool;
 
+    /// Returns the instances.
     fn get_instances(
         &self,
         namespace: &str,
@@ -68,6 +71,7 @@ pub trait NamingServiceProvider: Send + Sync {
             .collect()
     }
 
+    /// Returns the service.
     fn get_service(
         &self,
         namespace: &str,
@@ -77,6 +81,7 @@ pub trait NamingServiceProvider: Send + Sync {
         healthy_only: bool,
     ) -> Service;
 
+    /// Returns the service with protection info.
     fn get_service_with_protection_info(
         &self,
         namespace: &str,
@@ -86,6 +91,7 @@ pub trait NamingServiceProvider: Send + Sync {
         healthy_only: bool,
     ) -> (Service, ProtectionInfo);
 
+    /// The `list_services` method.
     fn list_services(
         &self,
         namespace: &str,
@@ -94,8 +100,10 @@ pub trait NamingServiceProvider: Send + Sync {
         page_size: i32,
     ) -> (i32, Vec<String>);
 
+    /// The `service_exists` method.
     fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool;
 
+    /// Returns the all service keys.
     fn get_all_service_keys(&self) -> Vec<String>;
 
     /// Count of registered services without allocating a key list.
@@ -105,6 +113,7 @@ pub trait NamingServiceProvider: Send + Sync {
         self.get_all_service_keys().len()
     }
 
+    /// The `batch_register_instances` method.
     fn batch_register_instances(
         &self,
         namespace: &str,
@@ -113,6 +122,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instances: Vec<Instance>,
     ) -> bool;
 
+    /// The `replace_ephemeral_instances` method.
     fn replace_ephemeral_instances(
         &self,
         namespace: &str,
@@ -121,6 +131,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instances: Vec<Instance>,
     ) -> bool;
 
+    /// The `merge_remote_instances` method.
     fn merge_remote_instances(
         &self,
         namespace: &str,
@@ -129,6 +140,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instances: Vec<Instance>,
     ) -> bool;
 
+    /// The `batch_deregister_instances` method.
     fn batch_deregister_instances(
         &self,
         namespace: &str,
@@ -137,6 +149,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instances: Vec<Instance>,
     ) -> bool;
 
+    /// The `heartbeat` method.
     fn heartbeat(
         &self,
         namespace: &str,
@@ -146,6 +159,7 @@ pub trait NamingServiceProvider: Send + Sync {
     ) -> bool;
 
     #[allow(clippy::too_many_arguments)]
+    /// The `update_instance_health` method.
     fn update_instance_health(
         &self,
         namespace: &str,
@@ -157,12 +171,15 @@ pub trait NamingServiceProvider: Send + Sync {
         healthy: bool,
     ) -> bool;
 
+    /// Returns the instance count.
     fn get_instance_count(&self) -> (usize, usize);
 
+    /// Returns the healthy instance count.
     fn get_healthy_instance_count(&self) -> (usize, usize);
 
     // === Metadata operations ===
 
+    /// Sets the service metadata.
     fn set_service_metadata(
         &self,
         namespace: &str,
@@ -171,6 +188,7 @@ pub trait NamingServiceProvider: Send + Sync {
         metadata: ServiceMetadata,
     );
 
+    /// Returns the service metadata.
     fn get_service_metadata(
         &self,
         namespace: &str,
@@ -178,6 +196,7 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     ) -> Option<ServiceMetadata>;
 
+    /// The `update_service_protect_threshold` method.
     fn update_service_protect_threshold(
         &self,
         namespace: &str,
@@ -186,6 +205,7 @@ pub trait NamingServiceProvider: Send + Sync {
         protect_threshold: f32,
     );
 
+    /// The `update_service_selector` method.
     fn update_service_selector(
         &self,
         namespace: &str,
@@ -195,6 +215,7 @@ pub trait NamingServiceProvider: Send + Sync {
         selector_expression: &str,
     );
 
+    /// The `update_service_metadata_map` method.
     fn update_service_metadata_map(
         &self,
         namespace: &str,
@@ -203,12 +224,15 @@ pub trait NamingServiceProvider: Send + Sync {
         metadata: HashMap<String, String>,
     );
 
+    /// The `delete_service_metadata` method.
     fn delete_service_metadata(&self, namespace: &str, group_name: &str, service_name: &str);
 
     // === Subscription operations ===
 
+    /// The `subscribe` method.
     fn subscribe(&self, connection_id: &str, namespace: &str, group_name: &str, service_name: &str);
 
+    /// The `unsubscribe` method.
     fn unsubscribe(
         &self,
         connection_id: &str,
@@ -217,11 +241,14 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     );
 
+    /// Returns the subscribers.
     fn get_subscribers(&self, namespace: &str, group_name: &str, service_name: &str)
     -> Vec<String>;
 
+    /// The `remove_subscriber` method.
     fn remove_subscriber(&self, connection_id: &str);
 
+    /// The `add_publisher` method.
     fn add_publisher(
         &self,
         connection_id: &str,
@@ -230,6 +257,7 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     );
 
+    /// The `remove_publisher` method.
     fn remove_publisher(
         &self,
         connection_id: &str,
@@ -238,20 +266,27 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     );
 
+    /// Returns the published services.
     fn get_published_services(&self, connection_id: &str) -> Vec<String>;
 
+    /// Returns the publishers.
     fn get_publishers(&self, namespace: &str, group_name: &str, service_name: &str) -> Vec<String>;
 
+    /// Returns the subscribed services.
     fn get_subscribed_services(&self, connection_id: &str) -> Vec<String>;
 
+    /// Returns the all publisher ids.
     fn get_all_publisher_ids(&self) -> Vec<String>;
 
+    /// Returns the all subscriber ids.
     fn get_all_subscriber_ids(&self) -> Vec<String>;
 
     // === Connection instance tracking ===
 
+    /// The `add_connection_instance` method.
     fn add_connection_instance(&self, connection_id: &str, service_key: &str, instance_key: &str);
 
+    /// The `remove_connection_instance` method.
     fn remove_connection_instance(
         &self,
         connection_id: &str,
@@ -259,10 +294,12 @@ pub trait NamingServiceProvider: Send + Sync {
         instance_key: &str,
     );
 
+    /// The `deregister_all_by_connection` method.
     fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String>;
 
     // === Cluster operations ===
 
+    /// Sets the cluster config.
     fn set_cluster_config(
         &self,
         namespace: &str,
@@ -272,6 +309,7 @@ pub trait NamingServiceProvider: Send + Sync {
         config: ClusterConfig,
     );
 
+    /// Returns the cluster config.
     fn get_cluster_config(
         &self,
         namespace: &str,
@@ -280,6 +318,7 @@ pub trait NamingServiceProvider: Send + Sync {
         cluster_name: &str,
     ) -> Option<ClusterConfig>;
 
+    /// Returns the all cluster configs.
     fn get_all_cluster_configs(
         &self,
         namespace: &str,
@@ -287,6 +326,7 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     ) -> Vec<ClusterConfig>;
     #[allow(clippy::too_many_arguments)]
+    /// The `update_cluster_health_check` method.
     fn update_cluster_health_check(
         &self,
         namespace: &str,
@@ -298,6 +338,7 @@ pub trait NamingServiceProvider: Send + Sync {
         use_instance_port: bool,
     );
 
+    /// The `update_cluster_metadata` method.
     fn update_cluster_metadata(
         &self,
         namespace: &str,
@@ -307,6 +348,7 @@ pub trait NamingServiceProvider: Send + Sync {
         metadata: HashMap<String, String>,
     );
 
+    /// The `delete_cluster_config` method.
     fn delete_cluster_config(
         &self,
         namespace: &str,
@@ -316,6 +358,7 @@ pub trait NamingServiceProvider: Send + Sync {
     );
 
     #[allow(clippy::too_many_arguments)]
+    /// The `create_cluster_config` method.
     fn create_cluster_config(
         &self,
         namespace: &str,
@@ -328,6 +371,7 @@ pub trait NamingServiceProvider: Send + Sync {
         metadata: HashMap<String, String>,
     ) -> Result<(), String>;
 
+    /// Returns the cluster statistics.
     fn get_cluster_statistics(
         &self,
         namespace: &str,
@@ -335,6 +379,7 @@ pub trait NamingServiceProvider: Send + Sync {
         service_name: &str,
     ) -> Vec<ClusterStatistics>;
 
+    /// Returns the single cluster statistics.
     fn get_single_cluster_statistics(
         &self,
         namespace: &str,

@@ -1,5 +1,6 @@
-// Raft type configuration for openraft
-// Defines all the type aliases needed for the Raft consensus implementation
+//! Raft type configuration for openraft.
+//!
+//! Defines all the type aliases needed for the Raft consensus implementation.
 
 use std::io::Cursor;
 
@@ -13,10 +14,12 @@ pub type NodeId = u64;
 /// Snapshot data - serialized state machine data
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SnapshotData {
+    /// Serialized state machine data carried by the snapshot.
     pub data: Vec<u8>,
 }
 
 impl SnapshotData {
+    /// Create a new snapshot data wrapper from the given serialized bytes.
     pub fn new(data: Vec<u8>) -> Self {
         Self { data }
     }
@@ -37,6 +40,7 @@ impl From<SnapshotData> for Cursor<Vec<u8>> {
 }
 
 openraft::declare_raft_types!(
+    /// The openraft type configuration used throughout the crate.
     pub TypeConfig:
         D = RaftRequest,
         R = RaftResponse,

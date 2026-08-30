@@ -519,6 +519,10 @@ async fn get_cluster(
     Result::<ServerLoaderMetrics>::http_success(metrics)
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/loader")
         .service(get_current)

@@ -39,21 +39,37 @@ pub mod headers {
 
 /// Span attribute keys following OpenTelemetry semantic conventions
 pub mod attributes {
+    /// Span attribute key for the HTTP method.
     pub const HTTP_METHOD: &str = "http.method";
+    /// Span attribute key for the full HTTP URL.
     pub const HTTP_URL: &str = "http.url";
+    /// Span attribute key for the HTTP request target.
     pub const HTTP_TARGET: &str = "http.target";
+    /// Span attribute key for the HTTP host.
     pub const HTTP_HOST: &str = "http.host";
+    /// Span attribute key for the HTTP scheme.
     pub const HTTP_SCHEME: &str = "http.scheme";
+    /// Span attribute key for the HTTP response status code.
     pub const HTTP_STATUS_CODE: &str = "http.status_code";
+    /// Span attribute key for the HTTP user agent.
     pub const HTTP_USER_AGENT: &str = "http.user_agent";
+    /// Span attribute key for the request content length.
     pub const HTTP_REQUEST_CONTENT_LENGTH: &str = "http.request_content_length";
+    /// Span attribute key for the response content length.
     pub const HTTP_RESPONSE_CONTENT_LENGTH: &str = "http.response_content_length";
+    /// Span attribute key for the peer IP address.
     pub const NET_PEER_IP: &str = "net.peer.ip";
+    /// Span attribute key for the peer port.
     pub const NET_PEER_PORT: &str = "net.peer.port";
+    /// Span attribute key for the authenticated end-user ID.
     pub const ENDUSER_ID: &str = "enduser.id";
+    /// Span attribute key for the Batata namespace.
     pub const BATATA_NAMESPACE: &str = "batata.namespace";
+    /// Span attribute key for the Batata config group.
     pub const BATATA_GROUP: &str = "batata.group";
+    /// Span attribute key for the Batata config data ID.
     pub const BATATA_DATA_ID: &str = "batata.data_id";
+    /// Span attribute key for the Batata service name.
     pub const BATATA_SERVICE_NAME: &str = "batata.service_name";
 }
 
@@ -151,6 +167,7 @@ impl TraceContext {
 pub struct TracingMiddleware;
 
 impl TracingMiddleware {
+/// Performs the `new` operation.
     pub fn new() -> Self {
         Self
     }

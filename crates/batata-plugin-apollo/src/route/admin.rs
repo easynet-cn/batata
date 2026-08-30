@@ -1428,6 +1428,7 @@ async fn disable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, 
     }
 }
 
+/// Performs the `configure_admin_routes` operation.
 pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(
         web::resource("/apps")

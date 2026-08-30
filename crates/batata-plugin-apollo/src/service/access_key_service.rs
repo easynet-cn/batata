@@ -5,15 +5,18 @@ use crate::persistence::shared::StoredAccessKey;
 use crate::persistence::traits::{ApolloPersistenceService, AccessKeyPersistence};
 use chrono::Utc;
 
+/// Represents the `AccessKeyService` entity.
 pub struct AccessKeyService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl AccessKeyService {
+    /// Creates a new `AccessKeyService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, app_id: &str, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
         let secret = Self::generate_secret();
         let now = Utc::now().timestamp_millis();
@@ -36,16 +39,19 @@ impl AccessKeyService {
         Ok(created.into())
     }
 
+    /// Returns the requested value.
     pub async fn list_by_app(&self, app_id: &str) -> Result<Vec<AccessKeyDTO>, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, _app_id: &str, id: i32, _operator: &str) -> Result<(), anyhow::Error> {
         self.persistence.delete(id).await?;
         Ok(())
     }
 
+    /// Performs the `enable` operation.
     pub async fn enable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list
@@ -59,6 +65,7 @@ impl AccessKeyService {
         Ok(updated.into())
     }
 
+    /// Performs the `disable` operation.
     pub async fn disable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list

@@ -1,3 +1,10 @@
+#![warn(missing_docs)]
+
+//! Database migrations for the batata service.
+//!
+//! This crate defines the [`Migrator`] and the ordered set of schema
+//! migrations applied to the underlying database via `sea-orm-migration`.
+
 pub use sea_orm_migration::prelude::*;
 
 pub(crate) mod column_helper;
@@ -15,6 +22,12 @@ mod m20260412_000011_create_pipeline_execution;
 mod m20260412_000012_create_ai_resource;
 mod m20260412_000013_create_ai_resource_version;
 
+/// The migration runner for the batata service.
+///
+/// Implements [`MigratorTrait`] by returning the full, chronologically
+/// ordered list of schema migrations defined in this crate. Pass this type
+/// to `sea-orm-migration` tooling (for example `Migrator::up`) to apply or
+/// roll back the database schema.
 pub struct Migrator;
 
 /// Total number of migrations — update when adding new migrations

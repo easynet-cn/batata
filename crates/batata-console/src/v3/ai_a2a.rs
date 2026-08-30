@@ -1,5 +1,6 @@
-// Console A2A agent management API endpoints
-// Aligned with Batata V3 Console API contract
+//! Console A2A agent management API endpoints.
+//!
+//! Aligned with Batata V3 Console API contract.
 // Uses Arc<dyn A2aAgentService> trait object (wired in batata-server)
 
 use std::sync::Arc;
@@ -344,6 +345,7 @@ async fn get_stats(
     }
 }
 
+/// Register the A2A agent management routes under `/ai/a2a`.
 pub fn routes() -> Scope {
     web::scope("/ai/a2a")
         .service(get_stats)

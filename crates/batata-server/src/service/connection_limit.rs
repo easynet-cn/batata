@@ -12,6 +12,13 @@ pub struct ControlPluginConnectionLimiter {
 }
 
 impl ControlPluginConnectionLimiter {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `control_plugin`: `control_plugin : Arc < dyn ControlPlugin > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new(control_plugin: Arc<dyn ControlPlugin>) -> Self {
         Self { control_plugin }
     }

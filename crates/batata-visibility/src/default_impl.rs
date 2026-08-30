@@ -31,6 +31,7 @@ pub const DEFAULT_SERVICE_NAME: &str = "default";
 /// Admin is determined by checking if the identity equals the admin username
 /// or if an `is_admin` hint is provided in the context.
 pub struct DefaultVisibilityService {
+    /// Hardcoded usernames treated as global admins (backward compatibility).
     admin_usernames: Vec<String>,
     /// Whether auth is disabled (all checks bypassed).
     /// Mirrors Nacos' isAuthDisabled() check.
@@ -42,6 +43,7 @@ pub struct DefaultVisibilityService {
 }
 
 impl DefaultVisibilityService {
+    /// Create a new default visibility service with built-in admin usernames.
     pub fn new() -> Self {
         Self {
             admin_usernames: vec!["nacos".to_string(), "admin".to_string()],
@@ -50,6 +52,7 @@ impl DefaultVisibilityService {
         }
     }
 
+    /// Override the hardcoded admin usernames used for global admin checks.
     pub fn with_admin_usernames(mut self, admins: Vec<String>) -> Self {
         self.admin_usernames = admins;
         self

@@ -65,6 +65,7 @@ async fn delete_kv(
     crate::kv::delete_kv(kv_service, index_provider, acl_service, req, query).await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/kv")
         .service(export_kv)
@@ -74,6 +75,7 @@ pub fn routes() -> Scope {
         .service(delete_kv)
 }
 
+/// The `txn_resource` function.
 pub fn txn_resource() -> actix_web::Resource {
     web::resource("/txn").route(web::put().to(crate::kv::txn))
 }

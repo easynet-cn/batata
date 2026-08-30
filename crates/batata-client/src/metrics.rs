@@ -171,24 +171,29 @@ pub struct SimpleCounter {
 }
 
 impl SimpleCounter {
+    /// Create a new counter initialized to zero.
     pub fn new() -> Self {
         Self {
             value: Arc::new(AtomicU64::new(0)),
         }
     }
 
+    /// Increment the counter by one.
     pub fn increment(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Add `delta` to the counter.
     pub fn add(&self, delta: u64) {
         self.value.fetch_add(delta, Ordering::Relaxed);
     }
 
+    /// Return the current counter value.
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
 
+    /// Reset the counter to zero.
     pub fn reset(&self) {
         self.value.store(0, Ordering::Relaxed);
     }

@@ -4,15 +4,18 @@ use crate::api::dto::AppNamespaceDTO;
 use crate::entity::apollo_app_namespace;
 use crate::persistence::traits::{ApolloPersistenceService, AppNamespacePersistence};
 
+/// Represents the `AppNamespaceService` entity.
 pub struct AppNamespaceService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl AppNamespaceService {
+    /// Creates a new `AppNamespaceService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, dto: AppNamespaceDTO) -> Result<AppNamespaceDTO, anyhow::Error> {
         use crate::persistence::shared::StoredNamespace;
         use crate::persistence::traits::{ClusterPersistence, NamespacePersistence};
@@ -65,21 +68,25 @@ impl AppNamespaceService {
         Ok(self.model_to_dto(&model))
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, app_id: &str, name: &str) -> Result<Option<AppNamespaceDTO>, anyhow::Error> {
         let model = self.persistence.get_app_namespace(app_id, name).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 
+    /// Returns the requested value.
     pub async fn list_by_app(&self, app_id: &str) -> Result<Vec<AppNamespaceDTO>, anyhow::Error> {
         let models = self.persistence.list_app_namespace_by_app(app_id).await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
+    /// Returns the requested value.
     pub async fn list_public(&self) -> Result<Vec<AppNamespaceDTO>, anyhow::Error> {
         let models = self.persistence.list_public_app_namespace().await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, app_id: &str, name: &str, operator: &str) -> Result<(), anyhow::Error> {
         self.persistence.delete_app_namespace(app_id, name, operator).await?;
         Ok(())

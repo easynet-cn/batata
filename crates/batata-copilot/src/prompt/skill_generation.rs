@@ -1,3 +1,5 @@
+//! System prompt for skill generation.
+
 /// Skill generation system prompt — matches Nacos SkillGenerationPrompt.SYSTEM_PROMPT
 pub const SYSTEM_PROMPT: &str = "\
 你是一个专业的 Agent Skill 创建专家，擅长根据用户提供的背景信息生成符合最佳实践的 Agent Skill。

@@ -16,6 +16,8 @@
 //! - `sync` - Batata/Nacos to xDS synchronization bridge
 //! - `mcp` - Istio MCP (Mesh Configuration Protocol) support
 
+#![warn(missing_docs)]
+
 pub mod conversion;
 pub mod grpc;
 pub mod mcp;

@@ -25,6 +25,7 @@ use crate::service::NamingService;
 /// through this trait so the ephemeral/persistent split is honored.
 #[async_trait]
 pub trait ClientOperationService: Send + Sync {
+    /// Registers the `register_instance` entry.
     async fn register_instance(
         &self,
         namespace: &str,
@@ -33,6 +34,7 @@ pub trait ClientOperationService: Send + Sync {
         instance: Instance,
     ) -> bool;
 
+    /// Removes the `deregister_instance` entry.
     async fn deregister_instance(
         &self,
         namespace: &str,
@@ -50,6 +52,7 @@ pub struct EphemeralClientOperationService {
 }
 
 impl EphemeralClientOperationService {
+    /// Creates a new instance.
     pub fn new(
         naming: Arc<NamingService>,
         distro: Option<Arc<batata_core::service::distro::DistroProtocol>>,
@@ -124,6 +127,7 @@ pub struct PersistentClientOperationService {
 }
 
 impl PersistentClientOperationService {
+    /// Creates a new instance.
     pub fn new(
         naming: Arc<NamingService>,
         raft_node: Option<Arc<batata_consistency::raft::RaftNode>>,
@@ -325,6 +329,7 @@ pub struct ClientOperationServiceProxy {
 }
 
 impl ClientOperationServiceProxy {
+    /// Creates a new instance.
     pub fn new(
         ephemeral: Arc<EphemeralClientOperationService>,
         persistent: Arc<PersistentClientOperationService>,
@@ -335,10 +340,12 @@ impl ClientOperationServiceProxy {
         }
     }
 
+    /// Performs the `ephemeral` operation.
     pub fn ephemeral(&self) -> &Arc<EphemeralClientOperationService> {
         &self.ephemeral
     }
 
+    /// Performs the `persistent` operation.
     pub fn persistent(&self) -> &Arc<PersistentClientOperationService> {
         &self.persistent
     }

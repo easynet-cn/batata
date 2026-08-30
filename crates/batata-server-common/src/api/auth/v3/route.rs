@@ -1,5 +1,6 @@
 use actix_web::{Scope, web};
 
+/// Performs the `routes` operation.
 pub fn routes() -> Scope {
     web::scope("/v3/auth")
         .service(super::admin::init_admin)

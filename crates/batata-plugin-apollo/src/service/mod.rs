@@ -1,28 +1,54 @@
+/// Application service.
 pub mod app_service;
+/// Cluster service.
 pub mod cluster_service;
+/// Commit service.
 pub mod commit_service;
+/// Namespace service.
 pub mod namespace_service;
+/// Item service.
 pub mod item_service;
+/// Item set service.
 pub mod item_set_service;
+/// Release service.
 pub mod release_service;
+/// Server config service.
 pub mod server_config_service;
+/// Instance service.
 pub mod instance_service;
+/// Instance config service.
 pub mod instance_config_service;
+/// Gray release rule service.
 pub mod gray_release_rule_service;
+/// Namespace branch service.
 pub mod namespace_branch_service;
+/// Instance audit service.
 pub mod instance_audit_service;
+/// Access key service.
 pub mod access_key_service;
+/// App namespace service.
 pub mod app_namespace_service;
+/// Namespace lock service.
 pub mod namespace_lock_service;
+/// Audit service.
 pub mod audit_service;
+/// Consumer service.
 pub mod consumer_service;
+/// Consumer token service.
 pub mod consumer_token_service;
+/// Permission service.
 pub mod permission_service;
+/// Role service.
 pub mod role_service;
+/// Favorite service.
 pub mod favorite_service;
+/// Search service.
 pub mod search_service;
+/// Release message service.
 pub mod release_message_service;
+/// Notification hub for config change events.
 pub mod notification_hub;
+/// Config sync service.
 pub mod config_sync_service;
 
 pub use app_service::AppService;

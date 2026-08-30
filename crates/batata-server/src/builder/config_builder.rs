@@ -74,18 +74,37 @@ pub struct ValidationErrors {
 }
 
 impl ValidationErrors {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `errors`: `errors : Vec < ValidationError > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new(errors: Vec<ValidationError>) -> Self {
         Self { errors }
     }
     
+    /// `is_empty` function.
+    ///
+    /// # Returns
+    /// `bool`.
     pub fn is_empty(&self) -> bool {
         self.errors.is_empty()
     }
     
+    /// `len` function.
+    ///
+    /// # Returns
+    /// `usize`.
     pub fn len(&self) -> usize {
         self.errors.len()
     }
     
+    /// `iter` function.
+    ///
+    /// # Returns
+    /// `impl Iterator < Item = & ValidationError >`.
     pub fn iter(&self) -> impl Iterator<Item = &ValidationError> {
         self.errors.iter()
     }

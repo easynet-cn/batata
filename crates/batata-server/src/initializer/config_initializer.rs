@@ -13,6 +13,10 @@ use crate::initializer::traits::{InitResult, ServiceInitializer};
 pub struct ConfigSubscriberInitializer;
 
 impl ConfigSubscriberInitializer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self
     }

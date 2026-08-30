@@ -34,6 +34,7 @@ pub trait HealthCheckApplyHook: Send + Sync {
 /// `RaftNode` and `InstanceCheckRegistry` are constructed.
 pub type SharedHealthCheckHook = Arc<tokio::sync::RwLock<Option<Arc<dyn HealthCheckApplyHook>>>>;
 
+/// Create a new, initially-empty shared health-check apply hook slot.
 pub fn new_shared_health_check_hook() -> SharedHealthCheckHook {
     Arc::new(tokio::sync::RwLock::new(None))
 }

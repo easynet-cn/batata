@@ -1,3 +1,7 @@
+//! V3 Console health endpoints.
+//!
+//! Provides liveness/readiness probing and component health reporting.
+
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Serialize;
 
@@ -7,29 +11,41 @@ use batata_server_common::model::response::Result;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Overall health status of the server and its components.
 pub struct HealthStatus {
+    /// Overall health status (`UP` or `DOWN`).
     pub status: String,
+    /// Health status of the database component.
     pub database: ComponentStatus,
+    /// Health status of the cluster component.
     pub cluster: ClusterStatus,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Health status of a single component.
 pub struct ComponentStatus {
+    /// Status of the component (`UP` or `DOWN`).
     pub status: String,
+    /// Optional human-readable detail message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Health status of the cluster component.
 pub struct ClusterStatus {
+    /// Status of the cluster (`UP` or `DOWN`).
     pub status: String,
+    /// Number of members in the cluster.
     pub member_count: usize,
+    /// Whether this node is the cluster leader.
     pub is_leader: bool,
 }
 
 impl ComponentStatus {
+    /// Create an `UP` component status with no message.
     pub fn up() -> Self {
         Self {
             status: "UP".to_string(),
@@ -37,6 +53,7 @@ impl ComponentStatus {
         }
     }
 
+    /// Create a `DOWN` component status with the given error message.
     pub fn down(message: String) -> Self {
         Self {
             status: "DOWN".to_string(),
@@ -182,6 +199,7 @@ async fn health_check(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
+/// Register the health check routes under `/health`.
 pub fn routes() -> Scope {
     web::scope("/health")
         .service(health_check)

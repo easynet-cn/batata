@@ -81,6 +81,7 @@ pub struct TpsControlMiddleware {
 }
 
 impl TpsControlMiddleware {
+/// Performs the `new` operation.
     pub fn new(control_plugin: Option<Arc<dyn ControlPlugin>>) -> Self {
         Self { control_plugin }
     }
@@ -105,6 +106,7 @@ where
     }
 }
 
+/// Middleware that applies TPS (transactions per second) control to requests.
 pub struct TpsControlService<S> {
     service: S,
     control_plugin: Option<Arc<dyn ControlPlugin>>,

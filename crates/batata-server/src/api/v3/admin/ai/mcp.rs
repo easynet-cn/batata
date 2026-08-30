@@ -29,22 +29,31 @@ use crate::{
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct McpForm {
     #[serde(default, alias = "namespaceId")]
+    /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(default, alias = "mcpName")]
+    /// `mcp_name` field.
     pub mcp_name: Option<String>,
     #[serde(default, alias = "mcpId")]
+    /// `mcp_id` field.
     pub mcp_id: Option<String>,
     #[serde(default)]
+    /// `version` field.
     pub version: Option<String>,
     #[serde(default, alias = "serverSpecification")]
+    /// `server_specification` field.
     pub server_specification: Option<String>,
     #[serde(default, alias = "toolSpecification")]
+    /// `tool_specification` field.
     pub tool_specification: Option<String>,
     #[serde(default, alias = "endpointSpecification")]
+    /// `endpoint_specification` field.
     pub endpoint_specification: Option<String>,
     #[serde(default)]
+    /// `latest` field.
     pub latest: Option<bool>,
     #[serde(default, alias = "overrideExisting")]
+    /// `override_existing` field.
     pub override_existing: Option<bool>,
 }
 
@@ -328,10 +337,13 @@ async fn delete_mcp(
 #[serde(rename_all = "camelCase")]
 pub struct McpEndpointQuery {
     #[serde(alias = "namespaceId")]
+    /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(alias = "mcpName")]
+    /// `mcp_name` field.
     pub mcp_name: String,
     #[serde(alias = "endpointUrl")]
+    /// `endpoint_url` field.
     pub endpoint_url: Option<String>,
 }
 
@@ -394,6 +406,10 @@ async fn deregister_mcp_endpoint(
     }
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/mcp")
         .service(list_mcp)

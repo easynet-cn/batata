@@ -35,7 +35,9 @@ struct Cli {
 /// Application configuration loaded from config files and environment
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
+    /// The raw configuration tree loaded from config files.
     pub config: Config,
+    /// The typed, validated configuration struct.
     pub typed: typed_config::BatataTypedConfig,
 }
 
@@ -103,6 +105,7 @@ fn collect_env_overrides(prefix: &str) -> Vec<(String, config::Value)> {
 }
 
 impl Configuration {
+/// Performs the `new` operation.
     pub fn new() -> anyhow::Result<Self> {
         // Step 1: Extract --dotted.key=value overrides before clap sees them
         let (property_overrides, filtered_args) = extract_property_overrides();
@@ -179,14 +182,17 @@ impl Configuration {
     // Deployment Configuration
     // ========================================================================
 
+/// Performs the `deployment_type` operation.
     pub fn deployment_type(&self) -> String {
         self.typed.deployment.type_.clone().unwrap_or_else(|| "merged".to_string())
     }
 
+/// Performs the `is_standalone` operation.
     pub fn is_standalone(&self) -> bool {
         self.typed.standalone
     }
 
+/// Performs the `startup_mode` operation.
     pub fn startup_mode(&self) -> String {
         if self.is_standalone() {
             "standalone".to_string()
@@ -195,18 +201,22 @@ impl Configuration {
         }
     }
 
+/// Performs the `function_mode` operation.
     pub fn function_mode(&self) -> Option<String> {
         self.typed.function_mode.clone()
     }
 
+/// Performs the `version` operation.
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+/// Performs the `compat_version` operation.
     pub fn compat_version(&self) -> String {
         self.config.get_string("nacos.version").unwrap_or_default()
     }
 
+/// Performs the `batata_version` operation.
     pub fn batata_version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
@@ -215,26 +225,32 @@ impl Configuration {
     // Server Configuration
     // ========================================================================
 
+/// Performs the `server_address` operation.
     pub fn server_address(&self) -> String {
         self.typed.server.address.clone().unwrap_or_else(|| "0.0.0.0".to_string())
     }
 
+/// Performs the `server_main_port` operation.
     pub fn server_main_port(&self) -> u16 {
         self.typed.server.main.port as u16
     }
 
+/// Performs the `server_context_path` operation.
     pub fn server_context_path(&self) -> String {
         self.typed.server.context_path.clone().unwrap_or_else(|| "nacos".to_string())
     }
 
+/// Performs the `sdk_server_port` operation.
     pub fn sdk_server_port(&self) -> u16 {
         self.server_main_port() + SDK_GRPC_PORT_DEFAULT_OFFSET
     }
 
+/// Performs the `cluster_server_port` operation.
     pub fn cluster_server_port(&self) -> u16 {
         self.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
     }
 
+/// Performs the `raft_port` operation.
     pub fn raft_port(&self) -> u16 {
         self.server_main_port() - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
     }
@@ -276,18 +292,22 @@ impl Configuration {
     // Console Configuration
     // ========================================================================
 
+/// Performs the `console_server_port` operation.
     pub fn console_server_port(&self) -> u16 {
         self.typed.console.port as u16
     }
 
+/// Performs the `console_server_context_path` operation.
     pub fn console_server_context_path(&self) -> String {
         self.typed.console.context_path.clone().unwrap_or_default()
     }
 
+/// Performs the `console_ui_enabled` operation.
     pub fn console_ui_enabled(&self) -> bool {
         self.typed.console.ui.enabled
     }
 
+/// Performs the `console_ui_dir` operation.
     pub fn console_ui_dir(&self) -> Option<String> {
         self.typed.console.ui.dir.clone().or_else(|| Some("console-ui".to_string()))
     }
@@ -298,6 +318,7 @@ impl Configuration {
         self.deployment_type() == DEPLOYMENT_TYPE_CONSOLE
     }
 
+/// Performs the `console_remote_server_addr` operation.
     pub fn console_remote_server_addr(&self) -> String {
         self.typed.console.remote.server_addr.clone().unwrap_or_else(|| "http://127.0.0.1:8848".to_string())
     }
@@ -360,18 +381,22 @@ impl Configuration {
             .collect()
     }
 
+/// Performs the `console_remote_username` operation.
     pub fn console_remote_username(&self) -> String {
         self.typed.console.remote.username.clone().unwrap_or_else(|| "batata".to_string())
     }
 
+/// Performs the `console_remote_password` operation.
     pub fn console_remote_password(&self) -> String {
         self.typed.console.remote.password.clone().unwrap_or_else(|| "batata".to_string())
     }
 
+/// Performs the `console_remote_connect_timeout_ms` operation.
     pub fn console_remote_connect_timeout_ms(&self) -> u64 {
         self.typed.console.remote.connect_timeout_ms as u64
     }
 
+/// Performs the `console_remote_read_timeout_ms` operation.
     pub fn console_remote_read_timeout_ms(&self) -> u64 {
         self.typed.console.remote.read_timeout_ms as u64
     }
@@ -380,14 +405,17 @@ impl Configuration {
     // Authentication Configuration
     // ========================================================================
 
+/// Performs the `auth_enabled` operation.
     pub fn auth_enabled(&self) -> bool {
         self.typed.core.auth.enabled
     }
 
+/// Performs the `auth_admin_enabled` operation.
     pub fn auth_admin_enabled(&self) -> bool {
         self.typed.core.auth.admin.enabled
     }
 
+/// Performs the `auth_enabled_for_api_type` operation.
     pub fn auth_enabled_for_api_type(&self, api_type: batata_common::ApiType) -> bool {
         match api_type {
             batata_common::ApiType::OpenApi => self.auth_enabled(),
@@ -397,26 +425,32 @@ impl Configuration {
         }
     }
 
+/// Performs the `server_identity_key` operation.
     pub fn server_identity_key(&self) -> String {
         self.typed.core.auth.server.identity.key.clone().unwrap_or_default()
     }
 
+/// Performs the `server_identity_value` operation.
     pub fn server_identity_value(&self) -> String {
         self.typed.core.auth.server.identity.value.clone().unwrap_or_default()
     }
 
+/// Performs the `auth_system_type` operation.
     pub fn auth_system_type(&self) -> String {
         self.typed.core.auth.system.type_.clone().unwrap_or_else(|| "default".to_string())
     }
 
+/// Performs the `auth_console_enabled` operation.
     pub fn auth_console_enabled(&self) -> bool {
         self.typed.core.auth.console.enabled
     }
 
+/// Performs the `token_secret_key` operation.
     pub fn token_secret_key(&self) -> String {
         self.typed.core.auth.plugin.default.token.secret.key.clone().unwrap_or_default()
     }
 
+/// Performs the `auth_token_expire_seconds` operation.
     pub fn auth_token_expire_seconds(&self) -> i64 {
         self.typed.core.auth.plugin.default.token.expire.seconds
     }
@@ -597,14 +631,17 @@ impl Configuration {
     // Database Configuration
     // ========================================================================
 
+/// Performs the `datasource_platform` operation.
     pub fn datasource_platform(&self) -> String {
         self.typed.sql.init.platform.clone().unwrap_or_default()
     }
 
+/// Performs the `plugin_datasource_log` operation.
     pub fn plugin_datasource_log(&self) -> bool {
         self.typed.plugin.datasource.log.enabled
     }
 
+/// Performs the `database_connection` operation.
     pub async fn database_connection(
         &self,
     ) -> std::result::Result<DatabaseConnection, Box<dyn std::error::Error>> {
@@ -693,54 +730,67 @@ impl Configuration {
     // Capacity & Health Configuration
     // ========================================================================
 
+/// Performs the `notify_connect_timeout` operation.
     pub fn notify_connect_timeout(&self) -> i32 {
         self.typed.config.notify.connect_timeout as i32
     }
 
+/// Performs the `notify_socket_timeout` operation.
     pub fn notify_socket_timeout(&self) -> i32 {
         self.typed.config.notify.socket_timeout as i32
     }
 
+/// Performs the `is_health_check` operation.
     pub fn is_health_check(&self) -> bool {
         self.typed.config.health_check.enabled
     }
 
+/// Performs the `max_health_check_fail_count` operation.
     pub fn max_health_check_fail_count(&self) -> i32 {
         self.typed.config.health_check.max_fail_count as i32
     }
 
+/// Performs the `max_content` operation.
     pub fn max_content(&self) -> i32 {
         self.typed.config.max_content as i32
     }
 
+/// Performs the `is_manage_capacity` operation.
     pub fn is_manage_capacity(&self) -> bool {
         self.typed.config.capacity.manage_enabled
     }
 
+/// Performs the `is_capacity_limit_check` operation.
     pub fn is_capacity_limit_check(&self) -> bool {
         self.typed.config.capacity.limit_check
     }
 
+/// Performs the `default_cluster_quota` operation.
     pub fn default_cluster_quota(&self) -> i32 {
         self.typed.config.capacity.default_cluster_quota as i32
     }
 
+/// Performs the `default_group_quota` operation.
     pub fn default_group_quota(&self) -> i32 {
         self.typed.config.capacity.default_group_quota as i32
     }
 
+/// Performs the `default_max_size` operation.
     pub fn default_max_size(&self) -> i32 {
         self.typed.config.capacity.default_max_size as i32
     }
 
+/// Performs the `default_max_aggr_count` operation.
     pub fn default_max_aggr_count(&self) -> i32 {
         self.typed.config.capacity.default_max_aggr_count as i32
     }
 
+/// Performs the `default_max_aggr_size` operation.
     pub fn default_max_aggr_size(&self) -> i32 {
         self.typed.config.capacity.default_max_aggr_size as i32
     }
 
+/// Performs the `config_rentention_days` operation.
     pub fn config_rentention_days(&self) -> i32 {
         self.typed.config.retention.days as i32
     }
@@ -749,22 +799,27 @@ impl Configuration {
     // OpenTelemetry Configuration
     // ========================================================================
 
+/// Performs the `otel_enabled` operation.
     pub fn otel_enabled(&self) -> bool {
         self.typed.otel.enabled
     }
 
+/// Performs the `otel_endpoint` operation.
     pub fn otel_endpoint(&self) -> String {
         self.typed.otel.endpoint.clone().unwrap_or_else(|| "http://localhost:4317".to_string())
     }
 
+/// Performs the `otel_service_name` operation.
     pub fn otel_service_name(&self) -> String {
         self.typed.otel.service_name.clone().unwrap_or_else(|| "batata".to_string())
     }
 
+/// Performs the `otel_sampling_ratio` operation.
     pub fn otel_sampling_ratio(&self) -> f64 {
         self.typed.otel.sampling_ratio
     }
 
+/// Performs the `otel_export_timeout_secs` operation.
     pub fn otel_export_timeout_secs(&self) -> u64 {
         self.typed.otel.export_timeout_secs as u64
     }
@@ -819,6 +874,7 @@ impl Configuration {
         self.typed.server.http.access_log.enabled
     }
 
+/// Performs the `control_plugin_enabled` operation.
     pub fn control_plugin_enabled(&self) -> bool {
         self.typed.plugin.control.enabled
     }
@@ -1555,14 +1611,23 @@ impl Configuration {
 /// RocksDB tuning configuration bundle
 #[derive(Debug, Clone)]
 pub struct RocksDbConfig {
+    /// Size of a single memtable write buffer in MiB.
     pub write_buffer_mb: usize,
+    /// Maximum number of memtables before writes are stalled.
     pub max_write_buffers: i32,
+    /// Number of background flush/compaction threads.
     pub max_background_jobs: i32,
+    /// Size of the shared block cache in MiB.
     pub block_cache_mb: usize,
+    /// Number of bits per key allocated to bloom filters.
     pub bloom_filter_bits: f64,
+    /// Whether level compaction is dynamically leveled.
     pub level_compaction_dynamic: bool,
+    /// Compression algorithm for the bottommost level.
     pub bottommost_compression: String,
+    /// Compression algorithm for other levels.
     pub compression: String,
+    /// Whether RocksDB statistics collection is enabled.
     pub enable_statistics: bool,
     /// Enable whole-key filtering in bloom filter for better point lookups
     pub whole_key_filtering: bool,

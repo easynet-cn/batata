@@ -25,7 +25,9 @@ use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
-use batata_plugin::{Plugin as _, ProtocolAdapterPlugin as _};
+use batata_plugin::Plugin as _;
+#[cfg(any(feature = "consul", feature = "apollo"))]
+use batata_plugin::ProtocolAdapterPlugin as _;
 use batata_plugin::spi::PluginManager;
 use batata_server_common::ServerStatusManager;
 use tracing::{error, info, warn};
@@ -54,6 +56,7 @@ pub struct AppBuilder {
 
     // Phase 2.5: Plugin manager
     plugin_manager: Option<batata_plugin::spi::PluginManager>,
+    #[cfg(feature = "consul")]
     consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>>,
     plugin_cf_names: Vec<String>,
 
@@ -100,6 +103,7 @@ impl AppBuilder {
             deployment_mode: DeploymentMode::Merged,
             is_console_remote: false,
             plugin_manager: None,
+            #[cfg(feature = "consul")]
             consul_plugin_ref: None,
             plugin_cf_names: Vec::new(),
             persistence_ctx: None,
@@ -239,21 +243,29 @@ impl AppBuilder {
         // ====================================================================
         info!("[Phase 2.5] Registering protocol adapter plugins...");
 
+        #[cfg(any(feature = "consul", feature = "apollo"))]
         let mut plugin_manager = batata_plugin::spi::PluginManager::new();
-        let mut consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>> = None;
+        #[cfg(not(any(feature = "consul", feature = "apollo")))]
+        let plugin_manager = batata_plugin::spi::PluginManager::new();
 
-        let consul_config =
-            batata_plugin_consul::ConsulPluginConfig::from_config(&config.config);
-        let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(
-            consul_config,
-        ));
+        #[cfg(feature = "consul")]
+        {
+            let mut consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>> = None;
 
-        if consul_plugin.is_enabled() {
-            plugin_manager.register_protocol_adapter(consul_plugin.clone());
-            consul_plugin_ref = Some(consul_plugin.clone());
-            info!("Consul plugin registered and enabled");
-        } else {
-            info!("Consul plugin disabled by configuration");
+            let consul_config =
+                batata_plugin_consul::ConsulPluginConfig::from_config(&config.config);
+            let consul_plugin =
+                Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(consul_config));
+
+            if consul_plugin.is_enabled() {
+                plugin_manager.register_protocol_adapter(consul_plugin.clone());
+                consul_plugin_ref = Some(consul_plugin.clone());
+                info!("Consul plugin registered and enabled");
+            } else {
+                info!("Consul plugin disabled by configuration");
+            }
+
+            self.consul_plugin_ref = consul_plugin_ref;
         }
 
         #[cfg(feature = "apollo")]
@@ -276,7 +288,6 @@ impl AppBuilder {
         let plugin_cf_names = plugin_manager.collect_plugin_column_families();
 
         self.plugin_manager = Some(plugin_manager);
-        self.consul_plugin_ref = consul_plugin_ref;
         self.plugin_cf_names = plugin_cf_names;
 
         info!("Phase 2 complete - plugins registered");
@@ -338,24 +349,29 @@ impl AppBuilder {
                 .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>);
 
         // Plugin state providers
-        let consul_plugin_clone = self.consul_plugin_ref.clone();
-        let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> =
+        #[cfg(feature = "consul")]
+        let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = {
+            let consul_plugin_clone = self.consul_plugin_ref.clone();
             match consul_plugin_clone {
                 Some(plugin) => vec![plugin as Arc<dyn batata_plugin::PluginStateProvider>],
-                None => {
-                    // Create a stub so state API still works
-                    vec![]
-                }
-            };
+                None => vec![],
+            }
+        };
+        #[cfg(not(feature = "consul"))]
+        let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = Vec::new();
 
         // Console datasource
-        let consul_for_ds = self.consul_plugin_ref.clone();
-        let ds_plugins: Vec<Arc<dyn batata_plugin::PluginStateProvider>> =
+        #[cfg(feature = "consul")]
+        let ds_plugins: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = {
+            let consul_for_ds = self.consul_plugin_ref.clone();
             if let Some(ref c) = consul_for_ds {
                 vec![c.clone() as Arc<dyn batata_plugin::PluginStateProvider>]
             } else {
                 Vec::new()
-            };
+            }
+        };
+        #[cfg(not(feature = "consul"))]
+        let ds_plugins: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = Vec::new();
 
         let console_datasource = batata_console::create_datasource(
             config,
@@ -791,6 +807,7 @@ impl AppBuilder {
         plugin_manager.init_protocol_adapters(&plugin_ctx).await?;
 
         // Wire Consul event broadcast (cluster mode only)
+        #[cfg(feature = "consul")]
         if let Some(ref consul_plugin) = self.consul_plugin_ref {
             let event_service = consul_plugin.event_service().clone();
 
@@ -1446,6 +1463,7 @@ async fn run_http_servers(
 }
 
 /// Build HTTP servers for all enabled protocol adapter plugins.
+#[cfg(feature = "consul")]
 fn build_plugin_servers(
     app_state: &Arc<AppState>,
     grpc_servers: &startup::GrpcServers,
@@ -1480,6 +1498,16 @@ fn build_plugin_servers(
     }
 
     Ok(servers)
+}
+
+/// No protocol adapter needs a dedicated HTTP server when consul is disabled.
+#[cfg(not(feature = "consul"))]
+fn build_plugin_servers(
+    _app_state: &Arc<AppState>,
+    _grpc_servers: &startup::GrpcServers,
+    _plugin_manager: &batata_plugin::spi::PluginManager,
+) -> Result<Vec<actix_web::dev::Server>, Box<dyn std::error::Error>> {
+    Ok(Vec::new())
 }
 
 /// Build MCP registry server if enabled.

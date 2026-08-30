@@ -5,15 +5,18 @@ use crate::persistence::shared::StoredCommit;
 use crate::persistence::traits::{ApolloPersistenceService, CommitPersistence};
 use chrono::Utc;
 
+/// Represents the `CommitService` entity.
 pub struct CommitService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl CommitService {
+    /// Creates a new `CommitService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, dto: CommitDTO) -> Result<CommitDTO, anyhow::Error> {
         let now = Utc::now().timestamp_millis();
         let created_by = dto.data_change_created_by.clone().unwrap_or_default();
@@ -37,16 +40,19 @@ impl CommitService {
         Ok(created.into())
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, id: i32) -> Result<Option<CommitDTO>, anyhow::Error> {
         let stored = self.persistence.get_by_id(id).await?;
         Ok(stored.map(|s| s.into()))
     }
 
+    /// Performs the `list` operation.
     pub async fn list(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<CommitDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_namespace(app_id, cluster_name, namespace_name).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, id: i32, _operator: &str) -> Result<(), anyhow::Error> {
         let stored = self.persistence.get_by_id(id).await?
             .ok_or_else(|| anyhow::anyhow!("Commit not found: {}", id))?;

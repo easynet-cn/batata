@@ -91,9 +91,14 @@ pub trait GrpcConnectionManager: Send + Sync {
 /// Minimal gRPC client info for the trait boundary
 #[derive(Debug, Clone)]
 pub struct GrpcClientInfo {
+    /// The `client_ip` field.
     pub client_ip: String,
+    /// The `client_port` field.
     pub client_port: u16,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `sdk` field.
     pub sdk: String,
+    /// The `std` field.
     pub labels: std::collections::HashMap<String, String>,
 }

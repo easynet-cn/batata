@@ -1,5 +1,6 @@
-// Remote data source implementation
-// Provides HTTP-based access to console operations via remote server
+//! Remote data source implementation.
+//!
+//! Provides HTTP-based access to console operations via remote server.
 
 use async_trait::async_trait;
 use std::{
@@ -283,6 +284,7 @@ pub struct RemoteDataSource {
 }
 
 impl RemoteDataSource {
+    /// Create a new [`RemoteDataSource`] with default auto-refresh configuration.
     pub async fn new(configuration: &Configuration) -> anyhow::Result<Self> {
         Self::with_auto_refresh(configuration, AutoRefreshConfig::default()).await
     }

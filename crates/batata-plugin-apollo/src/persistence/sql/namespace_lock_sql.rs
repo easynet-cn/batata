@@ -7,11 +7,13 @@ use crate::entity::apollo_namespace_lock;
 use crate::persistence::shared::StoredNamespaceLock;
 use crate::persistence::traits::NamespaceLockPersistence;
 
+/// Represents the `NamespaceLockSqlPersistence` entity.
 pub struct NamespaceLockSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl NamespaceLockSqlPersistence {
+    /// Creates a new `NamespaceLockSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

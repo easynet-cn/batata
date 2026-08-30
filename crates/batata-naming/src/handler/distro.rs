@@ -18,9 +18,13 @@ pub use batata_core::service::distro::DistroProtocol;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DistroInstanceData {
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_name` value.
     pub group_name: String,
+    /// The `service_name` value.
     pub service_name: String,
+    /// The `instances` value.
     pub instances: Vec<DistroInstance>,
 }
 
@@ -28,14 +32,23 @@ pub struct DistroInstanceData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DistroInstance {
+    /// The `instance_id` value.
     pub instance_id: String,
+    /// The `ip` value.
     pub ip: String,
+    /// The `port` value.
     pub port: i32,
+    /// The `weight` value.
     pub weight: f64,
+    /// The `healthy` value.
     pub healthy: bool,
+    /// The `enabled` value.
     pub enabled: bool,
+    /// The `ephemeral` value.
     pub ephemeral: bool,
+    /// The `cluster_name` value.
     pub cluster_name: String,
+    /// The `metadata` value.
     pub metadata: std::collections::HashMap<String, String>,
 }
 
@@ -46,6 +59,7 @@ pub struct NamingInstanceDistroHandler {
 }
 
 impl NamingInstanceDistroHandler {
+    /// Creates a new instance.
     pub fn new(local_address: String, naming_service: Arc<NamingService>) -> Self {
         Self {
             local_address,

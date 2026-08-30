@@ -7,11 +7,13 @@ use crate::entity::apollo_app;
 use crate::persistence::shared::StoredApp;
 use crate::persistence::traits::AppPersistence;
 
+/// Represents the `AppSqlPersistence` entity.
 pub struct AppSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl AppSqlPersistence {
+    /// Creates a new `AppSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

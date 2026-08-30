@@ -38,6 +38,7 @@ pub struct Debouncer {
 }
 
 impl Debouncer {
+    /// Create a new debouncer with the given quiet period and maximum wait.
     pub fn new(debounce_after: Duration, debounce_max: Duration) -> Self {
         Self {
             debounce_after,
@@ -127,8 +128,11 @@ pub enum ServiceChangeEvent {
     Updated(NacosServiceData),
     /// Service was removed
     Removed {
+        /// Namespace ID of the removed service.
         namespace_id: String,
+        /// Group name of the removed service.
         group_name: String,
+        /// Service name of the removed service.
         service_name: String,
     },
 }

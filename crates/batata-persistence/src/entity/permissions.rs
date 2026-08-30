@@ -5,15 +5,20 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "permissions")]
+/// ORM model for a row in the `permissions` table.
 pub struct Model {
+    /// Primary key part: role name.
     #[sea_orm(primary_key)]
     pub role: String,
+    /// Primary key part: resource pattern.
     #[sea_orm(primary_key)]
     pub resource: String,
+    /// Primary key part: allowed action.
     #[sea_orm(primary_key)]
     pub action: String,
 }
 
+/// Relation definitions for the `permissions` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

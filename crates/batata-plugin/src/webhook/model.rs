@@ -85,6 +85,7 @@ pub struct WebhookEvent {
 }
 
 impl WebhookEvent {
+    /// Creates a new `WebhookEvent` of the given type with a generated id and current timestamp.
     pub fn new(event_type: WebhookEventType) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -102,26 +103,31 @@ impl WebhookEvent {
         }
     }
 
+    /// Sets the namespace of the event.
     pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = namespace.into();
         self
     }
 
+    /// Sets the group of the event.
     pub fn with_group(mut self, group: impl Into<String>) -> Self {
         self.group = group.into();
         self
     }
 
+    /// Sets the resource (e.g. data ID) of the event.
     pub fn with_resource(mut self, resource: impl Into<String>) -> Self {
         self.resource = resource.into();
         self
     }
 
+    /// Adds a structured data field to the event.
     pub fn with_data(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.data.insert(key.into(), value);
         self
     }
 
+    /// Adds a string metadata field to the event.
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self

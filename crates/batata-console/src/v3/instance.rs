@@ -240,6 +240,7 @@ async fn update_instance(
     Result::<String>::http_success("ok".to_string())
 }
 
+/// Register the instance management routes under `/instance`.
 pub fn routes() -> Scope {
     web::scope("/instance")
         .service(list_instances)

@@ -1,4 +1,4 @@
-// Core/cluster model types
+//! Core/cluster model types
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,7 +7,9 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IdGeneratorInfo {
+    /// The `resource` field.
     pub resource: String,
+    /// The `info` field.
     pub info: IdInfo,
 }
 
@@ -15,7 +17,9 @@ pub struct IdGeneratorInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IdInfo {
+    /// The `current_id` field.
     pub current_id: i64,
+    /// The `work_id` field.
     pub work_id: i64,
 }
 
@@ -23,16 +27,27 @@ pub struct IdInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConnectionInfo {
+    /// The `connection_id` field.
     pub connection_id: String,
+    /// The `client_ip` field.
     pub client_ip: String,
+    /// The `remote_ip` field.
     pub remote_ip: String,
+    /// The `remote_port` field.
     pub remote_port: i32,
+    /// The `connect_type` field.
     pub connect_type: String,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `version` field.
     pub version: String,
+    /// The `create_time` field.
     pub create_time: String,
+    /// The `last_active_time` field.
     pub last_active_time: String,
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
+    /// The `metadata_info` field.
     pub metadata_info: serde_json::Value,
 }
 
@@ -40,13 +55,21 @@ pub struct ConnectionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerLoaderMetrics {
+    /// The `detail` field.
     pub detail: Vec<ServerLoaderInfo>,
+    /// The `total` field.
     pub total: i32,
+    /// The `max` field.
     pub max: i32,
+    /// The `min` field.
     pub min: i32,
+    /// The `avg` field.
     pub avg: f64,
+    /// The `member_count` field.
     pub member_count: i32,
+    /// The `threshold` field.
     pub threshold: f64,
+    /// The `completed` field.
     pub completed: bool,
 }
 
@@ -54,10 +77,15 @@ pub struct ServerLoaderMetrics {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerLoaderInfo {
+    /// The `address` field.
     pub address: String,
+    /// The `metric` field.
     pub metric: f64,
+    /// The `load` field.
     pub load: f64,
+    /// The `sdk_conn_count` field.
     pub sdk_conn_count: i32,
+    /// The `connection_count` field.
     pub connection_count: i32,
 }
 

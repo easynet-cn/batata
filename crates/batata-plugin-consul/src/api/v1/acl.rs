@@ -403,6 +403,7 @@ async fn oidc_callback_handler(
 // Scope builder
 // ============================================================================
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/acl")
         // Bootstrap and auth

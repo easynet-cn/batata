@@ -182,7 +182,9 @@ pub fn parse_encryption_patterns(
 /// Configuration structure for encryption patterns
 #[derive(Clone, Debug)]
 pub struct EncryptionPatternConfig {
+    /// `pattern_type` field.
     pub pattern_type: String,
+    /// `value` field.
     pub value: String,
 }
 

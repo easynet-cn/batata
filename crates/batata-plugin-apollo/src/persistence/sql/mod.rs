@@ -62,6 +62,7 @@ pub struct SqlApolloPersistence {
 }
 
 impl SqlApolloPersistence {
+    /// Creates a new `SqlApolloPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self {
             app: AppSqlPersistence::new(db.clone()),

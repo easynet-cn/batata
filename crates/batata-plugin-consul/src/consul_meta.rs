@@ -23,7 +23,7 @@ pub enum LinearizableReadError {
     /// this to the leader's Consul HTTP address via its own discovery
     /// (cluster config, DNS, etc.) since batata does not currently track
     /// per-node Consul HTTP ports in shared state.
-    NotLeader { leader_addr: Option<String> },
+    NotLeader { #[doc = "The `leader_addr` field."] leader_addr: Option<String> },
     /// Any other failure (e.g. Raft read-index timeout, storage error).
     Other(String),
 }
@@ -86,6 +86,7 @@ impl ConsistencyMode {
 /// Mirrors the Go `structs.QueryOptions`.
 #[derive(Debug, Clone)]
 pub struct ConsulQueryOptions {
+/// The `consistency` field.
     pub consistency: ConsistencyMode,
     /// Blocking query: minimum index to wait for (`?index`).
     pub min_query_index: Option<u64>,

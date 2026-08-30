@@ -4,30 +4,36 @@ use crate::api::dto::ConsumerDTO;
 use crate::entity::apollo_consumer;
 use crate::persistence::traits::{ApolloPersistenceService, ConsumerPersistence};
 
+/// Represents the `ConsumerService` entity.
 pub struct ConsumerService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ConsumerService {
+    /// Creates a new `ConsumerService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, dto: ConsumerDTO) -> Result<ConsumerDTO, anyhow::Error> {
         let model = self.persistence.create_consumer(dto).await?;
         Ok(self.model_to_dto(&model))
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, id: i32) -> Result<Option<ConsumerDTO>, anyhow::Error> {
         let model = self.persistence.get_consumer(id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 
+    /// Returns the requested value.
     pub async fn get_by_app(&self, app_id: &str) -> Result<Option<ConsumerDTO>, anyhow::Error> {
         let model = self.persistence.get_consumer_by_app(app_id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
 
+    /// Performs the `list` operation.
     pub async fn list(&self) -> Result<Vec<ConsumerDTO>, anyhow::Error> {
         let models = self.persistence.list_consumers().await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())

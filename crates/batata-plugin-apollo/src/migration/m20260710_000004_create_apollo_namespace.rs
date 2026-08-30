@@ -30,8 +30,9 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 联合唯一索引：MySQL需要前缀长度（cluster_name(128)）避免索引长度超过3072字节限制
-        // PostgreSQL/SQLite不支持前缀长度语法，直接使用完整列
+        // Composite unique index: MySQL requires a prefix length (cluster_name(128)) to keep the
+        // index within the 3072-byte limit.
+        // PostgreSQL/SQLite do not support prefix-length syntax, so the full columns are used.
         match backend {
             DatabaseBackend::MySql => {
                 manager.get_connection().execute_unprepared(

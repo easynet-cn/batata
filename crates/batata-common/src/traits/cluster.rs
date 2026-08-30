@@ -5,15 +5,22 @@ use super::core_ctx::MemberState;
 /// Cluster health summary
 #[derive(Clone, Debug, Default)]
 pub struct ClusterHealthSummary {
+    /// The `total` field.
     pub total: usize,
+    /// The `up` field.
     pub up: usize,
+    /// The `down` field.
     pub down: usize,
+    /// The `suspicious` field.
     pub suspicious: usize,
+    /// The `starting` field.
     pub starting: usize,
+    /// The `isolation` field.
     pub isolation: usize,
 }
 
 impl ClusterHealthSummary {
+    /// The `is_healthy` method.
     pub fn is_healthy(&self) -> bool {
         self.up > self.total / 2
     }
@@ -25,10 +32,15 @@ impl ClusterHealthSummary {
 /// extend_info metadata used by Consul and other plugins.
 #[derive(Debug, Clone)]
 pub struct ExtendedMemberInfo {
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: u16,
+    /// The `address` field.
     pub address: String,
+    /// The `state` field.
     pub state: MemberState,
+    /// The `std` field.
     pub extend_info: std::collections::BTreeMap<String, serde_json::Value>,
 }
 

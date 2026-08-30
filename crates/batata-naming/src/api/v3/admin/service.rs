@@ -884,6 +884,7 @@ async fn update_service_cluster(
     Result::<bool>::http_success(true)
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/service")
         .service(create_service)

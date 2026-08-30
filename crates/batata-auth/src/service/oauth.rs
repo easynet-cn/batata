@@ -210,17 +210,25 @@ impl OAuthConfig {
 /// OIDC discovery document
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcDiscovery {
+    /// Issuer identifier for the OpenID provider.
     pub issuer: String,
+    /// Authorization endpoint URL.
     pub authorization_endpoint: String,
+    /// Token endpoint URL.
     pub token_endpoint: String,
     #[serde(default)]
+    /// Optional userinfo endpoint URL.
     pub userinfo_endpoint: Option<String>,
+    /// JWKS URI used to fetch signing keys.
     pub jwks_uri: String,
     #[serde(default)]
+    /// Scopes supported by the provider.
     pub scopes_supported: Vec<String>,
     #[serde(default)]
+    /// Response types supported by the provider.
     pub response_types_supported: Vec<String>,
     #[serde(default)]
+    /// Grant types supported by the provider.
     pub grant_types_supported: Vec<String>,
     /// OIDC RP-initiated logout endpoint (optional, per OIDC Discovery spec)
     #[serde(default)]
@@ -230,16 +238,22 @@ pub struct OidcDiscovery {
 /// OAuth2 token response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenResponse {
+    /// OAuth2 access token.
     pub access_token: String,
     #[serde(default)]
+    /// Token type (e.g. "Bearer").
     pub token_type: String,
     #[serde(default)]
+    /// Access token lifetime in seconds, if provided.
     pub expires_in: Option<i64>,
     #[serde(default)]
+    /// Refresh token, if issued.
     pub refresh_token: Option<String>,
     #[serde(default)]
+    /// OpenID Connect ID token, if issued.
     pub id_token: Option<String>,
     #[serde(default)]
+    /// Granted scope, if returned by the provider.
     pub scope: Option<String>,
 }
 

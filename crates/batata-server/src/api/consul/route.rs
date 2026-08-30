@@ -1,3 +1,4 @@
+//! Module `api::consul::route` of the `batata-server` crate.
 // Consul API route configuration
 // Combines plugin routes with local export/import routes
 
@@ -7,6 +8,7 @@ use actix_web::web;
 use super::kv;
 
 // Re-export plugin route functions
+/// Re-exported item.
 pub use batata_plugin_consul::route::routes;
 
 /// Configure Consul KV API routes under /v1 scope.

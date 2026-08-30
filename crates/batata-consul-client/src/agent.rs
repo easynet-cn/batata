@@ -1,3 +1,4 @@
+//! Local Consul agent configuration and runtime operations.
 use std::collections::HashMap;
 
 use tokio::sync::mpsc;

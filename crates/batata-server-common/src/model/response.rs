@@ -8,12 +8,16 @@ use serde::{Deserialize, Serialize};
 /// Generic result wrapper for API responses
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Result<T> {
+    /// The result code; 0 indicates success.
     pub code: i32,
+    /// A human-readable message describing the result.
     pub message: String,
+    /// The response payload.
     pub data: T,
 }
 
 impl<T> Result<T> {
+/// Performs the `new` operation.
     pub fn new(code: i32, message: String, data: T) -> Self {
         Result::<T> {
             code,
@@ -22,6 +26,7 @@ impl<T> Result<T> {
         }
     }
 
+/// Performs the `success` operation.
     pub fn success(data: T) -> Result<T> {
         Result::<T> {
             code: 0,
@@ -30,6 +35,7 @@ impl<T> Result<T> {
         }
     }
 
+/// Performs the `fail` operation.
     pub fn fail(message: String) -> Result<()> {
         Result::<()> {
             code: 500,
@@ -38,10 +44,12 @@ impl<T> Result<T> {
         }
     }
 
+/// Performs the `http_success` operation.
     pub fn http_success(data: impl Serialize) -> HttpResponse {
         HttpResponse::Ok().json(Result::success(data))
     }
 
+/// Performs the `http_response` operation.
     pub fn http_response(
         status: u16,
         code: i32,
@@ -105,14 +113,20 @@ impl<T> Result<T> {
 /// Error result for API error responses
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorResult {
+    /// The time the error occurred.
     pub timestamp: String,
+    /// The HTTP status code.
     pub status: i32,
+    /// The error reason phrase.
     pub error: String,
+    /// A human-readable error message.
     pub message: String,
+    /// The request path that produced the error.
     pub path: String,
 }
 
 impl ErrorResult {
+/// Performs the `new` operation.
     pub fn new(status: i32, error: String, message: String, path: String) -> Self {
         ErrorResult {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -123,6 +137,7 @@ impl ErrorResult {
         }
     }
 
+/// Performs the `forbidden` operation.
     pub fn forbidden(message: &str, path: &str) -> Self {
         ErrorResult {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -136,6 +151,7 @@ impl ErrorResult {
         }
     }
 
+/// Performs the `http_response_forbidden` operation.
     pub fn http_response_forbidden(code: i32, message: &str, path: &str) -> HttpResponse {
         HttpResponse::Forbidden().json(ErrorResult::forbidden(
             format!("Code: {}, Message: {}", code, message).as_str(),
@@ -149,6 +165,7 @@ impl ErrorResult {
 pub struct ConsoleException {}
 
 impl ConsoleException {
+/// Performs the `handle_access_exception` operation.
     pub fn handle_access_exception(message: String) -> HttpResponse {
         Result::<String>::http_response(
             403,
@@ -158,6 +175,7 @@ impl ConsoleException {
         )
     }
 
+/// Performs the `handle_illegal_argument_exception` operation.
     pub fn handle_illegal_argument_exception(message: String) -> HttpResponse {
         Result::<String>::http_response(
             400,
@@ -167,6 +185,7 @@ impl ConsoleException {
         )
     }
 
+/// Performs the `handle_runtime_exception` operation.
     pub fn handle_runtime_exception(code: u16, message: String) -> HttpResponse {
         Result::<String>::http_response(
             code,
@@ -176,6 +195,7 @@ impl ConsoleException {
         )
     }
 
+/// Performs the `handle_exception` operation.
     pub fn handle_exception(_uri: String, message: String) -> HttpResponse {
         Result::<String>::http_response(
             500,

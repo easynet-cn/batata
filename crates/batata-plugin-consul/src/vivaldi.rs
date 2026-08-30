@@ -81,6 +81,7 @@ impl Default for VivaldiCoord {
 }
 
 impl VivaldiCoord {
+/// The `new` associated function.
     pub fn new(dim: usize) -> Self {
         Self {
             vec: vec![0.0; dim],

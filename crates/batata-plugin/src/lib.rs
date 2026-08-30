@@ -7,6 +7,8 @@
 //! - CMDB Plugin: Label sync and entity mapping (PLG-201 to PLG-203)
 //! - Extension points for custom plugins
 
+#![warn(missing_docs)]
+
 pub mod audit;
 pub mod cmdb;
 pub mod control;
@@ -70,6 +72,7 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
+    /// Creates a new, empty `PluginRegistry`.
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),

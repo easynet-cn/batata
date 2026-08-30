@@ -19,6 +19,7 @@ pub struct FailoverReactor {
 }
 
 impl FailoverReactor {
+    /// Create a failover reactor for the given environment name.
     pub fn new(env_name: String) -> Self {
         let base_path = Self::get_failover_path(env_name.as_str());
         Self {

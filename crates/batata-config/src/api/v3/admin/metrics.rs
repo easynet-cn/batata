@@ -80,6 +80,7 @@ async fn ip_metrics(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
     Result::<IpMetrics>::http_success(response)
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/metrics")
         .service(cluster_metrics)

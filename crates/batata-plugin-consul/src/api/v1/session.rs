@@ -85,6 +85,7 @@ async fn renew_session(
     crate::session::renew_session(req, session_service, acl_service, path, index_provider).await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/session")
         .service(create_session)

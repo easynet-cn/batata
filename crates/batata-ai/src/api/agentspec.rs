@@ -882,7 +882,9 @@ async fn client_search_agentspecs(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecUploadForm {
+    /// Optional AgentSpec name; falls back to the name inside the uploaded card.
     pub agent_spec_name: Option<String>,
+    /// Optional AgentSpec manifest JSON uploaded as a form field.
     pub agent_spec_card: Option<String>,
 }
 

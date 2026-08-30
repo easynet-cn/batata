@@ -3,9 +3,13 @@
 /// Information about a config change delivered to listeners.
 #[derive(Clone, Debug)]
 pub struct ConfigResponse {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Config tenant/namespace ID.
     pub tenant: String,
+    /// Config content.
     pub content: String,
 }
 
@@ -39,6 +43,7 @@ impl<F> FnConfigChangeListener<F>
 where
     F: Fn(ConfigResponse) + Send + Sync + 'static,
 {
+    /// Create a new closure-based config change listener.
     pub fn new(f: F) -> Self {
         Self { f }
     }

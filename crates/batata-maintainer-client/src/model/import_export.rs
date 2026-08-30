@@ -1,4 +1,4 @@
-// Configuration import/export model types
+//! Configuration import/export model types
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
@@ -8,9 +8,13 @@ use std::str::FromStr;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
+    /// The `success_count` field.
     pub success_count: u32,
+    /// The `skip_count` field.
     pub skip_count: u32,
+    /// The `fail_count` field.
     pub fail_count: u32,
+    /// The `fail_data` field.
     pub fail_data: Vec<ImportFailItem>,
 }
 
@@ -18,8 +22,11 @@ pub struct ImportResult {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportFailItem {
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `reason` field.
     pub reason: String,
 }
 

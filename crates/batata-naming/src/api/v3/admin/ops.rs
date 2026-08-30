@@ -344,6 +344,7 @@ async fn set_log_level(
     }
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/ops")
         .service(get_switches)

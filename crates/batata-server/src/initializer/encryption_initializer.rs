@@ -14,6 +14,10 @@ use batata_config::service::encryption::{ConfigEncryptionService, EncryptionPatt
 pub struct EncryptionInitializer;
 
 impl EncryptionInitializer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self
     }

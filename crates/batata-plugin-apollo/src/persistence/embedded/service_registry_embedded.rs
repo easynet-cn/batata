@@ -16,11 +16,13 @@ use crate::persistence::traits::service_registry::{ServiceRegistryEntry, Service
 
 const KEY_PREFIX: &str = "sr:";
 
+/// Represents the `ServiceRegistryEmbedded` entity.
 pub struct ServiceRegistryEmbedded {
     db: Arc<DB>,
 }
 
 impl ServiceRegistryEmbedded {
+    /// Creates a new `ServiceRegistryEmbedded`.
     pub fn new(db: Arc<DB>) -> Self {
         Self { db }
     }

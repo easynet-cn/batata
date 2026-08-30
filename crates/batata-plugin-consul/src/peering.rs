@@ -29,12 +29,19 @@ use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 #[derive(Default)]
 pub enum PeeringState {
     #[default]
+/// The `Undefined` variant.
     Undefined,
+/// The `Pending` variant.
     Pending,
+/// The `Establishing` variant.
     Establishing,
+/// The `Active` variant.
     Active,
+/// The `Failing` variant.
     Failing,
+/// The `Deleting` variant.
     Deleting,
+/// The `Terminated` variant.
     Terminated,
 }
 
@@ -56,13 +63,18 @@ impl std::fmt::Display for PeeringState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringStreamStatus {
+/// The `imported_services` field.
     pub imported_services: Vec<String>,
+/// The `exported_services` field.
     pub exported_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_heartbeat` field.
     pub last_heartbeat: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_receive` field.
     pub last_receive: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_send` field.
     pub last_send: Option<String>,
 }
 
@@ -71,8 +83,10 @@ pub struct PeeringStreamStatus {
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringRemoteInfo {
     #[serde(default)]
+/// The `partition` field.
     pub partition: String,
     #[serde(default)]
+/// The `datacenter` field.
     pub datacenter: String,
 }
 
@@ -81,27 +95,41 @@ pub struct PeeringRemoteInfo {
 #[serde(rename_all = "PascalCase")]
 pub struct Peering {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
     #[serde(default)]
+/// The `partition` field.
     pub partition: String,
+/// The `state` field.
     pub state: PeeringState,
     #[serde(rename = "PeerID")]
+/// The `peer_id` field.
     pub peer_id: String,
     #[serde(default)]
+/// The `peer_server_name` field.
     pub peer_server_name: String,
     #[serde(default)]
+/// The `peer_server_addresses` field.
     pub peer_server_addresses: Vec<String>,
     #[serde(default, rename = "PeerCAPems")]
+/// The `peer_ca_pems` field.
     pub peer_ca_pems: Vec<String>,
     #[serde(default)]
+/// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
+/// The `stream_status` field.
     pub stream_status: PeeringStreamStatus,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
     #[serde(default)]
+/// The `remote` field.
     pub remote: PeeringRemoteInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `deleted_at` field.
     pub deleted_at: Option<String>,
 }
 
@@ -109,12 +137,16 @@ pub struct Peering {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringGenerateTokenRequest {
+/// The `peer_name` field.
     pub peer_name: String,
     #[serde(default)]
+/// The `partition` field.
     pub partition: String,
     #[serde(default)]
+/// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
     #[serde(default)]
+/// The `server_external_addresses` field.
     pub server_external_addresses: Vec<String>,
 }
 
@@ -122,6 +154,7 @@ pub struct PeeringGenerateTokenRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringGenerateTokenResponse {
+/// The `peering_token` field.
     pub peering_token: String,
 }
 
@@ -129,11 +162,15 @@ pub struct PeeringGenerateTokenResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringEstablishRequest {
+/// The `peer_name` field.
     pub peer_name: String,
+/// The `peering_token` field.
     pub peering_token: String,
     #[serde(default)]
+/// The `partition` field.
     pub partition: String,
     #[serde(default)]
+/// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
 }
 
@@ -154,6 +191,7 @@ struct PeeringToken {
 /// Query parameters for peering endpoints
 #[derive(Debug, Deserialize)]
 pub struct PeeringQueryParams {
+/// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -178,10 +216,12 @@ pub struct ConsulPeeringService {
 }
 
 impl ConsulPeeringService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self::with_datacenter("dc1".to_string())
     }
 
+/// The `with_datacenter` associated function.
     pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             peerings: Arc::new(DashMap::new()),
@@ -193,11 +233,13 @@ impl ConsulPeeringService {
         }
     }
 
+/// The `with_consul_port` method.
     pub fn with_consul_port(mut self, port: u16) -> Self {
         self.consul_port = port;
         self
     }
 
+/// The `with_rocks` associated function.
     pub fn with_rocks(db: Arc<DB>, datacenter: String, consul_port: u16) -> Self {
         let peerings = Arc::new(DashMap::new());
         let mut max_index = 1u64;
@@ -249,6 +291,7 @@ impl ConsulPeeringService {
         svc
     }
 
+/// The `generate_token` method.
     pub async fn generate_token(
         &self,
         req: PeeringGenerateTokenRequest,
@@ -329,6 +372,7 @@ impl ConsulPeeringService {
         })
     }
 
+/// The `establish` method.
     pub async fn establish(&self, req: PeeringEstablishRequest) -> Result<(), String> {
         if req.peer_name.is_empty() {
             return Err("PeerName is required".to_string());
@@ -398,6 +442,7 @@ impl ConsulPeeringService {
         Ok(())
     }
 
+/// The `get_peering` method.
     pub fn get_peering(&self, name: &str) -> Option<Peering> {
         self.peerings
             .get(name)
@@ -405,6 +450,7 @@ impl ConsulPeeringService {
             .map(|p| p.value().clone())
     }
 
+/// The `list_peerings` method.
     pub fn list_peerings(&self) -> Vec<Peering> {
         let mut peerings: Vec<Peering> = self
             .peerings
@@ -416,6 +462,7 @@ impl ConsulPeeringService {
         peerings
     }
 
+/// The `delete_peering` method.
     pub async fn delete_peering(&self, name: &str) -> bool {
         if let Some(mut peering) = self.peerings.get_mut(name) {
             peering.state = PeeringState::Deleting;

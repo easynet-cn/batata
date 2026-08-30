@@ -48,6 +48,7 @@ pub async fn readiness(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
+/// Register the V2 console health routes under `/health`.
 pub fn routes() -> Scope {
     web::scope("/health").service(liveness).service(readiness)
 }

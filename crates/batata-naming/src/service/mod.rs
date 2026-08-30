@@ -58,9 +58,13 @@ pub fn build_instance_key_parts(ip: &str, port: i32, cluster_name: &str) -> Stri
 /// Fuzzy watch pattern for service discovery
 #[derive(Clone, Debug)]
 pub struct FuzzyWatchPattern {
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_pattern` value.
     pub group_pattern: String,
+    /// The `service_pattern` value.
     pub service_pattern: String,
+    /// The `watch_type` value.
     pub watch_type: String,
 }
 
@@ -129,6 +133,7 @@ fn build_cluster_key(service_key: &str, cluster_name: &str) -> String {
 }
 
 impl NamingService {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             services: Arc::new(DashMap::new()),

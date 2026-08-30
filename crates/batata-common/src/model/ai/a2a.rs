@@ -452,9 +452,14 @@ pub struct AgentCardDetailInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRegistryStats {
+    /// The `total_agents` field.
     pub total_agents: u32,
+    /// The `healthy_agents` field.
     pub healthy_agents: u32,
+    /// The `unhealthy_agents` field.
     pub unhealthy_agents: u32,
+    /// The `by_namespace` field.
     pub by_namespace: HashMap<String, u32>,
+    /// The `by_skill` field.
     pub by_skill: HashMap<String, u32>,
 }

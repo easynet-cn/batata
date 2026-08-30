@@ -56,9 +56,13 @@ pub enum AuthRequirement {
     Internal,
 }
 
-// Trait for handling gRPC payload messages
 #[tonic::async_trait]
+/// Trait for handling gRPC payload messages.
 pub trait PayloadHandler: Send + Sync {
+    /// Handles an incoming gRPC payload message.
+    ///
+    /// Returns an appropriate response payload, or `Status::unimplemented` for
+    /// unknown message types by default.
     async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let message_type = payload
             .metadata
@@ -72,6 +76,7 @@ pub trait PayloadHandler: Send + Sync {
         )))
     }
 
+    /// Returns `true` if handle.
     fn can_handle(&self) -> &'static str {
         ""
     }
@@ -256,6 +261,7 @@ fn build_auth_error_payload(response_type: &str, error_code: i32, message: &str)
 // Default handler for unregistered message types
 // Provides enhanced error handling and logging for unknown message types
 #[derive(Clone)]
+/// Represents Default Handler.
 pub struct DefaultHandler;
 
 #[tonic::async_trait]
@@ -317,7 +323,7 @@ pub trait TpsChecker: Send + Sync {
 }
 
 // Registry for managing payload handlers by message type
-// Supports dynamic handler registration with logging for debugging
+/// Supports dynamic handler registration with logging for debugging
 pub struct HandlerRegistry {
     handlers: dashmap::DashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
@@ -332,6 +338,7 @@ impl Default for HandlerRegistry {
 }
 
 impl HandlerRegistry {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             handlers: dashmap::DashMap::new(),
@@ -423,17 +430,20 @@ impl HandlerRegistry {
 }
 
 #[derive(Clone)]
+/// Represents GRPC Request Service.
 pub struct GrpcRequestService {
     handler_registry: Arc<HandlerRegistry>,
 }
 
 impl GrpcRequestService {
+    /// Creates a new instance.
     pub fn new(handler_registry: HandlerRegistry) -> Self {
         Self {
             handler_registry: Arc::new(handler_registry),
         }
     }
 
+    /// Builds an instance from the given arc.
     pub fn from_arc(handler_registry: Arc<HandlerRegistry>) -> Self {
         Self { handler_registry }
     }
@@ -596,6 +606,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 }
 
 #[derive(Clone)]
+/// Represents GRPC Bi Request Stream Service.
 pub struct GrpcBiRequestStreamService {
     handler_registry: Arc<HandlerRegistry>,
     connection_manager: Arc<ConnectionManager>,
@@ -604,6 +615,7 @@ pub struct GrpcBiRequestStreamService {
 }
 
 impl GrpcBiRequestStreamService {
+    /// Creates a new instance.
     pub fn new(
         handler_registry: HandlerRegistry,
         connection_manager: ConnectionManager,
@@ -617,6 +629,7 @@ impl GrpcBiRequestStreamService {
             connection_cleanup,
         }
     }
+    /// Builds an instance from the given arc.
     pub fn from_arc(
         handler_registry: Arc<HandlerRegistry>,
         connection_manager: Arc<ConnectionManager>,

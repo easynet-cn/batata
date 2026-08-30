@@ -43,8 +43,11 @@ use crate::{
 /// Handler for McpServerEndpointRequest - register/deregister MCP server endpoint
 #[derive(Clone)]
 pub struct McpServerEndpointHandler {
+    /// In-memory MCP server registry used as a fallback target.
     pub mcp_registry: Arc<McpServerRegistry>,
+    /// Optional config-backed MCP server operation service.
     pub mcp_service: Option<Arc<dyn McpServerService>>,
+    /// Optional endpoint registration service.
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -157,7 +160,9 @@ impl PayloadHandler for McpServerEndpointHandler {
 /// Handler for QueryMcpServerRequest - query MCP server details
 #[derive(Clone)]
 pub struct QueryMcpServerHandler {
+    /// In-memory MCP server registry used as a fallback source.
     pub mcp_registry: Arc<McpServerRegistry>,
+    /// Optional config-backed MCP server operation service.
     pub mcp_service: Option<Arc<dyn McpServerService>>,
 }
 
@@ -249,7 +254,9 @@ impl PayloadHandler for QueryMcpServerHandler {
 /// Handler for ReleaseMcpServerRequest - publish/release an MCP server
 #[derive(Clone)]
 pub struct ReleaseMcpServerHandler {
+    /// In-memory MCP server registry used as a fallback target.
     pub mcp_registry: Arc<McpServerRegistry>,
+    /// Optional config-backed MCP server operation service.
     pub mcp_service: Option<Arc<dyn McpServerService>>,
 }
 
@@ -390,8 +397,11 @@ impl PayloadHandler for ReleaseMcpServerHandler {
 /// Handler for AgentEndpointRequest - register/deregister agent endpoint
 #[derive(Clone)]
 pub struct AgentEndpointHandler {
+    /// In-memory A2A agent registry used as a fallback target.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+    /// Optional endpoint registration service.
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -522,7 +532,9 @@ impl PayloadHandler for AgentEndpointHandler {
 /// Handler for QueryAgentCardRequest - query agent card details
 #[derive(Clone)]
 pub struct QueryAgentCardHandler {
+    /// In-memory A2A agent registry used as a fallback source.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
 }
 
@@ -614,7 +626,9 @@ impl PayloadHandler for QueryAgentCardHandler {
 /// Handler for ReleaseAgentCardRequest - publish/release an agent card
 #[derive(Clone)]
 pub struct ReleaseAgentCardHandler {
+    /// In-memory A2A agent registry used as a fallback target.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
 }
 
@@ -763,7 +777,9 @@ impl PayloadHandler for ReleaseAgentCardHandler {
 /// and converts results to `AgentCatalogEntry` page.
 #[derive(Clone)]
 pub struct AgentSearchRpcHandler {
+    /// In-memory A2A agent registry used as a fallback source.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
 }
 
@@ -943,8 +959,11 @@ impl PayloadHandler for AgentSearchRpcHandler {
 /// `AgentDiscoveryResult` with `callInterfaces` + `endpointSets`.
 #[derive(Clone)]
 pub struct AgentDiscoveryRpcHandler {
+    /// In-memory A2A agent registry used as a fallback source.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+    /// Optional endpoint registration service.
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -1114,7 +1133,9 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
 /// `AiEndpointService.create_agent_endpoint()`.
 #[derive(Clone)]
 pub struct AgentEndpointRegisterRpcHandler {
+    /// In-memory A2A agent registry used as a fallback target.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional endpoint registration service.
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -1234,8 +1255,11 @@ impl PayloadHandler for AgentEndpointRegisterRpcHandler {
 /// `AiEndpointService.delete_agent_endpoint()`.
 #[derive(Clone)]
 pub struct AgentEndpointDeregisterRpcHandler {
+    /// In-memory A2A agent registry used as a fallback target.
     pub agent_registry: Arc<AgentRegistry>,
+    /// Optional config-backed A2A agent service.
     pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+    /// Optional endpoint registration service.
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -1384,6 +1408,7 @@ fn default_agent_card() -> AgentCard {
 /// Handler for QueryPromptRequest — queries prompt with version/label/MD5 support
 #[derive(Clone)]
 pub struct QueryPromptHandler {
+    /// Prompt operation service used to resolve prompt queries.
     pub prompt_service: Arc<crate::service::prompt::PromptOperationService>,
 }
 

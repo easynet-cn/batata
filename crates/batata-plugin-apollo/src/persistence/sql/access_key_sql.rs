@@ -7,11 +7,13 @@ use crate::entity::apollo_access_key;
 use crate::persistence::shared::StoredAccessKey;
 use crate::persistence::traits::AccessKeyPersistence;
 
+/// Represents the `AccessKeySqlPersistence` entity.
 pub struct AccessKeySqlPersistence {
     db: DatabaseConnection,
 }
 
 impl AccessKeySqlPersistence {
+    /// Creates a new `AccessKeySqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

@@ -16,6 +16,7 @@ pub struct AiEndpointService {
 }
 
 impl AiEndpointService {
+    /// Creates a new `AiEndpointService` backed by the given naming service.
     pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self { naming_service }
     }
@@ -236,8 +237,12 @@ impl AiEndpointService {
 /// Endpoint info returned from queries
 #[derive(Debug, Clone)]
 pub struct EndpointInfo {
+    /// Endpoint IP address.
     pub address: String,
+    /// Endpoint port.
     pub port: u16,
+    /// Whether the endpoint is currently healthy.
     pub healthy: bool,
+    /// Arbitrary metadata attached to the endpoint.
     pub metadata: std::collections::HashMap<String, String>,
 }

@@ -11,25 +11,36 @@ use crate::api::dto::{AppDTO, NamespaceDTO, ItemDTO, ErrorResponse, ClusterDTO, 
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenCreateAppDTO` entity.
 pub struct OpenCreateAppDTO {
+    /// The `app` field.
     pub app: AppDTO,
     #[serde(default)]
+    /// The `admins` field.
     pub admins: Vec<String>,
     #[serde(default)]
+    /// The `assign_app_role_to_self` field.
     pub assign_app_role_to_self: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenAppNamespaceDTO` entity.
 pub struct OpenAppNamespaceDTO {
+    /// The `app_id` field.
     pub app_id: String,
+    /// The `name` field.
     pub name: String,
     #[serde(default = "default_format")]
+    /// The `format` field.
     pub format: String,
     #[serde(default = "default_is_public")]
+    /// The `is_public` field.
     pub is_public: bool,
     #[serde(default)]
+    /// The `comment` field.
     pub comment: String,
+    /// The `data_change_created_by` field.
     pub data_change_created_by: String,
 }
 
@@ -43,16 +54,23 @@ fn default_is_public() -> bool {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenItemDTO` entity.
 pub struct OpenItemDTO {
+    /// The `key` field.
     pub key: String,
+    /// The `value` field.
     pub value: String,
     #[serde(default)]
+    /// The `comment` field.
     pub comment: String,
     #[serde(default = "default_item_type")]
+    /// The `type` field.
     pub r#type: i16,
     #[serde(default)]
+    /// The `data_change_created_by` field.
     pub data_change_created_by: Option<String>,
     #[serde(default)]
+    /// The `data_change_last_modified_by` field.
     pub data_change_last_modified_by: Option<String>,
 }
 
@@ -62,61 +80,94 @@ fn default_item_type() -> i16 {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `NamespaceReleaseDTO` entity.
 pub struct NamespaceReleaseDTO {
+    /// The `release_title` field.
     pub release_title: String,
     #[serde(default)]
+    /// The `release_comment` field.
     pub release_comment: String,
+    /// The `released_by` field.
     pub released_by: String,
     #[serde(default)]
+    /// The `is_emergency_publish` field.
     pub is_emergency_publish: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `NamespaceGrayDelReleaseDTO` entity.
 pub struct NamespaceGrayDelReleaseDTO {
+    /// The `release_title` field.
     pub release_title: String,
     #[serde(default)]
+    /// The `release_comment` field.
     pub release_comment: String,
+    /// The `released_by` field.
     pub released_by: String,
     #[serde(default)]
+    /// The `is_emergency_publish` field.
     pub is_emergency_publish: bool,
     #[serde(default)]
+    /// The `create_items` field.
     pub create_items: Vec<OpenItemDTO>,
     #[serde(default)]
+    /// The `update_items` field.
     pub update_items: Vec<OpenItemDTO>,
     #[serde(default)]
+    /// The `delete_items` field.
     pub delete_items: Vec<OpenItemDTO>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenNamespace` entity.
 pub struct OpenNamespace {
+    /// The `app_id` field.
     pub app_id: String,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `namespace_name` field.
     pub namespace_name: String,
+    /// The `format` field.
     pub format: String,
+    /// The `comment` field.
     pub comment: String,
+    /// The `is_public` field.
     pub is_public: bool,
+    /// The `items` field.
     pub items: Vec<ItemDTO>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenEnvCluster` entity.
 pub struct OpenEnvCluster {
+    /// The `env` field.
     pub env: String,
+    /// The `clusters` field.
     pub clusters: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents the `OpenRelease` entity.
 pub struct OpenRelease {
+    /// The `id` field.
     pub id: i32,
+    /// The `release_id` field.
     pub release_id: i32,
+    /// The `app_id` field.
     pub app_id: String,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `namespace_name` field.
     pub namespace_name: String,
+    /// The `name` field.
     pub name: String,
+    /// The `configurations` field.
     pub configurations: Value,
+    /// The `comment` field.
     pub comment: String,
 }
 
@@ -1685,6 +1736,7 @@ async fn create_missing_namespaces_openapi(
     }))
 }
 
+/// Performs the `configure_openapi_routes` operation.
 pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/openapi/v1/apps")

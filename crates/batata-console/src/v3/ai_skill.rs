@@ -1,5 +1,6 @@
-// Console Skill management API endpoints
-// Aligned with Batata V3 Console API contract
+//! Console Skill management API endpoints.
+//!
+//! Aligned with Batata V3 Console API contract.
 // Mirrors admin endpoints under /v3/console/ai/skills with ConsoleApi security
 
 use std::sync::Arc;
@@ -250,8 +251,10 @@ async fn list_skills(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleSkillUploadQuery {
+    /// Namespace the skill belongs to.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Whether to overwrite an existing skill with the same name.
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -750,6 +753,7 @@ async fn update_scope(
     }
 }
 
+/// Register the skill management routes under `/ai/skills`.
 pub fn routes() -> Scope {
     web::scope("/ai/skills")
         .service(list_skills)

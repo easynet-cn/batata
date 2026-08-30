@@ -13,6 +13,7 @@ mod gray_release;
 mod instance;
 mod access_key;
 mod release_message;
+/// Persistence service registry.
 pub mod service_registry;
 mod namespace_lock;
 mod portal;
@@ -39,6 +40,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 #[async_trait]
+/// Defines the `ApolloPersistenceService` trait.
 pub trait ApolloPersistenceService:
     AppPersistence
     + ClusterPersistence
@@ -65,8 +67,10 @@ pub trait ApolloPersistenceService:
     + Send
     + Sync
 {
+    /// Performs the `health_check` operation.
     async fn health_check(&self) -> anyhow::Result<()>;
 
+    /// Returns the requested value.
     fn get_db_connection(&self) -> Option<sea_orm::DatabaseConnection> {
         None
     }

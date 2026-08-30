@@ -5,15 +5,18 @@ use crate::persistence::shared::StoredInstance;
 use crate::persistence::traits::{ApolloPersistenceService, InstancePersistence};
 use chrono::Utc;
 
+/// Represents the `InstanceService` entity.
 pub struct InstanceService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl InstanceService {
+    /// Creates a new `InstanceService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `register` operation.
     pub async fn register(&self, dto: InstanceDTO) -> Result<InstanceDTO, anyhow::Error> {
         let now = Utc::now().timestamp_millis();
 
@@ -31,6 +34,7 @@ impl InstanceService {
         Ok(created.into())
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, app_id: &str, cluster_name: &str, ip: &str, data_center: &str) -> Result<Option<InstanceDTO>, anyhow::Error> {
         let instances = self.persistence.get_by_app(app_id, Some(cluster_name)).await?;
         let found = instances.into_iter()
@@ -38,11 +42,13 @@ impl InstanceService {
         Ok(found.map(|s| s.into()))
     }
 
+    /// Returns the requested value.
     pub async fn list_by_app_cluster(&self, app_id: &str, cluster_name: &str) -> Result<Vec<InstanceDTO>, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id, Some(cluster_name)).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Performs the `heartbeat` operation.
     pub async fn heartbeat(&self, app_id: &str, cluster_name: &str, ip: &str, data_center: &str) -> Result<(), anyhow::Error> {
         let now = Utc::now().timestamp_millis();
 

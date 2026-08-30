@@ -30,6 +30,8 @@ pub struct DefaultAuthPlugin {
 }
 
 impl DefaultAuthPlugin {
+    /// Create a new default auth plugin backed by the given JWT secret and
+    /// persistence layer.
     pub fn new(
         secret_key: String,
         token_expire_seconds: i64,
@@ -248,6 +250,7 @@ pub struct LdapAuthPlugin {
 }
 
 impl LdapAuthPlugin {
+    /// Compose a default auth plugin with an LDAP authentication service.
     pub fn new(default_plugin: DefaultAuthPlugin, ldap_service: LdapAuthService) -> Self {
         Self {
             default_plugin,

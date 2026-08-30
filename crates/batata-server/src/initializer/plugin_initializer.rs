@@ -13,6 +13,10 @@ use crate::initializer::traits::{InitResult, ServiceInitializer};
 pub struct PluginInitializer;
 
 impl PluginInitializer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self
     }

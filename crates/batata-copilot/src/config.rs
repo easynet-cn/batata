@@ -13,18 +13,25 @@ const COPILOT_CONFIG_GROUP: &str = "nacos-copilot";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CopilotConfig {
+    /// Whether the copilot is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// LLM API key (env var takes precedence over this value).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// LLM model name (e.g. `qwen-turbo`).
     #[serde(default = "default_model")]
     pub model: String,
+    /// Base URL of the OpenAI-compatible LLM API.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    /// Base URL of the Nacos Studio (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub studio_url: Option<String>,
+    /// Studio project name used for Nacos Studio integration.
     #[serde(default = "default_studio_project")]
     pub studio_project: String,
+    /// Default namespace for copilot operations.
     #[serde(default = "default_namespace")]
     pub default_namespace: String,
 }
@@ -93,6 +100,7 @@ pub struct CopilotConfigStorage {
 }
 
 impl CopilotConfigStorage {
+    /// Create a new storage backed by the given `PersistenceService`.
     pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
         Self { persistence }
     }

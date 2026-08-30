@@ -7,10 +7,15 @@
 //! - Task scheduling
 //! - Abstraction layer for multi-registry support
 
+#![warn(missing_docs)]
+
+/// Unified abstraction layer for service discovery, configuration, and health checking.
 pub mod abstraction;
 pub mod handler;
+/// Core data models and structures.
 pub mod model;
 pub mod server;
+/// Core services: cluster membership, connections, configuration, and health.
 pub mod service;
 pub mod traits;
 
@@ -25,7 +30,7 @@ pub mod api {
     pub use batata_api::remote;
 }
 
-// Re-export cluster module
+/// Re-export cluster module
 pub mod cluster {
     pub use crate::service::cluster::{ServerMemberManager, ServerMemberManagerConfig};
     pub use batata_common::ClusterHealthSummary;

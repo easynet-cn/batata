@@ -392,7 +392,12 @@ pub enum LockCommand {
     /// Renew a lock
     Renew(LockRenewRequest),
     /// Force release (admin)
-    ForceRelease { namespace: String, name: String },
+    ForceRelease {
+        /// Lock namespace.
+        namespace: String,
+        /// Lock name.
+        name: String,
+    },
     /// Expire check (background)
     ExpireCheck,
 }
@@ -407,9 +412,15 @@ pub enum LockCommandResponse {
     /// Renew result
     Renew(LockRenewResult),
     /// Force release result
-    ForceRelease { success: bool },
+    ForceRelease {
+        /// Whether the force release succeeded.
+        success: bool,
+    },
     /// Expire check result
-    ExpireCheck { expired: u32 },
+    ExpireCheck {
+        /// Number of locks expired during the check.
+        expired: u32,
+    },
 }
 
 fn current_timestamp() -> i64 {

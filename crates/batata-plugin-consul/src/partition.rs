@@ -29,16 +29,22 @@ pub type PartitionError = (u16, String);
 #[serde(rename_all = "PascalCase")]
 #[derive(Default)]
 pub struct Partition {
+/// The `name` field.
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+/// The `description` field.
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+/// The `deleted_at` field.
     pub deleted_at: Option<String>,
     #[serde(default)]
+/// The `disable_gossip` field.
     pub disable_gossip: bool,
     #[serde(default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -52,6 +58,7 @@ pub struct ConsulPartitionService {
 }
 
 impl ConsulPartitionService {
+/// The `new` associated function.
     pub fn new(index_provider: ConsulIndexProvider) -> Self {
         let partitions = Arc::new(DashMap::new());
         // "default" partition always exists

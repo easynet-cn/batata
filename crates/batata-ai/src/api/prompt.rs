@@ -22,16 +22,23 @@ use crate::service::prompt::PromptOperationService;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for publishing a new prompt version.
 pub struct PromptPublishForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Prompt version in `major.minor.patch` format.
     pub version: String,
+    /// Prompt template content.
     #[serde(default)]
     pub template: String,
+    /// Optional commit message.
     #[serde(alias = "commitMsg")]
     pub commit_msg: Option<String>,
+    /// Optional description.
     pub description: Option<String>,
     /// Comma-separated biz tags
     #[serde(alias = "bizTags")]
@@ -42,73 +49,104 @@ pub struct PromptPublishForm {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for fetching prompt metadata or version detail.
 pub struct PromptQueryForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Optional specific version to fetch.
     pub version: Option<String>,
+    /// Optional label to resolve to a version.
     pub label: Option<String>,
+    /// Optional client MD5 for conditional (Not Modified) responses.
     pub md5: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for listing prompts with pagination and filtering.
 pub struct PromptListForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Optional prompt key filter.
     #[serde(alias = "promptKey")]
     pub prompt_key: Option<String>,
+    /// Optional free-text search keyword.
     pub search: Option<String>,
+    /// Optional comma-separated biz tags filter.
     #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
+    /// Page number (1-based).
     #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
+    /// Page size.
     #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for listing prompt versions (history).
 pub struct PromptHistoryForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Page number (1-based).
     #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
+    /// Page size.
     #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for binding a label to a prompt version.
 pub struct PromptLabelBindForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Label to bind.
     pub label: String,
+    /// Target version for the label.
     pub version: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for unbinding a prompt label.
 pub struct PromptLabelForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Label to unbind.
     pub label: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for updating prompt metadata.
 pub struct PromptMetadataForm {
+    /// Namespace identifier.
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
+    /// Optional new description.
     pub description: Option<String>,
     /// Comma-separated biz tags
     #[serde(alias = "bizTags")]

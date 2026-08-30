@@ -24,16 +24,19 @@ pub struct SnapshotSwitch {
 }
 
 impl SnapshotSwitch {
+    /// Create a snapshot switch with the given initial state.
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled: Arc::new(AtomicBool::new(enabled)),
         }
     }
 
+    /// Return whether snapshot functionality is enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
 
+    /// Enable or disable snapshot functionality.
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
@@ -265,9 +268,13 @@ impl LocalConfigInfoProcessor {
 /// Snapshot file metadata
 #[derive(Debug, Clone)]
 pub struct SnapshotMetadata {
+    /// Path of the snapshot file on disk.
     pub file_path: PathBuf,
+    /// Size of the snapshot file in bytes.
     pub size: u64,
+    /// Last modification time of the snapshot file.
     pub modified: std::time::SystemTime,
+    /// MD5 hash of the snapshot content.
     pub md5: String,
 }
 
@@ -277,6 +284,7 @@ pub struct SnapshotManager {
 }
 
 impl SnapshotManager {
+    /// Create a snapshot manager wrapping the given processor.
     pub fn new(processor: LocalConfigInfoProcessor) -> Self {
         Self {
             processor: Arc::new(RwLock::new(processor)),

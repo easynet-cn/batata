@@ -1,2 +1,3 @@
 //! Distro protocol gRPC handlers - re-exported from batata-core
+/// Re-exported item.
 pub use batata_core::handler::distro::*;

@@ -8,15 +8,18 @@ use crate::persistence::traits::{ApolloPersistenceService, GrayReleasePersistenc
 use chrono::Utc;
 use serde_json::Value;
 
+/// Represents the `GrayReleaseRuleService` entity.
 pub struct GrayReleaseRuleService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl GrayReleaseRuleService {
+    /// Creates a new `GrayReleaseRuleService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `create` operation.
     pub async fn create(&self, dto: GrayReleaseRuleDTO) -> Result<GrayReleaseRuleDTO, anyhow::Error> {
         let existing = self.persistence.get_by_namespace(&dto.app_id, &dto.cluster_name, &dto.namespace_name).await?;
 
@@ -48,6 +51,7 @@ impl GrayReleaseRuleService {
         Ok(created.into())
     }
 
+    /// Performs the `get` operation.
     pub async fn get(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str) -> Result<Option<GrayReleaseRuleDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         let found = stored_list.into_iter()
@@ -55,6 +59,7 @@ impl GrayReleaseRuleService {
         Ok(found.map(|s| s.into()))
     }
 
+    /// Returns the requested value.
     pub async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<GrayReleaseRuleDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         Ok(stored_list
@@ -64,6 +69,7 @@ impl GrayReleaseRuleService {
             .collect())
     }
 
+    /// Performs the `update` operation.
     pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, dto: GrayReleaseRuleDTO) -> Result<(), anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         let existing = stored_list.into_iter()
@@ -77,6 +83,7 @@ impl GrayReleaseRuleService {
         Ok(())
     }
 
+    /// Performs the `delete` operation.
     pub async fn delete(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, _operator: &str) -> Result<(), anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         let existing = stored_list.into_iter()
@@ -87,6 +94,7 @@ impl GrayReleaseRuleService {
         Ok(())
     }
 
+    /// Performs the `match_gray_release_rule` operation.
     pub async fn match_gray_release_rule(&self, app_id: &str, cluster_name: &str, namespace_name: &str, client_ip: &str) -> Result<Option<i64>, anyhow::Error> {
         let rules = self.persistence.list_by_app(app_id).await?;
         let active_rules: Vec<_> = rules.into_iter()

@@ -1,3 +1,4 @@
+//! Access Control List (ACL) tokens, policies, and roles.
 use std::collections::HashMap;
 
 use crate::client::ConsulClient;

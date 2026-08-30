@@ -1,16 +1,16 @@
-//! OIDC (OpenID Connect) 认证模块，兼容 Consul API。
+//! OIDC (OpenID Connect) authentication module, compatible with the Consul API.
 //!
-//! 本模块实现了与 Consul `internal/go-sso/oidcauth` 库兼容的 OIDC 认证流程，
-//! 提供两个核心操作：
-//! - 生成 OIDC 授权 URL（`get_auth_url`）
-//! - 交换授权码获取 token 并提取 claims（`exchange_code`）
+//! This module implements an OIDC authentication flow compatible with Consul's `internal/go-sso/oidcauth` library.
+//! Provides two core operations:
+//! - Generates the OIDC authorization URL (`get_auth_url`).
+//! - Exchanges the authorization code for a token and extracts claims (`exchange_code`).
 //!
-//! 核心特性：
-//! - PKCE (Proof Key for Code Exchange) S256，默认启用（与 Consul 一致）
-//! - State 管理：10 分钟 TTL，一次性使用（验证后立即删除）
-//! - OIDC Discovery 文档缓存，避免重复请求
-//! - JWT 签名验证（使用 provider 的 JWKS）
-//! - 支持 ClaimMappings 和 ListClaimMappings
+//! Core features:
+//! - PKCE (Proof Key for Code Exchange) S256, enabled by default (matching Consul).
+//! - State management: 10-minute TTL, single use (removed immediately after verification).
+//! - OIDC Discovery document cache to avoid repeated requests.
+//! - JWT signature verification (using the provider's JWKS).
+//! - Supports `ClaimMappings` and `ListClaimMappings`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -24,67 +24,67 @@ use sha2::{Digest, Sha256};
 use tracing::debug;
 
 // ============================================================================
-// 常量定义
+// Constants.
 // ============================================================================
 
-/// OIDC state 的默认 TTL（10 分钟），与 Consul 一致
+/// Default TTL (10 minutes) for the OIDC state, matching Consul.
 const DEFAULT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 
-/// 随机字节数（用于生成 state ID 和 nonce）
+/// Number of random bytes (used to generate the state ID and nonce).
 const RANDOM_BYTES: usize = 20;
 
-/// PKCE code_verifier 长度（32 字节 = 43 字符 base64url）
+/// Length of the PKCE `code_verifier` (32 bytes = 43 base64url characters).
 const PKCE_VERIFIER_BYTES: usize = 32;
 
 // ============================================================================
-// OidcConfig - 从 AuthMethod.config 解析的 OIDC 配置
+// OidcConfig - OIDC configuration parsed from `AuthMethod.config`.
 // ============================================================================
 
-/// OIDC 认证方法配置，从 AuthMethod 的 config 字段解析而来。
+/// OIDC auth method configuration, parsed from the `AuthMethod` config field.
 ///
-/// 对应 Consul 的 `OIDCAuthMethodConfig` 结构体。
+/// Corresponds to Consul's `OIDCAuthMethodConfig` struct.
 #[derive(Clone, Debug)]
 pub struct OidcConfig {
-    /// OIDC provider 的 discovery URL（必填）
+    /// The OIDC provider's discovery URL (required).
     pub oidc_discovery_url: String,
-    /// OIDC client ID（必填）
+    /// The OIDC client ID (required).
     pub oidc_client_id: String,
     /// OIDC client secret
     pub oidc_client_secret: String,
-    /// 请求的 OIDC scopes（默认包含 "openid"）
+    /// Requested OIDC scopes (includes "openid" by default).
     pub oidc_scopes: Vec<String>,
-    /// 请求的 ACR values
+    /// Requested ACR values.
     pub oidc_acr_values: Vec<String>,
-    /// 允许的回调 URI 列表（必填，redirect_uri 必须在其中）
+    /// List of allowed callback URIs (required; the `redirect_uri` must be among them).
     pub allowed_redirect_uris: Vec<String>,
-    /// claim 映射：JWT claim 名 -> 变量名
+    /// Claim mapping: JWT claim name -> variable name.
     pub claim_mappings: HashMap<String, String>,
-    /// 列表型 claim 映射：JWT claim 名 -> 变量名
+    /// List-type claim mapping: JWT claim name -> variable name.
     pub list_claim_mappings: HashMap<String, String>,
-    /// 绑定的 audience 列表
+    /// List of bound audiences.
     pub bound_audiences: Vec<String>,
-    /// 是否启用 PKCE（默认 true，与 Consul 一致）
+    /// Whether PKCE is enabled (defaults to `true`, matching Consul).
     pub oidc_client_use_pkce: bool,
-    /// 是否启用详细 OIDC 日志
+    /// Whether verbose OIDC logging is enabled.
     pub verbose_oidc_logging: bool,
-    /// OIDC discovery 的 CA 证书（PEM 格式，可选）
+    /// CA certificate for OIDC discovery (PEM format, optional).
     pub oidc_discovery_ca_cert: Option<String>,
-    /// 支持的 JWT 签名算法列表
+    /// List of supported JWT signing algorithms.
     pub jwt_supported_algs: Vec<String>,
 }
 
 impl OidcConfig {
-    /// 从 AuthMethod 的 config 字段解析 OIDC 配置。
+    /// Parses the OIDC configuration from the `AuthMethod` config field.
     ///
-    /// config 是一个 `HashMap<String, serde_json::Value>`，其中键名使用
-    /// Consul 的 PascalCase 格式（如 "OIDCDiscoveryURL"、"OIDCClientID" 等）。
+    /// `config` is a `HashMap<String, serde_json::Value>` whose keys use
+    /// Consul's PascalCase format (e.g. "OIDCDiscoveryURL", "OIDCClientID", etc.).
     ///
-    /// # 参数
-    /// - `config`: AuthMethod 的 config 字段
+    /// # Arguments
+    /// - `config`: the `AuthMethod` config field.
     ///
-    /// # 返回
-    /// - `Ok(OidcConfig)`: 解析成功
-    /// - `Err(String)`: 配置缺失或格式错误，包含详细的错误信息
+    /// # Returns
+    /// - `Ok(OidcConfig)`: parsing succeeded.
+    /// - `Err(String)`: a required field is missing or malformed, with a detailed error message.
     pub fn from_auth_method_config(
         config: &Option<HashMap<String, serde_json::Value>>,
     ) -> Result<Self, String> {
@@ -92,28 +92,28 @@ impl OidcConfig {
             "OIDC auth method config is missing required fields: OIDCDiscoveryURL, OIDCClientID, AllowedRedirectURIs".to_string()
         })?;
 
-        // 必填字段：OIDCDiscoveryURL
+        // Required field: OIDCDiscoveryURL.
         let oidc_discovery_url = config
             .get("OIDCDiscoveryURL")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| "OIDCDiscoveryURL is required".to_string())?;
 
-        // 必填字段：OIDCClientID
+        // Required field: OIDCClientID.
         let oidc_client_id = config
             .get("OIDCClientID")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| "OIDCClientID is required".to_string())?;
 
-        // 可选字段：OIDCClientSecret
+        // Optional field: OIDCClientSecret.
         let oidc_client_secret = config
             .get("OIDCClientSecret")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        // 必填字段：AllowedRedirectURIs
+        // Required field: AllowedRedirectURIs.
         let allowed_redirect_uris = config
             .get("AllowedRedirectURIs")
             .and_then(|v| v.as_array())
@@ -128,7 +128,7 @@ impl OidcConfig {
             return Err("AllowedRedirectURIs must contain at least one URI".to_string());
         }
 
-        // 可选字段：OIDCScopes
+        // Optional field: OIDCScopes.
         let oidc_scopes = config
             .get("OIDCScopes")
             .and_then(|v| v.as_array())
@@ -139,7 +139,7 @@ impl OidcConfig {
             })
             .unwrap_or_default();
 
-        // 可选字段：OIDCACRValues
+        // Optional field: OIDCACRValues.
         let oidc_acr_values = config
             .get("OIDCACRValues")
             .and_then(|v| v.as_array())
@@ -150,7 +150,7 @@ impl OidcConfig {
             })
             .unwrap_or_default();
 
-        // 可选字段：ClaimMappings
+        // Optional field: ClaimMappings.
         let claim_mappings = config
             .get("ClaimMappings")
             .and_then(|v| v.as_object())
@@ -161,7 +161,7 @@ impl OidcConfig {
             })
             .unwrap_or_default();
 
-        // 可选字段：ListClaimMappings
+        // Optional field: ListClaimMappings.
         let list_claim_mappings = config
             .get("ListClaimMappings")
             .and_then(|v| v.as_object())
@@ -172,7 +172,7 @@ impl OidcConfig {
             })
             .unwrap_or_default();
 
-        // 可选字段：BoundAudiences
+        // Optional field: BoundAudiences.
         let bound_audiences = config
             .get("BoundAudiences")
             .and_then(|v| v.as_array())
@@ -183,25 +183,25 @@ impl OidcConfig {
             })
             .unwrap_or_default();
 
-        // 可选字段：OIDCClientUsePKCE（默认 true，与 Consul 一致）
+        // Optional field: OIDCClientUsePKCE (defaults to true, matching Consul).
         let oidc_client_use_pkce = config
             .get("OIDCClientUsePKCE")
             .and_then(|v| v.as_bool())
             .unwrap_or(true); // 默认启用 PKCE
 
-        // 可选字段：VerboseOIDCLogging
+        // Optional field: VerboseOIDCLogging.
         let verbose_oidc_logging = config
             .get("VerboseOIDCLogging")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // 可选字段：OIDCDiscoveryCACert
+        // Optional field: OIDCDiscoveryCACert.
         let oidc_discovery_ca_cert = config
             .get("OIDCDiscoveryCACert")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        // 可选字段：JWTSupportedAlgs
+        // Optional field: JWTSupportedAlgs.
         let jwt_supported_algs = config
             .get("JWTSupportedAlgs")
             .and_then(|v| v.as_array())
@@ -229,7 +229,7 @@ impl OidcConfig {
         })
     }
 
-    /// 验证 redirect_uri 是否在允许的列表中。
+    /// Validates whether the `redirect_uri` is in the allowed list.
     pub fn validate_redirect_uri(&self, redirect_uri: &str) -> Result<(), String> {
         if self.allowed_redirect_uris.iter().any(|uri| uri == redirect_uri) {
             Ok(())
@@ -243,62 +243,62 @@ impl OidcConfig {
 }
 
 // ============================================================================
-// OidcState - 单次 OIDC 认证流程的状态
+// OidcState - state of a single OIDC authentication flow.
 // ============================================================================
 
-/// OIDC 认证流程的临时状态，存储在 state_store 中。
+/// Temporary state of an OIDC authentication flow, stored in the `state_store`.
 ///
-/// 每个 state 对应一次 OIDC 认证流程，包含：
-/// - nonce：用于防止重放攻击
-/// - redirect_uri：回调时用于交换 code 的 redirect_uri
-/// - auth_method：关联的认证方法名
-/// - client_nonce：客户端提供的 nonce（可选）
-/// - meta：客户端提供的元数据（可选）
-/// - code_verifier：PKCE code_verifier（如果启用 PKCE）
+/// Each state corresponds to one OIDC authentication flow and contains:
+/// - `nonce`: used to prevent replay attacks.
+/// - `redirect_uri`: the callback URI used to exchange the code.
+/// - `auth_method`: the associated auth method name.
+/// - `client_nonce`: the client-provided nonce (optional).
+/// - `meta`: client-provided metadata (optional).
+/// - `code_verifier`: the PKCE `code_verifier` (if PKCE is enabled).
 #[derive(Clone, Debug)]
 pub struct OidcState {
-    /// 随机生成的 nonce，发送给 OIDC provider 并在回调时验证
+    /// Randomly generated nonce sent to the OIDC provider and verified on callback.
     nonce: String,
-    /// 客户端请求时使用的 redirect_uri
+    /// The `redirect_uri` used in the client's request.
     redirect_uri: String,
-    /// 关联的认证方法名
+    /// The associated auth method name.
     auth_method: String,
-    /// 客户端提供的 nonce（可选，用于额外验证）
+    /// The client-provided nonce (optional, used for extra validation).
     client_nonce: Option<String>,
-    /// 客户端提供的元数据
+    /// Client-provided metadata.
     meta: Option<HashMap<String, String>>,
-    /// 创建时间，用于 TTL 过期检查
+    /// Creation time, used for TTL expiry checks.
     created_at: Instant,
-    /// PKCE code_verifier（如果启用 PKCE）
+    /// The PKCE `code_verifier` (if PKCE is enabled).
     code_verifier: Option<String>,
 }
 
 impl OidcState {
-    /// 检查 state 是否已过期
+    /// Checks whether the state has expired.
     fn is_expired(&self, ttl: Duration) -> bool {
         self.created_at.elapsed() > ttl
     }
 }
 
 // ============================================================================
-// OidcStateStore - State 存储与管理
+// OidcStateStore - state storage and management.
 // ============================================================================
 
-/// OIDC state 存储器，使用 DashMap 实现并发安全的 state 管理。
+/// OIDC state store providing concurrent, safe state management backed by `DashMap`.
 ///
-/// 特性：
-/// - 10 分钟 TTL，自动过期
-/// - 一次性使用：verify_and_remove 后立即删除
-/// - 并发安全：使用 DashMap
+/// Features:
+/// - 10-minute TTL with automatic expiry.
+/// - Single use: removed immediately after `verify_and_remove`.
+/// - Concurrency-safe: backed by `DashMap`.
 pub struct OidcStateStore {
-    /// 存储 state 的 DashMap，key 为 state_id
+    /// The `DashMap` storing states, keyed by `state_id`.
     states: DashMap<String, OidcState>,
-    /// state 的 TTL
+    /// The state TTL.
     ttl: Duration,
 }
 
 impl OidcStateStore {
-    /// 创建新的 state 存储器，使用默认 10 分钟 TTL。
+    /// Creates a new state store with the default 10-minute TTL.
     pub fn new() -> Self {
         Self {
             states: DashMap::new(),
@@ -306,7 +306,7 @@ impl OidcStateStore {
         }
     }
 
-    /// 创建新的 state 存储器，使用自定义 TTL（用于测试）。
+    /// Creates a new state store with a custom TTL (used in tests).
     #[cfg(test)]
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
@@ -315,42 +315,42 @@ impl OidcStateStore {
         }
     }
 
-    /// 插入一个新的 state。
+    /// Inserts a new state.
     ///
-    /// 插入前会清理过期的 state，避免内存泄漏。
+    /// Cleans up expired states before inserting, to avoid memory leaks.
     pub fn insert(&self, state_id: String, state: OidcState) {
-        // 顺便清理过期 state
+        // Also clean up expired states.
         self.cleanup_expired();
         self.states.insert(state_id, state);
     }
 
-    /// 验证并移除 state（一次性使用）。
+    /// Verifies and removes a state (single use).
     ///
-    /// 如果 state 不存在或已过期，返回 None。
-    /// 如果存在且未过期，移除并返回 state。
+    /// Returns `None` if the state does not exist or has expired.
+    /// If it exists and has not expired, removes and returns the state.
     pub fn verify_and_remove(&self, state_id: &str) -> Option<OidcState> {
-        // 顺便清理过期 state
+        // Also clean up expired states.
         self.cleanup_expired();
 
-        // 移除 state（一次性使用）
+        // Remove the state (single use).
         self.states.remove(state_id).map(|(_, state)| state)
     }
 
-    /// 清理所有过期的 state。
+    /// Cleans up all expired states.
     ///
-    /// 在每次 insert 和 verify_and_remove 时自动调用。
-    /// 也可以手动调用以主动清理。
+    /// Called automatically on every `insert` and `verify_and_remove`.
+    /// Can also be called manually to trigger cleanup.
     pub fn cleanup_expired(&self) {
         let ttl = self.ttl;
         self.states.retain(|_, state| !state.is_expired(ttl));
     }
 
-    /// 返回当前存储的 state 数量（主要用于测试和监控）。
+    /// Returns the current number of stored states (mainly for tests and monitoring).
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
-    /// 检查 state 是否存在（仅用于测试）。
+    /// Checks whether a state exists (tests only).
     #[cfg(test)]
     pub fn contains(&self, state_id: &str) -> bool {
         self.states.contains_key(state_id)
@@ -364,102 +364,102 @@ impl Default for OidcStateStore {
 }
 
 // ============================================================================
-// OIDC Discovery 文档与缓存
+// OIDC Discovery document and cache.
 // ============================================================================
 
-/// OIDC Discovery 文档（来自 `/.well-known/openid-configuration`）。
+/// The OIDC Discovery document (from `/.well-known/openid-configuration`).
 ///
-/// 只包含 batata 需要的字段。
+/// Contains only the fields needed by batata.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct OidcDiscoveryDoc {
-    /// OIDC provider 的 issuer URL
+    /// The OIDC provider's issuer URL.
     issuer: String,
-    /// 授权端点 URL
+    /// The authorization endpoint URL.
     authorization_endpoint: String,
-    /// token 端点 URL
+    /// The token endpoint URL.
     token_endpoint: String,
-    /// JWKS URI（用于获取验证 JWT 的公钥）
+    /// The JWKS URI (used to fetch the public keys for verifying JWTs).
     jwks_uri: String,
-    /// userinfo 端点 URL（可选）
+    /// The userinfo endpoint URL (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     userinfo_endpoint: Option<String>,
 }
 
-/// JWKS (JSON Web Key Set) 中的单个 key。
+/// A single key in a JWKS (JSON Web Key Set).
 #[derive(Clone, Debug, Deserialize)]
 struct Jwk {
-    /// key ID（用于匹配 JWT header 中的 kid）
+    /// The key ID (used to match the `kid` in the JWT header).
     #[serde(skip_serializing_if = "Option::is_none")]
     kid: Option<String>,
-    /// key type（如 "RSA"）
+    /// The key type (e.g. "RSA").
     kty: String,
-    /// RSA modulus（base64url 编码）
+    /// The RSA modulus (base64url-encoded).
     #[serde(skip_serializing_if = "Option::is_none")]
     n: Option<String>,
-    /// RSA exponent（base64url 编码）
+    /// The RSA exponent (base64url-encoded).
     #[serde(skip_serializing_if = "Option::is_none")]
     e: Option<String>,
 }
 
-/// JWKS (JSON Web Key Set) 响应。
+/// The JWKS (JSON Web Key Set) response.
 #[derive(Clone, Debug, Deserialize)]
 struct Jwks {
     keys: Vec<Jwk>,
 }
 
-/// OIDC Discovery 文档缓存，按 discovery URL 缓存。
+/// Cache for the OIDC Discovery document, keyed by discovery URL.
 ///
-/// 使用全局静态缓存，避免每个请求都查询 OIDC provider。
-/// 缓存有效期为 5 分钟。
+/// Uses a global static cache to avoid querying the OIDC provider on every request.
+/// Cache validity is 5 minutes.
 static DISCOVERY_CACHE: LazyLock<DashMap<String, (OidcDiscoveryDoc, Instant)>> =
     LazyLock::new(|| DashMap::new());
 
-/// JWKS 缓存，按 jwks_uri 缓存。
+/// Cache for the JWKS, keyed by `jwks_uri`.
 ///
-/// 缓存有效期为 10 分钟。
+/// Cache validity is 10 minutes.
 static JWKS_CACHE: LazyLock<DashMap<String, (Jwks, Instant)>> =
     LazyLock::new(|| DashMap::new());
 
-/// Discovery 文档缓存时间（5 分钟）
+/// Discovery document cache duration (5 minutes).
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// JWKS 缓存时间（10 分钟）
+/// JWKS cache duration (10 minutes).
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 // ============================================================================
-// OidcAuthenticator - 核心 OIDC 认证器
+// OidcAuthenticator - core OIDC authenticator.
 // ============================================================================
 
-/// OIDC 认证器，封装了完整的 OIDC 认证流程。
+/// The OIDC authenticator, encapsulating the full OIDC authentication flow.
 ///
-/// 每个 OidcConfig 对应一个 OidcAuthenticator。
-/// Authenticator 内部维护：
-/// - HTTP client（用于与 OIDC provider 通信）
-/// - state store（管理认证流程状态）
+/// Each `OidcConfig` corresponds to one `OidcAuthenticator`.
+/// The authenticator internally maintains:
+/// - An HTTP client (used to communicate with the OIDC provider).
+/// - A state store (managing the authentication flow state).
 pub struct OidcAuthenticator {
-    /// OIDC 配置
+    /// The OIDC configuration.
     config: OidcConfig,
     /// HTTP client（reqwest）
     http_client: reqwest::Client,
-    /// state 存储器
+    /// The state store.
     state_store: OidcStateStore,
 }
 
 impl OidcAuthenticator {
-    /// 创建新的 OIDC 认证器。
+    /// Creates a new OIDC authenticator.
     ///
-    /// # 参数
-    /// - `config`: OIDC 配置
+    /// # Arguments
+    /// - `config`: the OIDC configuration.
     ///
-    /// # 返回
-    /// - `Ok(Self)`: 创建成功
-    /// - `Err(String)`: HTTP client 创建失败
+    /// # Returns
+    /// - `Ok(Self)`: creation succeeded.
+    /// - `Err(String)`: failed to create the HTTP client.
     pub fn new(config: OidcConfig) -> Result<Self, String> {
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none());
 
-        // 如果配置了 CA 证书，添加到 client
+        // If a CA certificate is configured, add it to the client.
         if let Some(ref ca_cert_pem) = config.oidc_discovery_ca_cert {
             let cert = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())
                 .map_err(|e| format!("Failed to parse OIDC discovery CA cert: {}", e))?;
@@ -477,26 +477,26 @@ impl OidcAuthenticator {
         })
     }
 
-    /// 生成 OIDC 授权 URL。
+    /// Generates the OIDC authorization URL.
     ///
-    /// 流程：
-    /// 1. 验证 redirect_uri 在 allowed_redirect_uris 中
-    /// 2. 生成 state ID 和 nonce（各 20 字节随机数）
-    /// 3. 如果 PKCE 启用，生成 code_verifier 和 code_challenge
-    /// 4. 查询 OIDC discovery 获取 authorization_endpoint
-    /// 5. 构建授权 URL
-    /// 6. 存储 state
-    /// 7. 返回 URL
+    /// Steps:
+    /// 1. Validate the `redirect_uri` against the `allowed_redirect_uris`.
+    /// 2. Generate the state ID and nonce (each 20 random bytes).
+    /// 3. If PKCE is enabled, generate the `code_verifier` and `code_challenge`.
+    /// 4. Query OIDC discovery for the `authorization_endpoint`.
+    /// 5. Build the authorization URL.
+    /// 6. Store the state.
+    /// 7. Return the URL.
     ///
-    /// # 参数
-    /// - `redirect_uri`: 回调 URI（必须在 allowed_redirect_uris 中）
-    /// - `auth_method`: 认证方法名
-    /// - `client_nonce`: 客户端 nonce（可选）
-    /// - `meta`: 客户端元数据（可选）
+    /// # Arguments
+    /// - `redirect_uri`: the callback URI (must be in `allowed_redirect_uris`).
+    /// - `auth_method`: the auth method name.
+    /// - `client_nonce`: the client nonce (optional).
+    /// - `meta`: client metadata (optional).
     ///
-    /// # 返回
-    /// - `Ok(String)`: 授权 URL
-    /// - `Err(String)`: 错误信息
+    /// # Returns
+    /// - `Ok(String)`: the authorization URL.
+    /// - `Err(String)`: an error message.
     pub async fn get_auth_url(
         &self,
         redirect_uri: &str,
@@ -504,14 +504,14 @@ impl OidcAuthenticator {
         client_nonce: Option<&str>,
         meta: Option<HashMap<String, String>>,
     ) -> Result<String, String> {
-        // 1. 验证 redirect_uri
+        // 1. Validate the redirect_uri.
         self.config.validate_redirect_uri(redirect_uri)?;
 
-        // 2. 生成 state ID 和 nonce
+        // 2. Generate the state ID and nonce.
         let state_id = generate_random_string(RANDOM_BYTES);
         let nonce = generate_random_string(RANDOM_BYTES);
 
-        // 3. 生成 PKCE code_verifier 和 code_challenge
+        // 3. Generate the PKCE `code_verifier` and `code_challenge`.
         let (code_verifier, code_challenge) = if self.config.oidc_client_use_pkce {
             let verifier = generate_random_string(PKCE_VERIFIER_BYTES);
             let challenge = compute_pkce_challenge(&verifier);
@@ -520,10 +520,10 @@ impl OidcAuthenticator {
             (None, None)
         };
 
-        // 4. 查询 OIDC discovery 获取 authorization_endpoint
+        // 4. Query OIDC discovery for the `authorization_endpoint`.
         let discovery = self.fetch_discovery_doc().await?;
 
-        // 5. 构建授权 URL
+        // 5. Build the authorization URL.
         let auth_url = build_authorization_url(
             &discovery.authorization_endpoint,
             &self.config.oidc_client_id,
@@ -539,7 +539,7 @@ impl OidcAuthenticator {
             debug!("OIDC auth URL generated for method '{}': {}", auth_method, auth_url);
         }
 
-        // 6. 存储 state
+        // 6. Store the state.
         let state = OidcState {
             nonce,
             redirect_uri: redirect_uri.to_string(),
@@ -551,63 +551,63 @@ impl OidcAuthenticator {
         };
         self.state_store.insert(state_id, state);
 
-        // 7. 返回 URL
+        // 7. Return the URL.
         Ok(auth_url)
     }
 
-    /// 交换授权码获取 token 并提取 claims。
+    /// Exchanges the authorization code for a token and extracts the claims.
     ///
-    /// 流程：
-    /// 1. 验证并移除 state（一次性使用）
-    /// 2. 查询 OIDC discovery 获取 token_endpoint
-    /// 3. POST 到 token_endpoint 交换 code
-    /// 4. 解析响应获取 id_token
-    /// 5. 验证 JWT 签名（使用 discovery 的 jwks_uri 获取公钥）
-    /// 6. 验证 nonce 匹配
-    /// 7. 提取 claims
-    /// 8. 应用 claim_mappings 和 list_claim_mappings
+    /// Steps:
+    /// 1. Verify and remove the state (single use).
+    /// 2. Query OIDC discovery for the `token_endpoint`.
+    /// 3. POST to the `token_endpoint` to exchange the code.
+    /// 4. Parse the response to obtain the `id_token`.
+    /// 5. Verify the JWT signature (fetch the public key via the discovery `jwks_uri`).
+    /// 6. Verify the nonce matches.
+    /// 7. Extract the claims.
+    /// 8. Apply `claim_mappings` and `list_claim_mappings`.
     ///
-    /// # 参数
-    /// - `state_id`: 授权 URL 返回时携带的 state
-    /// - `code`: OIDC provider 返回的授权码
+    /// # Arguments
+    /// - `state_id`: the state returned with the authorization URL.
+    /// - `code`: the authorization code returned by the OIDC provider.
     ///
-    /// # 返回
-    /// - `Ok(OidcClaims)`: 提取的 claims
-    /// - `Err(String)`: 错误信息
+    /// # Returns
+    /// - `Ok(OidcClaims)`: the extracted claims.
+    /// - `Err(String)`: an error message.
     pub async fn exchange_code(
         &self,
         state_id: &str,
         code: &str,
     ) -> Result<OidcClaims, String> {
-        // 1. 验证并移除 state（一次性使用）
+        // 1. Verify and remove the state (single use).
         let state = self.state_store.verify_and_remove(state_id).ok_or_else(|| {
             "OIDC state not found or expired. The state may have already been used or has timed out".to_string()
         })?;
 
-        // 2. 查询 OIDC discovery 获取 token_endpoint
+        // 2. Query OIDC discovery for the `token_endpoint`.
         let discovery = self.fetch_discovery_doc().await?;
 
-        // 3. POST 到 token_endpoint 交换 code
+        // 3. POST to the `token_endpoint` to exchange the code.
         let token_response = self
             .exchange_code_for_token(&discovery.token_endpoint, code, &state)
             .await?;
 
-        // 4. 获取 id_token
+        // 4. Obtain the `id_token`.
         let id_token = token_response.id_token.ok_or_else(|| {
             "OIDC token response does not contain id_token".to_string()
         })?;
 
-        // 5. 验证 JWT 签名
+        // 5. Verify the JWT signature.
         let jwks = self.fetch_jwks(&discovery.jwks_uri).await?;
         let claims = verify_jwt(&id_token, &jwks, &discovery.issuer, &self.config)?;
 
-        // 6. 验证 nonce 匹配
+        // 6. Verify the nonce matches.
         let token_nonce = claims.get("nonce").and_then(|v| v.as_str());
         if token_nonce != Some(state.nonce.as_str()) {
             return Err("OIDC nonce mismatch: the id_token nonce does not match the expected nonce".to_string());
         }
 
-        // 7. 应用 claim_mappings 和 list_claim_mappings
+        // 7. Apply `claim_mappings` and `list_claim_mappings`.
         let processed_claims = apply_claim_mappings(&claims, &self.config);
 
         if self.config.verbose_oidc_logging {
@@ -625,25 +625,25 @@ impl OidcAuthenticator {
         })
     }
 
-    /// 获取 state store 中的 state 数量（主要用于监控）。
+    /// Returns the number of states in the store (mainly for monitoring).
     pub fn state_count(&self) -> usize {
         self.state_store.len()
     }
 
-    /// 手动触发 state 清理。
+    /// Manually triggers state cleanup.
     pub fn cleanup_states(&self) {
         self.state_store.cleanup_expired();
     }
 
     // ------------------------------------------------------------------
-    // 内部方法
+    // Internal methods.
     // ------------------------------------------------------------------
 
-    /// 获取 OIDC discovery 文档（带缓存）。
+    /// Fetches the OIDC discovery document (with caching).
     async fn fetch_discovery_doc(&self) -> Result<OidcDiscoveryDoc, String> {
         let discovery_url = &self.config.oidc_discovery_url;
 
-        // 检查缓存
+        // Check the cache.
         if let Some(entry) = DISCOVERY_CACHE.get(discovery_url) {
             let (doc, created_at) = entry.value();
             if created_at.elapsed() < DISCOVERY_CACHE_TTL {
@@ -654,7 +654,7 @@ impl OidcAuthenticator {
             }
         }
 
-        // 缓存未命中或已过期，从 OIDC provider 获取
+        // Cache miss or expired; fetch from the OIDC provider.
         if self.config.verbose_oidc_logging {
             debug!("Fetching OIDC discovery document from {}", discovery_url);
         }
@@ -679,15 +679,15 @@ impl OidcAuthenticator {
             .await
             .map_err(|e| format!("Failed to parse OIDC discovery document: {}", e))?;
 
-        // 更新缓存
+        // Update the cache.
         DISCOVERY_CACHE.insert(discovery_url.clone(), (doc.clone(), Instant::now()));
 
         Ok(doc)
     }
 
-    /// 获取 JWKS（带缓存）。
+    /// Fetches the JWKS (with caching).
     async fn fetch_jwks(&self, jwks_uri: &str) -> Result<Jwks, String> {
-        // 检查缓存
+        // Check the cache.
         if let Some(entry) = JWKS_CACHE.get(jwks_uri) {
             let (jwks, created_at) = entry.value();
             if created_at.elapsed() < JWKS_CACHE_TTL {
@@ -698,7 +698,7 @@ impl OidcAuthenticator {
             }
         }
 
-        // 缓存未命中或已过期，从 OIDC provider 获取
+        // Cache miss or expired; fetch from the OIDC provider.
         if self.config.verbose_oidc_logging {
             debug!("Fetching JWKS from {}", jwks_uri);
         }
@@ -723,20 +723,20 @@ impl OidcAuthenticator {
             .await
             .map_err(|e| format!("Failed to parse JWKS: {}", e))?;
 
-        // 更新缓存
+        // Update the cache.
         JWKS_CACHE.insert(jwks_uri.to_string(), (jwks.clone(), Instant::now()));
 
         Ok(jwks)
     }
 
-    /// 使用授权码交换 token。
+    /// Exchanges the authorization code for a token.
     async fn exchange_code_for_token(
         &self,
         token_endpoint: &str,
         code: &str,
         state: &OidcState,
     ) -> Result<TokenResponse, String> {
-        // 构建 form 表单参数
+        // Build the form parameters.
         let mut form = vec![
             ("grant_type".to_string(), "authorization_code".to_string()),
             ("code".to_string(), code.to_string()),
@@ -744,7 +744,7 @@ impl OidcAuthenticator {
             ("client_id".to_string(), self.config.oidc_client_id.clone()),
         ];
 
-        // client_secret（如果配置了）
+        // client_secret (if configured).
         if !self.config.oidc_client_secret.is_empty() {
             form.push((
                 "client_secret".to_string(),
@@ -752,7 +752,7 @@ impl OidcAuthenticator {
             ));
         }
 
-        // code_verifier（如果启用了 PKCE）
+        // code_verifier (if PKCE is enabled).
         if let Some(ref verifier) = state.code_verifier {
             form.push(("code_verifier".to_string(), verifier.clone()));
         }
@@ -791,63 +791,63 @@ impl OidcAuthenticator {
 }
 
 // ============================================================================
-// OIDC Token 响应
+// OIDC token response.
 // ============================================================================
 
-/// OIDC token 端点的响应。
+/// The response from the OIDC token endpoint.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct TokenResponse {
-    /// access_token（不一定需要，但 OIDC 标准要求返回）
+    /// The `access_token` (not always required, but returned per the OIDC spec).
     #[serde(default)]
     access_token: Option<String>,
-    /// id_token（OIDC 核心，包含用户 claims）
+    /// The `id_token` (the OIDC core, containing the user claims).
     #[serde(default)]
     id_token: Option<String>,
-    /// token_type（如 "Bearer"）
+    /// The `token_type` (e.g. "Bearer").
     #[serde(default)]
     token_type: Option<String>,
-    /// expires_in（秒）
+    /// The `expires_in` value (in seconds).
     #[serde(default)]
     expires_in: Option<u64>,
-    /// refresh_token（可选）
+    /// The `refresh_token` (optional).
     #[serde(default)]
     refresh_token: Option<String>,
 }
 
 // ============================================================================
-// OidcClaims - 处理后的 claims
+// OidcClaims - processed claims.
 // ============================================================================
 
-/// 处理后的 OIDC claims，包含应用了 claim_mappings 的变量。
+/// The processed OIDC claims, containing variables after applying `claim_mappings`.
 ///
-/// 用于后续的 binding rules 匹配。
+/// Used for subsequent binding-rule matching.
 #[derive(Clone, Debug)]
 pub struct OidcClaims {
-    /// 处理后的 claims 变量映射（key 为变量名，value 为 JSON 值）
+    /// The processed claims variable map (key is the variable name, value is the JSON value).
     pub claims: HashMap<String, serde_json::Value>,
-    /// 关联的认证方法名
+    /// The associated auth method name.
     pub auth_method: String,
-    /// 客户端 nonce
+    /// The client nonce.
     pub client_nonce: Option<String>,
-    /// 客户端元数据
+    /// Client metadata.
     pub meta: Option<HashMap<String, String>>,
 }
 
 // ============================================================================
-// 辅助函数
+// Helper functions.
 // ============================================================================
 
-/// 生成随机字符串（base64url 编码）。
+/// Generates a random string (base64url-encoded).
 ///
-/// 生成 `num_bytes` 个随机字节，然后使用 base64url（无 padding）编码。
+/// Generates `num_bytes` random bytes, then encodes them with base64url (no padding).
 fn generate_random_string(num_bytes: usize) -> String {
     let mut bytes = vec![0u8; num_bytes];
     rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 
-/// 计算 PKCE code_challenge（S256 方法）。
+/// Computes the PKCE `code_challenge` (S256 method).
 ///
 /// code_challenge = base64url(SHA256(code_verifier))
 fn compute_pkce_challenge(code_verifier: &str) -> String {
@@ -857,7 +857,7 @@ fn compute_pkce_challenge(code_verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash)
 }
 
-/// 构建 OIDC 授权 URL。
+/// Builds the OIDC authorization URL.
 #[allow(clippy::too_many_arguments)]
 fn build_authorization_url(
     authorization_endpoint: &str,
@@ -869,12 +869,12 @@ fn build_authorization_url(
     scopes: &[String],
     acr_values: &[String],
 ) -> String {
-    // 构建 scope 参数（始终包含 "openid"）
+    // Build the scope parameter (always includes "openid").
     let mut all_scopes = vec!["openid".to_string()];
     all_scopes.extend(scopes.iter().cloned());
     let scope_str = all_scopes.join(" ");
 
-    // 使用 url 库构建 URL
+    // Build the URL using the url crate.
     let mut url = url::Url::parse(authorization_endpoint)
         .unwrap_or_else(|_| url::Url::parse("http://localhost").unwrap());
     let mut query_pairs = url.query_pairs_mut();
@@ -886,14 +886,14 @@ fn build_authorization_url(
         .append_pair("state", state)
         .append_pair("nonce", nonce);
 
-    // PKCE 参数
+    // PKCE parameters.
     if let Some(challenge) = code_challenge {
         query_pairs
             .append_pair("code_challenge", challenge)
             .append_pair("code_challenge_method", "S256");
     }
 
-    // ACR values（如果配置了）
+    // ACR values (if configured).
     if !acr_values.is_empty() {
         query_pairs.append_pair("acr_values", &acr_values.join(" "));
     }
@@ -902,15 +902,15 @@ fn build_authorization_url(
     url.to_string()
 }
 
-/// 验证 JWT 并提取 claims。
+/// Verifies the JWT and extracts the claims.
 ///
-/// 流程：
-/// 1. 解析 JWT header 获取 kid 和 alg
-/// 2. 在 JWKS 中查找匹配的 key
-/// 3. 使用匹配的 key 验证 JWT 签名
-/// 4. 验证 issuer
-/// 5. 验证 audience（如果配置了 bound_audiences）
-/// 6. 返回 claims
+/// Steps:
+/// 1. Parse the JWT header to get the `kid` and `alg`.
+/// 2. Find the matching key in the JWKS.
+/// 3. Verify the JWT signature using the matched key.
+/// 4. Verify the issuer.
+/// 5. Verify the audience (if `bound_audiences` is configured).
+/// 6. Return the claims.
 fn verify_jwt(
     token: &str,
     jwks: &Jwks,
@@ -919,15 +919,15 @@ fn verify_jwt(
 ) -> Result<serde_json::Value, String> {
     use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
-    // 1. 解析 JWT header 获取 kid 和 alg
+    // 1. Parse the JWT header to get the `kid` and `alg`.
     let header = decode_header(token)
         .map_err(|e| format!("Failed to decode JWT header: {}", e))?;
 
     let kid = header.kid.as_deref();
 
-    // 2. 在 JWKS 中查找匹配的 key
+    // 2. Find the matching key in the JWKS.
     let matching_key = jwks.keys.iter().find(|k| {
-        // 如果 kid 存在，按 kid 匹配；否则用第一个 RSA key
+        // If a kid exists, match by kid; otherwise use the first RSA key.
         if let Some(kid) = kid {
             k.kid.as_deref() == Some(kid)
         } else {
@@ -942,23 +942,23 @@ fn verify_jwt(
         )
     })?;
 
-    // 3. 创建 DecodingKey
+    // 3. Create the DecodingKey.
     let n = jwk.n.as_deref().ok_or("JWK missing 'n' (modulus) field")?;
     let e = jwk.e.as_deref().ok_or("JWK missing 'e' (exponent) field")?;
     let decoding_key = DecodingKey::from_rsa_components(n, e)
         .map_err(|e| format!("Failed to create decoding key from JWK: {}", e))?;
 
-    // 4. 创建 Validation
+    // 4. Create the Validation.
     let algorithm = match header.alg {
         Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512 => header.alg,
         Algorithm::PS256 | Algorithm::PS384 | Algorithm::PS512 => header.alg,
         Algorithm::ES256 | Algorithm::ES384 => header.alg,
         Algorithm::EdDSA => header.alg,
         _ => {
-            // 默认使用 RS256
-            // 如果配置了 JWTSupportedAlgs，检查是否支持
+            // Default to RS256.
+            // If JWTSupportedAlgs is configured, check whether it is supported.
             if !config.jwt_supported_algs.is_empty() {
-                // 检查 alg 是否在支持的列表中
+                // Check whether the alg is in the supported list.
                 let alg_str = format!("{:?}", header.alg);
                 if !config.jwt_supported_algs.iter().any(|a| alg_str.contains(a)) {
                     return Err(format!("JWT algorithm {:?} is not in the supported algorithms list", header.alg));
@@ -970,43 +970,43 @@ fn verify_jwt(
 
     let mut validation = Validation::new(algorithm);
 
-    // 设置预期的 issuer
+    // Set the expected issuer.
     validation.set_issuer(&[expected_issuer]);
 
-    // 设置预期的 audience（如果配置了 bound_audiences）
+    // Set the expected audience (if bound_audiences is configured).
     if !config.bound_audiences.is_empty() {
         let audiences: Vec<&str> = config.bound_audiences.iter().map(|s| s.as_str()).collect();
         validation.set_audience(&audiences);
     }
 
-    // 5. 验证 JWT
+    // 5. Verify the JWT.
     let token_data = decode::<serde_json::Value>(token, &decoding_key, &validation)
         .map_err(|e| format!("JWT verification failed: {}", e))?;
 
     Ok(token_data.claims)
 }
 
-/// 应用 claim_mappings 和 list_claim_mappings。
+/// Applies `claim_mappings` and `list_claim_mappings`.
 ///
-/// 将原始 JWT claims 按照配置的映射规则转换为变量名。
+/// Converts the raw JWT claims into variable names per the configured mapping rules.
 fn apply_claim_mappings(
     raw_claims: &serde_json::Value,
     config: &OidcConfig,
 ) -> HashMap<String, serde_json::Value> {
     let mut result = HashMap::new();
 
-    // 应用 claim_mappings（单个值）
+    // Apply claim_mappings (single value).
     for (claim_name, var_name) in &config.claim_mappings {
         if let Some(value) = raw_claims.get(claim_name) {
             result.insert(var_name.clone(), value.clone());
         }
     }
 
-    // 应用 list_claim_mappings（列表值）
+    // Apply list_claim_mappings (list value).
     for (claim_name, var_name) in &config.list_claim_mappings {
         if let Some(value) = raw_claims.get(claim_name) {
             if let Some(arr) = value.as_array() {
-                // 列表型 claim，存储为字符串数组
+                // List-type claim, stored as a string array.
                 let strings: Vec<String> = arr
                     .iter()
                     .filter_map(|v| {
@@ -1024,7 +1024,7 @@ fn apply_claim_mappings(
                     ),
                 );
             } else if value.is_string() {
-                // 如果 claim 不是数组而是字符串，也按列表处理
+                // If the claim is a string rather than an array, still treat it as a list.
                 result.insert(
                     var_name.clone(),
                     serde_json::Value::Array(vec![value.clone()]),
@@ -1037,41 +1037,41 @@ fn apply_claim_mappings(
 }
 
 // ============================================================================
-// 全局 OIDC Authenticator 缓存
+// Global OIDC authenticator cache.
 // ============================================================================
 
-/// 全局 OIDC authenticator 缓存，按 auth method name 缓存。
+/// Global OIDC authenticator cache, keyed by auth method name.
 ///
-/// 使用静态缓存（类似 TOKEN_CACHE），避免每次请求都重新创建 authenticator。
-/// 当 auth method 配置更新时，调用 `invalidate_authenticator` 清除缓存。
+/// Uses a static cache (similar to `TOKEN_CACHE`) to avoid recreating the authenticator on every request.
+/// Calls `invalidate_authenticator` to clear the cache when an auth method's config is updated.
 static OIDC_AUTHENTICATORS: LazyLock<DashMap<String, Arc<OidcAuthenticator>>> =
     LazyLock::new(|| DashMap::new());
 
-/// 获取或创建指定 auth method 的 OIDC authenticator。
+/// Gets or creates the OIDC authenticator for the given auth method.
 ///
-/// 如果缓存中不存在，则从 auth method 配置创建新的 authenticator 并缓存。
+/// If not in the cache, creates a new authenticator from the auth method config and caches it.
 ///
-/// # 参数
-/// - `auth_method_name`: 认证方法名
-/// - `config`: auth method 的 config
+/// # Arguments
+/// - `auth_method_name`: the auth method name.
+/// - `config`: the auth method config.
 ///
-/// # 返回
+/// # Returns
 /// - `Ok(Arc<OidcAuthenticator>)`: authenticator
-/// - `Err(String)`: 创建失败
+/// - `Err(String)`: creation failed.
 pub fn get_or_create_authenticator(
     auth_method_name: &str,
     config: &Option<HashMap<String, serde_json::Value>>,
 ) -> Result<Arc<OidcAuthenticator>, String> {
-    // 检查缓存
+    // Check the cache.
     if let Some(entry) = OIDC_AUTHENTICATORS.get(auth_method_name) {
         return Ok(entry.value().clone());
     }
 
-    // 缓存未命中，创建新的 authenticator
+    // Cache miss; create a new authenticator.
     let oidc_config = OidcConfig::from_auth_method_config(config)?;
     let authenticator = Arc::new(OidcAuthenticator::new(oidc_config)?);
 
-    // 存入缓存（使用 entry API 避免竞争条件）
+    // Store in the cache (use the entry API to avoid race conditions).
     OIDC_AUTHENTICATORS
         .entry(auth_method_name.to_string())
         .or_insert(authenticator.clone());
@@ -1079,20 +1079,20 @@ pub fn get_or_create_authenticator(
     Ok(authenticator)
 }
 
-/// 清除指定 auth method 的 OIDC authenticator 缓存。
+/// Clears the OIDC authenticator cache for the given auth method.
 ///
-/// 在 auth method 更新或删除时调用。
+/// Called when an auth method is updated or deleted.
 pub fn invalidate_authenticator(auth_method_name: &str) {
     OIDC_AUTHENTICATORS.remove(auth_method_name);
 }
 
-/// 清除所有 OIDC authenticator 缓存。
+/// Clears all OIDC authenticator caches.
 pub fn invalidate_all_authenticators() {
     OIDC_AUTHENTICATORS.clear();
 }
 
 // ============================================================================
-// 单元测试
+// Unit tests.
 // ============================================================================
 
 #[cfg(test)]
@@ -1100,10 +1100,10 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// 测试从 auth method config 解析 OIDC 配置
+    /// Tests parsing the OIDC config from the auth method config.
     #[test]
     fn test_oidc_config_from_auth_method() {
-        // 测试完整的有效配置
+        // Test a complete, valid configuration.
         let mut config = HashMap::new();
         config.insert(
             "OIDCDiscoveryURL".to_string(),
@@ -1145,19 +1145,19 @@ mod tests {
         assert_eq!(oidc_config.oidc_scopes, vec!["email", "profile"]);
         assert_eq!(oidc_config.claim_mappings.get("project"), Some(&"project_var".to_string()));
         assert_eq!(oidc_config.list_claim_mappings.get("groups"), Some(&"groups_var".to_string()));
-        // PKCE 默认启用
+        // PKCE is enabled by default.
         assert!(oidc_config.oidc_client_use_pkce);
     }
 
-    /// 测试缺少必填字段时的错误处理
+    /// Tests error handling when required fields are missing.
     #[test]
     fn test_oidc_config_missing_required_fields() {
-        // 测试 config 为 None
+        // Test config being None.
         let result = OidcConfig::from_auth_method_config(&None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("missing required fields"));
 
-        // 测试缺少 OIDCDiscoveryURL
+        // Test missing OIDCDiscoveryURL.
         let mut config = HashMap::new();
         config.insert("OIDCClientID".to_string(), serde_json::json!("test-client"));
         config.insert(
@@ -1168,7 +1168,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("OIDCDiscoveryURL is required"));
 
-        // 测试缺少 AllowedRedirectURIs
+        // Test missing AllowedRedirectURIs.
         let mut config = HashMap::new();
         config.insert("OIDCDiscoveryURL".to_string(), serde_json::json!("https://example.com"));
         config.insert("OIDCClientID".to_string(), serde_json::json!("test-client"));
@@ -1177,7 +1177,7 @@ mod tests {
         assert!(result.unwrap_err().contains("AllowedRedirectURIs is required"));
     }
 
-    /// 测试 PKCE 可被禁用
+    /// Tests that PKCE can be disabled.
     #[test]
     fn test_oidc_config_pkce_disabled() {
         let mut config = HashMap::new();
@@ -1193,7 +1193,7 @@ mod tests {
         assert!(!oidc_config.oidc_client_use_pkce);
     }
 
-    /// 测试 state store 的插入和验证
+    /// Tests insertion and verification of the state store.
     #[test]
     fn test_oidc_state_store_insert_and_verify() {
         let store = OidcStateStore::new();
@@ -1208,25 +1208,25 @@ mod tests {
             code_verifier: None,
         };
 
-        // 插入 state
+        // Insert the state.
         store.insert("test-state-id".to_string(), state);
 
-        // 验证 state 存在
+        // Verify the state exists.
         assert!(store.contains("test-state-id"));
 
-        // verify_and_remove 应该返回 state
+        // verify_and_remove should return the state.
         let result = store.verify_and_remove("test-state-id");
         assert!(result.is_some());
         assert_eq!(result.unwrap().nonce, "test-nonce");
 
-        // state 应该已被移除（一次性使用）
+        // The state should have been removed (single use).
         assert!(!store.contains("test-state-id"));
     }
 
-    /// 测试 state store 的过期清理
+    /// Tests expiry cleanup of the state store.
     #[test]
     fn test_oidc_state_store_expired_cleanup() {
-        // 使用 10ms TTL
+        // Use a 10ms TTL.
         let store = OidcStateStore::with_ttl(Duration::from_millis(10));
 
         let state = OidcState {
@@ -1242,15 +1242,15 @@ mod tests {
         store.insert("test-state-id".to_string(), state);
         assert!(store.contains("test-state-id"));
 
-        // 等待过期
+        // Wait for expiry.
         std::thread::sleep(Duration::from_millis(50));
 
-        // 手动清理
+        // Manual cleanup.
         store.cleanup_expired();
         assert!(!store.contains("test-state-id"));
     }
 
-    /// 测试 state 的一次性使用特性（verify 后立即删除）
+    /// Tests the single-use property of a state (removed immediately after verify).
     #[test]
     fn test_oidc_state_store_verify_removes_state() {
         let store = OidcStateStore::new();
@@ -1267,7 +1267,7 @@ mod tests {
 
         store.insert("one-time-state".to_string(), state);
 
-        // 第一次验证应该成功
+        // The first verification should succeed.
         let result1 = store.verify_and_remove("one-time-state");
         assert!(result1.is_some());
         let retrieved = result1.unwrap();
@@ -1275,12 +1275,12 @@ mod tests {
         assert_eq!(retrieved.client_nonce, Some("client-nonce".to_string()));
         assert_eq!(retrieved.code_verifier, Some("test-verifier".to_string()));
 
-        // 第二次验证应该失败（state 已被删除）
+        // The second verification should fail (state already removed).
         let result2 = store.verify_and_remove("one-time-state");
         assert!(result2.is_none());
     }
 
-    /// 测试不存在的 state 验证返回 None
+    /// Tests that verifying a non-existent state returns None.
     #[test]
     fn test_oidc_state_store_verify_nonexistent() {
         let store = OidcStateStore::new();
@@ -1288,7 +1288,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// 测试 redirect_uri 验证
+    /// Tests `redirect_uri` validation.
     #[test]
     fn test_redirect_uri_validation() {
         let config = OidcConfig {
@@ -1310,49 +1310,49 @@ mod tests {
             jwt_supported_algs: vec![],
         };
 
-        // 有效的 redirect_uri
+        // Valid redirect_uri.
         assert!(config.validate_redirect_uri("http://localhost:8500/callback").is_ok());
         assert!(config.validate_redirect_uri("http://localhost:8500/ui/login").is_ok());
 
-        // 无效的 redirect_uri
+        // Invalid redirect_uri.
         assert!(config.validate_redirect_uri("http://evil.com/callback").is_err());
         assert!(config.validate_redirect_uri("http://localhost:8500/evil").is_err());
     }
 
-    /// 测试 PKCE code_challenge 计算
+    /// Tests PKCE `code_challenge` computation.
     #[test]
     fn test_pkce_challenge_computation() {
-        // 使用已知测试向量验证 PKCE S256 计算
+        // Verify PKCE S256 computation against a known test vector.
         // code_verifier -> SHA256 -> base64url(no padding)
         let verifier = "dBjftJeZ4CVK-mJMgjYqsrkuerxyAL_nzjF2yT5g";
         let challenge = compute_pkce_challenge(verifier);
 
-        // 验证 challenge 是 base64url 编码且长度正确（SHA256 = 32 bytes -> 43 chars base64url）
+        // Verify the challenge is base64url-encoded with the correct length (SHA256 = 32 bytes -> 43 base64url chars).
         assert_eq!(challenge.len(), 43, "PKCE challenge should be 43 characters (32 bytes base64url no padding)");
 
-        // 验证每次计算结果一致（确定性）
+        // Verify results are deterministic across calls.
         let challenge2 = compute_pkce_challenge(verifier);
         assert_eq!(challenge, challenge2, "Same verifier should produce same challenge");
 
-        // 验证不同 verifier 产生不同 challenge
+        // Verify different verifiers produce different challenges.
         let different_challenge = compute_pkce_challenge("different-verifier-1234567890");
         assert_ne!(challenge, different_challenge, "Different verifiers should produce different challenges");
     }
 
-    /// 测试随机字符串生成
+    /// Tests random string generation.
     #[test]
     fn test_random_string_generation() {
         let s1 = generate_random_string(20);
         let s2 = generate_random_string(20);
 
-        // 两个随机字符串应该不同
+        // Two random strings should differ.
         assert_ne!(s1, s2);
 
-        // 长度应该正确（20 字节 base64url 无 padding = 27 字符）
+        // Length should be correct (20 bytes base64url no padding = 27 chars).
         assert_eq!(s1.len(), 27);
     }
 
-    /// 测试授权 URL 构建
+    /// Tests authorization URL construction.
     #[test]
     fn test_build_authorization_url() {
         let url = build_authorization_url(
@@ -1366,7 +1366,7 @@ mod tests {
             &[],
         );
 
-        // 验证 URL 包含所有必需参数
+        // Verify the URL contains all required parameters.
         assert!(url.contains("https://provider.example.com/oauth2/authorize"));
         assert!(url.contains("client_id=test-client-id"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8500%2Fcallback"));
@@ -1378,7 +1378,7 @@ mod tests {
         assert!(url.contains("code_challenge_method=S256"));
     }
 
-    /// 测试不带 PKCE 的授权 URL 构建
+    /// Tests authorization URL construction without PKCE.
     #[test]
     fn test_build_authorization_url_no_pkce() {
         let url = build_authorization_url(
@@ -1396,7 +1396,7 @@ mod tests {
         assert!(!url.contains("code_challenge_method"));
     }
 
-    /// 测试带 ACR values 的授权 URL 构建
+    /// Tests authorization URL construction with ACR values.
     #[test]
     fn test_build_authorization_url_with_acr_values() {
         let url = build_authorization_url(
@@ -1413,7 +1413,7 @@ mod tests {
         assert!(url.contains("acr_values=urn%3Amace%3Aincommon%3Aiap%3Asilver"));
     }
 
-    /// 测试 claim_mappings 应用
+    /// Tests application of `claim_mappings`.
     #[test]
     fn test_apply_claim_mappings() {
         let mut claim_mappings = HashMap::new();
@@ -1452,14 +1452,14 @@ mod tests {
         assert_eq!(result.get("project_var"), Some(&serde_json::json!("my-project")));
         assert_eq!(result.get("display_name"), Some(&serde_json::json!("John Doe")));
 
-        // 列表型 claim 应该被转换为数组
+        // List-type claims should be converted to an array.
         let groups = result.get("groups_var").unwrap().as_array().unwrap();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0], "admin");
         assert_eq!(groups[1], "developer");
     }
 
-    /// 测试 claim_mappings 处理不存在的 claim
+    /// Tests that `claim_mappings` handles non-existent claims.
     #[test]
     fn test_apply_claim_mappings_missing_claim() {
         let mut claim_mappings = HashMap::new();
@@ -1484,7 +1484,7 @@ mod tests {
         let raw_claims = serde_json::json!({"sub": "12345"});
         let result = apply_claim_mappings(&raw_claims, &config);
 
-        // 不存在的 claim 不应该出现在结果中
+        // A non-existent claim should not appear in the result.
         assert!(result.get("missing_var").is_none());
     }
 }

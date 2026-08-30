@@ -10,6 +10,7 @@ use batata_common::crypto::{CryptoResult, EncryptionPlugin};
 pub struct NoopEncryptionPlugin;
 
 impl NoopEncryptionPlugin {
+    /// Create a new pass-through (no-op) encryption plugin.
     pub fn new() -> Self {
         Self
     }

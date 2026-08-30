@@ -1,5 +1,6 @@
-// Console Pipeline management API endpoints
-// Mirrors admin pipeline endpoints under /v3/console/ai/pipelines
+//! Console Pipeline management API endpoints.
+//!
+//! Mirrors admin pipeline endpoints under `/v3/console/ai/pipelines`.
 
 use std::sync::Arc;
 
@@ -80,6 +81,7 @@ async fn list_pipelines(
     }
 }
 
+/// Register the pipeline management routes under `/ai/pipelines`.
 pub fn routes() -> Scope {
     web::scope("/ai/pipelines")
         .service(list_pipelines)

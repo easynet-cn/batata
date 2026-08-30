@@ -203,6 +203,7 @@ async fn get_gateway_services(
     .await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/catalog")
         .service(list_datacenters)

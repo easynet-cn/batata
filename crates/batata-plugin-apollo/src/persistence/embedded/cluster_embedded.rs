@@ -10,12 +10,14 @@ use crate::persistence::shared::StoredCluster;
 use super::id_generator::IdGenerator;
 use crate::persistence::traits::ClusterPersistence;
 
+/// Represents the `ClusterEmbedded` entity.
 pub struct ClusterEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl ClusterEmbedded {
+    /// Creates a new `ClusterEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

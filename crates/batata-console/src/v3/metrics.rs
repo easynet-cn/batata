@@ -1,5 +1,6 @@
-// Prometheus metrics endpoint for observability
-// Exports application metrics in Prometheus text format
+//! Prometheus metrics endpoint for observability.
+//!
+//! Exports application metrics in Prometheus text format.
 
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use std::sync::Arc;
@@ -58,6 +59,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Create a new [`Metrics`] collector with the start time set to now.
     pub fn new() -> Self {
         Self {
             start_time: Some(Instant::now()),
@@ -65,99 +67,122 @@ impl Metrics {
         }
     }
 
+    /// Increment the total HTTP request counter.
     pub fn inc_http_requests(&self) {
         self.http_requests_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the total gRPC request counter.
     pub fn inc_grpc_requests(&self) {
         self.grpc_requests_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the config publish operation counter.
     pub fn inc_config_publish(&self) {
         self.config_publish_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the config query operation counter.
     pub fn inc_config_query(&self) {
         self.config_query_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the config listen operation counter.
     pub fn inc_config_listen(&self) {
         self.config_listen_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the config delete operation counter.
     pub fn inc_config_delete(&self) {
         self.config_delete_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the service register operation counter.
     pub fn inc_service_register(&self) {
         self.service_register_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the service deregister operation counter.
     pub fn inc_service_deregister(&self) {
         self.service_deregister_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the service query operation counter.
     pub fn inc_service_query(&self) {
         self.service_query_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the service subscribe operation counter.
     pub fn inc_service_subscribe(&self) {
         self.service_subscribe_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the heartbeat operation counter.
     pub fn inc_heartbeat(&self) {
         self.heartbeat_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the active connections counter.
     pub fn inc_connections(&self) {
         self.active_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Decrement the active connections counter.
     pub fn dec_connections(&self) {
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// Increment the active gRPC connections counter.
     pub fn inc_grpc_connections(&self) {
         self.grpc_connections.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Decrement the active gRPC connections counter.
     pub fn dec_grpc_connections(&self) {
         self.grpc_connections.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// Set the total config count gauge.
     pub fn set_config_count(&self, count: u64) {
         self.config_count.store(count, Ordering::Relaxed);
     }
 
+    /// Set the total service count gauge.
     pub fn set_service_count(&self, count: u64) {
         self.service_count.store(count, Ordering::Relaxed);
     }
 
+    /// Set the total and healthy instance count gauges.
     pub fn set_instance_count(&self, total: u64, healthy: u64) {
         self.instance_count.store(total, Ordering::Relaxed);
         self.healthy_instance_count
             .store(healthy, Ordering::Relaxed);
     }
 
+    /// Record an HTTP request latency sample in microseconds.
     pub fn record_http_latency(&self, latency_us: u64) {
         self.http_latency_sum_us
             .fetch_add(latency_us, Ordering::Relaxed);
         self.http_latency_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the HTTP error counter.
     pub fn inc_http_errors(&self) {
         self.http_errors_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the gRPC error counter.
     pub fn inc_grpc_errors(&self) {
         self.grpc_errors_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Return the uptime of the process in seconds.
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0)
     }
 
+    /// Return the average HTTP request latency in milliseconds.
     pub fn avg_http_latency_ms(&self) -> f64 {
         let count = self.http_latency_count.load(Ordering::Relaxed);
         if count == 0 {
@@ -377,6 +402,7 @@ async fn metrics(data: web::Data<AppState>) -> impl Responder {
         .body(body)
 }
 
+/// Register the metrics routes under `/metrics`.
 pub fn routes() -> Scope {
     web::scope("/metrics").service(metrics)
 }

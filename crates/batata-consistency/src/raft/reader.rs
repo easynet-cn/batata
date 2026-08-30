@@ -1,5 +1,6 @@
-// RocksDB reader for embedded storage backends
-// Provides read-only query operations on the state machine's RocksDB
+//! RocksDB reader for embedded storage backends.
+//!
+//! Provides read-only query operations on the state machine's RocksDB.
 
 use crate::bincode;
 use std::sync::Arc;

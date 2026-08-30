@@ -42,6 +42,7 @@ pub struct ConnectionManagerPusher {
 }
 
 impl ConnectionManagerPusher {
+    /// Creates a new instance.
     pub fn new(cm: Arc<batata_core::service::remote::ConnectionManager>) -> Self {
         Self { cm }
     }
@@ -68,6 +69,7 @@ pub struct NamingDisconnectListener {
 }
 
 impl NamingDisconnectListener {
+    /// Creates a new instance.
     pub fn new(
         naming: Arc<NamingService>,
         pusher: Arc<dyn SubscriberPusher>,

@@ -8,6 +8,8 @@
 //! - Service selector evaluation
 //! - Metadata persistence
 
+#![warn(missing_docs)]
+
 pub mod api;
 pub mod handler;
 pub mod healthcheck;
@@ -63,6 +65,7 @@ pub struct DistroAwareCleanup {
 }
 
 impl DistroAwareCleanup {
+    /// Creates a new instance.
     pub fn new(naming: Arc<NamingService>, distro: Arc<DistroProtocol>) -> Self {
         Self { naming, distro }
     }

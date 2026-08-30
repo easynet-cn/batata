@@ -9,16 +9,20 @@ use crate::persistence::{
 };
 
 #[derive(Clone)]
+/// Represents the `ApolloPluginInner` entity.
 pub struct ApolloPluginInner {
+    /// The `persistence` field.
     pub persistence: Arc<dyn ApolloPersistenceService>,
 }
 
+/// Represents the `ApolloPlugin` entity.
 pub struct ApolloPlugin {
     config: ApolloPluginConfig,
     inner: std::sync::OnceLock<ApolloPluginInner>,
 }
 
 impl ApolloPlugin {
+    /// Creates an `ApolloPlugin` from a plugin configuration.
     pub fn from_plugin_config(config: ApolloPluginConfig) -> Self {
         Self {
             config,

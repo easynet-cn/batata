@@ -100,6 +100,7 @@ impl Default for CmdbEntity {
 }
 
 impl CmdbEntity {
+    /// Creates a new `CmdbEntity` with the given type and name.
     pub fn new(entity_type: CmdbEntityType, name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -108,21 +109,25 @@ impl CmdbEntity {
         }
     }
 
+    /// The `with_namespace` method.
     pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = namespace.into();
         self
     }
 
+    /// The `with_group` method.
     pub fn with_group(mut self, group: impl Into<String>) -> Self {
         self.group = group.into();
         self
     }
 
+    /// The `with_label` method.
     pub fn with_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels.insert(key.into(), value.into());
         self
     }
 
+    /// The `with_attribute` method.
     pub fn with_attribute(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.attributes.insert(key.into(), value);
         self
@@ -173,6 +178,7 @@ pub struct CmdbLabel {
 }
 
 impl CmdbLabel {
+    /// Creates a new `CmdbLabel` with the given key and value.
     pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             key: key.into(),
@@ -184,6 +190,7 @@ impl CmdbLabel {
         }
     }
 
+    /// Creates a new system `CmdbLabel` with the given key and value.
     pub fn system_label(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             key: key.into(),
@@ -253,12 +260,18 @@ pub enum LabelTransform {
     /// Suffix with a value
     Suffix(String),
     /// Replace pattern (simple string replace)
-    Replace { from: String, to: String },
+    Replace {
+        /// The substring to replace from.
+        from: String,
+        /// The substring to replace with.
+        to: String,
+    },
     /// Map values using a lookup table
     Map(HashMap<String, String>),
 }
 
 impl LabelTransform {
+    /// The `apply` method.
     pub fn apply(&self, value: &str) -> String {
         match self {
             LabelTransform::None => value.to_string(),

@@ -558,6 +558,7 @@ async fn update_cluster(
     }
 }
 
+/// Register the service discovery routes under `/ns`.
 pub fn routes() -> Scope {
     web::scope("/ns")
         .service(

@@ -1,4 +1,4 @@
-// MaintainerClient - facade for all Admin API operations
+//! MaintainerClient - facade for all Admin API operations
 
 use std::collections::HashMap;
 
@@ -70,6 +70,13 @@ impl MaintainerClient {
     // Server State / Liveness / Readiness APIs
     // ============================================================================
 
+    /// Server state.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<HashMap<String, Option<String>>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn server_state(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
         let response: ApiResponse<HashMap<String, Option<String>>> = self
             .http_client
@@ -83,10 +90,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Server readiness.
+    ///
+    /// # Returns
+    /// The `bool` result.
     pub async fn server_readiness(&self) -> bool {
         self.cluster_health().await.is_ok()
     }
 
+    /// Liveness.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn liveness(&self) -> anyhow::Result<bool> {
         let response: ApiResponse<serde_json::Value> = self
             .http_client
@@ -95,6 +113,13 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Readiness.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn readiness(&self) -> anyhow::Result<bool> {
         let response: ApiResponse<serde_json::Value> = self
             .http_client
@@ -107,6 +132,18 @@ impl MaintainerClient {
     // Core Ops APIs (Raft, ID Generators, Log Level)
     // ============================================================================
 
+    /// Raft ops.
+    ///
+    /// # Arguments
+    /// * `command` - The `command` parameter.
+    /// * `value` - The `value` parameter.
+    /// * `group_id` - The `group_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn raft_ops(
         &self,
         command: &str,
@@ -135,6 +172,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Get id generators.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<IdGeneratorInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn get_id_generators(&self) -> anyhow::Result<Vec<IdGeneratorInfo>> {
         let response: ApiResponse<Vec<IdGeneratorInfo>> = self
             .http_client
@@ -143,6 +187,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Update core log level.
+    ///
+    /// # Arguments
+    /// * `log_name` - The `log_name` parameter.
+    /// * `log_level` - The `log_level` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<()>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn update_core_log_level(
         &self,
         log_name: &str,
@@ -172,6 +227,13 @@ impl MaintainerClient {
     // Cluster / Loader APIs
     // ============================================================================
 
+    /// Cluster members.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<Member>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_members(&self) -> anyhow::Result<Vec<Member>> {
         let response: ApiResponse<Vec<Member>> = self
             .http_client
@@ -180,6 +242,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Cluster members filtered.
+    ///
+    /// # Arguments
+    /// * `address` - The `address` parameter.
+    /// * `state` - The `state` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<Member>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_members_filtered(
         &self,
         address: Option<&str>,
@@ -206,6 +279,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Cluster health.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ClusterHealthResponse>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_health(&self) -> anyhow::Result<ClusterHealthResponse> {
         #[derive(Deserialize)]
         struct HealthResponse {
@@ -235,6 +315,13 @@ impl MaintainerClient {
         })
     }
 
+    /// Cluster self.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<SelfMemberResponse>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_self(&self) -> anyhow::Result<SelfMemberResponse> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -275,6 +362,16 @@ impl MaintainerClient {
         })
     }
 
+    /// Cluster member.
+    ///
+    /// # Arguments
+    /// * `address` - The `address` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Option<Member>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_member(&self, address: &str) -> anyhow::Result<Option<Member>> {
         #[derive(Serialize)]
         struct Query<'a> {
@@ -291,11 +388,28 @@ impl MaintainerClient {
         Ok(response.data.into_iter().find(|m| m.address == address))
     }
 
+    /// Cluster member count.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<usize>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn cluster_member_count(&self) -> anyhow::Result<usize> {
         let members = self.cluster_members().await?;
         Ok(members.len())
     }
 
+    /// Update lookup mode.
+    ///
+    /// # Arguments
+    /// * `mode` - The `mode` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn update_lookup_mode(&self, mode: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         struct Form<'a> {
@@ -309,6 +423,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Get current clients.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<HashMap<String, ConnectionInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn get_current_clients(&self) -> anyhow::Result<HashMap<String, ConnectionInfo>> {
         let response: ApiResponse<HashMap<String, ConnectionInfo>> = self
             .http_client
@@ -317,6 +438,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Reload connection count.
+    ///
+    /// # Arguments
+    /// * `count` - The `count` parameter.
+    /// * `redirect_address` - The `redirect_address` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn reload_connection_count(
         &self,
         count: Option<i32>,
@@ -344,6 +476,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Smart reload cluster.
+    ///
+    /// # Arguments
+    /// * `loader_factor` - The `loader_factor` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn smart_reload_cluster(
         &self,
         loader_factor: Option<&str>,
@@ -365,6 +507,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Reload single client.
+    ///
+    /// # Arguments
+    /// * `connection_id` - The `connection_id` parameter.
+    /// * `redirect_address` - The `redirect_address` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn reload_single_client(
         &self,
         connection_id: &str,
@@ -390,6 +543,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Get cluster loader metrics.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ServerLoaderMetrics>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn get_cluster_loader_metrics(&self) -> anyhow::Result<ServerLoaderMetrics> {
         let response: ApiResponse<ServerLoaderMetrics> = self
             .http_client
@@ -402,12 +562,29 @@ impl MaintainerClient {
     // Namespace APIs
     // ============================================================================
 
+    /// Namespace list.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<Namespace>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_list(&self) -> anyhow::Result<Vec<Namespace>> {
         let response: ApiResponse<Vec<Namespace>> =
             self.http_client.get(admin_api_path::NAMESPACE_LIST).await?;
         Ok(response.data)
     }
 
+    /// Namespace get.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Namespace>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_get(&self, namespace_id: &str) -> anyhow::Result<Namespace> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -422,6 +599,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Namespace create.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `namespace_name` - The `namespace_name` parameter.
+    /// * `namespace_desc` - The `namespace_desc` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_create(
         &self,
         namespace_id: &str,
@@ -450,6 +639,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Namespace update.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `namespace_name` - The `namespace_name` parameter.
+    /// * `namespace_desc` - The `namespace_desc` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_update(
         &self,
         namespace_id: &str,
@@ -478,6 +679,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Namespace delete.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_delete(&self, namespace_id: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -492,6 +703,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Namespace exists.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn namespace_exists(&self, namespace_id: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -515,6 +736,18 @@ impl MaintainerClient {
     // Config CRUD APIs
     // ============================================================================
 
+    /// Config get.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Option<ConfigDetailInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_get(
         &self,
         data_id: &str,
@@ -544,6 +777,24 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Config search.
+    ///
+    /// # Arguments
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `app_name` - The `app_name` parameter.
+    /// * `tags` - The `tags` parameter.
+    /// * `types` - The `types` parameter.
+    /// * `content` - The `content` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ConfigBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_search(
         &self,
         page_no: u64,
@@ -591,6 +842,25 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Config search by detail.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `search` - The `search` parameter.
+    /// * `config_detail` - The `config_detail` parameter.
+    /// * `config_type` - The `config_type` parameter.
+    /// * `config_tags` - The `config_tags` parameter.
+    /// * `app_name` - The `app_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ConfigBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_search_by_detail(
         &self,
         data_id: &str,
@@ -641,6 +911,27 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Config publish.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `content` - The `content` parameter.
+    /// * `app_name` - The `app_name` parameter.
+    /// * `config_tags` - The `config_tags` parameter.
+    /// * `desc` - The `desc` parameter.
+    /// * `r#use` - The `r#use` parameter.
+    /// * `effect` - The `effect` parameter.
+    /// * `r#type` - The `r#type` parameter.
+    /// * `schema` - The `schema` parameter.
+    /// * `encrypted_data_key` - The `encrypted_data_key` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_publish(
         &self,
         data_id: &str,
@@ -696,6 +987,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config update metadata.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `description` - The `description` parameter.
+    /// * `config_tags` - The `config_tags` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_update_metadata(
         &self,
         data_id: &str,
@@ -730,6 +1035,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config delete.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_delete(
         &self,
         data_id: &str,
@@ -758,6 +1075,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config batch delete.
+    ///
+    /// # Arguments
+    /// * `ids` - The `ids` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_batch_delete(&self, ids: &[i64]) -> anyhow::Result<bool> {
         let response: ApiResponse<bool> = self
             .http_client
@@ -769,6 +1096,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config clone.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `clone_infos` - The `clone_infos` parameter.
+    /// * `src_user` - The `src_user` parameter.
+    /// * `policy` - The `policy` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<HashMap<String, serde_json::Value>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_clone(
         &self,
         namespace_id: &str,
@@ -803,6 +1143,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config export.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group` - The `group` parameter.
+    /// * `data_ids` - The `data_ids` parameter.
+    /// * `app_name` - The `app_name` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<u8>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_export(
         &self,
         namespace_id: &str,
@@ -834,6 +1187,18 @@ impl MaintainerClient {
         self.http_client.get_bytes(&path).await
     }
 
+    /// Config import.
+    ///
+    /// # Arguments
+    /// * `file_data` - The `file_data` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `policy` - The `policy` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ImportResult>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_import(
         &self,
         file_data: Vec<u8>,
@@ -860,6 +1225,18 @@ impl MaintainerClient {
     // Config Beta APIs
     // ============================================================================
 
+    /// Config get beta.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Option<ConfigGrayInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_get_beta(
         &self,
         data_id: &str,
@@ -889,6 +1266,25 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Config publish beta.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `content` - The `content` parameter.
+    /// * `app_name` - The `app_name` parameter.
+    /// * `src_user` - The `src_user` parameter.
+    /// * `config_tags` - The `config_tags` parameter.
+    /// * `desc` - The `desc` parameter.
+    /// * `r#type` - The `r#type` parameter.
+    /// * `beta_ips` - The `beta_ips` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_publish_beta(
         &self,
         data_id: &str,
@@ -938,6 +1334,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config stop beta.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_stop_beta(
         &self,
         data_id: &str,
@@ -970,6 +1378,19 @@ impl MaintainerClient {
     // Config History APIs
     // ============================================================================
 
+    /// History get.
+    ///
+    /// # Arguments
+    /// * `nid` - The `nid` parameter.
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Option<ConfigHistoryDetailInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn history_get(
         &self,
         nid: i64,
@@ -1001,6 +1422,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// History list.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ConfigHistoryBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn history_list(
         &self,
         data_id: &str,
@@ -1035,6 +1470,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// History configs by namespace.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<ConfigBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn history_configs_by_namespace(
         &self,
         namespace_id: &str,
@@ -1055,6 +1500,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// History get previous.
+    ///
+    /// # Arguments
+    /// * `id` - The `id` parameter.
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Option<ConfigHistoryDetailInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn history_get_previous(
         &self,
         id: i64,
@@ -1090,6 +1548,18 @@ impl MaintainerClient {
     // Config Listener APIs
     // ============================================================================
 
+    /// Config listeners.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ConfigListenerInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_listeners(
         &self,
         data_id: &str,
@@ -1118,6 +1588,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config listeners with aggregation.
+    ///
+    /// # Arguments
+    /// * `data_id` - The `data_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `aggregation` - The `aggregation` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ConfigListenerInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_listeners_with_aggregation(
         &self,
         data_id: &str,
@@ -1149,6 +1632,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config listeners by ip.
+    ///
+    /// # Arguments
+    /// * `ip` - The `ip` parameter.
+    /// * `all` - The `all` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `aggregation` - The `aggregation` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ConfigListenerInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_listeners_by_ip(
         &self,
         ip: &str,
@@ -1184,6 +1680,13 @@ impl MaintainerClient {
     // Config Ops APIs
     // ============================================================================
 
+    /// Config update local cache.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_update_local_cache(&self) -> anyhow::Result<String> {
         let response: ApiResponse<String> = self
             .http_client
@@ -1192,6 +1695,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Config set log level.
+    ///
+    /// # Arguments
+    /// * `log_name` - The `log_name` parameter.
+    /// * `log_level` - The `log_level` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn config_set_log_level(
         &self,
         log_name: &str,
@@ -1222,6 +1736,20 @@ impl MaintainerClient {
     // ============================================================================
 
     #[allow(clippy::too_many_arguments)]
+    /// Service list.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ServiceView>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_list(
         &self,
         namespace_id: &str,
@@ -1258,6 +1786,21 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Service list with options.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ignore_empty_service` - The `ignore_empty_service` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ServiceView>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_list_with_options(
         &self,
         namespace_id: &str,
@@ -1296,6 +1839,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service list with detail.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<ServiceDetailInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_list_with_detail(
         &self,
         namespace_id: &str,
@@ -1332,6 +1889,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service get.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ServiceDetailInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_get(
         &self,
         namespace_id: &str,
@@ -1360,6 +1929,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service create.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `protect_threshold` - The `protect_threshold` parameter.
+    /// * `metadata` - The `metadata` parameter.
+    /// * `selector` - The `selector` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_create(
         &self,
         namespace_id: &str,
@@ -1399,6 +1983,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service update.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `protect_threshold` - The `protect_threshold` parameter.
+    /// * `metadata` - The `metadata` parameter.
+    /// * `selector` - The `selector` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_update(
         &self,
         namespace_id: &str,
@@ -1438,6 +2037,18 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service delete.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_delete(
         &self,
         namespace_id: &str,
@@ -1466,6 +2077,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service subscribers.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<SubscriberInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_subscribers(
         &self,
         namespace_id: &str,
@@ -1500,6 +2125,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service subscribers with aggregation.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    /// * `aggregation` - The `aggregation` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<SubscriberInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_subscribers_with_aggregation(
         &self,
         namespace_id: &str,
@@ -1537,6 +2177,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service selector types.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<String>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_selector_types(&self) -> anyhow::Result<Vec<String>> {
         let response: ApiResponse<Vec<String>> = self
             .http_client
@@ -1549,6 +2196,19 @@ impl MaintainerClient {
     // Instance APIs
     // ============================================================================
 
+    /// Instance list.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `cluster_name` - The `cluster_name` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<Instance>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_list(
         &self,
         namespace_id: &str,
@@ -1581,6 +2241,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance list with healthy filter.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `cluster_name` - The `cluster_name` parameter.
+    /// * `healthy_only` - The `healthy_only` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<Instance>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_list_with_healthy_filter(
         &self,
         namespace_id: &str,
@@ -1616,6 +2290,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance detail.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ip` - The `ip` parameter.
+    /// * `port` - The `port` parameter.
+    /// * `cluster_name` - The `cluster_name` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Instance>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_detail(
         &self,
         namespace_id: &str,
@@ -1654,6 +2343,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance register.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `instance` - The `instance` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_register(
         &self,
         namespace_id: &str,
@@ -1707,6 +2409,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance deregister.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `instance` - The `instance` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_deregister(
         &self,
         namespace_id: &str,
@@ -1746,6 +2461,24 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Instance update.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ip` - The `ip` parameter.
+    /// * `port` - The `port` parameter.
+    /// * `cluster_name` - The `cluster_name` parameter.
+    /// * `weight` - The `weight` parameter.
+    /// * `enabled` - The `enabled` parameter.
+    /// * `metadata` - The `metadata` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_update(
         &self,
         namespace_id: &str,
@@ -1793,6 +2526,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance partial update.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `instance` - The `instance` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_partial_update(
         &self,
         namespace_id: &str,
@@ -1842,6 +2588,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance batch update metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `instances_json` - The `instances_json` parameter.
+    /// * `metadata` - The `metadata` parameter.
+    /// * `String>` - The `String>` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<InstanceMetadataBatchResult>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_batch_update_metadata(
         &self,
         namespace_id: &str,
@@ -1878,6 +2639,21 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Instance batch delete metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `instances_json` - The `instances_json` parameter.
+    /// * `metadata` - The `metadata` parameter.
+    /// * `String>` - The `String>` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<InstanceMetadataBatchResult>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn instance_batch_delete_metadata(
         &self,
         namespace_id: &str,
@@ -1918,6 +2694,21 @@ impl MaintainerClient {
     // Naming Health APIs
     // ============================================================================
 
+    /// Update instance health status.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ip` - The `ip` parameter.
+    /// * `port` - The `port` parameter.
+    /// * `healthy` - The `healthy` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn update_instance_health_status(
         &self,
         namespace_id: &str,
@@ -1955,6 +2746,13 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Get health checkers.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<HashMap<String, serde_json::Value>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn get_health_checkers(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let response: ApiResponse<HashMap<String, serde_json::Value>> = self
             .http_client
@@ -1967,6 +2765,19 @@ impl MaintainerClient {
     // Naming Cluster APIs
     // ============================================================================
 
+    /// Update naming cluster.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `cluster` - The `cluster` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn update_naming_cluster(
         &self,
         namespace_id: &str,
@@ -2019,6 +2830,16 @@ impl MaintainerClient {
     // Naming Ops APIs
     // ============================================================================
 
+    /// Naming metrics.
+    ///
+    /// # Arguments
+    /// * `only_status` - The `only_status` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<MetricsInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn naming_metrics(&self, only_status: bool) -> anyhow::Result<MetricsInfo> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -2033,6 +2854,17 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Naming set log level.
+    ///
+    /// # Arguments
+    /// * `log_name` - The `log_name` parameter.
+    /// * `log_level` - The `log_level` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn naming_set_log_level(
         &self,
         log_name: &str,
@@ -2062,6 +2894,13 @@ impl MaintainerClient {
     // Naming Client APIs
     // ============================================================================
 
+    /// Client list.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<String>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn client_list(&self) -> anyhow::Result<Vec<String>> {
         let response: ApiResponse<Vec<String>> = self
             .http_client
@@ -2070,6 +2909,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Client detail.
+    ///
+    /// # Arguments
+    /// * `client_id` - The `client_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<ClientSummaryInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn client_detail(&self, client_id: &str) -> anyhow::Result<ClientSummaryInfo> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -2084,6 +2933,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Client published services.
+    ///
+    /// # Arguments
+    /// * `client_id` - The `client_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<ClientServiceInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn client_published_services(
         &self,
         client_id: &str,
@@ -2101,6 +2960,16 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Client subscribed services.
+    ///
+    /// # Arguments
+    /// * `client_id` - The `client_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<ClientServiceInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn client_subscribed_services(
         &self,
         client_id: &str,
@@ -2121,6 +2990,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service published clients.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ip` - The `ip` parameter.
+    /// * `port` - The `port` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<ClientPublisherInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_published_clients(
         &self,
         namespace_id: &str,
@@ -2157,6 +3040,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Service subscribed clients.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `group_name` - The `group_name` parameter.
+    /// * `service_name` - The `service_name` parameter.
+    /// * `ip` - The `ip` parameter.
+    /// * `port` - The `port` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<ClientSubscriberInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn service_subscribed_clients(
         &self,
         namespace_id: &str,
@@ -2197,6 +3094,19 @@ impl MaintainerClient {
     // AI MCP APIs
     // ============================================================================
 
+    /// Mcp server list.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<McpServerBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_list(
         &self,
         namespace_id: &str,
@@ -2230,6 +3140,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Mcp server search.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<McpServerBasicInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_search(
         &self,
         namespace_id: &str,
@@ -2263,6 +3186,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Mcp server detail.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `mcp_id` - The `mcp_id` parameter.
+    /// * `version` - The `version` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<McpServerDetailInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_detail(
         &self,
         namespace_id: &str,
@@ -2294,6 +3230,20 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Mcp server create.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `server_spec` - The `server_spec` parameter.
+    /// * `tool_spec` - The `tool_spec` parameter.
+    /// * `endpoint_spec` - The `endpoint_spec` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<String>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_create(
         &self,
         namespace_id: &str,
@@ -2330,6 +3280,22 @@ impl MaintainerClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Mcp server update.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `is_latest` - The `is_latest` parameter.
+    /// * `server_spec` - The `server_spec` parameter.
+    /// * `tool_spec` - The `tool_spec` parameter.
+    /// * `endpoint_spec` - The `endpoint_spec` parameter.
+    /// * `override_existing` - The `override_existing` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_update(
         &self,
         namespace_id: &str,
@@ -2372,6 +3338,19 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Mcp server delete.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `mcp_name` - The `mcp_name` parameter.
+    /// * `mcp_id` - The `mcp_id` parameter.
+    /// * `version` - The `version` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn mcp_server_delete(
         &self,
         namespace_id: &str,
@@ -2407,6 +3386,18 @@ impl MaintainerClient {
     // AI Agent (A2A) APIs
     // ============================================================================
 
+    /// Agent register.
+    ///
+    /// # Arguments
+    /// * `agent_card` - The `agent_card` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `registration_type` - The `registration_type` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_register(
         &self,
         agent_card: &AgentCard,
@@ -2429,6 +3420,18 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Agent get.
+    ///
+    /// # Arguments
+    /// * `agent_name` - The `agent_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `registration_type` - The `registration_type` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<AgentCardDetailInfo>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_get(
         &self,
         agent_name: &str,
@@ -2457,6 +3460,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Agent update.
+    ///
+    /// # Arguments
+    /// * `agent_card` - The `agent_card` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `set_as_latest` - The `set_as_latest` parameter.
+    /// * `registration_type` - The `registration_type` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_update(
         &self,
         agent_card: &AgentCard,
@@ -2481,6 +3497,18 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Agent delete.
+    ///
+    /// # Arguments
+    /// * `agent_name` - The `agent_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `version` - The `version` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<bool>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_delete(
         &self,
         agent_name: &str,
@@ -2509,6 +3537,17 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// Agent list versions.
+    ///
+    /// # Arguments
+    /// * `agent_name` - The `agent_name` parameter.
+    /// * `namespace_id` - The `namespace_id` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Vec<AgentVersionDetail>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_list_versions(
         &self,
         agent_name: &str,
@@ -2534,6 +3573,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Agent list.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `agent_name` - The `agent_name` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<AgentCardVersionInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_list(
         &self,
         namespace_id: &str,
@@ -2567,6 +3619,19 @@ impl MaintainerClient {
         Ok(response.data)
     }
 
+    /// Agent search.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - The `namespace_id` parameter.
+    /// * `agent_name_pattern` - The `agent_name_pattern` parameter.
+    /// * `page_no` - The `page_no` parameter.
+    /// * `page_size` - The `page_size` parameter.
+    ///
+    /// # Returns
+    /// The `anyhow::Result<Page<AgentCardVersionInfo>>` result.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying HTTP request fails.
     pub async fn agent_search(
         &self,
         namespace_id: &str,

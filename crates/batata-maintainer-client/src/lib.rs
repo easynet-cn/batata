@@ -1,4 +1,12 @@
-// batata-maintainer-client: Admin/maintainer HTTP client for Batata
+//! Admin/maintainer HTTP client for Batata.
+//!
+//! Provides the [`MaintainerClient`] facade and the SDK trait contracts
+//! [`CoreMaintainerService`], [`ConfigMaintainerService`], and
+//! [`NamingMaintainerService`] for administering a Batata (Nacos-compatible)
+//! server: server state, cluster, namespace, configuration, naming, AI MCP,
+//! AI agent, and plugin management.
+
+#![warn(missing_docs)]
 
 pub mod client;
 pub mod config;

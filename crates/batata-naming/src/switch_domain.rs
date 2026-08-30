@@ -10,13 +10,21 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 /// Uses atomics for lock-free read/write. Initialized from Configuration at startup.
 /// Can be updated at runtime via the admin switches API.
 pub struct SwitchDomain {
+    /// The `push_enabled` value.
     pub push_enabled: AtomicBool,
+    /// The `health_check_enabled` value.
     pub health_check_enabled: AtomicBool,
+    /// The `distro_enabled` value.
     pub distro_enabled: AtomicBool,
+    /// The `default_push_cache_millis` value.
     pub default_push_cache_millis: AtomicI64,
+    /// The `client_beat_interval` value.
     pub client_beat_interval: AtomicI64,
+    /// The `default_cache_millis` value.
     pub default_cache_millis: AtomicI64,
+    /// The `check_times` value.
     pub check_times: AtomicI32,
+    /// The `default_instance_ephemeral` value.
     pub default_instance_ephemeral: AtomicBool,
 }
 
@@ -101,15 +109,19 @@ impl SwitchDomain {
     }
 
     // Getters
+    /// Returns the value of `is_push_enabled`.
     pub fn is_push_enabled(&self) -> bool {
         self.push_enabled.load(Ordering::Relaxed)
     }
+    /// Returns the value of `is_health_check_enabled`.
     pub fn is_health_check_enabled(&self) -> bool {
         self.health_check_enabled.load(Ordering::Relaxed)
     }
+    /// Returns the value of `is_distro_enabled`.
     pub fn is_distro_enabled(&self) -> bool {
         self.distro_enabled.load(Ordering::Relaxed)
     }
+    /// Returns the value of `get_check_times`.
     pub fn get_check_times(&self) -> i32 {
         self.check_times.load(Ordering::Relaxed)
     }

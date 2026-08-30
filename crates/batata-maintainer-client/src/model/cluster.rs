@@ -1,4 +1,4 @@
-// Cluster model types
+//! Cluster model types
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,7 +7,9 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAbility {
+    /// The `support_remote_connection` field.
     pub support_remote_connection: bool,
+    /// The `grpc_report_enabled` field.
     pub grpc_report_enabled: bool,
 }
 
@@ -24,6 +26,7 @@ impl Default for RemoteAbility {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigAbility {
+    /// The `support_remote_metrics` field.
     pub support_remote_metrics: bool,
 }
 
@@ -31,6 +34,7 @@ pub struct ConfigAbility {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NamingAbility {
+    /// The `support_jraft` field.
     pub support_jraft: bool,
 }
 
@@ -46,8 +50,11 @@ impl Default for NamingAbility {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeAbilities {
+    /// The `remote_ability` field.
     pub remote_ability: RemoteAbility,
+    /// The `config_ability` field.
     pub config_ability: ConfigAbility,
+    /// The `naming_ability` field.
     pub naming_ability: NamingAbility,
 }
 
@@ -55,13 +62,21 @@ pub struct NodeAbilities {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: u16,
+    /// The `state` field.
     pub state: String,
+    /// The `extend_info` field.
     pub extend_info: HashMap<String, serde_json::Value>,
+    /// The `address` field.
     pub address: String,
+    /// The `abilities` field.
     pub abilities: NodeAbilities,
+    /// The `grpc_report_enabled` field.
     pub grpc_report_enabled: bool,
+    /// The `fail_access_cnt` field.
     pub fail_access_cnt: i32,
 }
 
@@ -69,11 +84,17 @@ pub struct Member {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterHealthSummary {
+    /// The `total` field.
     pub total: usize,
+    /// The `up` field.
     pub up: usize,
+    /// The `down` field.
     pub down: usize,
+    /// The `suspicious` field.
     pub suspicious: usize,
+    /// The `starting` field.
     pub starting: usize,
+    /// The `isolation` field.
     pub isolation: usize,
 }
 
@@ -81,8 +102,11 @@ pub struct ClusterHealthSummary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterHealthResponse {
+    /// The `is_healthy` field.
     pub is_healthy: bool,
+    /// The `summary` field.
     pub summary: ClusterHealthSummary,
+    /// The `standalone` field.
     pub standalone: bool,
 }
 
@@ -90,11 +114,17 @@ pub struct ClusterHealthResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelfMemberResponse {
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: u16,
+    /// The `address` field.
     pub address: String,
+    /// The `state` field.
     pub state: String,
+    /// The `is_standalone` field.
     pub is_standalone: bool,
+    /// The `version` field.
     pub version: String,
 }
 

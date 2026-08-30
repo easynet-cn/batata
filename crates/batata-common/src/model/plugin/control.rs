@@ -333,40 +333,47 @@ pub struct ControlContext {
 }
 
 impl ControlContext {
+    /// Creates a new, empty `ControlContext`.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The `with_ip` method.
     pub fn with_ip(mut self, ip: impl Into<String>) -> Self {
         self.client_ip = Some(ip.into());
 
         self
     }
 
+    /// The `with_client_id` method.
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = Some(client_id.into());
 
         self
     }
 
+    /// The `with_namespace` method.
     pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
 
         self
     }
 
+    /// The `with_service` method.
     pub fn with_service(mut self, service: impl Into<String>) -> Self {
         self.service = Some(service.into());
 
         self
     }
 
+    /// The `with_path` method.
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
 
         self
     }
 
+    /// The `with_user` method.
     pub fn with_user(mut self, user: impl Into<String>) -> Self {
         self.user = Some(user.into());
 

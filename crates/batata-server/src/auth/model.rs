@@ -1,7 +1,9 @@
+//! Module `auth::model` of the `batata-server` crate.
 // Authentication and authorization models
 // Re-exports from batata_auth with local extensions
 
 // Re-export all auth types and constants from batata_auth
+/// Re-exported item.
 pub use batata_auth::model::*;
 
 #[cfg(test)]

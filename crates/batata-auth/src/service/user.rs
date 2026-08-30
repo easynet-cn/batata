@@ -8,6 +8,7 @@ use batata_persistence::sea_orm::*;
 
 use crate::model::User;
 
+/// Look up a single user by username.
 pub async fn find_by_username(
     db: &DatabaseConnection,
     username: &str,
@@ -21,6 +22,7 @@ pub async fn find_by_username(
     Ok(user)
 }
 
+/// Query users filtered by username, paginated.
 pub async fn search_page(
     db: &DatabaseConnection,
     username: &str,
@@ -72,6 +74,7 @@ pub async fn search_page(
     Ok(Page::<User>::default())
 }
 
+/// Return the usernames that contain the given substring.
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
     // Use into_tuple to directly fetch only username column, avoiding full model deserialization
     let users = users::Entity::find()
@@ -85,6 +88,7 @@ pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<V
     Ok(users)
 }
 
+/// Create a new local user with a bcrypt-hashed password (enabled by default).
 pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {
     let hashed_password = bcrypt::hash(password, 10u32)
         .map_err(|e| anyhow::anyhow!("Failed to hash password: {}", e))?;
@@ -100,6 +104,7 @@ pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> 
     Ok(())
 }
 
+/// Replace a user's password with a fresh bcrypt hash, if the user exists.
 pub async fn update(
     db: &DatabaseConnection,
     username: &str,
@@ -121,6 +126,7 @@ pub async fn update(
     }
 }
 
+/// Delete a user by username, if the user exists.
 pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<()> {
     match users::Entity::find_by_id(username).one(db).await? {
         Some(entity) => {

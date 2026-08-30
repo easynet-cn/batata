@@ -17,12 +17,19 @@ use crate::initializer::traits::{
 /// gRPC server kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrpcServerKind {
+    /// `Sdk` variant.
     Sdk,
+    /// `Cluster` variant.
     Cluster,
+    /// `Raft` variant.
     Raft,
 }
 
 impl GrpcServerKind {
+    /// `as_str` function.
+    ///
+    /// # Returns
+    /// `& 'static str`.
     pub fn as_str(&self) -> &'static str {
         match self {
             GrpcServerKind::Sdk => "GrpcSdk",
@@ -45,16 +52,27 @@ impl From<GrpcServerKind> for ServerKind {
 /// gRPC server configuration
 #[derive(Clone)]
 pub struct GrpcServerConfig {
+    /// `port` field.
     pub port: u16,
+    /// `tls_enabled` field.
     pub tls_enabled: bool,
+    /// `tcp_keepalive_secs` field.
     pub tcp_keepalive_secs: u64,
+    /// `tcp_nodelay` field.
     pub tcp_nodelay: bool,
+    /// `http2_keepalive_interval_secs` field.
     pub http2_keepalive_interval_secs: u64,
+    /// `http2_keepalive_timeout_secs` field.
     pub http2_keepalive_timeout_secs: u64,
+    /// `concurrency_limit` field.
     pub concurrency_limit: usize,
+    /// `max_concurrent_streams` field.
     pub max_concurrent_streams: u32,
+    /// `initial_connection_window_size` field.
     pub initial_connection_window_size: u32,
+    /// `initial_stream_window_size` field.
     pub initial_stream_window_size: u32,
+    /// `max_frame_size` field.
     pub max_frame_size: u32,
 }
 
@@ -82,16 +100,28 @@ pub struct GrpcServerState {
 }
 
 impl GrpcServerState {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self {
             health: AtomicU8::new(ServerHealth::Starting as u8),
         }
     }
 
+    /// `set_health` function.
+    ///
+    /// # Arguments
+    /// - `health`: `health : ServerHealth . ty`.
     pub fn set_health(&self, health: ServerHealth) {
         self.health.store(health as u8, Ordering::SeqCst);
     }
 
+    /// `health` function.
+    ///
+    /// # Returns
+    /// `ServerHealth`.
     pub fn health(&self) -> ServerHealth {
         match self.health.load(Ordering::SeqCst) {
             0 => ServerHealth::Starting,

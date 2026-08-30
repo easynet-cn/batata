@@ -18,6 +18,7 @@ pub struct JsonStore {
 }
 
 impl JsonStore {
+    /// Creates a new `JsonStore`.
     pub fn new(db: Arc<DB>, cf: &'static str) -> Self {
         Self { db, cf }
     }
@@ -28,6 +29,7 @@ impl JsonStore {
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", self.cf))
     }
 
+    /// Performs the `get` operation.
     pub fn get<T: DeserializeOwned>(&self, key: &[u8]) -> Result<Option<T>> {
         let cf = self.cfh()?;
         match self.db.get_cf(cf, key)? {
@@ -36,6 +38,7 @@ impl JsonStore {
         }
     }
 
+    /// Performs the `put` operation.
     pub fn put<T: Serialize>(&self, key: &[u8], value: &T) -> Result<()> {
         let cf = self.cfh()?;
         let bytes = serde_json::to_vec(value)?;
@@ -45,6 +48,7 @@ impl JsonStore {
         Ok(())
     }
 
+    /// Performs the `delete` operation.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
         let cf = self.cfh()?;
         self.db
@@ -53,6 +57,7 @@ impl JsonStore {
         Ok(())
     }
 
+    /// Performs the `scan_all` operation.
     pub fn scan_all<T: DeserializeOwned>(&self) -> Result<Vec<T>> {
         let cf = self.cfh()?;
         let mut out = Vec::new();
@@ -63,6 +68,7 @@ impl JsonStore {
         Ok(out)
     }
 
+    /// Performs the `scan_prefix` operation.
     pub fn scan_prefix<T: DeserializeOwned>(&self, prefix: &[u8]) -> Result<Vec<T>> {
         let cf = self.cfh()?;
         let mut out = Vec::new();

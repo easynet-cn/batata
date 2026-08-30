@@ -38,6 +38,7 @@ pub trait AuthCacheInvalidator: Send + Sync {
 /// Handler for AuthCacheInvalidateRequest — evicts local auth caches
 #[derive(Clone)]
 pub struct AuthCacheInvalidateHandler {
+    /// The `invalidator` field.
     pub invalidator: Arc<dyn AuthCacheInvalidator>,
 }
 

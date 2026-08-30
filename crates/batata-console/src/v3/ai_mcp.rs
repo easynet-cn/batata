@@ -1,5 +1,6 @@
-// Console MCP server management API endpoints
-// Aligned with Batata V3 Console API contract
+//! Console MCP server management API endpoints.
+//!
+//! Aligned with Batata V3 Console API contract.
 // Uses Arc<dyn McpServerService> trait object (wired in batata-server)
 
 use std::collections::HashMap;
@@ -394,6 +395,7 @@ async fn get_stats(
     }
 }
 
+/// Register the MCP server management routes under `/ai/mcp`.
 pub fn routes() -> Scope {
     web::scope("/ai/mcp")
         .service(get_stats)

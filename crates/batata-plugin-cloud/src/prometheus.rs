@@ -261,23 +261,37 @@ impl Default for PrometheusServiceDiscovery {
     }
 }
 
-/// Service with instances for target generation
+/// Service with instances for target generation.
+///
+/// This aggregates a Batata service and its registered instances so that
+/// [`PrometheusServiceDiscovery::generate_targets`] can build Prometheus
+/// target groups from it.
 #[derive(Debug, Clone)]
 pub struct ServiceWithInstances {
+    /// Namespace the service belongs to.
     pub namespace: String,
+    /// Group name the service belongs to.
     pub group_name: String,
+    /// Name of the service.
     pub service_name: String,
+    /// Instances registered for the service.
     pub instances: Vec<InstanceInfo>,
 }
 
-/// Instance information for target generation
+/// Instance information for target generation.
 #[derive(Debug, Clone)]
 pub struct InstanceInfo {
+    /// IP address of the instance.
     pub ip: String,
+    /// Port the instance listens on.
     pub port: i32,
+    /// Whether the instance is currently healthy.
     pub healthy: bool,
+    /// Whether the instance is enabled for discovery.
     pub enabled: bool,
+    /// Name of the cluster the instance belongs to.
     pub cluster_name: String,
+    /// Arbitrary metadata associated with the instance.
     pub metadata: HashMap<String, String>,
 }
 

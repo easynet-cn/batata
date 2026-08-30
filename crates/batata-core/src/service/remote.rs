@@ -18,6 +18,7 @@ pub trait ConnectionEventListener: Send + Sync {
     async fn on_disconnected(&self, connection_id: &str, meta: &ConnectionMeta);
 }
 
+/// Context Interceptor.
 pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Status> {
     let mut connection = Connection::default();
 
@@ -67,6 +68,7 @@ pub trait ConnectionLimitChecker: Send + Sync {
     async fn release_connection(&self, client_ip: &str, client_id: &str);
 }
 
+/// Represents Connection Manager.
 pub struct ConnectionManager {
     clients: Arc<DashMap<String, Arc<GrpcClient>>>,
     listeners: Arc<RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
@@ -90,6 +92,7 @@ impl Default for ConnectionManager {
 }
 
 impl ConnectionManager {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             clients: Arc::new(DashMap::new()),
@@ -103,6 +106,7 @@ impl ConnectionManager {
         }
     }
 
+    /// Builds an instance from the given arc.
     pub fn from_arc(clients: Arc<DashMap<String, Arc<GrpcClient>>>) -> Self {
         let count = clients.len();
         Self {
@@ -173,6 +177,7 @@ impl ConnectionManager {
         }
     }
 
+    /// Registers the .
     pub async fn register(&self, connection_id: &str, client: GrpcClient) -> bool {
         if self.clients.contains_key(connection_id) {
             tracing::debug!(connection_id, "Connection already registered, skipping");
@@ -225,6 +230,7 @@ impl ConnectionManager {
         true
     }
 
+    /// Deregisters the unregister.
     pub async fn unregister(&self, connection_id: &str) {
         self.timeout_counters.remove(connection_id);
         if let Some((_, client)) = self.clients.remove(connection_id) {

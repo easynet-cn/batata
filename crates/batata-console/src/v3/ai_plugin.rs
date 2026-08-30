@@ -1,5 +1,6 @@
-// Console plugin management API endpoints
-// This module provides console endpoints for listing available plugins
+//! Console plugin management API endpoints.
+//!
+//! This module provides console endpoints for listing available plugins.
 
 use actix_web::{HttpRequest, Responder, Scope, get, web};
 use serde::Serialize;
@@ -14,10 +15,15 @@ use batata_server_common::{ActionTypes, ApiType, SignType, secured};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginInfo {
+    /// Name of the plugin.
     pub name: String,
+    /// Category of the plugin (e.g. `auth`, `notification`).
     pub category: String,
+    /// Human-readable description of the plugin.
     pub description: String,
+    /// Version of the plugin.
     pub version: String,
+    /// Whether the plugin is currently enabled.
     pub enabled: bool,
 }
 
@@ -95,6 +101,7 @@ struct PluginQuery {
     name: String,
 }
 
+/// Register the console plugin management routes under `/core/plugin`.
 pub fn routes() -> Scope {
     web::scope("/core/plugin")
         .service(list_plugins)

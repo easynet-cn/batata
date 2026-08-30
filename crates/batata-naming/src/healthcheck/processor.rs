@@ -20,8 +20,11 @@ use tracing::debug;
 /// Health check types
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HealthCheckType {
+    /// The `None` variant.
     None,
+    /// The `Tcp` variant.
     Tcp,
+    /// The `Http` variant.
     Http,
     /// TTL-based passive check (client calls /check/pass)
     Ttl,
@@ -33,6 +36,7 @@ pub enum HealthCheckType {
 
 impl HealthCheckType {
     #[allow(clippy::should_implement_trait)]
+    /// Constructs from the `from_str` source.
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "TCP" => Self::Tcp,
@@ -44,6 +48,7 @@ impl HealthCheckType {
         }
     }
 
+    /// Performs the `as_str` operation.
     pub fn as_str(&self) -> &str {
         match self {
             Self::None => "NONE",
@@ -59,8 +64,11 @@ impl HealthCheckType {
 /// Health check result
 #[derive(Debug, Clone)]
 pub struct HealthCheckResult {
+    /// The `success` value.
     pub success: bool,
+    /// The `message` value.
     pub message: Option<String>,
+    /// The `response_time_ms` value.
     pub response_time_ms: u64,
 }
 
@@ -79,6 +87,7 @@ pub trait HealthCheckProcessor: Send + Sync {
 pub struct TcpHealthCheckProcessor;
 
 impl TcpHealthCheckProcessor {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self
     }
@@ -173,6 +182,7 @@ impl HealthCheckProcessor for TcpHealthCheckProcessor {
 pub struct HttpHealthCheckProcessor;
 
 impl HttpHealthCheckProcessor {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self
     }
@@ -330,6 +340,7 @@ impl HealthCheckProcessor for HttpHealthCheckProcessor {
 pub struct NoneHealthCheckProcessor;
 
 impl NoneHealthCheckProcessor {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self
     }
@@ -375,6 +386,7 @@ pub struct MysqlHealthCheckProcessor {
 }
 
 impl MysqlHealthCheckProcessor {
+    /// Creates a new instance.
     pub fn new(connect_timeout: Duration) -> Self {
         Self {
             connections: Arc::new(DashMap::new()),

@@ -7,39 +7,61 @@ use batata_server_common::model::AppState;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// `CapacityRequest` data model.
 pub struct CapacityRequest {
+/// The `tenant` value.
     pub tenant: Option<String>,
+/// The `group` value.
     pub group: Option<String>,
+/// The `quota` value.
     pub quota: Option<i32>,
     #[serde(alias = "maxSize")]
+/// The `max_size` value.
     pub max_size: Option<i32>,
     #[serde(alias = "maxAggrCount")]
+/// The `max_aggr_count` value.
     pub max_aggr_count: Option<i32>,
     #[serde(alias = "maxAggrSize")]
+/// The `max_aggr_size` value.
     pub max_aggr_size: Option<i32>,
     #[serde(alias = "maxHistoryCount")]
+/// The `max_history_count` value.
     pub max_history_count: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// `CapacityResponse` data model.
 pub struct CapacityResponse {
+/// The `code` value.
     pub code: i32,
+/// The `message` value.
     pub message: String,
+/// The `data` value.
     pub data: Option<CapacityData>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// `CapacityData` data model.
 pub struct CapacityData {
+/// The `id` value.
     pub id: Option<i64>,
+/// The `tenant` value.
     pub tenant: Option<String>,
+/// The `group` value.
     pub group: Option<String>,
+/// The `quota` value.
     pub quota: i32,
+/// The `usage` value.
     pub usage: i32,
+/// The `max_size` value.
     pub max_size: i32,
+/// The `max_aggr_count` value.
     pub max_aggr_count: i32,
+/// The `max_aggr_size` value.
     pub max_aggr_size: i32,
+/// The `max_history_count` value.
     pub max_history_count: i32,
 }
 
@@ -199,6 +221,7 @@ pub async fn set_capacity(
     }
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/capacity")
         .service(get_capacity)

@@ -22,10 +22,12 @@ use crate::grpc::{GrpcClient, ServerPushHandler};
 
 /// Watch types for fuzzy watch requests
 pub const WATCH_TYPE_WATCH: &str = "WATCH";
+/// Unwatch request type used to cancel a fuzzy watch subscription.
 pub const WATCH_TYPE_UNWATCH: &str = "UN_WATCH";
 
 /// Change types for fuzzy watch notifications
 pub const CHANGE_TYPE_ADD: &str = "ADD_CONFIG";
+/// Change type indicating a config entry was deleted.
 pub const CHANGE_TYPE_DELETE: &str = "DELETE_CONFIG";
 
 /// Trait for receiving config fuzzy watch events
@@ -55,6 +57,7 @@ impl<F> FnConfigFuzzyWatchListener<F>
 where
     F: Fn(ConfigFuzzyWatchEvent) + Send + Sync + 'static,
 {
+    /// Create a new closure-based fuzzy watch listener.
     pub fn new(f: F) -> Self {
         Self { f }
     }
@@ -86,6 +89,7 @@ pub struct ConfigFuzzyWatchService {
 }
 
 impl ConfigFuzzyWatchService {
+    /// Create a new fuzzy watch service backed by the given gRPC client.
     pub fn new(grpc_client: Arc<GrpcClient>) -> Self {
         Self {
             grpc_client,
@@ -373,6 +377,7 @@ pub struct ConfigFuzzyWatchChangeNotifyHandler {
 }
 
 impl ConfigFuzzyWatchChangeNotifyHandler {
+    /// Create a new change-notify push handler for the given service.
     pub fn new(fuzzy_watch_service: Arc<ConfigFuzzyWatchService>) -> Self {
         Self {
             fuzzy_watch_service,
@@ -397,6 +402,7 @@ pub struct ConfigFuzzyWatchSyncHandler {
 }
 
 impl ConfigFuzzyWatchSyncHandler {
+    /// Create a new sync push handler for the given service.
     pub fn new(fuzzy_watch_service: Arc<ConfigFuzzyWatchService>) -> Self {
         Self {
             fuzzy_watch_service,

@@ -25,32 +25,39 @@ pub struct ConsulClientMetrics {
 }
 
 impl ConsulClientMetrics {
+/// Performs the `new` operation.
     pub fn new() -> Self {
         Self::default()
     }
 
+/// Performs the `record_success` operation.
     pub fn record_success(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_success.fetch_add(1, Ordering::Relaxed);
     }
 
+/// Performs the `record_failure` operation.
     pub fn record_failure(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_failed.fetch_add(1, Ordering::Relaxed);
     }
 
+/// Performs the `record_retry` operation.
     pub fn record_retry(&self) {
         self.retries_total.fetch_add(1, Ordering::Relaxed);
     }
 
+/// Performs the `record_rotation` operation.
     pub fn record_rotation(&self) {
         self.address_rotations.fetch_add(1, Ordering::Relaxed);
     }
 
+/// Performs the `record_not_found` operation.
     pub fn record_not_found(&self) {
         self.not_found.fetch_add(1, Ordering::Relaxed);
     }
 
+/// Performs the `record_rate_limited` operation.
     pub fn record_rate_limited(&self) {
         self.rate_limited.fetch_add(1, Ordering::Relaxed);
     }
@@ -72,12 +79,19 @@ impl ConsulClientMetrics {
 /// Immutable snapshot of metrics for reporting
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ConsulMetricsSnapshot {
+    /// Total number of requests sent.
     pub requests_total: u64,
+    /// Number of successful requests.
     pub requests_success: u64,
+    /// Number of failed requests.
     pub requests_failed: u64,
+    /// Total number of retries performed.
     pub retries_total: u64,
+    /// Number of server address rotations.
     pub address_rotations: u64,
+    /// Number of 404 responses received.
     pub not_found: u64,
+    /// Number of rate-limited responses received.
     pub rate_limited: u64,
 }
 

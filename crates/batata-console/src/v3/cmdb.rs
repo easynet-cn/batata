@@ -13,23 +13,32 @@ use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppSt
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for listing CMDB entities.
 pub struct EntityListQuery {
+    /// Optional entity type filter (e.g. `Service`, `Instance`).
     #[serde(default, alias = "entityType")]
     pub entity_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for creating a CMDB entity.
 pub struct CreateEntityRequest {
+    /// Name of the CMDB entity.
     pub name: String,
+    /// Type of the CMDB entity (defaults to `Service`).
     #[serde(default = "default_entity_type")]
     pub entity_type: String,
+    /// Optional namespace the entity belongs to.
     #[serde(default)]
     pub namespace: String,
+    /// Optional group the entity belongs to.
     #[serde(default)]
     pub group: String,
+    /// Labels attached to the entity.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+    /// Arbitrary attributes attached to the entity.
     #[serde(default)]
     pub attributes: HashMap<String, serde_json::Value>,
 }

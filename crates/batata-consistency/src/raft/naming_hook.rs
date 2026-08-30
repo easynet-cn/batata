@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// apply succeeds. Implementations must be idempotent — the state machine
 /// may replay an apply during snapshot install or cold-start recovery.
 pub trait NamingApplyHook: Send + Sync {
+    /// Called after a persistent instance register/deregister-update apply succeeds.
     fn on_register(
         &self,
         namespace_id: &str,
@@ -27,6 +28,7 @@ pub trait NamingApplyHook: Send + Sync {
         cluster_name: &str,
     );
 
+    /// Called after a persistent instance deregister apply succeeds.
     fn on_deregister(
         &self,
         namespace_id: &str,
@@ -35,6 +37,7 @@ pub trait NamingApplyHook: Send + Sync {
         instance_id: &str,
     );
 
+    /// Called after a persistent instance update apply succeeds.
     #[allow(clippy::too_many_arguments)]
     fn on_update(
         &self,
@@ -56,6 +59,7 @@ pub trait NamingApplyHook: Send + Sync {
 /// `PluginRegistry`).
 pub type SharedNamingHook = Arc<tokio::sync::RwLock<Option<Arc<dyn NamingApplyHook>>>>;
 
+/// Create a new, initially-empty shared naming apply hook slot.
 pub fn new_shared_naming_hook() -> SharedNamingHook {
     Arc::new(tokio::sync::RwLock::new(None))
 }

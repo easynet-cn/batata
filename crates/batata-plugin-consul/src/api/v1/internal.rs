@@ -349,6 +349,7 @@ async fn internal_rpc_methods() -> HttpResponse {
     HttpResponse::Ok().json(methods)
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/internal")
         .service(ui_services)

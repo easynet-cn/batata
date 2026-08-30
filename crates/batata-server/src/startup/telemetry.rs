@@ -287,6 +287,13 @@ pub struct OtelGuard {
 }
 
 impl OtelGuard {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `provider`: `provider : Option < SdkTracerProvider > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new(provider: Option<SdkTracerProvider>) -> Self {
         Self { provider }
     }

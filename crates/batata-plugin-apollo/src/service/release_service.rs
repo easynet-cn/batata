@@ -9,11 +9,13 @@ use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, R
 use crate::service::release_message_service::ReleaseMessageService;
 use chrono::Utc;
 
+/// Represents the `ReleaseService` entity.
 pub struct ReleaseService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ReleaseService {
+    /// Creates a new `ReleaseService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
@@ -36,6 +38,7 @@ impl ReleaseService {
         }
     }
 
+    /// Performs the `publish` operation.
     pub async fn publish(&self, app_id: &str, cluster_name: &str, namespace_name: &str, 
         release_name: &str, release_comment: Option<String>, operator: &str, 
         _is_emergency_publish: bool) -> Result<ReleaseDTO, anyhow::Error> {
@@ -128,11 +131,13 @@ impl ReleaseService {
         Ok(created.into())
     }
 
+    /// Returns the requested value.
     pub async fn get_latest_active(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<ReleaseDTO>, anyhow::Error> {
         let stored = <dyn ReleasePersistence>::get_latest(&self.persistence, app_id, cluster_name, namespace_name).await?;
         Ok(stored.map(|s| s.into()))
     }
 
+    /// Returns the requested value.
     pub async fn get_configurations(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
         let release = self.get_latest_active(app_id, cluster_name, namespace_name).await?;
 
@@ -145,6 +150,7 @@ impl ReleaseService {
         }
     }
 
+    /// Returns the requested value.
     pub async fn find_active_releases(&self, app_id: &str, cluster_name: &str, namespace_name: &str, _page: u64, _size: u64) -> Result<(Vec<ReleaseDTO>, u64), anyhow::Error> {
         let stored_list = <dyn ReleasePersistence>::list_by_namespace(&self.persistence, app_id, cluster_name, namespace_name).await?;
         let active_releases: Vec<_> = stored_list.into_iter()
@@ -156,6 +162,7 @@ impl ReleaseService {
         Ok((active_releases, count))
     }
 
+    /// Returns the requested value.
     pub async fn get_by_id(&self, release_id: i32) -> Result<Option<ReleaseDTO>, anyhow::Error> {
         let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?;
         Ok(stored.map(|s| s.into()))
@@ -352,6 +359,7 @@ impl ReleaseService {
         .await
     }
 
+    /// Performs the `compare` operation.
     pub async fn compare(&self, base_release_id: i32, to_compare_release_id: i32) -> Result<Value, anyhow::Error> {
         let base = <dyn ReleasePersistence>::get_by_id(&self.persistence, base_release_id).await?;
         let other = <dyn ReleasePersistence>::get_by_id(&self.persistence, to_compare_release_id).await?;
@@ -371,6 +379,7 @@ impl ReleaseService {
         }))
     }
 
+    /// Performs the `merge_branch_and_release` operation.
     pub async fn merge_branch_and_release(
         &self,
         app_id: &str,
@@ -467,6 +476,7 @@ impl ReleaseService {
         Ok(merged)
     }
 
+    /// Returns the requested value.
     pub async fn find_release_history(
         &self,
         app_id: &str,

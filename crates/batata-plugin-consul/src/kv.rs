@@ -31,24 +31,31 @@ use crate::model::ConsulErrorBody;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KVPair {
     #[serde(rename = "Key")]
+/// The `key` field.
     pub key: String,
 
     #[serde(rename = "CreateIndex")]
+/// The `create_index` field.
     pub create_index: u64,
 
     #[serde(rename = "ModifyIndex")]
+/// The `modify_index` field.
     pub modify_index: u64,
 
     #[serde(rename = "LockIndex")]
+/// The `lock_index` field.
     pub lock_index: u64,
 
     #[serde(rename = "Flags")]
+/// The `flags` field.
     pub flags: u64,
 
     #[serde(rename = "Value", skip_serializing_if = "Option::is_none")]
+/// The `value` field.
     pub value: Option<String>, // Base64 encoded
 
     #[serde(rename = "Session", skip_serializing_if = "Option::is_none")]
+/// The `session` field.
     pub session: Option<String>,
 }
 
@@ -159,15 +166,19 @@ pub struct KVQueryParams {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TxnOp {
     #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
+/// The `kv` field.
     pub kv: Option<KVTxnOp>,
 
     #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+/// The `node` field.
     pub node: Option<NodeTxnOp>,
 
     #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+/// The `service` field.
     pub service: Option<ServiceTxnOp>,
 
     #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+/// The `check` field.
     pub check: Option<CheckTxnOp>,
 }
 
@@ -175,18 +186,23 @@ pub struct TxnOp {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KVTxnOp {
     #[serde(rename = "Verb")]
+/// The `verb` field.
     pub verb: String, // "set", "get", "delete", "cas", "delete-cas", "delete-tree"
 
     #[serde(rename = "Key")]
+/// The `key` field.
     pub key: String,
 
     #[serde(rename = "Value", skip_serializing_if = "Option::is_none")]
+/// The `value` field.
     pub value: Option<String>, // Base64 encoded
 
     #[serde(rename = "Flags", skip_serializing_if = "Option::is_none")]
+/// The `flags` field.
     pub flags: Option<u64>,
 
     #[serde(rename = "Index", skip_serializing_if = "Option::is_none")]
+/// The `index` field.
     pub index: Option<u64>,
 }
 
@@ -194,9 +210,11 @@ pub struct KVTxnOp {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxnResult {
     #[serde(rename = "Results", skip_serializing_if = "Option::is_none")]
+/// The `results` field.
     pub results: Option<Vec<TxnResultItem>>,
 
     #[serde(rename = "Errors", skip_serializing_if = "Option::is_none")]
+/// The `errors` field.
     pub errors: Option<Vec<TxnError>>,
 }
 
@@ -204,8 +222,10 @@ pub struct TxnResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeTxnOp {
     #[serde(rename = "Verb")]
+/// The `verb` field.
     pub verb: String,
     #[serde(rename = "Node")]
+/// The `node` field.
     pub node: NodeTxnEntry,
 }
 
@@ -213,28 +233,36 @@ pub struct NodeTxnOp {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NodeTxnEntry {
     #[serde(rename = "ID", default)]
+/// The `id` field.
     pub id: String,
     #[serde(rename = "Node", default)]
+/// The `node` field.
     pub node: String,
     #[serde(rename = "Address", default)]
+/// The `address` field.
     pub address: String,
     #[serde(
         rename = "Datacenter",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+/// The `datacenter` field.
     pub datacenter: Option<String>,
     #[serde(
         rename = "TaggedAddresses",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+/// The `tagged_addresses` field.
     pub tagged_addresses: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+/// The `meta` field.
     pub meta: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "CreateIndex", default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(rename = "ModifyIndex", default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -242,10 +270,13 @@ pub struct NodeTxnEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceTxnOp {
     #[serde(rename = "Verb")]
+/// The `verb` field.
     pub verb: String,
     #[serde(rename = "Node")]
+/// The `node` field.
     pub node: String,
     #[serde(rename = "Service")]
+/// The `service` field.
     pub service: ServiceTxnEntry,
 }
 
@@ -253,20 +284,28 @@ pub struct ServiceTxnOp {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServiceTxnEntry {
     #[serde(rename = "ID", default)]
+/// The `id` field.
     pub id: String,
     #[serde(rename = "Service", default)]
+/// The `service` field.
     pub service: String,
     #[serde(rename = "Tags", default, skip_serializing_if = "Option::is_none")]
+/// The `tags` field.
     pub tags: Option<Vec<String>>,
     #[serde(rename = "Address", default)]
+/// The `address` field.
     pub address: String,
     #[serde(rename = "Port", default)]
+/// The `port` field.
     pub port: u16,
     #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+/// The `meta` field.
     pub meta: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "CreateIndex", default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(rename = "ModifyIndex", default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -274,8 +313,10 @@ pub struct ServiceTxnEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckTxnOp {
     #[serde(rename = "Verb")]
+/// The `verb` field.
     pub verb: String,
     #[serde(rename = "Check")]
+/// The `check` field.
     pub check: CheckTxnEntry,
 }
 
@@ -283,24 +324,34 @@ pub struct CheckTxnOp {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CheckTxnEntry {
     #[serde(rename = "Node", default)]
+/// The `node` field.
     pub node: String,
     #[serde(rename = "CheckID", default)]
+/// The `check_id` field.
     pub check_id: String,
     #[serde(rename = "Name", default)]
+/// The `name` field.
     pub name: String,
     #[serde(rename = "Status", default)]
+/// The `status` field.
     pub status: String,
     #[serde(rename = "Notes", default)]
+/// The `notes` field.
     pub notes: String,
     #[serde(rename = "Output", default)]
+/// The `output` field.
     pub output: String,
     #[serde(rename = "ServiceID", default)]
+/// The `service_id` field.
     pub service_id: String,
     #[serde(rename = "ServiceName", default)]
+/// The `service_name` field.
     pub service_name: String,
     #[serde(rename = "CreateIndex", default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(rename = "ModifyIndex", default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -308,12 +359,16 @@ pub struct CheckTxnEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TxnResultItem {
     #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
+/// The `kv` field.
     pub kv: Option<KVPair>,
     #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+/// The `node` field.
     pub node: Option<NodeTxnEntry>,
     #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+/// The `service` field.
     pub service: Option<ServiceTxnEntry>,
     #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+/// The `check` field.
     pub check: Option<CheckTxnEntry>,
 }
 
@@ -321,9 +376,11 @@ pub struct TxnResultItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxnError {
     #[serde(rename = "OpIndex")]
+/// The `op_index` field.
     pub op_index: u32,
 
     #[serde(rename = "What")]
+/// The `what` field.
     pub what: String,
 }
 

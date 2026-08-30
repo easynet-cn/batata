@@ -21,7 +21,9 @@ use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ACL Token header name
+/// The `X_CONSUL_TOKEN` constant.
 pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
+/// The `CONSUL_TOKEN_QUERY` constant.
 pub const CONSUL_TOKEN_QUERY: &str = "token";
 /// Well-known accessor ID for the bootstrap management token
 pub const BOOTSTRAP_ACCESSOR_ID: &str = "00000000-0000-0000-0000-000000000001";
@@ -75,9 +77,12 @@ pub fn invalidate_all_caches() {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclTokenExpanded {
+/// The `expanded_policies` field.
     pub expanded_policies: Vec<AclPolicy>,
+/// The `expanded_roles` field.
     pub expanded_roles: Vec<AclRole>,
     #[serde(flatten)]
+/// The `token` field.
     pub token: AclToken,
 }
 
@@ -85,18 +90,28 @@ pub struct AclTokenExpanded {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclToken {
+/// The `accessor_id` field.
     pub accessor_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `secret_id` field.
     pub secret_id: Option<String>,
+/// The `description` field.
     pub description: String,
+/// The `policies` field.
     pub policies: Vec<PolicyLink>,
+/// The `roles` field.
     pub roles: Vec<RoleLink>,
+/// The `local` field.
     pub local: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `expiration_time` field.
     pub expiration_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "ExpirationTTL")]
+/// The `expiration_ttl` field.
     pub expiration_ttl: Option<u64>,
+/// The `create_time` field.
     pub create_time: String,
+/// The `modify_time` field.
     pub modify_time: String,
 }
 
@@ -105,8 +120,10 @@ pub struct AclToken {
 #[serde(rename_all = "PascalCase")]
 pub struct PolicyLink {
     #[serde(rename = "ID", default)]
+/// The `id` field.
     pub id: String,
     #[serde(default)]
+/// The `name` field.
     pub name: String,
 }
 
@@ -115,8 +132,10 @@ pub struct PolicyLink {
 #[serde(rename_all = "PascalCase")]
 pub struct RoleLink {
     #[serde(rename = "ID", default)]
+/// The `id` field.
     pub id: String,
     #[serde(default)]
+/// The `name` field.
     pub name: String,
 }
 
@@ -125,13 +144,20 @@ pub struct RoleLink {
 #[serde(rename_all = "PascalCase")]
 pub struct AclPolicy {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
+/// The `description` field.
     pub description: String,
+/// The `rules` field.
     pub rules: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `datacenters` field.
     pub datacenters: Option<Vec<String>>,
+/// The `create_time` field.
     pub create_time: String,
+/// The `modify_time` field.
     pub modify_time: String,
 }
 
@@ -140,15 +166,23 @@ pub struct AclPolicy {
 #[serde(rename_all = "PascalCase")]
 pub struct AclRole {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
+/// The `description` field.
     pub description: String,
+/// The `policies` field.
     pub policies: Vec<PolicyLink>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `service_identities` field.
     pub service_identities: Option<Vec<ServiceIdentity>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `node_identities` field.
     pub node_identities: Option<Vec<NodeIdentity>>,
+/// The `create_time` field.
     pub create_time: String,
+/// The `modify_time` field.
     pub modify_time: String,
 }
 
@@ -156,8 +190,10 @@ pub struct AclRole {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceIdentity {
+/// The `service_name` field.
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `datacenters` field.
     pub datacenters: Option<Vec<String>>,
 }
 
@@ -165,7 +201,9 @@ pub struct ServiceIdentity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct NodeIdentity {
+/// The `node_name` field.
     pub node_name: String,
+/// The `datacenter` field.
     pub datacenter: String,
 }
 
@@ -173,48 +211,69 @@ pub struct NodeIdentity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AuthMethod {
+/// The `name` field.
     pub name: String,
     #[serde(rename = "Type")]
+/// The `method_type` field.
     pub method_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `display_name` field.
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `description` field.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `max_token_ttl` field.
     pub max_token_ttl: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `token_locality` field.
     pub token_locality: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `config` field.
     pub config: Option<HashMap<String, serde_json::Value>>,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `namespace` field.
     pub namespace: Option<String>,
 }
 
 /// Parsed ACL rules for authorization checks
 #[derive(Clone, Debug, Default)]
 pub struct ParsedRules {
+/// The `agent_rules` field.
     pub agent_rules: Vec<ResourceRule>,
+/// The `key_rules` field.
     pub key_rules: Vec<ResourceRule>,
+/// The `node_rules` field.
     pub node_rules: Vec<ResourceRule>,
+/// The `service_rules` field.
     pub service_rules: Vec<ResourceRule>,
+/// The `session_rules` field.
     pub session_rules: Vec<ResourceRule>,
+/// The `query_rules` field.
     pub query_rules: Vec<ResourceRule>,
 }
 
 /// Single resource rule
 #[derive(Clone, Debug)]
 pub struct ResourceRule {
+/// The `prefix` field.
     pub prefix: String,
+/// The `policy` field.
     pub policy: RulePolicy,
 }
 
 /// Rule policy type
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RulePolicy {
+/// The `Read` variant.
     Read,
+/// The `Write` variant.
     Write,
+/// The `Deny` variant.
     Deny,
 }
 
@@ -232,10 +291,12 @@ impl std::str::FromStr for RulePolicy {
 }
 
 impl RulePolicy {
+/// The `allows_read` method.
     pub fn allows_read(&self) -> bool {
         matches!(self, RulePolicy::Read | RulePolicy::Write)
     }
 
+/// The `allows_write` method.
     pub fn allows_write(&self) -> bool {
         matches!(self, RulePolicy::Write)
     }
@@ -244,24 +305,35 @@ impl RulePolicy {
 /// Resource types for authorization
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResourceType {
+/// The `Agent` variant.
     Agent,
+/// The `Key` variant.
     Key,
+/// The `Keyring` variant.
     Keyring,
+/// The `Node` variant.
     Node,
+/// The `Operator` variant.
     Operator,
+/// The `Service` variant.
     Service,
+/// The `Session` variant.
     Session,
+/// The `Query` variant.
     Query,
 }
 
 /// ACL authorization result
 #[derive(Clone, Debug)]
 pub struct AuthzResult {
+/// The `allowed` field.
     pub allowed: bool,
+/// The `reason` field.
     pub reason: String,
 }
 
 impl AuthzResult {
+/// The `allowed` associated function.
     pub fn allowed() -> Self {
         Self {
             allowed: true,
@@ -269,6 +341,7 @@ impl AuthzResult {
         }
     }
 
+/// The `denied` associated function.
     pub fn denied(reason: &str) -> Self {
         Self {
             allowed: false,
@@ -299,6 +372,7 @@ impl Default for AclService {
 }
 
 impl AclService {
+/// The `new` associated function.
     pub fn new() -> Self {
         let store = AclStore::memory();
         let mut svc = Self {
@@ -325,6 +399,7 @@ impl AclService {
         svc
     }
 
+/// The `disabled` associated function.
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -341,6 +416,7 @@ impl AclService {
         Self::with_rocks_and_token(db, None)
     }
 
+/// The `with_rocks_and_token` associated function.
     pub fn with_rocks_and_token(db: Arc<DB>, initial_management_token: Option<String>) -> Self {
         let store = AclStore::persistent(db);
 
@@ -375,6 +451,7 @@ impl AclService {
         svc
     }
 
+/// The `with_raft_and_token` associated function.
     pub fn with_raft_and_token(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>, initial_management_token: Option<String>) -> Self {
         let mut svc = Self::with_rocks_and_token(db, initial_management_token);
         svc.raft_node = Some(raft_node);
@@ -1200,13 +1277,21 @@ query_prefix "" { policy = "write" }
 #[serde(rename_all = "PascalCase")]
 pub struct BootstrapResponse {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `accessor_id` field.
     pub accessor_id: String,
+/// The `secret_id` field.
     pub secret_id: String,
+/// The `description` field.
     pub description: String,
+/// The `policies` field.
     pub policies: Vec<PolicyLink>,
+/// The `local` field.
     pub local: bool,
+/// The `create_time` field.
     pub create_time: String,
+/// The `hash` field.
     pub hash: String,
 }
 
@@ -1218,8 +1303,11 @@ pub struct BootstrapResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LoginRequest {
+/// The `auth_method` field.
     pub auth_method: String,
+/// The `bearer_token` field.
     pub bearer_token: Option<String>,
+/// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
 }
 
@@ -1227,16 +1315,25 @@ pub struct LoginRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LoginResponse {
+/// The `accessor_id` field.
     pub accessor_id: String,
+/// The `secret_id` field.
     pub secret_id: String,
+/// The `description` field.
     pub description: String,
+/// The `policies` field.
     pub policies: Vec<PolicyLink>,
+/// The `roles` field.
     pub roles: Vec<RoleLink>,
+/// The `local` field.
     pub local: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `auth_method` field.
     pub auth_method: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `expiration_time` field.
     pub expiration_time: Option<String>,
+/// The `create_time` field.
     pub create_time: String,
 }
 
@@ -1248,8 +1345,10 @@ pub struct LoginResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CloneTokenRequest {
+/// The `description` field.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `namespace` field.
     pub namespace: Option<String>,
 }
 
@@ -1343,11 +1442,16 @@ pub async fn get_token(
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CreateTokenRequest {
+/// The `description` field.
     pub description: Option<String>,
+/// The `policies` field.
     pub policies: Option<Vec<PolicyLink>>,
+/// The `roles` field.
     pub roles: Option<Vec<RoleLink>>,
+/// The `local` field.
     pub local: Option<bool>,
     #[serde(default, rename = "ExpirationTTL")]
+/// The `expiration_ttl` field.
     pub expiration_ttl: Option<serde_json::Value>,
 }
 
@@ -1708,9 +1812,13 @@ pub async fn delete_policy(
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CreatePolicyRequest {
+/// The `name` field.
     pub name: String,
+/// The `description` field.
     pub description: Option<String>,
+/// The `rules` field.
     pub rules: String,
+/// The `datacenters` field.
     pub datacenters: Option<Vec<String>>,
 }
 
@@ -1746,10 +1854,15 @@ pub async fn create_policy(
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RoleRequest {
+/// The `name` field.
     pub name: String,
+/// The `description` field.
     pub description: Option<String>,
+/// The `policies` field.
     pub policies: Option<Vec<PolicyLink>>,
+/// The `service_identities` field.
     pub service_identities: Option<Vec<ServiceIdentity>>,
+/// The `node_identities` field.
     pub node_identities: Option<Vec<NodeIdentity>>,
 }
 
@@ -1865,13 +1978,20 @@ pub async fn delete_role(
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AuthMethodRequest {
+/// The `name` field.
     pub name: String,
     #[serde(rename = "Type")]
+/// The `method_type` field.
     pub method_type: String,
+/// The `display_name` field.
     pub display_name: Option<String>,
+/// The `description` field.
     pub description: Option<String>,
+/// The `max_token_ttl` field.
     pub max_token_ttl: Option<String>,
+/// The `token_locality` field.
     pub token_locality: Option<String>,
+/// The `config` field.
     pub config: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -1977,16 +2097,25 @@ pub async fn delete_auth_method(
 #[serde(rename_all = "PascalCase")]
 pub struct BindingRule {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `description` field.
     pub description: String,
+/// The `auth_method` field.
     pub auth_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `selector` field.
     pub selector: Option<String>,
+/// The `bind_type` field.
     pub bind_type: String,
+/// The `bind_name` field.
     pub bind_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `bind_vars` field.
     pub bind_vars: Option<HashMap<String, String>>,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -1995,13 +2124,19 @@ pub struct BindingRule {
 #[serde(rename_all = "PascalCase")]
 pub struct BindingRuleRequest {
     #[serde(default)]
+/// The `description` field.
     pub description: Option<String>,
+/// The `auth_method` field.
     pub auth_method: String,
     #[serde(default)]
+/// The `selector` field.
     pub selector: Option<String>,
+/// The `bind_type` field.
     pub bind_type: String,
+/// The `bind_name` field.
     pub bind_name: String,
     #[serde(default)]
+/// The `bind_vars` field.
     pub bind_vars: Option<HashMap<String, String>>,
 }
 
@@ -2009,18 +2144,28 @@ pub struct BindingRuleRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclReplicationStatus {
+/// The `enabled` field.
     pub enabled: bool,
+/// The `running` field.
     pub running: bool,
+/// The `source_datacenter` field.
     pub source_datacenter: String,
+/// The `replication_type` field.
     pub replication_type: String,
+/// The `replicated_index` field.
     pub replicated_index: u64,
+/// The `replicated_role_index` field.
     pub replicated_role_index: u64,
+/// The `replicated_token_index` field.
     pub replicated_token_index: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_success` field.
     pub last_success: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_error` field.
     pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `last_error_message` field.
     pub last_error_message: Option<String>,
 }
 
@@ -2032,9 +2177,13 @@ pub struct AclReplicationStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TemplatedPolicy {
+/// The `template_name` field.
     pub template_name: String,
+/// The `schema` field.
     pub schema: String,
+/// The `template` field.
     pub template: String,
+/// The `description` field.
     pub description: String,
 }
 
@@ -2048,6 +2197,7 @@ pub struct TemplatedPolicy {
 #[serde(rename_all = "PascalCase")]
 pub struct TemplatedPolicyVariables {
     #[serde(rename = "name", skip_serializing_if = "Option::is_none")]
+/// The `name` field.
     pub name: Option<String>,
 }
 
@@ -2057,9 +2207,13 @@ pub struct TemplatedPolicyVariables {
 #[serde(rename_all = "PascalCase")]
 pub struct SyntheticPolicy {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
+/// The `description` field.
     pub description: String,
+/// The `rules` field.
     pub rules: String,
 }
 
@@ -2208,14 +2362,19 @@ fn synthetic_policy_id(rules: &str) -> String {
 #[serde(rename_all = "PascalCase")]
 pub struct TokenUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `accessor_id` field.
     pub accessor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `description` field.
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `policies` field.
     pub policies: Option<Vec<PolicyLink>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `roles` field.
     pub roles: Option<Vec<RoleLink>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `local` field.
     pub local: Option<bool>,
 }
 
@@ -2224,12 +2383,17 @@ pub struct TokenUpdateRequest {
 #[serde(rename_all = "PascalCase")]
 pub struct PolicyUpdateRequest {
     #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
+/// The `id` field.
     pub id: Option<String>,
+/// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `description` field.
     pub description: Option<String>,
+/// The `rules` field.
     pub rules: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `datacenters` field.
     pub datacenters: Option<Vec<String>>,
 }
 
@@ -2594,9 +2758,12 @@ pub async fn preview_templated_policy(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclAuthorizationCheck {
+/// The `resource` field.
     pub resource: String,
     #[serde(default)]
+/// The `segment` field.
     pub segment: Option<String>,
+/// The `access` field.
     pub access: String,
 }
 
@@ -2604,10 +2771,14 @@ pub struct AclAuthorizationCheck {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclAuthorizationResponse {
+/// The `allow` field.
     pub allow: bool,
+/// The `resource` field.
     pub resource: String,
+/// The `access` field.
     pub access: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+/// The `error` field.
     pub error: String,
 }
 
@@ -2665,68 +2836,68 @@ pub async fn acl_authorize(
 }
 
 // ============================================================================
-// OIDC 认证端点
+// OIDC authentication endpoints.
 // ============================================================================
 
-/// POST /v1/acl/oidc/auth-url 请求体
+/// `POST /v1/acl/oidc/auth-url` request body.
 ///
-/// 对应 Consul 的 `ACLOIDCAuthURLParams` 结构体。
+/// Corresponds to Consul's `ACLOIDCAuthURLParams` struct.
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct OidcAuthUrlRequest {
-    /// 认证方法名（必须是 type=oidc 的 auth method）
+    /// The auth method name (must be an auth method of type `oidc`).
     pub auth_method: String,
-    /// 回调 URI（必须在 auth method 配置的 AllowedRedirectURIs 中）
+    /// The callback URI (must be in the auth method's configured `AllowedRedirectURIs`).
     #[serde(rename = "RedirectURI")]
     pub redirect_uri: String,
-    /// 客户端 nonce（可选，用于额外的请求验证）
+    /// The client nonce (optional, used for extra request validation).
     #[serde(default)]
     pub client_nonce: Option<String>,
-    /// 客户端元数据（可选）
+    /// Client metadata (optional).
     #[serde(default)]
     pub meta: Option<HashMap<String, String>>,
 }
 
-/// POST /v1/acl/oidc/auth-url 响应体
+/// `POST /v1/acl/oidc/auth-url` response body.
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct OidcAuthUrlResponse {
-    /// 生成的 OIDC 授权 URL
+    /// The generated OIDC authorization URL.
     #[serde(rename = "AuthURL")]
     pub auth_url: String,
 }
 
-/// POST /v1/acl/oidc/callback 请求体
+/// `POST /v1/acl/oidc/callback` request body.
 ///
-/// 对应 Consul 的 `ACLOIDCCallbackParams` 结构体。
+/// Corresponds to Consul's `ACLOIDCCallbackParams` struct.
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct OidcCallbackRequest {
-    /// 认证方法名
+    /// The auth method name.
     pub auth_method: String,
-    /// 授权 URL 返回时携带的 state
+    /// The state returned with the authorization URL.
     pub state: String,
-    /// OIDC provider 返回的授权码
+    /// The authorization code returned by the OIDC provider.
     pub code: String,
-    /// 客户端 nonce（可选，必须与 auth-url 请求时提供的一致）
+    /// The client nonce (optional, must match the one provided in the auth-url request).
     #[serde(default)]
     pub client_nonce: Option<String>,
 }
 
 /// POST /v1/acl/oidc/auth-url
-/// 生成 OIDC 授权 URL
+/// Generates the OIDC authorization URL.
 ///
-/// 流程：
-/// 1. 查找 auth method，验证类型为 oidc
-/// 2. 从 auth method 配置创建或获取缓存的 OidcAuthenticator
-/// 3. 调用 authenticator.get_auth_url 生成授权 URL
-/// 4. 返回 AuthURL
+/// Steps:
+/// 1. Look up the auth method and verify its type is oidc.
+/// 2. Create or get the cached `OidcAuthenticator` from the auth method config.
+/// 3. Call `authenticator.get_auth_url` to generate the authorization URL.
+/// 4. Return the AuthURL.
 pub async fn oidc_auth_url(
     acl_service: web::Data<AclService>,
     body: web::Json<OidcAuthUrlRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    // 查找 auth method
+    // Look up the auth method.
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
         Some(m) => m,
         None => {
@@ -2735,7 +2906,7 @@ pub async fn oidc_auth_url(
         }
     };
 
-    // 验证类型为 oidc
+    // Verify the type is oidc.
     if auth_method.method_type != "oidc" {
         return HttpResponse::BadRequest().consul_error(format!(
             "Auth method '{}' is not of type 'oidc' (got '{}')",
@@ -2743,7 +2914,7 @@ pub async fn oidc_auth_url(
         ));
     }
 
-    // 从配置创建或获取缓存的 OidcAuthenticator
+    // Create or get the cached OidcAuthenticator from the config.
     let authenticator = match crate::oidc::get_or_create_authenticator(
         &body.auth_method,
         &auth_method.config,
@@ -2758,7 +2929,7 @@ pub async fn oidc_auth_url(
         }
     };
 
-    // 生成授权 URL
+    // Generate the authorization URL.
     match authenticator
         .get_auth_url(
             &body.redirect_uri,
@@ -2783,22 +2954,22 @@ pub async fn oidc_auth_url(
 }
 
 /// POST /v1/acl/oidc/callback
-/// 交换授权码获取 token
+/// Exchanges the authorization code for a token.
 ///
-/// 流程：
-/// 1. 查找 auth method，验证类型为 oidc
-/// 2. 从配置创建或获取缓存的 OidcAuthenticator
-/// 3. 调用 authenticator.exchange_code 交换授权码
-/// 4. 验证 client_nonce（如果请求中提供了）
-/// 5. 应用 binding rules 确定 policies 和 roles
-/// 6. 创建 ACL token
-/// 7. 返回 token
+/// Steps:
+/// 1. Look up the auth method and verify its type is oidc.
+/// 2. Create or get the cached `OidcAuthenticator` from the config.
+/// 3. Call `authenticator.exchange_code` to exchange the authorization code.
+/// 4. Verify the `client_nonce` (if provided in the request).
+/// 5. Apply binding rules to determine policies and roles.
+/// 6. Create the ACL token.
+/// 7. Return the token.
 pub async fn oidc_callback(
     acl_service: web::Data<AclService>,
     body: web::Json<OidcCallbackRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    // 验证必填字段
+    // Validate required fields.
     if body.state.is_empty() {
         return HttpResponse::BadRequest().consul_error("State parameter is required");
     }
@@ -2806,7 +2977,7 @@ pub async fn oidc_callback(
         return HttpResponse::BadRequest().consul_error("Code parameter is required");
     }
 
-    // 查找 auth method
+    // Look up the auth method.
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
         Some(m) => m,
         None => {
@@ -2815,7 +2986,7 @@ pub async fn oidc_callback(
         }
     };
 
-    // 验证类型为 oidc
+    // Verify the type is oidc.
     if auth_method.method_type != "oidc" {
         return HttpResponse::BadRequest().consul_error(format!(
             "Auth method '{}' is not of type 'oidc' (got '{}')",
@@ -2823,7 +2994,7 @@ pub async fn oidc_callback(
         ));
     }
 
-    // 从配置创建或获取缓存的 OidcAuthenticator
+    // Create or get the cached OidcAuthenticator from the config.
     let authenticator = match crate::oidc::get_or_create_authenticator(
         &body.auth_method,
         &auth_method.config,
@@ -2838,7 +3009,7 @@ pub async fn oidc_callback(
         }
     };
 
-    // 交换授权码获取 claims
+    // Exchanges the authorization code for claims.
     let oidc_claims = match authenticator.exchange_code(&body.state, &body.code).await {
         Ok(claims) => claims,
         Err(e) => {
@@ -2850,7 +3021,7 @@ pub async fn oidc_callback(
         }
     };
 
-    // 验证 client_nonce（如果请求中提供了）
+    // Verify the `client_nonce` (if provided in the request).
     if let Some(ref request_nonce) = body.client_nonce {
         if oidc_claims.client_nonce.as_ref() != Some(request_nonce) {
             return HttpResponse::BadRequest()
@@ -2858,20 +3029,20 @@ pub async fn oidc_callback(
         }
     }
 
-    // 应用 binding rules 确定 policies 和 roles
+    // Apply binding rules to determine policies and roles.
     let (policies, roles) = apply_oidc_binding_rules(
         &acl_service,
         &body.auth_method,
         &oidc_claims.claims,
     );
 
-    // 计算 token 过期时间
+    // Compute the token expiry time.
     let expiration_ttl = auth_method.max_token_ttl.as_deref();
 
-    // 确定 token locality
+    // Determine the token locality.
     let local = auth_method.token_locality.as_deref() == Some("local");
 
-    // 创建 ACL token
+    // Create the ACL token.
     let token = acl_service
         .create_token(
             &format!("OIDC token via {}", body.auth_method),
@@ -2886,13 +3057,13 @@ pub async fn oidc_callback(
     consul_ok(&meta).json(token)
 }
 
-/// 应用 OIDC binding rules，根据 claims 确定要赋予的 policies 和 roles。
+/// Applies OIDC binding rules to determine the policies and roles to grant based on the claims.
 ///
-/// 遍历指定 auth method 的所有 binding rules，对每条规则：
-/// - 如果 selector 为 None 或空字符串，匹配所有
-/// - 否则尝试简单评估 selector 表达式
+/// Iterates over all binding rules of the given auth method; for each rule:
+/// - If the selector is `None` or empty, it matches everything.
+/// - Otherwise, attempt a simple evaluation of the selector expression.
 ///
-/// 返回 (policies, roles) 两个列表。
+/// Returns the two lists `(policies, roles)`.
 fn apply_oidc_binding_rules(
     acl_service: &AclService,
     auth_method: &str,
@@ -2901,7 +3072,7 @@ fn apply_oidc_binding_rules(
     let mut policies = Vec::new();
     let mut roles = Vec::new();
 
-    // 获取该 auth method 的所有 binding rules
+    // Get all binding rules for this auth method.
     let rules: Vec<BindingRule> = acl_service
         .list_binding_rules()
         .into_iter()
@@ -2909,12 +3080,12 @@ fn apply_oidc_binding_rules(
         .collect();
 
     for rule in &rules {
-        // 评估 selector
+        // Evaluate the selector.
         let matched = if rule.selector.as_ref().is_none_or(|s| s.is_empty()) {
-            // 无 selector，匹配所有
+            // No selector, matches everything.
             true
         } else {
-            // 有 selector，尝试简单评估
+            // Has a selector, attempt a simple evaluation.
             evaluate_binding_rule_selector(rule.selector.as_deref().unwrap_or(""), claims)
         };
 
@@ -2926,7 +3097,7 @@ fn apply_oidc_binding_rules(
                 "role" => {
                     roles.push(rule.bind_name.clone());
                 }
-                // service, node-identity 等其他类型暂不处理
+                // Other types such as service and node-identity are not handled yet.
                 _ => {
                     debug!("OIDC binding rule bind_type '{}' not supported, skipping", rule.bind_type);
                 }
@@ -2937,44 +3108,44 @@ fn apply_oidc_binding_rules(
     (policies, roles)
 }
 
-/// 简单评估 binding rule selector 表达式。
+/// Simply evaluates a binding rule selector expression.
 ///
-/// 支持的格式：
-/// - `key == "value"` - 字符串相等比较
-/// - `key in ["a", "b"]` - 列表包含检查
+/// Supported formats:
+/// - `key == "value"` - string equality comparison.
+/// - `key in ["a", "b"]` - list containment check.
 ///
-/// 不支持的格式返回 false。
+/// Unsupported formats return false.
 fn evaluate_binding_rule_selector(
     selector: &str,
     claims: &HashMap<String, serde_json::Value>,
 ) -> bool {
     let selector = selector.trim();
 
-    // 尝试解析 `key == "value"` 格式
+    // Try to parse the `key == "value"` format.
     if let Some(eq_pos) = selector.find("==") {
         let key = selector[..eq_pos].trim();
         let value_str = selector[eq_pos + 2..].trim();
 
-        // 去掉引号
+        // Strip the quotes.
         let value = value_str.trim_matches('"');
 
         if let Some(claim_value) = claims.get(key) {
-            // 字符串比较
+            // String comparison.
             if let Some(s) = claim_value.as_str() {
                 return s == value;
             }
-            // 其他类型的字符串比较
+            // String comparison for other types.
             return claim_value.to_string().trim_matches('"') == value;
         }
         return false;
     }
 
-    // 尝试解析 `key in [...]` 格式
+    // Try to parse the `key in [...]` format.
     if let Some(in_pos) = selector.find(" in ") {
         let key = selector[..in_pos].trim();
         let list_str = selector[in_pos + 4..].trim();
 
-        // 解析列表
+        // Parse the list.
         let list_str = list_str.trim_start_matches('[').trim_end_matches(']');
         let values: Vec<&str> = list_str
             .split(',')
@@ -2982,7 +3153,7 @@ fn evaluate_binding_rule_selector(
             .collect();
 
         if let Some(claim_value) = claims.get(key) {
-            // 如果 claim 是数组，检查是否有交集
+            // If the claim is an array, check for intersection.
             if let Some(arr) = claim_value.as_array() {
                 return arr.iter().any(|v| {
                     if let Some(s) = v.as_str() {
@@ -2994,7 +3165,7 @@ fn evaluate_binding_rule_selector(
                     }
                 });
             }
-            // 如果 claim 是字符串，检查是否在列表中
+            // If the claim is a string, check whether it is in the list.
             if let Some(s) = claim_value.as_str() {
                 return values.contains(&s);
             }
@@ -3002,7 +3173,7 @@ fn evaluate_binding_rule_selector(
         return false;
     }
 
-    // 不支持的格式，不匹配
+    // Unsupported format, does not match.
     false
 }
 

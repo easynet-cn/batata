@@ -37,6 +37,7 @@ where
     }
 }
 
+/// Middleware that records HTTP request metrics.
 pub struct HttpMetricsMiddleware<S> {
     service: S,
 }

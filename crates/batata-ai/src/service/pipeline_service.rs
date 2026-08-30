@@ -13,6 +13,7 @@ pub struct PipelineQueryService {
 }
 
 impl PipelineQueryService {
+    /// Creates a new `PipelineQueryService` backed by the given persistence.
     pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
         Self { persistence }
     }

@@ -1,3 +1,4 @@
+//! User-defined event fire and watch operations.
 use crate::client::ConsulClient;
 use crate::error::Result;
 use crate::model::{QueryMeta, QueryOptions, UserEvent, WriteMeta, WriteOptions};

@@ -27,6 +27,7 @@ use crate::{
 /// Handler for DistroDataSyncRequest - receives sync data from other cluster nodes
 #[derive(Clone)]
 pub struct DistroDataSyncHandler {
+    /// The `distro_protocol` field.
     pub distro_protocol: Arc<DistroProtocol>,
 }
 
@@ -85,6 +86,7 @@ impl PayloadHandler for DistroDataSyncHandler {
 /// is safe because each handler's `process_sync_data` is itself idempotent.
 #[derive(Clone)]
 pub struct DistroDataBatchSyncHandler {
+    /// The `distro_protocol` field.
     pub distro_protocol: Arc<DistroProtocol>,
 }
 
@@ -139,6 +141,7 @@ impl PayloadHandler for DistroDataBatchSyncHandler {
 /// Handler for DistroDataVerifyRequest - verifies data consistency with other cluster nodes
 #[derive(Clone)]
 pub struct DistroDataVerifyHandler {
+    /// The `distro_protocol` field.
     pub distro_protocol: Arc<DistroProtocol>,
 }
 
@@ -203,6 +206,7 @@ impl PayloadHandler for DistroDataVerifyHandler {
 /// Handler for DistroDataSnapshotRequest - returns all data for a type
 #[derive(Clone)]
 pub struct DistroDataSnapshotHandler {
+    /// The `distro_protocol` field.
     pub distro_protocol: Arc<DistroProtocol>,
 }
 

@@ -1,5 +1,6 @@
-// Console data source abstraction layer
-// Provides a unified interface for console operations in both local and remote modes
+//! Console data source abstraction layer.
+//!
+//! Provides a unified interface for console operations in both local and remote modes.
 
 pub mod local;
 pub mod remote;

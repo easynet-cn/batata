@@ -1,7 +1,9 @@
+//! Module `api::consul::kv` of the `batata-server` crate.
 // Consul KV Store API - Local extensions
 // Re-exports from batata_plugin_consul with export/import handlers that need AppState
 
 // Re-export all types from plugin
+/// Re-exported item.
 pub use batata_plugin_consul::kv::*;
 
 // Local export/import handlers that require AppState

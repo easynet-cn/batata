@@ -34,6 +34,10 @@ async fn set_log_level(
     do_set_log_level(&req, &data, &params, ApiType::AdminApi).await
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/ops")
         .service(raft_ops)

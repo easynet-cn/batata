@@ -7,11 +7,13 @@ use crate::entity::apollo_gray_release_rule;
 use crate::persistence::shared::StoredGrayReleaseRule;
 use crate::persistence::traits::GrayReleasePersistence;
 
+/// Represents the `GrayReleaseSqlPersistence` entity.
 pub struct GrayReleaseSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl GrayReleaseSqlPersistence {
+    /// Creates a new `GrayReleaseSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

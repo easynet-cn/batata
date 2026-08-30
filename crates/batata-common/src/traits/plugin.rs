@@ -42,27 +42,40 @@ pub trait ControlPlugin: Plugin {
 /// CMDB Plugin SPI for label sync and entity mapping
 #[async_trait::async_trait]
 pub trait CmdbPlugin: Plugin {
+    /// The `register_entity` method.
     async fn register_entity(&self, entity: CmdbEntity) -> anyhow::Result<String>;
+    /// The `update_entity` method.
     async fn update_entity(&self, entity: CmdbEntity) -> anyhow::Result<()>;
+    /// The `delete_entity` method.
     async fn delete_entity(&self, id: &str) -> anyhow::Result<bool>;
+    /// The `get_entity` method.
     async fn get_entity(&self, id: &str) -> anyhow::Result<Option<CmdbEntity>>;
+    /// The `list_entities` method.
     async fn list_entities(
         &self,
         entity_type: Option<CmdbEntityType>,
     ) -> anyhow::Result<Vec<CmdbEntity>>;
+    /// The `search_by_labels` method.
     async fn search_by_labels(
         &self,
         labels: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<CmdbEntity>>;
+    /// The `sync_labels` method.
     async fn sync_labels(
         &self,
         entity_id: &str,
         labels: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+    /// The `map_entity` method.
     async fn map_entity(&self, entity: &CmdbEntity) -> anyhow::Result<serde_json::Value>;
+    /// The `full_sync` method.
     async fn full_sync(&self) -> anyhow::Result<CmdbSyncResult>;
+    /// The `get_label_mappings` method.
     async fn get_label_mappings(&self) -> anyhow::Result<Vec<LabelMapping>>;
+    /// The `add_label_mapping` method.
     async fn add_label_mapping(&self, mapping: LabelMapping) -> anyhow::Result<String>;
+    /// The `remove_label_mapping` method.
     async fn remove_label_mapping(&self, id: &str) -> anyhow::Result<bool>;
+    /// The `get_stats` method.
     async fn get_stats(&self) -> CmdbStats;
 }

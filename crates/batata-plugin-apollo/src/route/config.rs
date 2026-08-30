@@ -660,6 +660,7 @@ async fn list_all_services(
     HttpResponse::Ok().json(all)
 }
 
+/// Performs the `configure_config_routes` operation.
 pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(
         web::resource("/configs/{app_id}/{cluster_name}/{namespace}")

@@ -105,6 +105,7 @@ impl std::fmt::Debug for ServerMemberManager {
 }
 
 impl ServerMemberManager {
+    /// Creates a new instance.
     pub fn new(config: &Configuration) -> Self {
         Self::with_config(
             config,
@@ -112,6 +113,7 @@ impl ServerMemberManager {
         )
     }
 
+    /// With Config.
     pub fn with_config(config: &Configuration, manager_config: ServerMemberManagerConfig) -> Self {
         // Use cluster.conf IP when available to avoid duplicate member entries
         let ip = if config.is_standalone() {

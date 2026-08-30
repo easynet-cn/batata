@@ -2,6 +2,7 @@ use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::{prelude::*, MigratorTrait};
 use sea_query::{Alias, DynIden, SeaRc};
 
+/// Column name helper utilities for migration statements.
 pub mod column_helper;
 mod m20260710_000001_create_apollo_app;
 mod m20260710_000002_create_apollo_app_namespace;
@@ -39,6 +40,7 @@ mod m20260710_000033_seed_initial_data;
 mod m20260710_000034_fix_release_id_type;
 mod m20260710_000035_add_namespace_fields;
 
+/// Represents the `ApolloMigrator` entity.
 pub struct ApolloMigrator;
 
 #[async_trait::async_trait]
@@ -91,6 +93,7 @@ impl MigratorTrait for ApolloMigrator {
 const APOLLO_MIGRATION_LOCK_NAME: &str = "apollo_migration";
 const APOLLO_MIGRATION_LOCK_KEY: i64 = 0x6170_6f6c_6c6f_4d49u64 as i64;
 
+/// Performs the `run_apollo_migrations_with_lock` operation.
 pub async fn run_apollo_migrations_with_lock(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<(), sea_orm::DbErr> {

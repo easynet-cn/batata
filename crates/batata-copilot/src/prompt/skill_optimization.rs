@@ -1,3 +1,5 @@
+//! System prompt for skill optimization.
+
 /// Skill optimization system prompt — matches Nacos SkillOptimizationPrompt.SYSTEM_PROMPT
 pub const SYSTEM_PROMPT: &str = "\
 你是一个专业的 Agent Skill 优化专家，擅长分析和优化 Agent Skill 的结构和内容。

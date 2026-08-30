@@ -451,6 +451,7 @@ async fn connect_authorize_persistent(
     .await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/connect")
         .service(get_ca_roots)

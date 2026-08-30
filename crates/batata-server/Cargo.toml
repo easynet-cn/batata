@@ -8,13 +8,10 @@ repository.workspace = true
 description = "Batata - Nacos-compatible service discovery and configuration management server"
 
 [features]
-default = ["consul", "apollo", "mesh", "ai", "cloud"]
+default = ["consul", "apollo"]
 consul = ["dep:batata-plugin-consul"]
 apollo = ["dep:batata-plugin-apollo"]
-mesh = ["dep:batata-mesh"]
-ai = ["dep:batata-ai", "dep:batata-copilot"]
-cloud = ["dep:batata-plugin-cloud"]
-full = ["consul", "apollo", "mesh", "ai", "cloud"]
+full = ["consul", "apollo"]
 
 [lib]
 name = "batata_server"
@@ -40,13 +37,15 @@ batata-server-common = { workspace = true }
 batata-plugin = { workspace = true }
 batata-maintainer-client = { workspace = true }
 
+# Internal crates (always compiled in)
+batata-ai = { workspace = true }
+batata-copilot = { workspace = true }
+batata-plugin-cloud = { workspace = true }
+batata-mesh = { workspace = true }
+
 # Optional internal crates (gated by feature flags)
-batata-ai = { workspace = true, optional = true }
-batata-copilot = { workspace = true, optional = true }
 batata-plugin-consul = { workspace = true, optional = true }
 batata-plugin-apollo = { workspace = true, optional = true }
-batata-plugin-cloud = { workspace = true, optional = true }
-batata-mesh = { workspace = true, optional = true }
 
 # Web framework
 actix-web = { workspace = true }

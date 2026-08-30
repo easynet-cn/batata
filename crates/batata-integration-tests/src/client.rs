@@ -43,9 +43,13 @@ impl<T> NacosResponse<T> {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
+    /// Access token returned after successful login.
     pub access_token: String,
+    /// Token time-to-live in seconds.
     pub token_ttl: i64,
+    /// Whether the logged-in user is a global admin.
     pub global_admin: bool,
+    /// Username of the logged-in user.
     pub username: String,
 }
 
@@ -502,9 +506,19 @@ pub enum TestClientError {
     /// Empty response data
     EmptyResponse,
     /// API returned an error
-    ApiError { code: i32, message: String },
+    ApiError {
+        /// Error code returned by the API.
+        code: i32,
+        /// Error message returned by the API.
+        message: String,
+    },
     /// HTTP error with status code
-    HttpError { status: u16, body: String },
+    HttpError {
+        /// HTTP status code.
+        status: u16,
+        /// Response body.
+        body: String,
+    },
 }
 
 impl std::fmt::Display for TestClientError {

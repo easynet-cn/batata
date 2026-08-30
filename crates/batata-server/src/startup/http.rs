@@ -261,26 +261,42 @@ pub fn mcp_registry_server(
 /// AI services for MCP and A2A APIs.
 #[derive(Clone)]
 pub struct AIServices {
+    /// `mcp_registry` field.
     pub mcp_registry: Arc<McpServerRegistry>,
+    /// `agent_registry` field.
     pub agent_registry: Arc<AgentRegistry>,
+    /// `mcp_service` field.
     pub mcp_service: Option<Arc<dyn batata_ai::McpServerService>>,
+    /// `a2a_service` field.
     pub a2a_service: Option<Arc<dyn batata_ai::A2aAgentService>>,
+    /// `endpoint_service` field.
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
+    /// `mcp_index` field.
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
+    /// `prompt_service` field.
     pub prompt_service: Option<Arc<batata_ai::PromptOperationService>>,
+    /// `skill_service` field.
     pub skill_service: Option<Arc<dyn batata_ai::SkillService>>,
+    /// `agentspec_service` field.
     pub agentspec_service: Option<Arc<dyn batata_ai::AgentSpecService>>,
+    /// `pipeline_service` field.
     pub pipeline_service: Option<Arc<dyn batata_ai::PipelineService>>,
+    /// `copilot_agent_manager` field.
     pub copilot_agent_manager: Option<Arc<batata_copilot::CopilotAgentManager>>,
+    /// `copilot_services` field.
     pub copilot_services: Option<CopilotServices>,
 }
 
 /// Copilot service bundle (4 services)
 #[derive(Clone)]
 pub struct CopilotServices {
+    /// `skill_generation` field.
     pub skill_generation: Arc<batata_copilot::service::SkillGenerationService>,
+    /// `skill_optimization` field.
     pub skill_optimization: Arc<batata_copilot::service::SkillOptimizationService>,
+    /// `prompt_optimization` field.
     pub prompt_optimization: Arc<batata_copilot::service::PromptOptimizationService>,
+    /// `prompt_debug` field.
     pub prompt_debug: Arc<batata_copilot::service::PromptDebugService>,
 }
 
@@ -392,7 +408,9 @@ impl Default for AIServices {
 /// Cloud services for Prometheus SD and K8s integration.
 #[derive(Clone)]
 pub struct CloudServices {
+    /// `prometheus_sd` field.
     pub prometheus_sd: Arc<PrometheusServiceDiscovery>,
+    /// `k8s_sync` field.
     pub k8s_sync: Arc<K8sServiceSync>,
 }
 
@@ -654,5 +672,6 @@ pub async fn serve_ui(req: HttpRequest, ui: web::Data<UiState>) -> HttpResponse 
 /// UI serving state shared by the SPA fallback handler.
 #[derive(Clone)]
 pub struct UiState {
+    /// `dir` field.
     pub dir: String,
 }

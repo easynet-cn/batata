@@ -15,19 +15,27 @@ use batata_server_common::{
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Query parameters for listing audit log entries.
 pub struct AuditListQuery {
+    /// Page number (1-based).
     #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
+    /// Page size.
     #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
+    /// Optional operation type filter (e.g. `CREATE`, `UPDATE`, `DELETE`).
     #[serde(default, alias = "operationType")]
     pub operation_type: Option<String>,
+    /// Optional operator (user) filter.
     #[serde(default)]
     pub operator: Option<String>,
+    /// Optional resource filter.
     #[serde(default)]
     pub resource: Option<String>,
+    /// Optional start time filter (datetime string or epoch millis).
     #[serde(default, alias = "startTime")]
     pub start_time: Option<String>,
+    /// Optional end time filter (datetime string or epoch millis).
     #[serde(default, alias = "endTime")]
     pub end_time: Option<String>,
 }
@@ -41,24 +49,39 @@ fn default_page_size() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// A single audit log entry describing an operation.
 pub struct AuditLogEntry {
+    /// Unique identifier of the audit log entry.
     pub id: i64,
+    /// Human-readable operation type (e.g. `CREATE`, `UPDATE`, `DELETE`).
     pub operation_type: String,
+    /// Type of the affected resource (e.g. `config`).
     pub resource_type: String,
+    /// Name of the affected resource (e.g. `group/dataId`).
     pub resource_name: String,
+    /// User that performed the operation.
     pub operator: String,
+    /// IP address of the operator.
     pub operator_ip: String,
+    /// Outcome of the operation (e.g. `SUCCESS`).
     pub result: String,
+    /// Human-readable detail describing the operation.
     pub detail: String,
+    /// Creation time of the entry, formatted as `YYYY-MM-DD HH:MM:SS`.
     pub created_time: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Aggregate statistics over audit log entries.
 pub struct AuditStats {
+    /// Total number of recorded operations.
     pub total_operations: u64,
+    /// Number of operations performed today.
     pub today_operations: u64,
+    /// Number of configuration change operations.
     pub config_changes: u64,
+    /// Number of authentication change operations.
     pub auth_changes: u64,
 }
 

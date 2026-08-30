@@ -12,11 +12,20 @@ use async_trait::async_trait;
 /// Validation error for configuration
 #[derive(Debug, Clone)]
 pub struct ValidationError {
+    /// `message` field.
     pub message: String,
+    /// `field` field.
     pub field: Option<String>,
 }
 
 impl ValidationError {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `message`: `message : impl Into < String > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -24,6 +33,13 @@ impl ValidationError {
         }
     }
     
+    /// `with_field` function.
+    ///
+    /// # Arguments
+    /// - `field`: `field : impl Into < String > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn with_field(mut self, field: impl Into<String>) -> Self {
         self.field = Some(field.into());
         self
@@ -104,6 +120,14 @@ pub trait ConfigBuilderTrait: Send + Sync {
 /// Persistence builder trait
 #[async_trait]
 pub trait PersistenceBuilderTrait: Send + Sync {
+    /// `initialize` function.
+    ///
+    /// # Arguments
+    /// - `config`: `config : & Configuration . ty`.
+    /// - `plugin_cf_names`: `plugin_cf_names : & [String] . ty`.
+    ///
+    /// # Returns
+    /// `InitResult < PersistenceContext >`.
     async fn initialize(
         &self,
         config: &Configuration,
@@ -114,6 +138,13 @@ pub trait PersistenceBuilderTrait: Send + Sync {
 /// Service builder trait
 #[async_trait]
 pub trait ServiceBuilderTrait: Send + Sync {
+    /// `build` function.
+    ///
+    /// # Arguments
+    /// - `ctx`: `ctx : & crate :: context :: AppContext . ty`.
+    ///
+    /// # Returns
+    /// `InitResult < () >`.
     async fn build(&self, ctx: &crate::context::AppContext) -> InitResult<()>;
 }
 
@@ -124,17 +155,29 @@ pub trait ServiceBuilderTrait: Send + Sync {
 /// Server kind enumeration
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ServerKind {
+    /// `HttpMain` variant.
     HttpMain,
+    /// `HttpConsole` variant.
     HttpConsole,
+    /// `GrpcSdk` variant.
     GrpcSdk,
+    /// `GrpcCluster` variant.
     GrpcCluster,
+    /// `GrpcRaft` variant.
     GrpcRaft,
+    /// `Xds` variant.
     Xds,
+    /// `McpRegistry` variant.
     McpRegistry,
+    /// `Plugin` variant.
     Plugin(String),
 }
 
 impl ServerKind {
+    /// `as_str` function.
+    ///
+    /// # Returns
+    /// `std :: borrow :: Cow < 'static , str >`.
     pub fn as_str(&self) -> std::borrow::Cow<'static, str> {
         match self {
             ServerKind::HttpMain => "HttpMain".into(),
@@ -158,15 +201,25 @@ impl std::fmt::Display for ServerKind {
 /// Server health status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerHealth {
+    /// `Starting` variant.
     Starting,
+    /// `Running` variant.
     Running,
+    /// `Draining` variant.
     Draining,
+    /// `Stopping` variant.
     Stopping,
+    /// `Stopped` variant.
     Stopped,
+    /// `Failed` variant.
     Failed,
 }
 
 impl ServerHealth {
+    /// `as_str` function.
+    ///
+    /// # Returns
+    /// `& 'static str`.
     pub fn as_str(&self) -> &'static str {
         match self {
             ServerHealth::Starting => "STARTING",
@@ -188,12 +241,23 @@ impl std::fmt::Display for ServerHealth {
 /// Server handle for lifecycle management
 #[derive(Clone)]
 pub struct ServerHandle {
+    /// `kind` field.
     pub kind: ServerKind,
+    /// `name` field.
     pub name: String,
+    /// `shutdown_tx` field.
     pub shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl ServerHandle {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `kind`: `kind : ServerKind . ty`.
+    /// - `name`: `name : impl Into < String > . ty`.
+    ///
+    /// # Returns
+    /// `(Self , tokio :: sync :: watch :: Receiver < bool >)`.
     pub fn new(kind: ServerKind, name: impl Into<String>) -> (Self, tokio::sync::watch::Receiver<bool>) {
         let (tx, rx) = tokio::sync::watch::channel(false);
         (
@@ -206,6 +270,7 @@ impl ServerHandle {
         )
     }
     
+    /// `shutdown` function.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
     }
@@ -273,4 +338,5 @@ impl<T: GracefulShutdownable + ?Sized> GracefulShutdownable for Arc<T> {
 // =============================================================================
 
 use crate::model::common::Configuration;
+/// Re-exported item.
 pub use crate::startup::persistence::PersistenceContext;

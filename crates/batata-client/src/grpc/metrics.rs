@@ -38,10 +38,12 @@ pub struct ClientMetrics {
 }
 
 impl ClientMetrics {
+    /// Create a new metrics collector with all counters at zero.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Record a successful request.
     pub fn record_request_success(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_success.fetch_add(1, Ordering::Relaxed);
@@ -49,19 +51,23 @@ impl ClientMetrics {
             .store(current_millis(), Ordering::Relaxed);
     }
 
+    /// Record a failed request.
     pub fn record_request_failure(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_failed.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record an auth retry (403 relogin).
     pub fn record_auth_retry(&self) {
         self.auth_retries.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a token refresh.
     pub fn record_token_refresh(&self) {
         self.token_refreshes.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a reconnection attempt, marking success when applicable.
     pub fn record_reconnect(&self, success: bool) {
         self.reconnects_total.fetch_add(1, Ordering::Relaxed);
         if success {
@@ -71,10 +77,12 @@ impl ClientMetrics {
         }
     }
 
+    /// Record a received server push message.
     pub fn record_push_received(&self) {
         self.push_received.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a dispatched push handler.
     pub fn record_push_dispatched(&self) {
         self.push_dispatched.fetch_add(1, Ordering::Relaxed);
     }
@@ -101,17 +109,29 @@ impl ClientMetrics {
 /// Immutable snapshot of client metrics for reporting.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ClientMetricsSnapshot {
+    /// Total number of requests sent.
     pub requests_total: u64,
+    /// Total number of successful requests.
     pub requests_success: u64,
+    /// Total number of failed requests.
     pub requests_failed: u64,
+    /// Total number of auth retries (403 relogin).
     pub auth_retries: u64,
+    /// Total number of token refreshes.
     pub token_refreshes: u64,
+    /// Total number of reconnection attempts.
     pub reconnects_total: u64,
+    /// Total number of successful reconnections.
     pub reconnects_success: u64,
+    /// Total number of server push messages received.
     pub push_received: u64,
+    /// Total number of push handler dispatches.
     pub push_dispatched: u64,
+    /// Current connection state (ConnectionState as u8).
     pub current_state: u8,
+    /// Timestamp of last successful request (millis since epoch).
     pub last_request_time: u64,
+    /// Timestamp of last connection established (millis since epoch).
     pub connected_since: u64,
 }
 

@@ -26,6 +26,7 @@ pub struct ConfigGetParam {
     pub tag: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl ConfigGetParam {
     impl_or_default!(
         pub,
@@ -81,6 +82,7 @@ pub struct ConfigPublishParam {
     pub encrypted_data_key: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl ConfigPublishParam {
     impl_or_default!(
         pub,
@@ -107,6 +109,7 @@ pub struct ConfigDeleteParam {
     pub tag: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl ConfigDeleteParam {
     impl_or_default!(
         pub,
@@ -182,6 +185,7 @@ pub struct ConfigSearchDetailParam {
     pub page_size: u64,
 }
 
+#[allow(missing_docs)]
 impl ConfigSearchDetailParam {
     impl_or_default!(
         pub,
@@ -219,6 +223,7 @@ fn default_search() -> String {
     "blur".to_string()
 }
 
+#[allow(missing_docs)]
 impl HistoryListParam {
     impl_or_default!(
         pub,
@@ -244,6 +249,7 @@ pub struct HistoryDetailParam {
     pub namespace_id: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl HistoryDetailParam {
     impl_or_default!(
         pub,
@@ -269,6 +275,7 @@ pub struct HistoryPreviousParam {
     pub namespace_id: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl HistoryPreviousParam {
     impl_or_default!(
         pub,
@@ -287,6 +294,7 @@ pub struct NamespaceConfigsParam {
     pub namespace_id: Option<String>,
 }
 
+#[allow(missing_docs)]
 impl NamespaceConfigsParam {
     impl_or_default!(
         pub,

@@ -1,5 +1,6 @@
-// Local data source implementation
-// Provides direct PersistenceService access for console operations in non-remote modes.
+//! Local data source implementation.
+//!
+//! Provides direct `PersistenceService` access for console operations in non-remote modes.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -49,6 +50,7 @@ pub struct LocalDataSource {
 }
 
 impl LocalDataSource {
+    /// Create a new [`LocalDataSource`] from the required services and configuration.
     pub fn new(
         persistence: Arc<dyn PersistenceService>,
         cluster_manager: Arc<dyn ClusterManager>,

@@ -1,4 +1,4 @@
-// Service detail and related model types
+//! Service detail and related model types
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,13 +9,21 @@ use super::naming::Instance;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServiceDetailInfo {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `cluster_map` field.
     pub cluster_map: HashMap<String, ClusterInfo>,
+    /// The `metadata` field.
     pub metadata: HashMap<String, String>,
+    /// The `protect_threshold` field.
     pub protect_threshold: f32,
+    /// The `selector` field.
     pub selector: Option<serde_json::Value>,
+    /// The `ephemeral` field.
     pub ephemeral: Option<bool>,
 }
 
@@ -23,12 +31,18 @@ pub struct ServiceDetailInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClusterInfo {
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `health_checker` field.
     pub health_checker: Option<serde_json::Value>,
+    /// The `healthy_check_port` field.
     pub healthy_check_port: i32,
+    /// The `use_instance_port_for_check` field.
     pub use_instance_port_for_check: bool,
+    /// The `metadata` field.
     pub metadata: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `hosts` field.
     pub hosts: Option<Vec<Instance>>,
 }
 
@@ -36,12 +50,19 @@ pub struct ClusterInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServiceView {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `cluster_count` field.
     pub cluster_count: i32,
+    /// The `ip_count` field.
     pub ip_count: i32,
+    /// The `healthy_instance_count` field.
     pub healthy_instance_count: i32,
+    /// The `trigger_flag` field.
     pub trigger_flag: bool,
 }
 
@@ -49,12 +70,19 @@ pub struct ServiceView {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SubscriberInfo {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `agent` field.
     pub agent: String,
+    /// The `app_name` field.
     pub app_name: String,
 }
 
@@ -63,22 +91,31 @@ pub struct SubscriberInfo {
 #[serde(rename_all = "camelCase", default)]
 pub struct MetricsInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `status` field.
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `service_count` field.
     pub service_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `instance_count` field.
     pub instance_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `subscribe_count` field.
     pub subscribe_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `client_count` field.
     pub client_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `connection_based_client_count` field.
     pub connection_based_client_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `ephemeral_ip_port_client_count` field.
     pub ephemeral_ip_port_client_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `persistent_ip_port_client_count` field.
     pub persistent_ip_port_client_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `responsible_client_count` field.
     pub responsible_client_count: Option<i32>,
 }
 
@@ -86,6 +123,7 @@ pub struct MetricsInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct InstanceMetadataBatchResult {
+    /// The `updated` field.
     pub updated: Vec<String>,
 }
 

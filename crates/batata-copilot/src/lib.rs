@@ -8,6 +8,8 @@
 //! - Console HTTP API endpoints
 //! - Persistent configuration storage
 
+#![warn(missing_docs)]
+
 pub mod agent;
 pub mod api;
 pub mod config;

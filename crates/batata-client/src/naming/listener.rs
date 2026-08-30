@@ -7,9 +7,13 @@ use super::instances_diff::InstancesDiff;
 /// Event delivered to naming listeners when a service's instance list changes.
 #[derive(Clone, Debug)]
 pub struct NamingEvent {
+    /// Name of the service that changed.
     pub service_name: String,
+    /// Group of the service.
     pub group_name: String,
+    /// Cluster filter for the subscription (empty = all clusters).
     pub clusters: String,
+    /// Current full instance list for the service.
     pub instances: Vec<Instance>,
     /// Diff between old and new instances (None on first subscription)
     pub diff: Option<InstancesDiff>,
@@ -35,6 +39,7 @@ impl<F> FnEventListener<F>
 where
     F: Fn(NamingEvent) + Send + Sync + 'static,
 {
+    /// Create a listener that invokes the given closure on each event.
     pub fn new(f: F) -> Self {
         Self { f }
     }

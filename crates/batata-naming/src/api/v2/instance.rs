@@ -1177,18 +1177,25 @@ struct BeatInfo {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceBeatParam {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` value.
     pub namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
+    /// The `group_name` value.
     pub group_name: Option<String>,
     #[serde(alias = "serviceName")]
+    /// The `service_name` value.
     pub service_name: String,
     #[serde(default)]
+    /// The `beat` value.
     pub beat: Option<String>,
     #[serde(default)]
+    /// The `ip` value.
     pub ip: Option<String>,
     #[serde(default)]
+    /// The `port` value.
     pub port: Option<i32>,
     #[serde(default, alias = "clusterName")]
+    /// The `cluster_name` value.
     pub cluster_name: Option<String>,
 }
 
@@ -1202,7 +1209,10 @@ impl InstanceBeatParam {
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BeatResponse {
+    /// The `client_beat_interval` value.
     pub client_beat_interval: i64,
+    /// The `light_beat_enabled` value.
     pub light_beat_enabled: bool,
+    /// The `code` value.
     pub code: i32,
 }

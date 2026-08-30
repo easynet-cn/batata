@@ -8,8 +8,11 @@ use std::collections::HashMap;
 /// Type of property change
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyChangeType {
+    /// The property was added in the new content.
     Added,
+    /// The property value was changed between old and new content.
     Modified,
+    /// The property was removed in the new content.
     Deleted,
 }
 
@@ -26,18 +29,26 @@ impl std::fmt::Display for PropertyChangeType {
 /// A single config change item
 #[derive(Debug, Clone)]
 pub struct ConfigChangeItem {
+    /// Property key that changed.
     pub key: String,
+    /// Value in the old content, if the property existed before.
     pub old_value: Option<String>,
+    /// Value in the new content, if the property exists after.
     pub new_value: Option<String>,
+    /// Type of change (added, modified, or deleted).
     pub change_type: PropertyChangeType,
 }
 
 /// Event carrying parsed config changes
 #[derive(Debug, Clone)]
 pub struct ConfigChangeEvent {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Config tenant/namespace ID.
     pub tenant: String,
+    /// Parsed change items keyed by property name.
     pub items: HashMap<String, ConfigChangeItem>,
 }
 
@@ -362,6 +373,7 @@ pub struct ConfigChangeHandler {
 }
 
 impl ConfigChangeHandler {
+    /// Create a new handler with the default set of format parsers.
     pub fn new() -> Self {
         Self {
             parsers: vec![

@@ -1,7 +1,12 @@
+//! Module `api::v3::admin::ai::route` of the `batata-server` crate.
 use actix_web::{Scope, web};
 
 use super::{a2a, mcp};
 
+/// `routes` function.
+///
+/// # Returns
+/// `Scope`.
 pub fn routes() -> Scope {
     web::scope("/ai")
         .service(mcp::routes())

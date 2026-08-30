@@ -1,3 +1,4 @@
+//! Health-check and service-instance queries.
 use crate::client::ConsulClient;
 use crate::error::Result;
 use crate::model::{HealthCheck, QueryMeta, QueryOptions, ServiceEntry};

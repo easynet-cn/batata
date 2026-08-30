@@ -1,5 +1,6 @@
-// RaftNode wrapper for managing Raft lifecycle
-// Provides a high-level API for interacting with the Raft consensus
+//! RaftNode wrapper for managing Raft lifecycle.
+//!
+//! Provides a high-level API for interacting with the Raft consensus.
 
 use crate::bincode;
 use std::collections::{BTreeMap, BTreeSet};
@@ -900,6 +901,7 @@ pub struct RaftNodeBuilder {
 }
 
 impl RaftNodeBuilder {
+    /// Create a new builder with no node ID, address, or custom configuration set.
     pub fn new() -> Self {
         Self {
             node_id: None,
@@ -908,21 +910,25 @@ impl RaftNodeBuilder {
         }
     }
 
+    /// Set the node ID for the node being built.
     pub fn node_id(mut self, id: NodeId) -> Self {
         self.node_id = Some(id);
         self
     }
 
+    /// Set the node's Raft communication address.
     pub fn addr(mut self, addr: impl Into<String>) -> Self {
         self.addr = Some(addr.into());
         self
     }
 
+    /// Set the Raft configuration.
     pub fn config(mut self, config: RaftConfig) -> Self {
         self.config = config;
         self
     }
 
+    /// Build the [`RaftNode`], returning an error if the node ID or address is missing.
     pub async fn build(self) -> Result<RaftNode, Box<dyn std::error::Error + Send + Sync>> {
         let node_id = self.node_id.ok_or("Node ID is required")?;
         let addr = self.addr.ok_or("Address is required")?;

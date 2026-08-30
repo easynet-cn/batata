@@ -1,3 +1,4 @@
+//! Module `error` of the `batata-server` crate.
 // Error handling and response types for Batata application
 // Re-exports from batata_common with actix-web specific implementations
 
@@ -6,6 +7,7 @@ use std::fmt::{Display, Formatter};
 use actix_web::HttpResponse;
 
 // Re-export error types and codes from batata_common
+/// Re-exported item.
 pub use batata_common::error::{
     ACCESS_DENIED, API_DEPRECATED, API_FUNCTION_DISABLED, CONFIG_GRAY_NAME_UNRECOGNIZED_ERROR,
     CONFIG_GRAY_OVER_MAX_VERSION_COUNT, CONFIG_GRAY_RULE_FORMAT_INVALID,
@@ -23,6 +25,7 @@ pub use batata_common::error::{
     SERVICE_DELETE_FAILURE, SERVICE_METADATA_ERROR, SERVICE_NAME_ERROR, SERVICE_NOT_EXIST, SUCCESS,
     TENANT_PARAM_ERROR, WEIGHT_ERROR,
 };
+/// Re-exported item.
 pub use batata_common::error::{BatataError, ErrorCode};
 
 use crate::model::common;
@@ -30,6 +33,7 @@ use crate::model::common;
 // Local wrapper for application errors to implement actix-web error handling
 // (Cannot impl foreign trait for foreign type due to orphan rules)
 #[derive(Debug)]
+/// `AppError` struct.
 pub struct AppError {
     inner: anyhow::Error,
 }
@@ -47,10 +51,18 @@ impl From<anyhow::Error> for AppError {
 }
 
 impl AppError {
+    /// `inner` function.
+    ///
+    /// # Returns
+    /// `& anyhow :: Error`.
     pub fn inner(&self) -> &anyhow::Error {
         &self.inner
     }
 
+    /// `downcast_ref` function.
+    ///
+    /// # Returns
+    /// `Option < & E >`.
     pub fn downcast_ref<E: std::error::Error + Send + Sync + 'static>(&self) -> Option<&E> {
         self.inner.downcast_ref::<E>()
     }

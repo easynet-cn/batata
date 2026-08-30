@@ -6,6 +6,8 @@
 //! - User, Role, Permission services
 //! - Auth middleware
 
+#![warn(missing_docs)]
+
 pub mod model;
 pub mod plugin;
 pub mod service;

@@ -5,14 +5,23 @@
 //! - Persistence trait abstractions for unified storage
 //! - Domain model types for persistence operations
 
+#![warn(missing_docs)]
+
+/// Bincode (de)serialization helpers re-exported from `batata_common`.
 pub mod bincode {
     pub use batata_common::bincode::{deserialize, serialize};
 }
+/// Distributed (Raft cluster) persistence backend.
 pub mod distributed;
+/// Standalone embedded (RocksDB) persistence backend.
 pub mod embedded;
+/// `SeaORM` entity definitions.
 pub mod entity;
+/// Storage-agnostic domain model types returned by the persistence traits.
 pub mod model;
+/// External database (MySQL/PostgreSQL via SeaORM) persistence backend.
 pub mod sql;
+/// Persistence trait abstractions for the unified storage layer.
 pub mod traits;
 
 // Re-export sea-orm for convenience

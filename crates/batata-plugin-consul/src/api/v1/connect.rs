@@ -176,6 +176,7 @@ async fn list_imported_services_persistent_handler(
     .await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/discovery-chain")
         .service(get_discovery_chain)
@@ -184,12 +185,14 @@ pub fn routes() -> Scope {
         .service(post_discovery_chain_persistent)
 }
 
+/// The `exported_services_resource` function.
 pub fn exported_services_resource() -> actix_web::Resource {
     web::resource("/exported-services")
         .route(web::get().to(list_exported_services_handler))
         .route(web::get().to(list_exported_services_persistent_handler))
 }
 
+/// The `imported_services_resource` function.
 pub fn imported_services_resource() -> actix_web::Resource {
     web::resource("/imported-services")
         .route(web::get().to(list_imported_services_handler))

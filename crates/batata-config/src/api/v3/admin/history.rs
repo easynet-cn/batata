@@ -290,6 +290,7 @@ async fn get_configs_by_namespace(
     }
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/history")
         .service(list_history)

@@ -5,30 +5,49 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "config_info")]
+/// ORM model for a row in the `config_info` table.
 pub struct Model {
+    /// Primary key.
     #[sea_orm(primary_key)]
     pub id: i64,
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group_id: Option<String>,
+    /// Config content.
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     pub content: Option<String>,
+    /// MD5 hash of the content.
     pub md5: Option<String>,
+    /// Creation timestamp.
     pub gmt_create: Option<DateTime>,
+    /// Last modification timestamp.
     pub gmt_modified: Option<DateTime>,
+    /// User who created/modified the config.
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,
+    /// Source IP of the last modification.
     pub src_ip: Option<String>,
+    /// Owning application name.
     pub app_name: Option<String>,
+    /// Tenant ID (namespace).
     pub tenant_id: Option<String>,
+    /// Description.
     pub c_desc: Option<String>,
+    /// Usage notes.
     pub c_use: Option<String>,
+    /// Effect description.
     pub effect: Option<String>,
+    /// Config type (e.g. `properties`, `yaml`).
     pub r#type: Option<String>,
+    /// Schema.
     #[sea_orm(column_type = "Text", nullable)]
     pub c_schema: Option<String>,
+    /// Encrypted data key.
     pub encrypted_data_key: Option<String>,
 }
 
+/// Relation definitions for the `config_info` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

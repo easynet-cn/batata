@@ -12,12 +12,14 @@ use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::ReleasePersistence;
 use super::id_generator::IdGenerator;
 
+/// Represents the `ReleaseEmbedded` entity.
 pub struct ReleaseEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl ReleaseEmbedded {
+    /// Creates a new `ReleaseEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

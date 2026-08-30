@@ -23,6 +23,7 @@ pub struct ConfigChangeNotifier {
 }
 
 impl ConfigChangeNotifier {
+    /// Creates a new, empty `ConfigChangeNotifier`.
     pub fn new() -> Self {
         Self {
             notifiers: DashMap::new(),

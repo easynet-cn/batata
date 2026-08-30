@@ -1,4 +1,4 @@
-// Common model types
+//! Common model types
 
 use serde::Deserialize;
 

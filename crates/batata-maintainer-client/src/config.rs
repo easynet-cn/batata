@@ -1,4 +1,4 @@
-// Configuration for MaintainerClient
+//! Configuration for MaintainerClient
 
 /// Configuration for the maintainer HTTP client
 #[derive(Clone, Debug)]

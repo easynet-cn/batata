@@ -196,6 +196,7 @@ pub struct DeltaClientState {
 }
 
 impl DeltaClientState {
+    /// Create a new, empty delta client state.
     pub fn new() -> Self {
         Self::default()
     }

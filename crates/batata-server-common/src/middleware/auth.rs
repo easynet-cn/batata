@@ -25,7 +25,7 @@ const ACCESS_TOKEN: &str = "accessToken";
 const AUTHORIZATION_HEADER: &str = "Authorization";
 const BEARER_PREFIX: &str = "Bearer ";
 
-// Authentication middleware transformer
+/// Authentication middleware transformer.
 pub struct Authentication;
 
 impl<S, B> Transform<S, ServiceRequest> for Authentication
@@ -45,6 +45,7 @@ where
     }
 }
 
+/// Middleware that authenticates incoming requests before forwarding them.
 pub struct AuthenticationMiddleware<S> {
     service: S,
 }

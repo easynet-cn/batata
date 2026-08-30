@@ -23,9 +23,13 @@ pub const DEFAULT_REDO_DELAY_MS: u64 = 500;
 /// - `unregistering`: a deregistration is in progress
 /// - `expected_registered`: the client expects this instance to be registered
 pub struct InstanceRedoData {
+    /// The namespace of the registered instance.
     pub namespace: String,
+    /// The group name of the registered instance.
     pub group_name: String,
+    /// The service name of the registered instance.
     pub service_name: String,
+    /// The instance data to (re-)register.
     pub instance: Instance,
     /// Whether the server has confirmed registration
     registered: AtomicBool,
@@ -36,6 +40,9 @@ pub struct InstanceRedoData {
 }
 
 impl InstanceRedoData {
+    /// Create redo data for the given instance.
+    ///
+    /// The instance is marked as expected to be registered initially.
     pub fn new(
         namespace: String,
         group_name: String,
@@ -67,19 +74,25 @@ impl InstanceRedoData {
         self.registered.load(Ordering::Relaxed) && self.unregistering.load(Ordering::Relaxed)
     }
 
+    /// Set whether the server has confirmed this instance registration.
     pub fn set_registered(&self, registered: bool) {
         self.registered.store(registered, Ordering::Relaxed);
     }
 
+    /// Whether the server has confirmed this instance registration.
     pub fn is_registered(&self) -> bool {
         self.registered.load(Ordering::Relaxed)
     }
 
+    /// Mark this instance as pending deregistration.
+    ///
+    /// Clears the expected-registered flag so it will not be re-registered.
     pub fn set_unregistering(&self) {
         self.unregistering.store(true, Ordering::Relaxed);
         self.expected_registered.store(false, Ordering::Relaxed);
     }
 
+    /// Set whether the client expects this instance to remain registered.
     pub fn set_expected_registered(&self, expected: bool) {
         self.expected_registered.store(expected, Ordering::Relaxed);
     }
@@ -89,9 +102,13 @@ impl InstanceRedoData {
 ///
 /// Matches Nacos Java `SubscriberRedoData`.
 pub struct SubscriberRedoData {
+    /// The namespace of the subscription.
     pub namespace: String,
+    /// The group name of the subscription.
     pub group_name: String,
+    /// The service name of the subscription.
     pub service_name: String,
+    /// The cluster filter of the subscription.
     pub clusters: String,
     /// Whether the server has confirmed the subscription
     registered: AtomicBool,
@@ -100,6 +117,9 @@ pub struct SubscriberRedoData {
 }
 
 impl SubscriberRedoData {
+    /// Create redo data for the given subscription.
+    ///
+    /// The subscription is marked as expected to be active initially.
     pub fn new(
         namespace: String,
         group_name: String,
@@ -121,14 +141,17 @@ impl SubscriberRedoData {
         !self.registered.load(Ordering::Relaxed) && self.expected_registered.load(Ordering::Relaxed)
     }
 
+    /// Set whether the server has confirmed this subscription.
     pub fn set_registered(&self, registered: bool) {
         self.registered.store(registered, Ordering::Relaxed);
     }
 
+    /// Whether the server has confirmed this subscription.
     pub fn is_registered(&self) -> bool {
         self.registered.load(Ordering::Relaxed)
     }
 
+    /// Set whether the client expects this subscription to remain active.
     pub fn set_expected_registered(&self, expected: bool) {
         self.expected_registered.store(expected, Ordering::Relaxed);
     }
@@ -154,6 +177,7 @@ pub struct NamingGrpcRedoService {
 }
 
 impl NamingGrpcRedoService {
+    /// Create a redo service with the default redo delay.
     pub fn new() -> Self {
         Self {
             registered_instances: DashMap::new(),
@@ -164,6 +188,7 @@ impl NamingGrpcRedoService {
         }
     }
 
+    /// Create a redo service with a custom redo delay.
     pub fn with_delay(redo_delay: Duration) -> Self {
         Self {
             registered_instances: DashMap::new(),

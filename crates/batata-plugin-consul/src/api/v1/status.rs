@@ -31,6 +31,7 @@ async fn get_peers(
     crate::status::get_peers(req, acl_service, member_manager, dc_config).await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/status").service(get_leader).service(get_peers)
 }

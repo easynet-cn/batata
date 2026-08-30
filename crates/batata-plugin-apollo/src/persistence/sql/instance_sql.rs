@@ -7,11 +7,13 @@ use crate::entity::apollo_instance;
 use crate::persistence::shared::StoredInstance;
 use crate::persistence::traits::InstancePersistence;
 
+/// Represents the `InstanceSqlPersistence` entity.
 pub struct InstanceSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl InstanceSqlPersistence {
+    /// Creates a new `InstanceSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

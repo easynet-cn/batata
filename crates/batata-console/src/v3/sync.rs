@@ -11,51 +11,81 @@ use batata_server_common::model::AppState;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// A configuration sync target environment.
 pub struct SyncEnvironment {
+    /// Display name of the sync target environment.
     pub name: String,
+    /// Base URL of the target environment.
     pub url: String,
+    /// Status of the environment (e.g. `available`).
     pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for triggering a configuration sync to a target environment.
 pub struct SyncRequest {
+    /// Base URL of the target environment to sync to.
     pub target_url: String,
+    /// Optional namespace to scope the sync to.
     pub namespace_id: Option<String>,
+    /// Optional list of data IDs to sync.
     pub data_ids: Option<Vec<String>>,
+    /// Optional group to scope the sync to.
     pub group: Option<String>,
+    /// Conflict resolution policy (`overwrite`, `skip`, `abort`).
     pub policy: Option<String>, // "overwrite", "skip", "abort"
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Aggregate result of a configuration sync operation.
 pub struct SyncResult {
+    /// Total number of configs considered for sync.
     pub total: u32,
+    /// Number of configs successfully synced.
     pub synced: u32,
+    /// Number of configs skipped due to conflicts.
     pub skipped: u32,
+    /// Number of configs that failed to sync.
     pub failed: u32,
+    /// Per-config sync results.
     pub details: Vec<SyncItemResult>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Per-config result of a configuration sync operation.
 pub struct SyncItemResult {
+    /// Data ID of the synced config.
     pub data_id: String,
+    /// Group of the synced config.
     pub group: String,
+    /// Sync status (`synced`, `skipped`, `failed`).
     pub status: String, // "synced", "skipped", "failed"
+    /// Optional detail message for the sync result.
     pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// A historical record of a configuration sync operation.
 pub struct SyncHistoryEntry {
+    /// Unique identifier of the sync history entry.
     pub id: u64,
+    /// Base URL of the target environment.
     pub target_url: String,
+    /// Namespace the sync operated on.
     pub namespace_id: String,
+    /// Total number of configs considered for sync.
     pub total: u32,
+    /// Number of configs successfully synced.
     pub synced: u32,
+    /// Number of configs that failed to sync.
     pub failed: u32,
+    /// Operator that triggered the sync.
     pub operator: String,
+    /// Creation time of the sync record.
     pub created_time: String,
 }
 
@@ -235,6 +265,7 @@ pub async fn get_sync_history() -> impl Responder {
     }))
 }
 
+/// Register the config sync routes under `/sync`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/sync")
         .service(get_sync_environments)

@@ -20,6 +20,7 @@ pub struct McpServerOperationService {
 }
 
 impl McpServerOperationService {
+    /// Creates a new `McpServerOperationService` with the given persistence and index.
     pub fn new(persistence: Arc<dyn PersistenceService>, index: Arc<McpServerIndex>) -> Self {
         Self { persistence, index }
     }

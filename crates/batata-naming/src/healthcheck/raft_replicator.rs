@@ -42,6 +42,7 @@ pub struct RaftHealthReplicator {
 }
 
 impl RaftHealthReplicator {
+    /// Creates a new instance.
     pub fn new(raft: Arc<RaftNode>) -> Self {
         Self { raft }
     }
@@ -106,6 +107,7 @@ pub struct RegistryApplyHook {
 }
 
 impl RegistryApplyHook {
+    /// Creates a new instance.
     pub fn new(registry: Arc<InstanceCheckRegistry>) -> Self {
         Self { registry }
     }

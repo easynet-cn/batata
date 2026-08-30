@@ -12,33 +12,40 @@ pub struct EncryptionPluginRegistry {
 }
 
 impl EncryptionPluginRegistry {
+    /// Create a new, empty encryption plugin registry.
     pub fn new() -> Self {
         Self {
             plugins: DashMap::new(),
         }
     }
 
+    /// Register an encryption plugin, keyed by its `name()`. Replaces any existing entry.
     pub fn register(&self, plugin: Arc<dyn EncryptionPlugin>) {
         let name = plugin.name().to_string();
         self.plugins.insert(name, plugin);
     }
 
+    /// Remove the plugin with the given name, returning `true` if one was removed.
     pub fn unregister(&self, name: &str) -> bool {
         self.plugins.remove(name).is_some()
     }
 
+    /// Find a registered plugin by name.
     pub fn find(&self, name: &str) -> Option<Arc<dyn EncryptionPlugin>> {
         self.plugins.get(name).map(|e| e.value().clone())
     }
 
+    /// Return the number of registered plugins.
     pub fn len(&self) -> usize {
         self.plugins.len()
     }
 
+    /// Return `true` if no plugins are registered.
     pub fn is_empty(&self) -> bool {
         self.plugins.is_empty()
     }
 
+    /// Return the names of all registered plugins.
     pub fn names(&self) -> Vec<String> {
         let mut out = Vec::with_capacity(self.plugins.len());
         for entry in self.plugins.iter() {

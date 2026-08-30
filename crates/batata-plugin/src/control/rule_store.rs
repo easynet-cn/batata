@@ -51,6 +51,7 @@ pub struct MemoryRuleStore {
 }
 
 impl MemoryRuleStore {
+    /// Create a new, empty in-memory rule store.
     pub fn new() -> Self {
         Self {
             rate_rules: DashMap::new(),
@@ -144,6 +145,7 @@ pub struct FileRuleStore {
 }
 
 impl FileRuleStore {
+    /// Create a new file-backed rule store persisting to `file_path`.
     pub fn new(file_path: impl Into<String>) -> Self {
         Self {
             file_path: file_path.into(),

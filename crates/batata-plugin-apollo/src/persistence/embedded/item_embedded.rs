@@ -13,12 +13,14 @@ use crate::persistence::shared::StoredItem;
 use crate::persistence::traits::ItemPersistence;
 use super::id_generator::IdGenerator;
 
+/// Represents the `ItemEmbedded` entity.
 pub struct ItemEmbedded {
     db: Arc<DB>,
     id_gen: Arc<IdGenerator>,
 }
 
 impl ItemEmbedded {
+    /// Creates a new `ItemEmbedded`.
     pub fn new(db: Arc<DB>, id_gen: Arc<IdGenerator>) -> Self {
         Self { db, id_gen }
     }

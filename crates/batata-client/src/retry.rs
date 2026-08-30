@@ -36,6 +36,7 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
+    /// Create a retry config with the given maximum attempts and defaults.
     pub fn new(max_retries: u32) -> Self {
         Self {
             max_retries,
@@ -43,21 +44,25 @@ impl RetryConfig {
         }
     }
 
+    /// Set the initial delay before the first retry.
     pub fn with_initial_delay(mut self, delay: Duration) -> Self {
         self.initial_delay = delay;
         self
     }
 
+    /// Set the maximum delay between retries.
     pub fn with_max_delay(mut self, delay: Duration) -> Self {
         self.max_delay = delay;
         self
     }
 
+    /// Set the backoff multiplier applied per attempt.
     pub fn with_multiplier(mut self, multiplier: f64) -> Self {
         self.multiplier = multiplier;
         self
     }
 
+    /// Disable random jitter in retry delays.
     pub fn without_jitter(mut self) -> Self {
         self.jitter = false;
         self

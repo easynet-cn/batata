@@ -38,6 +38,7 @@ pub struct DefaultCmdbPlugin {
 }
 
 impl DefaultCmdbPlugin {
+    /// Create a new CMDB plugin with the given configuration.
     pub fn new(config: CmdbConfig) -> Self {
         Self {
             config,

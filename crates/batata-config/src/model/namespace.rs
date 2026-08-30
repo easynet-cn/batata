@@ -17,12 +17,18 @@ pub const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Namespace {
+    /// The unique identifier of the namespace.
     pub namespace: String,
+    /// The display name of the namespace.
     pub namespace_show_name: String,
+    /// The description of the namespace.
     pub namespace_desc: String,
+    /// The maximum number of configs allowed in this namespace.
     pub quota: i32,
+    /// The current number of configs in this namespace.
     pub config_count: i64,
     #[serde(rename = "type")]
+    /// The namespace type (0 = public, 2 = custom).
     pub type_: i32,
 }
 
@@ -74,8 +80,11 @@ impl From<batata_persistence::NamespaceInfo> for Namespace {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NamespaceForm {
+    /// The namespace ID to create.
     pub namespace_id: String,
+    /// The display name of the namespace.
     pub namespace_name: String,
+    /// The description of the namespace.
     pub namespace_desc: String,
 }
 

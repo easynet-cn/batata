@@ -10,35 +10,59 @@ use serde::{Deserialize, Serialize};
 use batata_persistence::entity::{permissions, roles, users};
 
 // Auth configuration keys
+/// Config key enabling the auth subsystem globally.
 pub const AUTH_ENABLED_KEY: &str = "batata.core.auth.enabled";
+/// Config key enabling the console (UI) auth.
 pub const AUTH_CONSOLE_ENABLED_KEY: &str = "batata.core.auth.console.enabled";
+/// Config key enabling the admin API auth.
 pub const AUTH_ADMIN_ENABLED_KEY: &str = "batata.core.auth.admin.enabled";
+/// Config key selecting the active auth system type (e.g. "nacos", "ldap").
 pub const AUTH_SYSTEM_TYPE_KEY: &str = "batata.core.auth.system.type";
+/// Config property holding the server identity key.
 pub const AUTH_SERVER_IDENTITY_KEY_PROP: &str = "batata.core.auth.server.identity.key";
+/// Config property holding the server identity value.
 pub const AUTH_SERVER_IDENTITY_VALUE_PROP: &str = "batata.core.auth.server.identity.value";
 
+/// Role name granted global administrator privileges.
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
+/// HTTP header used to carry credentials (`Authorization`).
 pub const AUTHORIZATION_HEADER: &str = "Authorization";
+/// Prefix prepended to a JWT in the `Authorization` header.
 pub const TOKEN_PREFIX: &str = "Bearer ";
+/// Prefix for console-scoped resource names.
 pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
+/// Console endpoint used to update the current user's password.
 pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "console/user/password";
 
+/// Config key controlling the default JWT token lifetime, in seconds.
 pub const TOKEN_EXPIRE_SECONDS: &str = "batata.core.auth.plugin.default.token.expire.seconds";
+/// Default JWT token lifetime, in seconds (5 hours).
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
 
 // LDAP configuration keys
+/// Config key for the LDAP server URL.
 pub const AUTH_LDAP_URL: &str = "batata.core.auth.ldap.url";
+/// Config key for the LDAP base distinguished name.
 pub const AUTH_LDAP_BASE_DC: &str = "batata.core.auth.ldap.base_dc";
+/// Config key for the LDAP bind (admin) DN.
 pub const AUTH_LDAP_BIND_DN: &str = "batata.core.auth.ldap.bind_dn";
+/// Config key for the LDAP bind password.
 pub const AUTH_LDAP_PASSWORD: &str = "batata.core.auth.ldap.password";
-pub const AUTH_LADP_USER_DN_PATTERN: &str = "batata.core.auth.ldap.user_dn_pattern";
+/// Config key for the LDAP user DN pattern (e.g. `cn={0},dc=example,dc=org`).
+pub const AUTH_LDADP_USER_DN_PATTERN: &str = "batata.core.auth.ldap.user_dn_pattern";
+/// Config key for the LDAP user search filter prefix (e.g. `uid`).
 pub const AUTH_LDAP_FILTER_PREFIX: &str = "batata.core.auth.ldap.filter.prefix";
+/// Config key for the LDAP connection timeout, in milliseconds.
 pub const AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
+/// Config key toggling case-sensitive LDAP username comparison.
 pub const AUTH_LDAP_CASE_SENSITIVE: &str = "batata.core.auth.ldap.case.sensitive";
+/// Config key toggling whether to ignore LDAP partial result exceptions.
 pub const AUTH_LDAP_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
     "batata.core.auth.ldap.ignore.partial.result.exception";
 
+/// Maximum accepted password length, matching the bcrypt input limit.
 pub const MAX_PASSWORD_LENGTH: i32 = 72;
+/// Marker value indicating only an identity (no password) is provided.
 pub const ONLY_IDENTITY: &str = "only_identity";
 
 // ============================================================================
@@ -81,7 +105,9 @@ pub fn source_allows_password_login(source: &str) -> bool {
 /// Basic user information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
+    /// Unique login name for the user.
     pub username: String,
+    /// Hashed password (bcrypt) for local users; sentinel for external users.
     pub password: String,
     /// Identity provider that owns this account: one of
     /// [`USER_SOURCE_LOCAL`], [`USER_SOURCE_OAUTH`], [`USER_SOURCE_LDAP`].
@@ -117,9 +143,13 @@ impl From<&users::Model> for User {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticatedUser {
+    /// Authenticated username.
     pub username: String,
+    /// Hashed password for the user (may be a sentinel for external users).
     pub password: String,
+    /// Issued JWT bearer token.
     pub token: String,
+    /// Whether the user holds the global admin role.
     pub global_admin: bool,
 }
 
@@ -127,7 +157,9 @@ pub struct AuthenticatedUser {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JwtPayload {
+    /// Subject (username) the token was issued for.
     pub sub: String,
+    /// Expiry timestamp in seconds since the UNIX epoch.
     pub exp: i64,
 }
 
@@ -135,7 +167,9 @@ pub struct JwtPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleInfo {
+    /// Role name bound to the user.
     pub role: String,
+    /// Username that holds the role.
     pub username: String,
 }
 
@@ -161,8 +195,11 @@ impl From<&roles::Model> for RoleInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionInfo {
+    /// Role this permission is granted to.
     pub role: String,
+    /// Resource pattern the permission applies to.
     pub resource: String,
+    /// Allowed action(s), e.g. `r`, `w`, or `rw`.
     pub action: String,
 }
 
@@ -190,29 +227,43 @@ impl From<&permissions::Model> for PermissionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
+    /// Namespace identifier the resource belongs to.
     pub namespace_id: String,
+    /// Group the resource belongs to.
     pub group: String,
+    /// Resource name.
     pub name: String,
+    /// Resource type (e.g. `config`, `naming`).
     pub r#type: String,
+    /// Arbitrary properties attached to the resource.
     pub properties: HashMap<String, serde_json::Value>,
 }
 
 impl Resource {
+    /// Separator used between resource identifier segments.
     pub const SPLITTER: &str = ":";
+    /// Wildcard matching any value in a resource segment.
     pub const ANY: &str = "*";
+    /// Property key for the requested action.
     pub const ACTION: &str = "action";
+    /// Property key for the request class.
     pub const REQUEST_CLASS: &str = "requestClass";
 }
 
 /// Auth context passed through request extensions
 #[derive(Debug, Default, Clone)]
 pub struct AuthContext {
+    /// Username resolved from the request, if any.
     pub username: String,
+    /// Parsing/validation error associated with the JWT, if any.
     pub jwt_error: Option<jsonwebtoken::errors::Error>,
+    /// Whether a token was supplied in the request.
     pub token_provided: bool,
 }
 
 impl AuthContext {
+    /// Return a stable, human-readable description of the JWT error, or an
+    /// empty string when no error is present (e.g. no token was supplied).
     pub fn jwt_error_string(&self) -> String {
         if let Some(e) = &self.jwt_error {
             match e.kind() {

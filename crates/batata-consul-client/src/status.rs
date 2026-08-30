@@ -1,3 +1,4 @@
+//! Cluster status (leader and peer) queries.
 use crate::client::ConsulClient;
 use crate::error::Result;
 use crate::model::{QueryMeta, QueryOptions};

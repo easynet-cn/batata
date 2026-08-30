@@ -1,3 +1,5 @@
+//! System prompt for prompt optimization.
+
 /// Prompt optimization system prompt — matches Nacos PromptOptimizationPrompt.SYSTEM_PROMPT
 pub const SYSTEM_PROMPT: &str = "\
 你是一位专业的 Prompt 工程师，擅长优化和改进 Prompt 以获得更好的 AI 响应效果。

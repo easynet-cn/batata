@@ -25,20 +25,28 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 #[serde(rename_all = "PascalCase")]
 #[derive(Default)]
 pub struct Namespace {
+/// The `name` field.
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+/// The `description` field.
     pub description: String,
     #[serde(rename = "ACLs", default, skip_serializing_if = "Option::is_none")]
+/// The `acls` field.
     pub acls: Option<NamespaceACLConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+/// The `meta` field.
     pub meta: Option<std::collections::HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+/// The `deleted_at` field.
     pub deleted_at: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+/// The `partition` field.
     pub partition: String,
     #[serde(default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -47,8 +55,10 @@ pub struct Namespace {
 #[serde(rename_all = "PascalCase")]
 pub struct NamespaceACLConfig {
     #[serde(default)]
+/// The `policy_defaults` field.
     pub policy_defaults: Vec<ACLLink>,
     #[serde(default)]
+/// The `role_defaults` field.
     pub role_defaults: Vec<ACLLink>,
 }
 
@@ -57,8 +67,10 @@ pub struct NamespaceACLConfig {
 #[serde(rename_all = "PascalCase")]
 pub struct ACLLink {
     #[serde(rename = "ID", default, skip_serializing_if = "String::is_empty")]
+/// The `id` field.
     pub id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+/// The `name` field.
     pub name: String,
 }
 
@@ -72,6 +84,7 @@ pub struct ConsulNamespaceService {
 }
 
 impl ConsulNamespaceService {
+/// The `new` associated function.
     pub fn new(index_provider: ConsulIndexProvider) -> Self {
         let namespaces = Arc::new(DashMap::new());
         // "default" namespace always exists

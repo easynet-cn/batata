@@ -21,15 +21,18 @@ const SKILL_MD_KEY: &str = "skill-md";
 const RESOURCE_KEYWORD_EN: &str = "resource";
 const RESOURCE_KEYWORD_ZH: &str = "资源";
 
+/// Service for optimizing an existing Agent Skill via the LLM.
 pub struct SkillOptimizationService {
     agent_manager: Arc<CopilotAgentManager>,
 }
 
 impl SkillOptimizationService {
+    /// Create a new skill optimization service.
     pub fn new(agent_manager: Arc<CopilotAgentManager>) -> Self {
         Self { agent_manager }
     }
 
+    /// Optimize the given skill, returning a stream of `StreamChunk` events.
     pub async fn optimize_stream(
         &self,
         request: SkillOptimizationRequest,

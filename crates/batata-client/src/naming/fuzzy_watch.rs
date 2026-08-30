@@ -21,12 +21,14 @@ use batata_api::remote::model::ResponseTrait;
 use crate::error::Result;
 use crate::grpc::{GrpcClient, ServerPushHandler};
 
-/// Watch types
+/// Watch type constant for subscribing to matching services.
 pub const WATCH_TYPE_WATCH: &str = "WATCH";
+/// Watch type constant for removing a subscription.
 pub const WATCH_TYPE_UNWATCH: &str = "UN_WATCH";
 
-/// Change types for naming fuzzy watch
+/// Change type constant for a service being added.
 pub const CHANGE_TYPE_ADD: &str = "ADD_SERVICE";
+/// Change type constant for a service being removed.
 pub const CHANGE_TYPE_DELETE: &str = "DELETE_SERVICE";
 
 /// Trait for receiving naming fuzzy watch events
@@ -56,6 +58,7 @@ impl<F> FnNamingFuzzyWatchListener<F>
 where
     F: Fn(NamingFuzzyWatchEvent) + Send + Sync + 'static,
 {
+    /// Create a closure-based fuzzy watch listener.
     pub fn new(f: F) -> Self {
         Self { f }
     }
@@ -102,6 +105,7 @@ pub struct NamingFuzzyWatchService {
 }
 
 impl NamingFuzzyWatchService {
+    /// Create a naming fuzzy watch service backed by the given gRPC client.
     pub fn new(grpc_client: Arc<GrpcClient>) -> Self {
         Self {
             grpc_client,
@@ -382,6 +386,7 @@ pub struct NamingFuzzyWatchChangeNotifyHandler {
 }
 
 impl NamingFuzzyWatchChangeNotifyHandler {
+    /// Create a handler for server fuzzy watch change notifications.
     pub fn new(fuzzy_watch_service: Arc<NamingFuzzyWatchService>) -> Self {
         Self {
             fuzzy_watch_service,
@@ -406,6 +411,7 @@ pub struct NamingFuzzyWatchSyncHandler {
 }
 
 impl NamingFuzzyWatchSyncHandler {
+    /// Create a handler for server fuzzy watch sync requests.
     pub fn new(fuzzy_watch_service: Arc<NamingFuzzyWatchService>) -> Self {
         Self {
             fuzzy_watch_service,

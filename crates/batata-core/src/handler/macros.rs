@@ -192,6 +192,7 @@ impl<T> ResponseBuilder<T>
 where
     T: Default,
 {
+    /// Creates a new instance.
     pub fn new(request_id: String) -> Self {
         Self {
             response: T::default(),
@@ -199,6 +200,7 @@ where
         }
     }
 
+    /// With Response.
     pub fn with_response(response: T, request_id: String) -> Self {
         Self {
             response,
@@ -206,18 +208,22 @@ where
         }
     }
 
+    /// Request ID.
     pub fn request_id(&self) -> &str {
         &self.request_id
     }
 
+    /// Into Inner.
     pub fn into_inner(self) -> T {
         self.response
     }
 
+    /// Response.
     pub fn response(&self) -> &T {
         &self.response
     }
 
+    /// Response Mut.
     pub fn response_mut(&mut self) -> &mut T {
         &mut self.response
     }
@@ -225,8 +231,11 @@ where
 
 /// Extension trait for Payload to extract common information
 pub trait PayloadExt {
+    /// Message Type.
     fn message_type(&self) -> Option<&str>;
+    /// Client IP.
     fn client_ip(&self) -> Option<&str>;
+    /// Headers.
     fn headers(&self) -> std::collections::HashMap<String, String>;
 }
 

@@ -52,6 +52,7 @@ pub struct DistroDataItem {
 }
 
 impl DistroDataItem {
+    /// Creates a new instance.
     pub fn new(data_type: DistroDataType, key: String, content: String, source: String) -> Self {
         Self {
             data_type,
@@ -97,12 +98,14 @@ impl DistroDataItem {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataSyncRequest {
     #[serde(flatten)]
+    /// The `internal_request` field.
     pub internal_request: InternalRequest,
     /// The distro data to sync
     pub distro_data: DistroDataItem,
 }
 
 impl DistroDataSyncRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -110,6 +113,7 @@ impl DistroDataSyncRequest {
         }
     }
 
+    /// Builds the value with the given data.
     pub fn with_data(data: DistroDataItem) -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -147,6 +151,7 @@ impl From<&Payload> for DistroDataSyncRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataVerifyRequest {
     #[serde(flatten)]
+    /// The `internal_request` field.
     pub internal_request: InternalRequest,
     /// Data type to verify
     pub data_type: DistroDataType,
@@ -158,6 +163,7 @@ pub struct DistroDataVerifyRequest {
 }
 
 impl DistroDataVerifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -218,6 +224,7 @@ impl From<&Payload> for DistroDataVerifyRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataSnapshotRequest {
     #[serde(flatten)]
+    /// The `internal_request` field.
     pub internal_request: InternalRequest,
     /// Data type to get snapshot for
     pub data_type: DistroDataType,
@@ -227,6 +234,7 @@ pub struct DistroDataSnapshotRequest {
 }
 
 impl DistroDataSnapshotRequest {
+    /// Creates a new instance.
     pub fn new(data_type: DistroDataType) -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -295,6 +303,7 @@ impl From<&Payload> for DistroDataSnapshotRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataBatchSyncRequest {
     #[serde(flatten)]
+    /// The `internal_request` field.
     pub internal_request: InternalRequest,
     /// The distro data items to sync. Items in the same batch may belong to
     /// different data types (the receiver routes per-item using each item's
@@ -303,6 +312,7 @@ pub struct DistroDataBatchSyncRequest {
 }
 
 impl DistroDataBatchSyncRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -310,6 +320,7 @@ impl DistroDataBatchSyncRequest {
         }
     }
 
+    /// Builds the value with the given items.
     pub fn with_items(items: Vec<DistroDataItem>) -> Self {
         Self {
             internal_request: InternalRequest::new(),
@@ -347,22 +358,26 @@ impl From<&Payload> for DistroDataBatchSyncRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataSyncResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl DistroDataSyncResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
         }
     }
 
+    /// The `success` function.
     pub fn success() -> Self {
         Self {
             response: Response::new(),
         }
     }
 
+    /// The `fail` function.
     pub fn fail(message: &str) -> Self {
         let mut response = Response::new();
         response.success = false;
@@ -407,11 +422,14 @@ impl From<DistroDataSyncResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataBatchSyncResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `failed_keys` field.
     pub failed_keys: Vec<String>,
 }
 
 impl DistroDataBatchSyncResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -419,6 +437,7 @@ impl DistroDataBatchSyncResponse {
         }
     }
 
+    /// The `success` function.
     pub fn success(failed_keys: Vec<String>) -> Self {
         Self {
             response: Response::new(),
@@ -426,6 +445,7 @@ impl DistroDataBatchSyncResponse {
         }
     }
 
+    /// The `fail` function.
     pub fn fail(message: &str) -> Self {
         let mut response = Response::new();
         response.success = false;
@@ -467,12 +487,14 @@ impl From<DistroDataBatchSyncResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataVerifyResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
     /// Keys that need to be synced (missing or outdated)
     pub keys_need_sync: Vec<String>,
 }
 
 impl DistroDataVerifyResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -510,12 +532,14 @@ impl From<DistroDataVerifyResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct DistroDataSnapshotResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
     /// All distro data items
     pub snapshot: Vec<DistroDataItem>,
 }
 
 impl DistroDataSnapshotResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),

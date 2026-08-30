@@ -41,6 +41,7 @@ pub struct ConnectionHealthChecker {
 }
 
 impl ConnectionHealthChecker {
+    /// Create a health checker with the given max failures and check interval.
     pub fn new(max_failures: u32, check_interval: Duration) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

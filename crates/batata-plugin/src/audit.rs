@@ -15,22 +15,36 @@ use crate::spi::{
 /// Audit log entry
 #[derive(Debug, Clone)]
 pub struct AuditLogEntry {
+    /// Unique identifier for this audit log entry.
     pub id: String,
+    /// Event timestamp in milliseconds since the Unix epoch.
     pub timestamp: i64,
+    /// Config change pointcut that produced this entry.
     pub pointcut: String,
+    /// Execute type (before/after) that produced this entry.
     pub execute_type: String,
+    /// Config data ID the operation targeted.
     pub data_id: String,
+    /// Config group the operation targeted.
     pub group: String,
+    /// Tenant (namespace) the operation targeted.
     pub tenant: String,
+    /// Operator that performed the operation.
     pub operator: String,
+    /// Client IP address that initiated the operation, if known.
     pub client_ip: Option<String>,
+    /// Length in bytes of the config content involved.
     pub content_length: usize,
+    /// Arbitrary key-value metadata attached to the operation.
     pub metadata: HashMap<String, String>,
+    /// Whether the operation succeeded.
     pub success: bool,
+    /// Reason for failure, if the operation was denied or failed.
     pub reason: Option<String>,
 }
 
 impl AuditLogEntry {
+    /// Build an [`AuditLogEntry`] from a config change request and its outcome.
     pub fn from_request(req: &ConfigChangeRequest, success: bool, reason: Option<String>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -56,7 +70,9 @@ impl AuditLogEntry {
 /// Audit log storage trait
 #[async_trait::async_trait]
 pub trait AuditLogStore: Send + Sync {
+    /// Append a single audit log entry to the store.
     async fn append(&self, entry: AuditLogEntry) -> anyhow::Result<()>;
+    /// Query audit log entries using optional filters and pagination.
     async fn query(
         &self,
         data_id: Option<&str>,
@@ -77,6 +93,7 @@ pub struct InMemoryAuditLogStore {
 }
 
 impl InMemoryAuditLogStore {
+    /// Create a new in-memory store retaining at most `max_size` entries.
     pub fn new(max_size: usize) -> Self {
         Self {
             logs: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -134,6 +151,7 @@ pub struct AuditPlugin {
 }
 
 impl AuditPlugin {
+    /// Create a new audit plugin backed by the given log store.
     pub fn new(store: Arc<dyn AuditLogStore>) -> Self {
         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<AuditLogEntry>();
         let store_clone = store.clone();
@@ -147,10 +165,12 @@ impl AuditPlugin {
         Self { store, log_tx }
     }
 
+    /// Create a new audit plugin backed by an in-memory store of the given size.
     pub fn with_memory_store(max_size: usize) -> Self {
         Self::new(Arc::new(InMemoryAuditLogStore::new(max_size)))
     }
 
+    /// Return the underlying audit log store.
     pub fn store(&self) -> Arc<dyn AuditLogStore> {
         self.store.clone()
     }

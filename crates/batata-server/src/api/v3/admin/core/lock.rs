@@ -10,8 +10,10 @@ use crate::{error, model::common::AppState, model::response::Result};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+/// `ListLocksQuery` struct.
 pub struct ListLocksQuery {
     #[serde(default, alias = "namespaceId")]
+    /// `namespace_id` field.
     pub namespace_id: Option<String>,
 }
 
@@ -53,6 +55,10 @@ async fn list_locks(
     }
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/lock").service(list_locks)
 }

@@ -915,6 +915,7 @@ async fn delete_metadata_batch(
     Result::<serde_json::Value>::http_success(batch_result)
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/instance")
         .service(register_instance)

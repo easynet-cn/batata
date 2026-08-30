@@ -48,9 +48,13 @@ pub trait AuthPlugin: Plugin {
 /// Result of authentication
 #[derive(Debug, Clone)]
 pub struct AuthPluginResult {
+    /// Whether authentication succeeded.
     pub success: bool,
+    /// Authenticated username.
     pub username: String,
+    /// Optional human-readable message (e.g. failure reason).
     pub message: Option<String>,
+    /// Properties/attributes attached to the authenticated principal.
     pub properties: HashMap<String, String>,
 }
 
@@ -80,11 +84,14 @@ pub trait ConfigChangePlugin: Plugin {
 /// Result of config change interception
 #[derive(Debug, Clone)]
 pub struct ConfigChangeResult {
+    /// Whether the operation is allowed to proceed.
     pub allowed: bool,
+    /// Optional message describing the decision (e.g. denial reason).
     pub message: Option<String>,
 }
 
 impl ConfigChangeResult {
+    /// Create an allow result.
     pub fn allow() -> Self {
         Self {
             allowed: true,
@@ -92,6 +99,7 @@ impl ConfigChangeResult {
         }
     }
 
+    /// Create a deny result with the given message.
     pub fn deny(message: &str) -> Self {
         Self {
             allowed: false,
@@ -108,15 +116,22 @@ impl ConfigChangeResult {
 /// Mirrors Nacos `ConfigChangePointCutTypes`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConfigPointcut {
+    /// Configuration publish (create/update) operation.
     Publish,
+    /// Configuration remove (delete) operation.
     Remove,
+    /// Configuration get (read) operation.
     Get,
+    /// Batch configuration import operation.
     Import,
+    /// Configuration export operation.
     Export,
+    /// Configuration history query operation.
     History,
 }
 
 impl ConfigPointcut {
+    /// Return the string form of this pointcut.
     pub fn as_str(&self) -> &'static str {
         match self {
             ConfigPointcut::Publish => "publish",
@@ -132,11 +147,14 @@ impl ConfigPointcut {
 /// Execution timing for plugin hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecuteType {
+    /// Hook runs before the operation.
     Before,
+    /// Hook runs after the operation.
     After,
 }
 
 impl ExecuteType {
+    /// Return the string form of this execute type.
     pub fn as_str(&self) -> &'static str {
         match self {
             ExecuteType::Before => "before",
@@ -149,21 +167,34 @@ impl ExecuteType {
 /// Plugins can read and modify fields (parameter replacement).
 #[derive(Debug, Clone)]
 pub struct ConfigChangeRequest {
+    /// Config data ID the operation targets.
     pub data_id: String,
+    /// Config group the operation targets.
     pub group: String,
+    /// Tenant (namespace) the operation targets.
     pub tenant: String,
+    /// Config content.
     pub content: String,
+    /// Optional content type of the config.
     pub content_type: Option<String>,
+    /// Arbitrary key-value metadata attached to the operation.
     pub metadata: HashMap<String, String>,
+    /// Interception pointcut of the operation.
     pub pointcut: ConfigPointcut,
+    /// Execution timing (before/after) of the operation.
     pub execute_type: ExecuteType,
+    /// Operator that initiated the operation.
     pub operator: String,
+    /// Client IP address that initiated the operation, if known.
     pub client_ip: Option<String>,
+    /// Whether the chain should continue; set to `false` to deny.
     pub proceed: bool,
+    /// Reason for denial, populated when `proceed` is `false`.
     pub deny_reason: Option<String>,
 }
 
 impl ConfigChangeRequest {
+    /// Create a new config change request with default metadata and `proceed = true`.
     pub fn new(
         data_id: &str,
         group: &str,
@@ -189,6 +220,7 @@ impl ConfigChangeRequest {
         }
     }
 
+    /// Mark the request as denied with the given reason.
     pub fn deny(&mut self, reason: &str) {
         self.proceed = false;
         self.deny_reason = Some(reason.to_string());
@@ -198,12 +230,16 @@ impl ConfigChangeRequest {
 /// Result after running the plugin chain.
 #[derive(Debug, Clone)]
 pub struct ConfigChangeResponse {
+    /// Whether the operation is allowed to proceed.
     pub allowed: bool,
+    /// Optional message describing the decision.
     pub message: Option<String>,
+    /// The (possibly mutated) request when allowed, `None` otherwise.
     pub request: Option<ConfigChangeRequest>,
 }
 
 impl ConfigChangeResponse {
+    /// Create an allow result with no attached request.
     pub fn allow() -> Self {
         Self {
             allowed: true,
@@ -212,6 +248,7 @@ impl ConfigChangeResponse {
         }
     }
 
+    /// Create an allow result carrying the (possibly mutated) request.
     pub fn allow_with_request(req: ConfigChangeRequest) -> Self {
         Self {
             allowed: true,
@@ -220,6 +257,7 @@ impl ConfigChangeResponse {
         }
     }
 
+    /// Create a deny result with no attached request.
     pub fn deny(message: &str) -> Self {
         Self {
             allowed: false,
@@ -232,20 +270,27 @@ impl ConfigChangeResponse {
 /// Enhanced config change plugin supporting Pointcut, ExecuteType, and parameter replacement.
 #[async_trait::async_trait]
 pub trait ConfigChangePluginV2: Send + Sync {
+    /// Plugin name.
     fn name(&self) -> &str;
+    /// Plugin order; lower values run earlier in the chain.
     fn order(&self) -> i32 { 0 }
+    /// Whether this plugin is enabled.
     fn is_enabled(&self) -> bool { true }
+    /// Pointcuts this plugin wants to intercept.
     fn interested_pointcuts(&self) -> Vec<ConfigPointcut> {
         vec![ConfigPointcut::Publish, ConfigPointcut::Remove, ConfigPointcut::Get, ConfigPointcut::Import, ConfigPointcut::Export, ConfigPointcut::History]
     }
+    /// Execute types (before/after) this plugin wants to handle.
     fn interested_execute_types(&self) -> Vec<ExecuteType> {
         vec![ExecuteType::Before, ExecuteType::After]
     }
+    /// Run the plugin against the mutable request, returning an allow/deny result.
     async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult;
 }
 
 /// Wraps the old ConfigChangePlugin to work with the new V2 chain.
 pub struct ConfigChangePluginAdapter {
+    /// The wrapped legacy `ConfigChangePlugin`.
     pub inner: Arc<dyn ConfigChangePlugin>,
 }
 
@@ -295,8 +340,11 @@ pub trait ControlPlugin: Plugin {
 /// Result of TPS check
 #[derive(Debug, Clone)]
 pub struct TpsCheckResult {
+    /// Whether the request is allowed under the TPS limit.
     pub allowed: bool,
+    /// Remaining requests permitted in the current window.
     pub remaining: u64,
+    /// Configured TPS limit.
     pub limit: u64,
 }
 
@@ -314,6 +362,7 @@ pub struct PluginContext {
 }
 
 impl PluginContext {
+    /// Create a new, empty plugin context.
     pub fn new() -> Self {
         Self {
             extensions: HashMap::new(),
@@ -587,15 +636,19 @@ pub trait PluginNamingStore: Send + Sync {
 /// Errors from plugin naming store operations
 #[derive(Debug, thiserror::Error)]
 pub enum PluginNamingStoreError {
+    /// The key being registered already exists.
     #[error("Key already exists: {0}")]
     AlreadyExists(String),
 
+    /// The requested key was not found.
     #[error("Key not found: {0}")]
     NotFound(String),
 
+    /// Serialization or deserialization of stored data failed.
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// Underlying storage backend reported an error.
     #[error("Storage error: {0}")]
     Storage(String),
 }
@@ -633,6 +686,7 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
+    /// Create a new, empty plugin manager.
     pub fn new() -> Self {
         Self {
             auth_plugins: Vec::new(),
@@ -643,16 +697,19 @@ impl PluginManager {
         }
     }
 
+    /// Register an auth plugin (sorted by priority, ascending).
     pub fn register_auth(&mut self, plugin: Arc<dyn AuthPlugin>) {
         self.auth_plugins.push(plugin);
         self.auth_plugins.sort_by_key(|p| p.priority());
     }
 
+    /// Registers a config change plugin, sorted by priority (ascending).
     pub fn register_config_change(&mut self, plugin: Arc<dyn ConfigChangePlugin>) {
         self.config_change_plugins.push(plugin);
         self.config_change_plugins.sort_by_key(|p| p.priority());
     }
 
+    /// Registers a V2 config change plugin, sorted by order (ascending).
     pub fn register_config_change_v2(&mut self, plugin: Arc<dyn ConfigChangePluginV2>) {
         self.config_change_plugins_v2.push(plugin);
         self.config_change_plugins_v2.sort_by_key(|p| p.order());
@@ -689,6 +746,7 @@ impl PluginManager {
         ConfigChangeResponse::allow_with_request(request)
     }
 
+    /// Registers a control plugin, sorted by priority (ascending).
     pub fn register_control(&mut self, plugin: Arc<dyn ControlPlugin>) {
         self.control_plugins.push(plugin);
         self.control_plugins.sort_by_key(|p| p.priority());
@@ -747,6 +805,7 @@ impl PluginManager {
         }
     }
 
+    /// Registers a protocol adapter plugin, sorted by priority (ascending).
     pub fn register_protocol_adapter(&mut self, plugin: Arc<dyn ProtocolAdapterPlugin>) {
         tracing::info!(
             "Registered protocol adapter: {} (protocol={}, port={})",
@@ -788,22 +847,27 @@ impl PluginManager {
         Ok(())
     }
 
+    /// Returns all registered auth plugins in priority order.
     pub fn auth_plugins(&self) -> &[Arc<dyn AuthPlugin>] {
         &self.auth_plugins
     }
 
+    /// Returns all registered config change plugins in priority order.
     pub fn config_change_plugins(&self) -> &[Arc<dyn ConfigChangePlugin>] {
         &self.config_change_plugins
     }
 
+    /// Returns all registered V2 config change plugins in order.
     pub fn config_change_plugins_v2(&self) -> &[Arc<dyn ConfigChangePluginV2>] {
         &self.config_change_plugins_v2
     }
 
+    /// Returns all registered control plugins in priority order.
     pub fn control_plugins(&self) -> &[Arc<dyn ControlPlugin>] {
         &self.control_plugins
     }
 
+    /// Returns all registered protocol adapter plugins in priority order.
     pub fn protocol_adapters(&self) -> &[Arc<dyn ProtocolAdapterPlugin>] {
         &self.protocol_adapters
     }

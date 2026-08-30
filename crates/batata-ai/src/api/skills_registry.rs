@@ -27,32 +27,42 @@ use crate::service::skill_service::SkillOperationService;
 /// Response for `.well-known/skills/index.json`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WellKnownSkillsIndex {
+    /// All online skill entries in the namespace.
     pub skills: Vec<WellKnownSkillEntry>,
 }
 
 /// Single skill entry in the index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WellKnownSkillEntry {
+    /// Skill name (identifier).
     pub name: String,
+    /// Optional human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Names of files exposed by the skill.
     pub files: Vec<String>,
 }
 
 /// Response for `/api/search`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsSearchResponse {
+    /// Matching skills.
     pub skills: Vec<SkillsSearchItem>,
 }
 
 /// Single skill in search results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsSearchItem {
+    /// Skill id in `namespace/name` form.
     pub id: String,
+    /// Skill name (identifier).
     pub name: String,
+    /// Optional human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Number of installs (currently always `0`).
     pub installs: i64,
+    /// Source URL pointing back to this registry.
     pub source: String,
 }
 
@@ -61,9 +71,12 @@ pub struct SkillsSearchItem {
 // ============================================================================
 
 #[derive(Debug, Clone, Deserialize)]
+/// Query parameters for the `/api/search` endpoint.
 pub struct SearchQuery {
+    /// Optional search keyword.
     #[serde(default)]
     pub q: Option<String>,
+    /// Maximum number of results (capped at 100 by the handler).
     #[serde(default = "default_search_limit")]
     pub limit: u64,
 }

@@ -7,11 +7,13 @@ use crate::entity::apollo_cluster;
 use crate::persistence::shared::StoredCluster;
 use crate::persistence::traits::ClusterPersistence;
 
+/// Represents the `ClusterSqlPersistence` entity.
 pub struct ClusterSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl ClusterSqlPersistence {
+    /// Creates a new `ClusterSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

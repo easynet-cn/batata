@@ -8,9 +8,13 @@
 //! - Namespace management
 //! - Gray release rules
 
+/// Config data models.
 pub mod config;
+/// Config export/import data models.
 pub mod export;
+/// Gray release rule models.
 pub mod gray_rule;
+/// Namespace models.
 pub mod namespace;
 
 pub use config::*;

@@ -16,22 +16,28 @@ use batata_api::{
     model::{APP_CONN_PREFIX, APPNAME, CLIENT_VERSION_KEY},
 };
 
-// Label source constants (originally from remote::model)
+/// Label source constants (originally from remote::model)
 pub const LABEL_SOURCE: &str = "source";
+/// Label source type for SDK clients.
 pub const LABEL_SOURCE_SDK: &str = "sdk";
+/// Label source type for cluster nodes.
 pub const LABEL_SOURCE_CLUSTER: &str = "cluster";
 
 // Pagination parameters for list queries
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents Page Param.
 pub struct PageParam {
     #[serde(default = "PageParam::default_page_no")]
+    /// The `page_no` field.
     pub page_no: u64,
     #[serde(default = "PageParam::default_page_size")]
+    /// The `page_size` field.
     pub page_size: u64,
 }
 
 impl PageParam {
+    /// Start.
     pub fn start(&self) -> u64 {
         (self.page_no - 1) * self.page_size
     }
@@ -93,18 +99,21 @@ pub struct ConnectionMeta {
 }
 
 impl ConnectionMeta {
+    /// Returns `true` if sdk source.
     pub fn is_sdk_source(&self) -> bool {
         self.labels
             .get(LABEL_SOURCE)
             .is_some_and(|e| e.eq_ignore_ascii_case(LABEL_SOURCE_SDK))
     }
 
+    /// Returns `true` if cluster source.
     pub fn is_cluster_source(&self) -> bool {
         self.labels
             .get(LABEL_SOURCE)
             .is_some_and(|e| e.eq_ignore_ascii_case(LABEL_SOURCE_CLUSTER))
     }
 
+    /// Returns the app labels.
     pub fn get_app_labels(&self) -> HashMap<String, String> {
         // Pre-count app_conn labels to size the map accurately
         let app_conn_count = self
@@ -129,6 +138,7 @@ impl ConnectionMeta {
         map
     }
 
+    /// Record Push Queue Block Times.
     pub fn record_push_queue_block_times(&mut self) {
         if self.first_push_queue_block_time == 0 {
             self.first_push_queue_block_time = chrono::Utc::now().timestamp_millis();
@@ -137,6 +147,7 @@ impl ConnectionMeta {
         }
     }
 
+    /// Push Queue Block Times Last Over.
     pub fn push_queue_block_times_last_over(&self, time_mills_seconds: i64) -> bool {
         self.last_push_queue_block_time - self.first_push_queue_block_time > time_mills_seconds
     }
@@ -233,12 +244,16 @@ impl AtomicLastActive {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Represents Connection.
 pub struct Connection {
+    /// The `traced` field.
     pub traced: bool,
 
+    /// The `ability_table` field.
     pub ability_table: HashMap<String, bool>,
 
     #[serde(flatten)]
+    /// The `meta_info` field.
     pub meta_info: ConnectionMeta,
 
     /// Atomic last-active tracker for thread-safe idle time checks.
@@ -261,12 +276,16 @@ impl Connection {
 }
 
 #[derive(Clone)]
+/// Represents GRPC Client.
 pub struct GrpcClient {
+    /// The `connection` field.
     pub connection: Connection,
+    /// The `tx` field.
     pub tx: Sender<Result<Payload, Status>>,
 }
 
 impl GrpcClient {
+    /// Creates a new instance.
     pub fn new(connection: Connection, tx: Sender<Result<Payload, Status>>) -> Self {
         Self { connection, tx }
     }
@@ -276,6 +295,7 @@ impl GrpcClient {
 /// Provides access to configuration values for cluster and connection management
 #[derive(Clone, Debug)]
 pub struct Configuration {
+    /// The `config` field.
     pub config: config::Config,
 }
 

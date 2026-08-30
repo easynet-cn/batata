@@ -23,8 +23,11 @@ use crate::model::ConsulErrorBody;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DiscoveryGraphNodeType {
+/// The `Router` variant.
     Router,
+/// The `Splitter` variant.
     Splitter,
+/// The `Resolver` variant.
     Resolver,
 }
 
@@ -33,6 +36,7 @@ pub enum DiscoveryGraphNodeType {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryRouteMatch {
     #[serde(rename = "HTTP")]
+/// The `http` field.
     pub http: Option<DiscoveryHTTPRouteMatch>,
 }
 
@@ -41,16 +45,22 @@ pub struct DiscoveryRouteMatch {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPRouteMatch {
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_exact` field.
     pub path_exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_prefix` field.
     pub path_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_regex` field.
     pub path_regex: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `header` field.
     pub header: Vec<DiscoveryHTTPHeaderMatch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `query_param` field.
     pub query_param: Vec<DiscoveryHTTPQueryMatch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `methods` field.
     pub methods: Vec<String>,
 }
 
@@ -58,18 +68,25 @@ pub struct DiscoveryHTTPRouteMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPHeaderMatch {
+/// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `exact` field.
     pub exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `prefix` field.
     pub prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `suffix` field.
     pub suffix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `regex` field.
     pub regex: Option<String>,
     #[serde(default)]
+/// The `present` field.
     pub present: bool,
     #[serde(default)]
+/// The `invert` field.
     pub invert: bool,
 }
 
@@ -77,12 +94,16 @@ pub struct DiscoveryHTTPHeaderMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPQueryMatch {
+/// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `exact` field.
     pub exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `regex` field.
     pub regex: Option<String>,
     #[serde(default)]
+/// The `present` field.
     pub present: bool,
 }
 
@@ -90,7 +111,9 @@ pub struct DiscoveryHTTPQueryMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryRoute {
+/// The `definition` field.
     pub definition: Option<DiscoveryRouteMatch>,
+/// The `next_node` field.
     pub next_node: String,
 }
 
@@ -98,8 +121,11 @@ pub struct DiscoveryRoute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoverySplit {
+/// The `definition` field.
     pub definition: Option<DiscoverySplitDefinition>,
+/// The `weight` field.
     pub weight: f64,
+/// The `next_node` field.
     pub next_node: String,
 }
 
@@ -108,12 +134,16 @@ pub struct DiscoverySplit {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoverySplitDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `service` field.
     pub service: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `service_subset` field.
     pub service_subset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -121,10 +151,14 @@ pub struct DiscoverySplitDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryResolver {
+/// The `default` field.
     pub default: bool,
+/// The `connect_timeout` field.
     pub connect_timeout: String,
+/// The `target` field.
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+/// The `failover` field.
     pub failover: Option<DiscoveryFailover>,
 }
 
@@ -132,6 +166,7 @@ pub struct DiscoveryResolver {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryFailover {
+/// The `targets` field.
     pub targets: Vec<String>,
 }
 
@@ -140,13 +175,18 @@ pub struct DiscoveryFailover {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryGraphNode {
     #[serde(rename = "Type")]
+/// The `node_type` field.
     pub node_type: DiscoveryGraphNodeType,
+/// The `name` field.
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `routes` field.
     pub routes: Vec<DiscoveryRoute>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `splits` field.
     pub splits: Vec<DiscoverySplit>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `resolver` field.
     pub resolver: Option<DiscoveryResolver>,
 }
 
@@ -155,18 +195,29 @@ pub struct DiscoveryGraphNode {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryTarget {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `service` field.
     pub service: String,
+/// The `service_subset` field.
     pub service_subset: String,
+/// The `namespace` field.
     pub namespace: String,
+/// The `partition` field.
     pub partition: String,
+/// The `datacenter` field.
     pub datacenter: String,
     #[serde(rename = "MeshGateway")]
+/// The `mesh_gateway` field.
     pub mesh_gateway: MeshGatewayConfig,
+/// The `subset` field.
     pub subset: DiscoveryTargetSubset,
+/// The `connect_timeout` field.
     pub connect_timeout: String,
     #[serde(rename = "SNI")]
+/// The `sni` field.
     pub sni: String,
+/// The `name` field.
     pub name: String,
 }
 
@@ -175,6 +226,7 @@ pub struct DiscoveryTarget {
 #[serde(rename_all = "PascalCase")]
 pub struct MeshGatewayConfig {
     #[serde(default)]
+/// The `mode` field.
     pub mode: String,
 }
 
@@ -183,8 +235,10 @@ pub struct MeshGatewayConfig {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryTargetSubset {
     #[serde(default)]
+/// The `filter` field.
     pub filter: String,
     #[serde(default)]
+/// The `only_passing` field.
     pub only_passing: bool,
 }
 
@@ -192,14 +246,22 @@ pub struct DiscoveryTargetSubset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CompiledDiscoveryChain {
+/// The `service_name` field.
     pub service_name: String,
+/// The `namespace` field.
     pub namespace: String,
+/// The `datacenter` field.
     pub datacenter: String,
     #[serde(default)]
+/// The `customization_hash` field.
     pub customization_hash: String,
+/// The `protocol` field.
     pub protocol: String,
+/// The `start_node` field.
     pub start_node: String,
+/// The `nodes` field.
     pub nodes: HashMap<String, DiscoveryGraphNode>,
+/// The `targets` field.
     pub targets: HashMap<String, DiscoveryTarget>,
 }
 
@@ -207,6 +269,7 @@ pub struct CompiledDiscoveryChain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryChainResponse {
+/// The `chain` field.
     pub chain: CompiledDiscoveryChain,
 }
 
@@ -219,8 +282,10 @@ pub struct DiscoveryChainResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct ResolvedConsumers {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `peers` field.
     pub peers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `partitions` field.
     pub partitions: Vec<String>,
 }
 
@@ -228,7 +293,9 @@ pub struct ResolvedConsumers {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResolvedExportedService {
+/// The `service` field.
     pub service: String,
+/// The `consumers` field.
     pub consumers: ResolvedConsumers,
 }
 
@@ -236,8 +303,10 @@ pub struct ResolvedExportedService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ImportedService {
+/// The `service` field.
     pub service: String,
     #[serde(default)]
+/// The `source_peer` field.
     pub source_peer: String,
 }
 
@@ -248,10 +317,14 @@ pub struct ImportedService {
 /// Query parameters for discovery chain
 #[derive(Debug, Deserialize)]
 pub struct DiscoveryChainQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `ns` field.
     pub ns: Option<String>,
+/// The `partition` field.
     pub partition: Option<String>,
     #[serde(rename = "compile-dc")]
+/// The `compile_dc` field.
     pub compile_dc: Option<String>,
 }
 
@@ -260,16 +333,20 @@ pub struct DiscoveryChainQueryParams {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryChainOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `override_protocol` field.
     pub override_protocol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `override_connect_timeout` field.
     pub override_connect_timeout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `override_mesh_gateway` field.
     pub override_mesh_gateway: Option<MeshGatewayConfig>,
 }
 
 /// Query parameters for exported/imported services
 #[derive(Debug, Deserialize)]
 pub struct ServiceVisibilityQueryParams {
+/// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -291,10 +368,12 @@ pub struct ConsulConnectService {
 }
 
 impl ConsulConnectService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self::with_datacenter("dc1".to_string())
     }
 
+/// The `with_datacenter` associated function.
     pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             exported_services: Arc::new(DashMap::new()),
@@ -609,6 +688,7 @@ impl ConsulConnectService {
         response
     }
 
+/// The `list_exported_services` method.
     pub fn list_exported_services(&self) -> Vec<ResolvedExportedService> {
         let mut services: Vec<ResolvedExportedService> = self
             .exported_services
@@ -619,6 +699,7 @@ impl ConsulConnectService {
         services
     }
 
+/// The `list_imported_services` method.
     pub fn list_imported_services(&self) -> Vec<ImportedService> {
         let mut services: Vec<ImportedService> = self
             .imported_services

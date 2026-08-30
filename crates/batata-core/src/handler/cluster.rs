@@ -28,6 +28,7 @@ use crate::{
 /// Handler for MemberReportRequest - processes cluster member heartbeat reports
 #[derive(Clone)]
 pub struct MemberReportHandler {
+    /// The `member_manager` field.
     pub member_manager: Arc<ServerMemberManager>,
 }
 
@@ -105,6 +106,7 @@ pub trait PluginAvailabilityProvider: Send + Sync {
 /// - single plugin -> return `plugin_id` and `available` for that plugin
 #[derive(Clone)]
 pub struct PluginAvailabilityHandler {
+    /// The `provider` field.
     pub provider: Arc<dyn PluginAvailabilityProvider>,
 }
 

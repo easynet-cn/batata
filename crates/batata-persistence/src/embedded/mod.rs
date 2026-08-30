@@ -73,7 +73,7 @@ impl EmbeddedPersistService {
         const_hex::encode(md5::Md5::digest(content.as_bytes()))
     }
 
-    /// Convert a JSON value from RocksDB to ConfigStorageData
+    /// Convert a JSON value from RocksDB into a [`ConfigStorageData`].
     pub fn json_to_config(v: &serde_json::Value) -> ConfigStorageData {
         ConfigStorageData {
             id: 0,
@@ -97,7 +97,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert a JSON value to ConfigHistoryStorageData
+    /// Convert a JSON value from RocksDB into a [`ConfigHistoryStorageData`].
     pub fn json_to_history(v: &serde_json::Value) -> ConfigHistoryStorageData {
         ConfigHistoryStorageData {
             id: v["id"].as_i64().unwrap_or(0),
@@ -119,7 +119,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert a JSON value to ConfigGrayStorageData
+    /// Convert a JSON value from RocksDB into a [`ConfigGrayStorageData`].
     pub fn json_to_gray(v: &serde_json::Value) -> ConfigGrayStorageData {
         ConfigGrayStorageData {
             data_id: v["data_id"].as_str().unwrap_or("").to_string(),
@@ -138,7 +138,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert JSON to NamespaceInfo
+    /// Convert a JSON value from RocksDB into a [`NamespaceInfo`].
     pub fn json_to_namespace(v: &serde_json::Value, config_count: i64) -> NamespaceInfo {
         NamespaceInfo {
             namespace_id: v["namespace_id"].as_str().unwrap_or("").to_string(),
@@ -149,7 +149,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert JSON to UserInfo
+    /// Convert a JSON value from RocksDB into a [`UserInfo`].
     pub fn json_to_user(v: &serde_json::Value) -> UserInfo {
         let source = v["source"].as_str().unwrap_or("");
         UserInfo {
@@ -164,7 +164,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert JSON to RoleInfo
+    /// Convert a JSON value from RocksDB into a [`RoleInfo`].
     pub fn json_to_role(v: &serde_json::Value) -> RoleInfo {
         RoleInfo {
             role: v["role"].as_str().unwrap_or("").to_string(),
@@ -172,7 +172,7 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Convert JSON to PermissionInfo
+    /// Convert a JSON value from RocksDB into a [`PermissionInfo`].
     pub fn json_to_permission(v: &serde_json::Value) -> PermissionInfo {
         PermissionInfo {
             role: v["role"].as_str().unwrap_or("").to_string(),

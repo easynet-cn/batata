@@ -37,6 +37,10 @@ pub struct SkillOperationService {
 }
 
 impl SkillOperationService {
+    /// Creates a new `SkillOperationService`.
+    ///
+    /// Registers a default visibility service (with the optional auth plugin and
+    /// auth enabled flag) if one is not already present.
     pub fn new(
         persistence: Arc<dyn PersistenceService>,
         auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,

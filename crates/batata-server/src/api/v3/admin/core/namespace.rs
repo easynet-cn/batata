@@ -315,6 +315,10 @@ fn namespace_name_check(namespace_name: &str) -> bool {
     RE.is_match(namespace_name)
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/namespace")
         .service(list_namespaces)

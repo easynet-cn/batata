@@ -70,6 +70,10 @@ async fn servers(registry: web::Data<Arc<batata_core::ServerRegistry>>) -> impl 
     Result::<Vec<batata_core::ServerHealthInfo>>::http_success(health)
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/state")
         .service(get_state)

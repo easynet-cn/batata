@@ -20,14 +20,19 @@ use crate::model::{ApiResponse, Page};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerBasicInfo {
+    /// MCP server name.
     pub mcp_name: String,
     #[serde(default)]
+    /// Namespace ID the server belongs to.
     pub namespace_id: String,
     #[serde(default)]
+    /// Latest published version of the server.
     pub latest_version: String,
     #[serde(default)]
+    /// Human-readable description of the server.
     pub description: String,
     #[serde(default)]
+    /// Whether the server is currently enabled.
     pub enabled: bool,
 }
 
@@ -35,22 +40,31 @@ pub struct McpServerBasicInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerDetailInfo {
+    /// MCP server name.
     pub mcp_name: String,
     #[serde(default)]
+    /// Namespace ID the server belongs to.
     pub namespace_id: String,
     #[serde(default)]
+    /// Server version.
     pub version: String,
     #[serde(default)]
+    /// Human-readable description of the server.
     pub description: String,
     #[serde(default)]
+    /// Whether the server is currently enabled.
     pub enabled: bool,
     #[serde(default)]
+    /// Transport protocol used by the server (e.g. "stdio" or "sse").
     pub protocol: String,
     #[serde(default)]
+    /// Server type or category.
     pub server_type: String,
     #[serde(default)]
+    /// Tools exposed by the server.
     pub tools: Vec<McpToolSpec>,
     #[serde(default)]
+    /// Arbitrary metadata key-value pairs.
     pub metadata: HashMap<String, String>,
 }
 
@@ -58,10 +72,13 @@ pub struct McpServerDetailInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpToolSpec {
+    /// Tool name.
     pub name: String,
     #[serde(default)]
+    /// Tool description.
     pub description: String,
     #[serde(default)]
+    /// JSON schema describing the tool input.
     pub input_schema: serde_json::Value,
 }
 
@@ -69,20 +86,28 @@ pub struct McpToolSpec {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCardInfo {
+    /// Agent name.
     pub agent_name: String,
     #[serde(default)]
+    /// Namespace ID the agent belongs to.
     pub namespace_id: String,
     #[serde(default)]
+    /// Agent card version.
     pub version: String,
     #[serde(default)]
+    /// Human-readable description of the agent.
     pub description: String,
     #[serde(default)]
+    /// Whether the agent is currently enabled.
     pub enabled: bool,
     #[serde(default)]
+    /// Agent capabilities.
     pub capabilities: AgentCapabilities,
     #[serde(default)]
+    /// Skills exposed by the agent.
     pub skills: Vec<AgentSkill>,
     #[serde(default)]
+    /// Arbitrary metadata key-value pairs.
     pub metadata: HashMap<String, String>,
 }
 
@@ -91,10 +116,13 @@ pub struct AgentCardInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
     #[serde(default)]
+    /// Whether the agent supports streaming responses.
     pub streaming: bool,
     #[serde(default)]
+    /// Whether the agent supports push notifications.
     pub push_notifications: bool,
     #[serde(default)]
+    /// Whether the agent keeps a state-transition history.
     pub state_transition_history: bool,
 }
 
@@ -102,27 +130,37 @@ pub struct AgentCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSkill {
+    /// Skill identifier.
     pub id: String,
+    /// Skill name.
     pub name: String,
     #[serde(default)]
+    /// Skill description.
     pub description: String,
     #[serde(default)]
+    /// Skill tags.
     pub tags: Vec<String>,
 }
 
 /// MCP Server change event
 #[derive(Debug, Clone)]
 pub struct McpServerChangeEvent {
+    /// MCP server name affected by the change.
     pub mcp_name: String,
+    /// Namespace ID of the server.
     pub namespace_id: String,
+    /// Change type: "add", "update", or "delete".
     pub change_type: String, // "add", "update", "delete"
 }
 
 /// Agent Card change event
 #[derive(Debug, Clone)]
 pub struct AgentCardChangeEvent {
+    /// Agent name affected by the change.
     pub agent_name: String,
+    /// Namespace ID of the agent.
     pub namespace_id: String,
+    /// Change type: "add", "update", or "delete".
     pub change_type: String,
 }
 
@@ -132,11 +170,13 @@ pub struct AgentCardChangeEvent {
 
 /// Listener for MCP server changes
 pub trait McpServerListener: Send + Sync {
+    /// Called when an MCP server change occurs.
     fn on_change(&self, event: McpServerChangeEvent);
 }
 
 /// Listener for Agent Card changes
 pub trait AgentCardListener: Send + Sync {
+    /// Called when an Agent Card change occurs.
     fn on_change(&self, event: AgentCardChangeEvent);
 }
 
@@ -156,6 +196,7 @@ pub struct BatataAiService {
 }
 
 impl BatataAiService {
+    /// Create a new AI/MCP service backed by the given HTTP client.
     pub fn new(http_client: Arc<BatataHttpClient>) -> Self {
         Self {
             http_client,

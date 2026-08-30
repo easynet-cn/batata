@@ -1,6 +1,8 @@
+//! Module `service::naming` of the `batata-server` crate.
 // Naming service layer for service discovery operations
 // Re-exports from batata_naming crate
 
+/// Re-exported item.
 pub use batata_naming::service::NamingService;
 
 #[cfg(test)]

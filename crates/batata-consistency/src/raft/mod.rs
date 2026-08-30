@@ -1,5 +1,6 @@
-// Raft consensus module for Batata cluster
-// Provides strong consistency for persistent data using the Raft protocol
+//! Raft consensus module for Batata cluster.
+//!
+//! Provides strong consistency for persistent data using the Raft protocol.
 
 pub mod config;
 pub mod grpc_service;

@@ -29,11 +29,17 @@ use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 #[serde(rename_all = "PascalCase")]
 pub struct CARoot {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
+/// The `root_cert` field.
     pub root_cert: String,
+/// The `active` field.
     pub active: bool,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -42,8 +48,11 @@ pub struct CARoot {
 #[serde(rename_all = "PascalCase")]
 pub struct CARootList {
     #[serde(rename = "ActiveRootID")]
+/// The `active_root_id` field.
     pub active_root_id: String,
+/// The `trust_domain` field.
     pub trust_domain: String,
+/// The `roots` field.
     pub roots: Vec<CARoot>,
 }
 
@@ -64,20 +73,26 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CAConfig {
+/// The `provider` field.
     pub provider: String,
     #[serde(default, deserialize_with = "deserialize_map_or_null")]
+/// The `config` field.
     pub config: std::collections::HashMap<String, serde_json::Value>,
     #[serde(
         default,
         deserialize_with = "deserialize_map_or_null",
         skip_serializing_if = "std::collections::HashMap::is_empty"
     )]
+/// The `state` field.
     pub state: std::collections::HashMap<String, String>,
     #[serde(default)]
+/// The `force_without_cross_signing` field.
     pub force_without_cross_signing: bool,
     #[serde(default)]
+/// The `create_index` field.
     pub create_index: u64,
     #[serde(default)]
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -85,17 +100,26 @@ pub struct CAConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LeafCert {
+/// The `serial_number` field.
     pub serial_number: String,
     #[serde(rename = "CertPEM")]
+/// The `cert_pem` field.
     pub cert_pem: String,
     #[serde(rename = "PrivateKeyPEM")]
+/// The `private_key_pem` field.
     pub private_key_pem: String,
+/// The `service` field.
     pub service: String,
     #[serde(rename = "ServiceURI")]
+/// The `service_uri` field.
     pub service_uri: String,
+/// The `valid_after` field.
     pub valid_after: String,
+/// The `valid_before` field.
     pub valid_before: String,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -107,7 +131,9 @@ pub struct LeafCert {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IntentionAction {
+/// The `Allow` variant.
     Allow,
+/// The `Deny` variant.
     Deny,
 }
 
@@ -116,12 +142,16 @@ pub enum IntentionAction {
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionHTTPPermission {
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_exact` field.
     pub path_exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_prefix` field.
     pub path_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `path_regex` field.
     pub path_regex: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `methods` field.
     pub methods: Vec<String>,
 }
 
@@ -129,8 +159,10 @@ pub struct IntentionHTTPPermission {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionPermission {
+/// The `action` field.
     pub action: IntentionAction,
     #[serde(rename = "HTTP", skip_serializing_if = "Option::is_none")]
+/// The `http` field.
     pub http: Option<IntentionHTTPPermission>,
 }
 
@@ -139,24 +171,38 @@ pub struct IntentionPermission {
 #[serde(rename_all = "PascalCase")]
 pub struct Intention {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
     #[serde(default)]
+/// The `description` field.
     pub description: String,
     #[serde(rename = "SourceNS", default)]
+/// The `source_ns` field.
     pub source_ns: String,
+/// The `source_name` field.
     pub source_name: String,
     #[serde(rename = "DestinationNS", default)]
+/// The `destination_ns` field.
     pub destination_ns: String,
+/// The `destination_name` field.
     pub destination_name: String,
+/// The `action` field.
     pub action: IntentionAction,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The `permissions` field.
     pub permissions: Vec<IntentionPermission>,
     #[serde(default)]
+/// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
+/// The `precedence` field.
     pub precedence: i32,
+/// The `created_at` field.
     pub created_at: String,
+/// The `updated_at` field.
     pub updated_at: String,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -165,17 +211,25 @@ pub struct Intention {
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionRequest {
     #[serde(default)]
+/// The `description` field.
     pub description: String,
     #[serde(rename = "SourceNS", default)]
+/// The `source_ns` field.
     pub source_ns: String,
+/// The `source_name` field.
     pub source_name: String,
     #[serde(rename = "DestinationNS", default)]
+/// The `destination_ns` field.
     pub destination_ns: String,
+/// The `destination_name` field.
     pub destination_name: String,
+/// The `action` field.
     pub action: IntentionAction,
     #[serde(default)]
+/// The `permissions` field.
     pub permissions: Vec<IntentionPermission>,
     #[serde(default)]
+/// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
 }
 
@@ -183,20 +237,25 @@ pub struct IntentionRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionCheckResponse {
+/// The `allowed` field.
     pub allowed: bool,
 }
 
 /// Intention match query
 #[derive(Debug, Deserialize)]
 pub struct IntentionMatchQuery {
+/// The `by` field.
     pub by: String,
+/// The `name` field.
     pub name: String,
 }
 
 /// Query parameters for exact intention lookup
 #[derive(Debug, Deserialize)]
 pub struct IntentionExactQuery {
+/// The `source` field.
     pub source: Option<String>,
+/// The `destination` field.
     pub destination: Option<String>,
 }
 
@@ -204,10 +263,13 @@ pub struct IntentionExactQuery {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AgentAuthorizeRequest {
+/// The `target` field.
     pub target: String,
     #[serde(rename = "ClientCertURI")]
+/// The `client_cert_uri` field.
     pub client_cert_uri: String,
     #[serde(default)]
+/// The `client_cert_serial` field.
     pub client_cert_serial: String,
 }
 
@@ -215,21 +277,27 @@ pub struct AgentAuthorizeRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AgentAuthorizeResponse {
+/// The `authorized` field.
     pub authorized: bool,
+/// The `reason` field.
     pub reason: String,
 }
 
 /// Query parameters for intentions
 #[derive(Debug, Deserialize)]
 pub struct IntentionQueryParams {
+/// The `filter` field.
     pub filter: Option<String>,
+/// The `source` field.
     pub source: Option<String>,
+/// The `destination` field.
     pub destination: Option<String>,
 }
 
 /// Query parameters for CA root
 #[derive(Debug, Deserialize)]
 pub struct CARootQueryParams {
+/// The `pem` field.
     pub pem: Option<bool>,
     /// Blocking query: minimum index to wait for
     pub index: Option<u64>,
@@ -284,6 +352,7 @@ pub struct ConsulConnectCAService {
 }
 
 impl ConsulConnectCAService {
+/// The `new` associated function.
     pub fn new() -> Self {
         let root_id = uuid::Uuid::new_v4().to_string();
 
@@ -493,6 +562,7 @@ impl ConsulConnectCAService {
         svc
     }
 
+/// The `with_datacenter` method.
     pub fn with_datacenter(mut self, datacenter: String) -> Self {
         self.datacenter = datacenter;
         self
@@ -622,6 +692,7 @@ impl ConsulConnectCAService {
     // CA operations
     // ========================================================================
 
+/// The `get_roots` method.
     pub async fn get_roots(&self) -> CARootList {
         let active_id = self.active_root_id.read().await.clone();
         let roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
@@ -632,10 +703,12 @@ impl ConsulConnectCAService {
         }
     }
 
+/// The `get_ca_config` method.
     pub async fn get_ca_config(&self) -> CAConfig {
         self.ca_config.read().await.clone()
     }
 
+/// The `set_ca_config` method.
     pub async fn set_ca_config(&self, mut config: CAConfig) -> Result<(), String> {
         if config.provider.is_empty() {
             return Err("Provider is required".to_string());
@@ -663,6 +736,7 @@ impl ConsulConnectCAService {
         Ok(())
     }
 
+/// The `get_leaf_cert` method.
     pub fn get_leaf_cert(&self, service: &str) -> LeafCert {
         let now = Utc::now();
         let valid_before = now + chrono::Duration::hours(72);
@@ -734,6 +808,7 @@ impl ConsulConnectCAService {
     // Intention operations
     // ========================================================================
 
+/// The `create_intention` method.
     pub async fn create_intention(&self, req: IntentionRequest) -> Intention {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
@@ -790,10 +865,12 @@ impl ConsulConnectCAService {
         intention
     }
 
+/// The `get_intention` method.
     pub fn get_intention(&self, id: &str) -> Option<Intention> {
         self.intentions.get(id).map(|r| r.value().clone())
     }
 
+/// The `update_intention` method.
     pub async fn update_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
         if let Some(mut entry) = self.intentions.get_mut(id) {
             let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -843,6 +920,7 @@ impl ConsulConnectCAService {
         }
     }
 
+/// The `delete_intention` method.
     pub async fn delete_intention(&self, id: &str) -> bool {
         let removed = self.intentions.remove(id).is_some();
         if removed {
@@ -866,6 +944,7 @@ impl ConsulConnectCAService {
         removed
     }
 
+/// The `list_intentions` method.
     pub fn list_intentions(&self) -> Vec<Intention> {
         let mut intentions: Vec<Intention> =
             self.intentions.iter().map(|r| r.value().clone()).collect();
@@ -874,6 +953,7 @@ impl ConsulConnectCAService {
         intentions
     }
 
+/// The `check_intention` method.
     pub fn check_intention(&self, source: &str, destination: &str) -> bool {
         // Find the highest-precedence matching intention
         let mut best: Option<(i32, IntentionAction)> = None;
@@ -896,6 +976,7 @@ impl ConsulConnectCAService {
             .unwrap_or(true)
     }
 
+/// The `match_intentions` method.
     pub fn match_intentions(&self, by: &str, name: &str) -> Vec<Intention> {
         let mut matched: Vec<Intention> = self
             .intentions
@@ -985,6 +1066,7 @@ impl ConsulConnectCAService {
         }
     }
 
+/// The `authorize` method.
     pub fn authorize(&self, target: &str, client_cert_uri: &str) -> AgentAuthorizeResponse {
         // Extract source service from SPIFFE URI
         let source = client_cert_uri.rsplit('/').next().unwrap_or("unknown");

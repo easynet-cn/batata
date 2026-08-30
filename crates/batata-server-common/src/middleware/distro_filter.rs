@@ -25,6 +25,7 @@ pub struct DistroFilter {
 }
 
 impl DistroFilter {
+/// Performs the `new` operation.
     pub fn new(distro: Option<Arc<DistroProtocol>>) -> Self {
         Self { distro }
     }
@@ -49,6 +50,7 @@ where
     }
 }
 
+/// Middleware that filters distro requests based on cluster membership.
 pub struct DistroFilterMiddleware<S> {
     service: S,
     distro: Option<Arc<DistroProtocol>>,

@@ -1,3 +1,5 @@
+//! System prompt for prompt debug (kept for reference only).
+
 /// Prompt debug does NOT have its own system prompt in Nacos.
 /// The user's prompt is used directly as the system prompt,
 /// and the user input is sent as the user message.

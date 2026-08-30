@@ -146,10 +146,12 @@ pub struct ConsulCoordinateService {
 }
 
 impl ConsulCoordinateService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self::with_datacenter("dc1".to_string())
     }
 
+/// The `with_datacenter` associated function.
     pub fn with_datacenter(datacenter: String) -> Self {
         let node_name = hostname::get()
             .ok()
@@ -200,6 +202,7 @@ impl ConsulCoordinateService {
         self
     }
 
+/// The `with_rocks` associated function.
     pub fn with_rocks(db: Arc<DB>, datacenter: String) -> Self {
         let coordinates = Arc::new(DashMap::new());
 
@@ -319,6 +322,7 @@ impl ConsulCoordinateService {
         self.coordinates.clone()
     }
 
+/// The `get_datacenters` method.
     pub fn get_datacenters(&self) -> Vec<DatacenterMap> {
         let coordinates: Vec<CoordinateEntry> =
             self.coordinates.iter().map(|r| r.value().clone()).collect();
@@ -330,6 +334,7 @@ impl ConsulCoordinateService {
         }]
     }
 
+/// The `get_nodes` method.
     pub fn get_nodes(&self, segment: Option<&str>) -> Vec<CoordinateEntry> {
         let mut entries: Vec<CoordinateEntry> = self
             .coordinates
@@ -341,6 +346,7 @@ impl ConsulCoordinateService {
         entries
     }
 
+/// The `get_node` method.
     pub fn get_node(&self, node: &str) -> Option<Vec<CoordinateEntry>> {
         let entries: Vec<CoordinateEntry> = self
             .coordinates
@@ -356,6 +362,7 @@ impl ConsulCoordinateService {
         }
     }
 
+/// The `update_coordinate` method.
     pub async fn update_coordinate(&self, req: CoordinateUpdateRequest) -> Result<(), String> {
         // Validate coordinate dimensions
         if req.coord.vec.len() != 8 {
@@ -460,6 +467,7 @@ pub struct ConsulCoordinateServicePersistent {
 }
 
 impl ConsulCoordinateServicePersistent {
+/// The `new` associated function.
     pub fn new(datacenter: &str) -> Self {
         Self {
             coordinates: Arc::new(DashMap::new()),
@@ -468,6 +476,7 @@ impl ConsulCoordinateServicePersistent {
         }
     }
 
+/// The `with_rocks` associated function.
     pub fn with_rocks(db: Arc<DB>, datacenter: String) -> Self {
         let coordinates = Arc::new(DashMap::new());
 
@@ -504,6 +513,7 @@ impl ConsulCoordinateServicePersistent {
         }
     }
 
+/// The `get_datacenters` method.
     pub fn get_datacenters(&self) -> Vec<DatacenterMap> {
         let coordinates: Vec<CoordinateEntry> =
             self.coordinates.iter().map(|r| r.value().clone()).collect();
@@ -515,6 +525,7 @@ impl ConsulCoordinateServicePersistent {
         }]
     }
 
+/// The `get_nodes` method.
     pub fn get_nodes(&self, segment: Option<&str>) -> Vec<CoordinateEntry> {
         let mut entries: Vec<CoordinateEntry> = self
             .coordinates
@@ -526,6 +537,7 @@ impl ConsulCoordinateServicePersistent {
         entries
     }
 
+/// The `get_node` method.
     pub fn get_node(&self, node: &str) -> Option<Vec<CoordinateEntry>> {
         let entries: Vec<CoordinateEntry> = self
             .coordinates
@@ -541,6 +553,7 @@ impl ConsulCoordinateServicePersistent {
         }
     }
 
+/// The `update_coordinate` method.
     pub fn update_coordinate(&self, req: CoordinateUpdateRequest) -> Result<(), String> {
         if req.coord.vec.len() != 8 {
             return Err("Coordinate must have exactly 8 dimensions".to_string());

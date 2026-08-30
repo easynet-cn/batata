@@ -1,4 +1,4 @@
-// Naming/service discovery model types
+//! Naming/service discovery model types
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,15 +7,25 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Instance {
+    /// The `instance_id` field.
     pub instance_id: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `weight` field.
     pub weight: f64,
+    /// The `healthy` field.
     pub healthy: bool,
+    /// The `enabled` field.
     pub enabled: bool,
+    /// The `ephemeral` field.
     pub ephemeral: bool,
+    /// The `cluster_name` field.
     pub cluster_name: String,
+    /// The `service_name` field.
     pub service_name: String,
+    /// The `metadata` field.
     pub metadata: HashMap<String, String>,
 }
 

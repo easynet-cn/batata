@@ -12,10 +12,13 @@ use super::event::{TraceEvent, TraceEventKind};
 /// behavior when `subscribeTypes()` returns the base `TraceEvent.class`.
 #[async_trait]
 pub trait TraceSubscriber: Send + Sync {
+    /// Returns the unique name of this subscriber.
     fn name(&self) -> &str;
 
+    /// Returns the kinds of events this subscriber wants, or an empty slice for all kinds.
     fn subscribed_kinds(&self) -> &[TraceEventKind];
 
+    /// Handles a single trace event delivered by the registry.
     async fn on_event(&self, event: &TraceEvent);
 }
 
@@ -27,29 +30,35 @@ pub struct TraceSubscriberRegistry {
 }
 
 impl TraceSubscriberRegistry {
+    /// Creates a new, empty `TraceSubscriberRegistry`.
     pub fn new() -> Self {
         Self {
             subscribers: DashMap::new(),
         }
     }
 
+    /// Registers a subscriber, replacing any existing one with the same name.
     pub fn register(&self, subscriber: Arc<dyn TraceSubscriber>) {
         let name = subscriber.name().to_string();
         self.subscribers.insert(name, subscriber);
     }
 
+    /// Removes the subscriber with the given name, returning `true` if one existed.
     pub fn unregister(&self, name: &str) -> bool {
         self.subscribers.remove(name).is_some()
     }
 
+    /// Returns the number of registered subscribers.
     pub fn len(&self) -> usize {
         self.subscribers.len()
     }
 
+    /// Returns `true` if no subscribers are registered.
     pub fn is_empty(&self) -> bool {
         self.subscribers.is_empty()
     }
 
+    /// Returns the names of all registered subscribers.
     pub fn names(&self) -> Vec<String> {
         let mut out = Vec::with_capacity(self.subscribers.len());
         for entry in self.subscribers.iter() {

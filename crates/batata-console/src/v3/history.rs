@@ -1,3 +1,7 @@
+//! V3 Console config history API endpoints.
+//!
+//! Provides endpoints for querying configuration change history.
+
 use actix_web::{HttpRequest, Responder, Scope, get, post, web};
 use serde::{Deserialize, Serialize};
 
@@ -541,6 +545,7 @@ async fn find_previous(
     }
 }
 
+/// Register the config history routes under `/cs/history`.
 pub fn routes() -> Scope {
     web::scope("/cs/history")
         .service(find_one)

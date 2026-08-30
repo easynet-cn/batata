@@ -23,43 +23,82 @@
 //! - `coordinate`: Network coordinate/RTT endpoints
 //! - `peering`: Cluster peering for cross-datacenter service discovery
 
+#![warn(missing_docs)]
+
+/// The `api` module.
 pub mod api;
+/// The `constants` module.
 pub mod constants;
+/// The `consul_meta` module.
 pub mod consul_meta;
+/// The `plugin` module.
 pub mod plugin;
+/// The `raft` module.
 pub mod raft;
 
+/// The `acl` module.
 pub mod acl;
+/// The `acl_store` module.
 pub mod acl_store;
+/// The `agent` module.
 pub mod agent;
+/// The `api_metrics` module.
 pub mod api_metrics;
+/// The `catalog` module.
 pub mod catalog;
+/// The `check_index` module.
 pub mod check_index;
+/// The `config_entry` module.
 pub mod config_entry;
+/// The `connect` module.
 pub mod connect;
+/// The `connect_ca` module.
 pub mod connect_ca;
+/// The `coordinate` module.
 pub mod coordinate;
+/// The `event` module.
 pub mod event;
+/// The `filter` module.
 pub mod filter;
+/// The `health` module.
 pub mod health;
+/// The `index_provider` module.
 pub mod index_provider;
+/// The `internal` module.
 pub mod internal;
+/// The `kv` module.
 pub mod kv;
+/// The `log_broadcast` module.
 pub mod log_broadcast;
+/// The `model` module.
 pub mod model;
+/// The `namespace` module.
 pub mod namespace;
+/// The `naming_store` module.
 pub mod naming_store;
+/// The `oidc` module.
 pub mod oidc;
+/// The `operator` module.
 pub mod operator;
+/// The `partition` module.
 pub mod partition;
+/// The `peering` module.
 pub mod peering;
+/// The `query` module.
 pub mod query;
+/// The `result_handler` module.
 pub mod result_handler;
+/// The `route` module.
 pub mod route;
+/// The `session` module.
 pub mod session;
+/// The `snapshot` module.
 pub mod snapshot;
+/// The `snapshot_archive` module.
 pub mod snapshot_archive;
+/// The `status` module.
 pub mod status;
+/// The `vivaldi` module.
 pub mod vivaldi;
 
 // Re-export route functions for easy integration

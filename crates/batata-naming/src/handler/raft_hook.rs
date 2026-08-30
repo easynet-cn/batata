@@ -13,11 +13,13 @@ use batata_consistency::raft::NamingApplyHook;
 use crate::model::Instance;
 use crate::service::NamingService;
 
+/// Represents a `NamingApplyHookImpl`.
 pub struct NamingApplyHookImpl {
     naming: Arc<NamingService>,
 }
 
 impl NamingApplyHookImpl {
+    /// Creates a new instance.
     pub fn new(naming: Arc<NamingService>) -> Self {
         Self { naming }
     }

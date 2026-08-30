@@ -1,4 +1,4 @@
-// Naming client model types
+//! Naming client model types
 
 use serde::{Deserialize, Serialize};
 
@@ -6,14 +6,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClientSummaryInfo {
+    /// The `client_id` field.
     pub client_id: String,
+    /// The `ephemeral` field.
     pub ephemeral: bool,
+    /// The `last_updated_time` field.
     pub last_updated_time: i64,
+    /// The `client_type` field.
     pub client_type: String,
+    /// The `connect_type` field.
     pub connect_type: String,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `version` field.
     pub version: String,
+    /// The `client_ip` field.
     pub client_ip: String,
+    /// The `client_port` field.
     pub client_port: i32,
 }
 
@@ -21,12 +30,17 @@ pub struct ClientSummaryInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClientServiceInfo {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group_name` field.
     pub group_name: String,
+    /// The `service_name` field.
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `publisher_info` field.
     pub publisher_info: Option<ClientPublisherInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `subscriber_info` field.
     pub subscriber_info: Option<ClientSubscriberInfo>,
 }
 
@@ -34,9 +48,13 @@ pub struct ClientServiceInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClientPublisherInfo {
+    /// The `client_id` field.
     pub client_id: String,
+    /// The `ip` field.
     pub ip: String,
+    /// The `port` field.
     pub port: i32,
+    /// The `cluster_name` field.
     pub cluster_name: String,
 }
 
@@ -44,9 +62,13 @@ pub struct ClientPublisherInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClientSubscriberInfo {
+    /// The `client_id` field.
     pub client_id: String,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `agent` field.
     pub agent: String,
+    /// The `address` field.
     pub address: String,
 }
 

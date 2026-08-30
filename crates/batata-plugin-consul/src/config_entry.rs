@@ -51,41 +51,56 @@ pub const SUPPORTED_KINDS: &[&str] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConfigEntry {
+/// The `kind` field.
     pub kind: String,
+/// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `partition` field.
     pub partition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
     /// Additional fields stored as dynamic JSON
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
 /// Query parameters for config entry list
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryListParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `index` field.
     pub index: Option<u64>,
+/// The `wait` field.
     pub wait: Option<String>,
+/// The `filter` field.
     pub filter: Option<String>,
 }
 
 /// Query parameters for config entry apply
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryApplyParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `cas` field.
     pub cas: Option<u64>,
 }
 
 /// Query parameters for config entry delete
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryDeleteParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `cas` field.
     pub cas: Option<u64>,
 }
 
@@ -93,16 +108,22 @@ pub struct ConfigEntryDeleteParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConfigEntryRequest {
+/// The `kind` field.
     pub kind: String,
     #[serde(default)]
+/// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `partition` field.
     pub partition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
     #[serde(flatten)]
+/// The `extra` field.
     pub extra: HashMap<String, serde_json::Value>,
 }
 
@@ -124,6 +145,7 @@ pub struct ConsulConfigEntryService {
 }
 
 impl ConsulConfigEntryService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
@@ -227,6 +249,7 @@ impl ConsulConfigEntryService {
         }
     }
 
+/// The `list_entries` method.
     pub fn list_entries(&self, kind: &str) -> Vec<ConfigEntry> {
         let prefix = format!("{}/", kind);
         self.entries
@@ -236,11 +259,13 @@ impl ConsulConfigEntryService {
             .collect()
     }
 
+/// The `get_entry` method.
     pub fn get_entry(&self, kind: &str, name: &str) -> Option<ConfigEntry> {
         let key = Self::entry_key(kind, name);
         self.entries.get(&key).map(|r| r.value().clone())
     }
 
+/// The `apply_entry` method.
     pub async fn apply_entry(
         &self,
         mut req: ConfigEntryRequest,
@@ -303,6 +328,7 @@ impl ConsulConfigEntryService {
         Ok(true)
     }
 
+/// The `delete_entry` method.
     pub async fn delete_entry(
         &self,
         kind: &str,

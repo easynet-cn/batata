@@ -338,6 +338,7 @@ async fn list_instances(
     Result::<InstanceListResponse>::http_success(response)
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/instance")
         .service(register_or_beat)

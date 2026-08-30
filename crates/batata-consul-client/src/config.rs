@@ -1,3 +1,4 @@
+//! Client configuration via `ConsulClientConfig`.
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -71,7 +72,9 @@ impl Default for ConsulClientConfig {
     }
 }
 
+/// Configures retry count and base backoff for transient errors.
 impl ConsulClientConfig {
+/// Creates a new `ConsulClientConfig` for the given agent `address`.
     pub fn new(address: &str) -> Self {
         Self {
             address: address.to_string(),
@@ -88,47 +91,56 @@ impl ConsulClientConfig {
         }
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_token(mut self, token: &str) -> Self {
         self.token = token.to_string();
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_token_file(mut self, path: PathBuf) -> Self {
         self.token_file = Some(path);
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_datacenter(mut self, dc: &str) -> Self {
         self.datacenter = dc.to_string();
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_wait_time(mut self, wait: Duration) -> Self {
         self.wait_time = Some(wait);
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_timeouts(mut self, connect: Duration, read: Duration) -> Self {
         self.connect_timeout = connect;
         self.read_timeout = read;
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_namespace(mut self, ns: &str) -> Self {
         self.namespace = ns.to_string();
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_partition(mut self, partition: &str) -> Self {
         self.partition = partition.to_string();
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_tls(mut self, ca_cert: &str) -> Self {
         self.tls_ca_cert = Some(ca_cert.to_string());
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_mtls(mut self, ca_cert: &str, client_cert: &str, client_key: &str) -> Self {
         self.tls_ca_cert = Some(ca_cert.to_string());
@@ -136,6 +148,7 @@ impl ConsulClientConfig {
         self.tls_client_key = Some(client_key.to_string());
         self
     }
+/// Configures retry count and base backoff for transient errors.
 
     pub fn with_retry(mut self, max_retries: u32, backoff_base_ms: u64) -> Self {
         self.max_retries = max_retries;

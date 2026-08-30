@@ -36,12 +36,19 @@ use rand::Rng as _;
 #[serde(rename_all = "PascalCase")]
 pub struct RaftServer {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `node` field.
     pub node: String,
+/// The `address` field.
     pub address: String,
+/// The `leader` field.
     pub leader: bool,
+/// The `voter` field.
     pub voter: bool,
+/// The `protocol_version` field.
     pub protocol_version: String,
+/// The `last_index` field.
     pub last_index: u64,
 }
 
@@ -49,7 +56,9 @@ pub struct RaftServer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RaftConfigurationResponse {
+/// The `servers` field.
     pub servers: Vec<RaftServer>,
+/// The `index` field.
     pub index: u64,
 }
 
@@ -62,22 +71,28 @@ pub struct RaftConfigurationResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TransferLeaderResponse {
+/// The `success` field.
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `warning` field.
     pub warning: Option<String>,
 }
 
 /// Query parameters for raft peer removal
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RaftPeerParams {
+/// The `id` field.
     pub id: Option<String>,
+/// The `address` field.
     pub address: Option<String>,
+/// The `dc` field.
     pub dc: Option<String>,
 }
 
 /// Query parameters for transfer-leader
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TransferLeaderParams {
+/// The `id` field.
     pub id: Option<String>,
 }
 
@@ -85,15 +100,25 @@ pub struct TransferLeaderParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotConfiguration {
+/// The `cleanup_dead_servers` field.
     pub cleanup_dead_servers: bool,
+/// The `last_contact_threshold` field.
     pub last_contact_threshold: String,
+/// The `max_trailing_logs` field.
     pub max_trailing_logs: u64,
+/// The `min_quorum` field.
     pub min_quorum: u64,
+/// The `server_stabilization_time` field.
     pub server_stabilization_time: String,
+/// The `redundancy_zone_tag` field.
     pub redundancy_zone_tag: String,
+/// The `disable_upgrade_migration` field.
     pub disable_upgrade_migration: bool,
+/// The `upgrade_version_tag` field.
     pub upgrade_version_tag: String,
+/// The `create_index` field.
     pub create_index: u64,
+/// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -117,7 +142,9 @@ impl Default for AutopilotConfiguration {
 /// Query parameters for autopilot configuration PUT
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AutopilotConfigParams {
+/// The `cas` field.
     pub cas: Option<u64>,
+/// The `dc` field.
     pub dc: Option<String>,
 }
 
@@ -125,8 +152,11 @@ pub struct AutopilotConfigParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotHealthResponse {
+/// The `healthy` field.
     pub healthy: bool,
+/// The `failure_tolerance` field.
     pub failure_tolerance: i32,
+/// The `servers` field.
     pub servers: Vec<AutopilotServerHealth>,
 }
 
@@ -135,17 +165,29 @@ pub struct AutopilotHealthResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotServerHealth {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
+/// The `name` field.
     pub name: String,
+/// The `address` field.
     pub address: String,
+/// The `serf_status` field.
     pub serf_status: String,
+/// The `version` field.
     pub version: String,
+/// The `leader` field.
     pub leader: bool,
+/// The `last_contact` field.
     pub last_contact: String,
+/// The `last_term` field.
     pub last_term: u64,
+/// The `last_index` field.
     pub last_index: u64,
+/// The `healthy` field.
     pub healthy: bool,
+/// The `voter` field.
     pub voter: bool,
+/// The `stable_since` field.
     pub stable_since: String,
 }
 
@@ -153,10 +195,15 @@ pub struct AutopilotServerHealth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotStateResponse {
+/// The `healthy` field.
     pub healthy: bool,
+/// The `failure_tolerance` field.
     pub failure_tolerance: i32,
+/// The `leader` field.
     pub leader: String,
+/// The `voters` field.
     pub voters: Vec<String>,
+/// The `servers` field.
     pub servers: HashMap<String, AutopilotServerHealth>,
 }
 
@@ -164,45 +211,52 @@ pub struct AutopilotStateResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringRequest {
+/// The `key` field.
     pub key: String,
 }
 
 /// Keyring response
-/// 与Consul兼容的keyring响应，描述一个WAN或LANkeyring的状态
+/// Consul-compatible keyring response describing the state of a WAN or LAN keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringResponse {
     #[serde(rename = "WAN")]
+/// The `wan` field.
     pub wan: bool,
+/// The `datacenter` field.
     pub datacenter: String,
+/// The `segment` field.
     pub segment: String,
-    /// 分区名称（Consul Enterprise特性，OSS为空字符串）
+    /// The partition name (a Consul Enterprise feature; empty string in OSS).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub partition: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+/// The `messages` field.
     pub messages: Option<HashMap<String, String>>,
-    /// key→持有该key的节点数
+    /// `key` -> number of nodes holding that key.
     pub keys: HashMap<String, i32>,
-    /// 当前primary key→节点数
+    /// Current primary key -> number of nodes.
     pub primary_keys: HashMap<String, i32>,
+/// The `num_nodes` field.
     pub num_nodes: i32,
 }
 
-/// Keyring响应容器
-/// Consul的JSON字段名是"Responses"（PascalCase）
+/// Keyring response container.
+/// Consul's JSON field name is "Responses" (PascalCase).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringResponses {
+/// The `responses` field.
     pub responses: Vec<KeyringResponse>,
 }
 
-/// 查询参数 for keyring operations
+/// Query parameters for keyring operations.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct KeyringParams {
-    /// relay-factor: 0-5，控制通过gossip中继转发请求的节点数
+    /// `relay-factor`: 0-5, controls how many nodes forward the request via gossip relay.
     #[serde(rename = "relay-factor")]
     pub relay_factor: Option<u8>,
-    /// local-only: 仅GET/list操作支持，只返回本地节点的keyring信息
+    /// `local-only`: only supported by GET/list operations; returns only the local node's keyring info.
     #[serde(rename = "local-only")]
     pub local_only: Option<String>,
 }
@@ -210,18 +264,20 @@ pub struct KeyringParams {
 /// Query parameters for operator endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct OperatorQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `stale` field.
     pub stale: Option<String>,
 }
 
-/// 验证key格式：必须是base64编码的32字节数据（AES-256密钥）
-/// Consul使用AES-256-GCM加密gossip通信，密钥为32字节，base64编码后传输
+/// Validates the key format: must be 32 bytes of base64-encoded data (an AES-256 key).
+/// Consul encrypts gossip traffic with AES-256-GCM using a 32-byte key, transmitted base64-encoded.
 fn validate_key_format(key: &str) -> Result<Vec<u8>, String> {
-    // base64解码
+    // Decode base64.
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(key)
         .map_err(|e| format!("Invalid base64 key: {}", e))?;
-    // 验证长度为32字节（AES-256）
+    // Verify the length is 32 bytes (AES-256).
     if decoded.len() != 32 {
         return Err(format!(
             "Key must be 32 bytes (AES-256), got {} bytes",
@@ -231,8 +287,8 @@ fn validate_key_format(key: &str) -> Result<Vec<u8>, String> {
     Ok(decoded)
 }
 
-/// 解析local_only查询参数为布尔值
-/// Consul接受"true"/"1"/"yes"等为true，其他为false
+/// Parses the `local_only` query parameter into a boolean.
+/// Consul treats "true"/"1"/"yes" etc. as true and anything else as false.
 fn parse_local_only(value: &Option<String>) -> bool {
     match value {
         Some(v) => matches!(v.to_lowercase().as_str(), "true" | "1" | "yes" | "on"),
@@ -240,7 +296,7 @@ fn parse_local_only(value: &Option<String>) -> bool {
     }
 }
 
-/// 验证relay_factor范围（0-5），超出返回错误消息
+/// Validates the `relay_factor` range (0-5); returns an error message if out of range.
 fn validate_relay_factor(relay_factor: Option<u8>) -> Result<(), String> {
     if let Some(rf) = relay_factor {
         if rf > 5 {
@@ -274,10 +330,12 @@ pub struct ConsulOperatorService {
 }
 
 impl ConsulOperatorService {
+/// The `new` associated function.
     pub fn new(member_manager: Arc<dyn batata_common::ClusterManager>) -> Self {
         Self::with_datacenter(member_manager, "dc1".to_string())
     }
 
+/// The `with_datacenter` associated function.
     pub fn with_datacenter(
         member_manager: Arc<dyn batata_common::ClusterManager>,
         datacenter: String,
@@ -285,7 +343,7 @@ impl ConsulOperatorService {
         // Seed a default gossip key so `keyring_list` never returns empty.
         // Matches Consul which always reports at least the primary gossip
         // encryption key (or a placeholder in dev mode).
-        // 使用32字节随机数据作为AES-256密钥（base64编码后44字符）
+        // Use 32 random bytes as the AES-256 key (44 chars after base64 encoding).
         let keyring = Arc::new(DashMap::new());
         let member_count = member_manager.member_count() as i32;
         let mut default_key_bytes = [0u8; 32];
@@ -320,6 +378,7 @@ impl ConsulOperatorService {
         svc
     }
 
+/// The `get_raft_configuration` method.
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
         let members = self.member_manager.all_members_extended();
         let servers: Vec<RaftServer> = members
@@ -339,6 +398,7 @@ impl ConsulOperatorService {
         RaftConfigurationResponse { servers, index }
     }
 
+/// The `get_autopilot_health` method.
     pub fn get_autopilot_health(&self) -> AutopilotHealthResponse {
         use batata_common::MemberState;
 
@@ -389,6 +449,7 @@ impl ConsulOperatorService {
         }
     }
 
+/// The `get_autopilot_state` method.
     pub fn get_autopilot_state(&self) -> AutopilotStateResponse {
         let health = self.get_autopilot_health();
         let leader = health
@@ -418,10 +479,12 @@ impl ConsulOperatorService {
         }
     }
 
+/// The `get_autopilot_config` method.
     pub async fn get_autopilot_config(&self) -> AutopilotConfiguration {
         self.autopilot_config.read().await.clone()
     }
 
+/// The `set_autopilot_config` method.
     pub async fn set_autopilot_config(
         &self,
         config: AutopilotConfiguration,
@@ -441,9 +504,9 @@ impl ConsulOperatorService {
         Ok(true)
     }
 
-    /// 列出keyring中的所有key
-    /// 返回KeyringResponses（包含LAN和WAN两个response，或仅LAN如果local_only=true）
-    /// batata没有gossip/serf，WAN是LAN的副本（与Consul API兼容）
+    /// Lists all keys in the keyring.
+    /// Returns `KeyringResponses` (both LAN and WAN responses, or only LAN if `local_only=true`).
+    /// batata has no gossip/serf, so WAN is a copy of LAN (for Consul API compatibility).
     pub fn list_keys(&self, local_only: bool) -> KeyringResponses {
         let num_nodes = self.member_manager.member_count() as i32;
         let keys: HashMap<String, i32> = self
@@ -452,7 +515,7 @@ impl ConsulOperatorService {
             .map(|r| (r.key().clone(), *r.value()))
             .collect();
 
-        // primary_keys只包含当前激活的primary key
+        // primary_keys contains only the currently active primary key.
         let primary_key_guard = self.primary_key.try_read().ok().and_then(|g| g.clone());
         let primary_keys: HashMap<String, i32> = primary_key_guard
             .iter()
@@ -472,13 +535,13 @@ impl ConsulOperatorService {
         };
 
         if local_only {
-            // local_only=true时只返回LAN response
+            // When local_only=true, return only the LAN response.
             return KeyringResponses {
                 responses: vec![lan_resp],
             };
         }
 
-        // WAN response（batata中WAN是LAN的副本，因为没有gossip/serf）
+        // WAN response (in batata WAN is a copy of LAN since there is no gossip/serf).
         let wan_resp = KeyringResponse {
             wan: true,
             datacenter: self.datacenter.clone(),
@@ -495,36 +558,36 @@ impl ConsulOperatorService {
         }
     }
 
-    /// 安装新key到keyring
-    /// 验证key格式（base64编码的32字节），如果key已存在则成功但不重复添加
+    /// Installs a new key into the keyring.
+    /// Validates the key format (32 bytes base64-encoded); succeeds idempotently if the key already exists.
     pub fn install_key(&self, key: &str) -> Result<KeyringResponses, String> {
-        // 验证key格式
+        // Validate the key format.
         validate_key_format(key)?;
 
-        // 如果key已存在，返回成功（幂等操作，与Consul行为一致）
+        // If the key already exists, return success (idempotent, matching Consul behavior).
         if self.keyring.contains_key(key) {
             return Ok(self.list_keys(false));
         }
 
-        // 添加到keyring
+        // Add to the keyring.
         let member_count = self.member_manager.member_count() as i32;
         self.keyring.insert(key.to_string(), member_count.max(1));
 
         Ok(self.list_keys(false))
     }
 
-    /// 切换primary key
-    /// 验证key格式，检查key是否在keyring中，然后设为新的primary key
+    /// Switches the primary key.
+    /// Validates the key format, checks it is in the keyring, then sets it as the new primary key.
     pub async fn use_key(&self, key: &str) -> Result<KeyringResponses, String> {
-        // 验证key格式
+        // Validate the key format.
         validate_key_format(key)?;
 
-        // 检查key是否在keyring中
+        // Check whether the key is in the keyring.
         if !self.keyring.contains_key(key) {
             return Err(format!("Key '{}' not found in keyring", key));
         }
 
-        // 设置为新的primary key
+        // Set as the new primary key.
         let mut primary = self.primary_key.write().await;
         *primary = Some(key.to_string());
         drop(primary);
@@ -532,25 +595,25 @@ impl ConsulOperatorService {
         Ok(self.list_keys(false))
     }
 
-    /// 从keyring移除key
-    /// 验证key格式，检查key是否在keyring中，检查不是primary key
+    /// Removes a key from the keyring.
+    /// Validates the key format, checks it is in the keyring, and checks it is not the primary key.
     pub async fn remove_key(&self, key: &str) -> Result<KeyringResponses, String> {
-        // 验证key格式
+        // Validate the key format.
         validate_key_format(key)?;
 
-        // 检查key是否在keyring中
+        // Check whether the key is in the keyring.
         if !self.keyring.contains_key(key) {
             return Err(format!("Key '{}' not found in keyring", key));
         }
 
-        // 检查不是primary key（不能移除当前正在使用的primary key）
+        // Check it is not the primary key (cannot remove the currently used primary key).
         let primary = self.primary_key.read().await;
         if primary.as_deref() == Some(key) {
             return Err("Cannot remove primary key".to_string());
         }
         drop(primary);
 
-        // 从keyring移除
+        // Remove from the keyring.
         self.keyring.remove(key);
 
         Ok(self.list_keys(false))
@@ -565,9 +628,13 @@ impl ConsulOperatorService {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceUsage {
+/// The `nodes` field.
     pub nodes: i64,
+/// The `services` field.
     pub services: i64,
+/// The `service_instances` field.
     pub service_instances: i64,
+/// The `connect_service_instances` field.
     pub connect_service_instances: HashMap<String, i64>,
 }
 
@@ -575,6 +642,7 @@ pub struct ServiceUsage {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct OperatorUsageResponse {
+/// The `usage` field.
     pub usage: HashMap<String, ServiceUsage>,
 }
 
@@ -857,25 +925,25 @@ pub async fn get_autopilot_state(
 }
 
 /// GET /v1/operator/keyring
-/// 列出keyring中的所有key，返回KeyringResponses格式
+/// Lists all keys in the keyring, returning a `KeyringResponses`.
 pub async fn keyring_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
     query: web::Query<KeyringParams>,
 ) -> HttpResponse {
-    // Keyring list需要KeyringRead权限（read操作）
+    // Keyring list requires the KeyringRead permission (read operation).
     let authz = acl_service.authorize_request(&req, ResourceType::Keyring, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    // 验证relay_factor范围（0-5）
+    // Validate the relay_factor range (0-5).
     if let Err(e) = validate_relay_factor(query.relay_factor) {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(e));
     }
 
-    // 解析local_only参数（仅list操作支持）
+    // Parse the local_only parameter (only supported by list operations).
     let local_only = parse_local_only(&query.local_only);
 
     let responses = operator_service.list_keys(local_only);
@@ -883,7 +951,7 @@ pub async fn keyring_list(
 }
 
 /// POST /v1/operator/keyring
-/// 安装新key到keyring
+/// Installs a new key into the keyring.
 pub async fn keyring_install(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -891,18 +959,18 @@ pub async fn keyring_install(
     query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    // Keyring install需要KeyringWrite权限（write操作）
+    // Keyring install requires the KeyringWrite permission (write operation).
     let authz = acl_service.authorize_request(&req, ResourceType::Keyring, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    // 验证relay_factor范围（0-5）
+    // Validate the relay_factor range (0-5).
     if let Err(e) = validate_relay_factor(query.relay_factor) {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(e));
     }
 
-    // local_only仅list操作支持，其他操作返回400错误
+    // local_only is only supported by list operations; other operations return 400.
     if query.local_only.is_some() {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "local-only parameter is only valid for list (GET) operations",
@@ -916,7 +984,7 @@ pub async fn keyring_install(
 }
 
 /// PUT /v1/operator/keyring
-/// 切换primary key
+/// Switches the primary key.
 pub async fn keyring_use(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -924,18 +992,18 @@ pub async fn keyring_use(
     query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    // Keyring use需要KeyringWrite权限（write操作）
+    // Keyring use requires the KeyringWrite permission (write operation).
     let authz = acl_service.authorize_request(&req, ResourceType::Keyring, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    // 验证relay_factor范围（0-5）
+    // Validate the relay_factor range (0-5).
     if let Err(e) = validate_relay_factor(query.relay_factor) {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(e));
     }
 
-    // local_only仅list操作支持，其他操作返回400错误
+    // local_only is only supported by list operations; other operations return 400.
     if query.local_only.is_some() {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "local-only parameter is only valid for list (GET) operations",
@@ -949,7 +1017,7 @@ pub async fn keyring_use(
 }
 
 /// DELETE /v1/operator/keyring
-/// 从keyring移除key
+/// Removes a key from the keyring.
 pub async fn keyring_remove(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -957,18 +1025,18 @@ pub async fn keyring_remove(
     query: web::Query<KeyringParams>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    // Keyring remove需要KeyringWrite权限（write操作）
+    // Keyring remove requires the KeyringWrite permission (write operation).
     let authz = acl_service.authorize_request(&req, ResourceType::Keyring, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    // 验证relay_factor范围（0-5）
+    // Validate the relay_factor range (0-5).
     if let Err(e) = validate_relay_factor(query.relay_factor) {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(e));
     }
 
-    // local_only仅list操作支持，其他操作返回400错误
+    // local_only is only supported by list operations; other operations return 400.
     if query.local_only.is_some() {
         return HttpResponse::BadRequest().consul_error(ConsulError::new(
             "local-only parameter is only valid for list (GET) operations",
@@ -1176,31 +1244,31 @@ mod tests {
         assert!(health.failure_tolerance >= 0);
     }
 
-    /// 生成有效的AES-256密钥（base64编码的32字节），用于测试
+    /// Generates a valid AES-256 key (32 bytes base64-encoded), for tests.
     fn make_valid_key(seed: u8) -> String {
         base64::engine::general_purpose::STANDARD.encode([seed; 32])
     }
 
     #[test]
     fn test_keyring_validate_key_format() {
-        // 有效key：base64编码的32字节
+        // Valid key: 32 bytes base64-encoded.
         let valid_key = make_valid_key(0xAA);
         let result = validate_key_format(&valid_key);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 32);
 
-        // 无效base64
+        // Invalid base64.
         let result = validate_key_format("not-valid-base64!!!");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid base64 key"));
 
-        // 长度不足（16字节 = AES-128，不被接受）
+        // Length too short (16 bytes = AES-128, not accepted).
         let short_key = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
         let result = validate_key_format(&short_key);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("32 bytes"));
 
-        // 长度超出（64字节）
+        // Length too long (64 bytes).
         let long_key = base64::engine::general_purpose::STANDARD.encode([0u8; 64]);
         let result = validate_key_format(&long_key);
         assert!(result.is_err());
@@ -1211,12 +1279,12 @@ mod tests {
     fn test_keyring_install_invalid_key() {
         let service = test_service();
 
-        // 无效key格式应返回错误
+        // Invalid key format should return an error.
         let result = service.install_key("invalid-key");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid base64 key"));
 
-        // 长度不对的key
+        // Key with wrong length.
         let short_key = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
         let result = service.install_key(&short_key);
         assert!(result.is_err());
@@ -1225,13 +1293,13 @@ mod tests {
 
     #[test]
     fn test_keyring_relay_factor_validation() {
-        // relay_factor 0-5 有效
+        // relay_factor 0-5 is valid.
         assert!(validate_relay_factor(None).is_ok());
         assert!(validate_relay_factor(Some(0)).is_ok());
         assert!(validate_relay_factor(Some(3)).is_ok());
         assert!(validate_relay_factor(Some(5)).is_ok());
 
-        // relay_factor > 5 无效
+        // relay_factor > 5 is invalid.
         let result = validate_relay_factor(Some(6));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("relay-factor must be between 0 and 5"));
@@ -1239,7 +1307,7 @@ mod tests {
 
     #[test]
     fn test_keyring_local_only_only_for_list() {
-        // local_only 参数解析
+        // Parse the local_only parameter.
         assert!(!parse_local_only(&None));
         assert!(parse_local_only(&Some("true".to_string())));
         assert!(parse_local_only(&Some("1".to_string())));
@@ -1252,7 +1320,7 @@ mod tests {
     fn test_keyring_list_returns_keyring_responses() {
         let service = test_service();
 
-        // 默认返回LAN和WAN两个response
+        // By default return both LAN and WAN responses.
         let responses = service.list_keys(false);
         assert_eq!(responses.responses.len(), 2);
 
@@ -1272,7 +1340,7 @@ mod tests {
         assert!(!wan.keys.is_empty());
         assert!(!wan.primary_keys.is_empty());
 
-        // local_only=true时只返回LAN response
+        // When local_only=true, return only the LAN response.
         let responses = service.list_keys(true);
         assert_eq!(responses.responses.len(), 1);
         assert!(!responses.responses[0].wan);
@@ -1283,15 +1351,15 @@ mod tests {
         let service = test_service();
         let key = make_valid_key(0x42);
 
-        // 第一次安装
+        // First install.
         let result = service.install_key(&key);
         assert!(result.is_ok());
 
-        // 第二次安装同一个key不应报错（幂等操作）
+        // Installing the same key a second time should not error (idempotent).
         let result = service.install_key(&key);
         assert!(result.is_ok());
 
-        // key应该只存在一个
+        // The key should exist only once.
         let responses = service.list_keys(false);
         let count = responses.responses[0]
             .keys
@@ -1305,7 +1373,7 @@ mod tests {
     async fn test_keyring_full_rotation() {
         let service = test_service();
 
-        // 获取初始primary key
+        // Get the initial primary key.
         let initial = service.list_keys(false);
         let initial_primary = initial.responses[0]
             .primary_keys
@@ -1314,23 +1382,23 @@ mod tests {
             .cloned()
             .expect("should have an initial primary key");
 
-        // 步骤1: install新key
+        // Step 1: install a new key.
         let new_key = make_valid_key(0x99);
         let result = service.install_key(&new_key);
         assert!(result.is_ok(), "install should succeed");
 
-        // 确认新key在keyring中
+        // Confirm the new key is in the keyring.
         let responses = service.list_keys(false);
         assert!(
             responses.responses[0].keys.contains_key(&new_key),
             "new key should be in keyring after install"
         );
 
-        // 步骤2: use新key（切换primary）
+        // Step 2: use the new key (switch primary).
         let result = service.use_key(&new_key).await;
         assert!(result.is_ok(), "use should succeed");
 
-        // 确认primary key已切换
+        // Confirm the primary key has switched.
         let responses = service.list_keys(false);
         let current_primary = responses.responses[0]
             .primary_keys
@@ -1343,11 +1411,11 @@ mod tests {
             "primary key should be the new key after use"
         );
 
-        // 步骤3: remove旧key
+        // Step 3: remove the old key.
         let result = service.remove_key(&initial_primary).await;
         assert!(result.is_ok(), "remove old key should succeed");
 
-        // 确认旧key已移除
+        // Confirm the old key has been removed.
         let responses = service.list_keys(false);
         assert!(
             !responses.responses[0].keys.contains_key(&initial_primary),
@@ -1366,7 +1434,7 @@ mod tests {
         service.install_key(&key).unwrap();
         service.use_key(&key).await.unwrap();
 
-        // 移除primary key应返回错误
+        // Removing the primary key should return an error.
         let result = service.remove_key(&key).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Cannot remove primary key"));
@@ -1377,7 +1445,7 @@ mod tests {
         let service = test_service();
         let valid_key = make_valid_key(0xEE);
 
-        // 使用不在keyring中的有效key应返回错误
+        // Using a valid key not in the keyring should return an error.
         let result = service.use_key(&valid_key).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found in keyring"));

@@ -34,8 +34,11 @@ pub struct CapacityRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapacityResponse {
+/// The `code` value.
     pub code: i32,
+/// The `message` value.
     pub message: String,
+/// The `data` value.
     pub data: Option<CapacityData>,
 }
 
@@ -43,14 +46,23 @@ pub struct CapacityResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapacityData {
+/// The `id` value.
     pub id: Option<i64>,
+/// The `tenant` value.
     pub tenant: Option<String>,
+/// The `group` value.
     pub group: Option<String>,
+/// The `quota` value.
     pub quota: i32,
+/// The `usage` value.
     pub usage: i32,
+/// The `max_size` value.
     pub max_size: i32,
+/// The `max_aggr_count` value.
     pub max_aggr_count: i32,
+/// The `max_aggr_size` value.
     pub max_aggr_size: i32,
+/// The `max_history_count` value.
     pub max_history_count: i32,
 }
 

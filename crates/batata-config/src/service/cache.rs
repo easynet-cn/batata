@@ -55,6 +55,7 @@ pub struct ConfigCacheService {
 }
 
 impl ConfigCacheService {
+    /// Creates a new, empty `ConfigCacheService`.
     pub fn new() -> Self {
         Self {
             cache: DashMap::new(),

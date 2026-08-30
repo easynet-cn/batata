@@ -4,15 +4,18 @@ use crate::persistence::shared::{StoredNamespace, StoredItem};
 use crate::persistence::traits::{ApolloPersistenceService, NamespacePersistence, ItemPersistence};
 use chrono::Utc;
 
+/// Represents the `ConfigSyncService` entity.
 pub struct ConfigSyncService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ConfigSyncService {
+    /// Creates a new `ConfigSyncService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `sync_configs` operation.
     pub async fn sync_configs(
         &self,
         source_app_id: &str,
@@ -109,6 +112,7 @@ impl ConfigSyncService {
         })
     }
 
+    /// Performs the `sync_app_all_namespaces` operation.
     pub async fn sync_app_all_namespaces(
         &self,
         source_app_id: &str,
@@ -148,6 +152,7 @@ impl ConfigSyncService {
         Ok(results)
     }
 
+    /// Returns the requested value.
     pub async fn get_sync_status(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<SyncStatus, anyhow::Error> {
         let target_ns = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
 
@@ -172,26 +177,41 @@ impl ConfigSyncService {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+/// Represents the `SyncResult` entity.
 pub struct SyncResult {
+    /// The `created` field.
     pub created: usize,
+    /// The `updated` field.
     pub updated: usize,
+    /// The `skipped` field.
     pub skipped: usize,
+    /// The `total` field.
     pub total: usize,
+    /// The `message` field.
     pub message: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+/// Represents the `NamespaceSyncResult` entity.
 pub struct NamespaceSyncResult {
+    /// The `namespace_name` field.
     pub namespace_name: String,
+    /// The `success` field.
     pub success: bool,
+    /// The `error` field.
     pub error: Option<String>,
+    /// The `result` field.
     pub result: Option<SyncResult>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+/// Represents the `SyncStatus` entity.
 pub struct SyncStatus {
+    /// The `exists` field.
     pub exists: bool,
+    /// The `item_count` field.
     pub item_count: u64,
+    /// The `last_modified_time` field.
     pub last_modified_time: Option<String>,
 }
 

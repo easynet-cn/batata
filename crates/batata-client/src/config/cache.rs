@@ -17,13 +17,18 @@ use super::listener::{ConfigChangeEventListener, ConfigChangeListener, ConfigRes
 /// - `last_content`: the content last delivered (for change event diff computation)
 /// - `in_notifying`: prevents concurrent notification of the same listener
 pub struct ManagerListenerWrap {
+    /// The wrapped config listener.
     pub listener: Arc<dyn ConfigChangeListener>,
+    /// MD5 of the content last delivered to this listener.
     pub last_call_md5: String,
+    /// Content last delivered to this listener.
     pub last_content: String,
+    /// Whether a notification is currently in progress for this listener.
     pub in_notifying: AtomicBool,
 }
 
 impl ManagerListenerWrap {
+    /// Create a new listener wrap with the given listener and initial state.
     pub fn new(listener: Arc<dyn ConfigChangeListener>, md5: &str, content: &str) -> Self {
         Self {
             listener,
@@ -36,13 +41,18 @@ impl ManagerListenerWrap {
 
 /// Wraps a change event listener with per-listener state tracking.
 pub struct ManagerChangeEventListenerWrap {
+    /// The wrapped change event listener.
     pub listener: Arc<dyn ConfigChangeEventListener>,
+    /// MD5 of the content last delivered to this listener.
     pub last_call_md5: String,
+    /// Content last delivered to this listener.
     pub last_content: String,
+    /// Whether a notification is currently in progress for this listener.
     pub in_notifying: AtomicBool,
 }
 
 impl ManagerChangeEventListenerWrap {
+    /// Create a new change-event listener wrap with the given listener and initial state.
     pub fn new(listener: Arc<dyn ConfigChangeEventListener>, md5: &str, content: &str) -> Self {
         Self {
             listener,
@@ -58,10 +68,15 @@ impl ManagerChangeEventListenerWrap {
 /// Matches Nacos Java `CacheData` with all state flags for coordinating
 /// between server push notifications and the listen loop.
 pub struct CacheData {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Config tenant/namespace ID.
     pub tenant: String,
+    /// Current config content.
     pub content: String,
+    /// MD5 hash of the current content.
     pub md5: String,
     /// Config type (e.g., "properties", "yaml", "json") for change parsing
     pub config_type: String,

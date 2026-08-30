@@ -5,27 +5,43 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "config_info_gray")]
+/// ORM model for a row in the `config_info_gray` table.
 pub struct Model {
+    /// Primary key.
     #[sea_orm(primary_key)]
     pub id: i64,
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group_id: String,
+    /// Gray config content.
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     pub content: String,
+    /// MD5 hash of the content.
     pub md5: Option<String>,
+    /// User who created the config.
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,
+    /// Source IP of the operation.
     pub src_ip: Option<String>,
+    /// Creation timestamp.
     pub gmt_create: DateTime,
+    /// Last modification timestamp.
     pub gmt_modified: DateTime,
+    /// Owning application name.
     pub app_name: Option<String>,
+    /// Tenant ID (namespace).
     pub tenant_id: Option<String>,
+    /// Gray (beta) config name.
     pub gray_name: String,
+    /// Gray rule expression.
     #[sea_orm(column_type = "Text")]
     pub gray_rule: String,
+    /// Encrypted data key.
     pub encrypted_data_key: String,
 }
 
+/// Relation definitions for the `config_info_gray` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

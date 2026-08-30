@@ -17,6 +17,7 @@ pub struct ClientLabelsCollector {
 }
 
 impl ClientLabelsCollector {
+    /// Create a new, empty labels collector.
     pub fn new() -> Self {
         Self {
             custom_labels: HashMap::new(),
@@ -24,17 +25,20 @@ impl ClientLabelsCollector {
         }
     }
 
+    /// Set the application name label.
     pub fn with_app_name(mut self, name: &str) -> Self {
         self.app_name = name.to_string();
         self
     }
 
+    /// Add a single custom label.
     pub fn with_label(mut self, key: &str, value: &str) -> Self {
         self.custom_labels
             .insert(key.to_string(), value.to_string());
         self
     }
 
+    /// Add multiple custom labels.
     pub fn with_labels(mut self, labels: HashMap<String, String>) -> Self {
         self.custom_labels.extend(labels);
         self

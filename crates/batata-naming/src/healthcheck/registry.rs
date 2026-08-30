@@ -34,6 +34,7 @@ use batata_plugin::HealthCheckResultHandler;
 /// always applies locally — preserving the original single-node behavior.
 #[async_trait::async_trait]
 pub trait HealthStatusReplicator: Send + Sync {
+    /// Performs the `replicate_status` operation.
     async fn replicate_status(
         &self,
         check_key: &str,
@@ -42,6 +43,7 @@ pub trait HealthStatusReplicator: Send + Sync {
         response_time_ms: u64,
     ) -> bool;
 
+    /// Performs the `replicate_ttl` operation.
     async fn replicate_ttl(&self, check_key: &str, status: &str, output: Option<&str>) -> bool;
 }
 
@@ -90,6 +92,7 @@ pub enum CheckType {
 }
 
 impl CheckType {
+    /// Performs the `as_str` operation.
     pub fn as_str(&self) -> &str {
         match self {
             Self::None => "",
@@ -130,21 +133,33 @@ pub struct InstanceCheckConfig {
     /// Check protocol type
     pub check_type: CheckType,
     // Location coordinates
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_name` value.
     pub group_name: String,
+    /// The `service_name` value.
     pub service_name: String,
+    /// The `ip` value.
     pub ip: String,
+    /// The `port` value.
     pub port: i32,
+    /// The `cluster_name` value.
     pub cluster_name: String,
     // Active check params
+    /// The `http_url` value.
     pub http_url: Option<String>,
+    /// The `tcp_addr` value.
     pub tcp_addr: Option<String>,
+    /// The `grpc_addr` value.
     pub grpc_addr: Option<String>,
     /// Database connection URL for database health check (MySQL/PostgreSQL/SQLite)
     pub db_url: Option<String>,
+    /// The `interval` value.
     pub interval: Duration,
+    /// The `timeout` value.
     pub timeout: Duration,
     // TTL params
+    /// The `ttl` value.
     pub ttl: Option<Duration>,
     // Thresholds
     /// Consecutive successes before transitioning to Passing (default: 0 = immediate)
@@ -152,6 +167,7 @@ pub struct InstanceCheckConfig {
     /// Consecutive failures before transitioning to Critical (default: 0 = immediate; Nacos uses 3)
     pub failures_before_critical: u32,
     // Auto-deregistration
+    /// The `deregister_critical_after` value.
     pub deregister_critical_after: Option<Duration>,
     /// Initial status when check is registered
     pub initial_status: CheckStatus,

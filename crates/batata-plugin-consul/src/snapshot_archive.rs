@@ -24,7 +24,9 @@ use sha2::{Digest, Sha256};
 
 /// File names used inside the tar archive (must match Consul byte-for-byte).
 pub const META_FILE: &str = "meta.json";
+/// The `STATE_FILE` constant.
 pub const STATE_FILE: &str = "state.bin";
+/// The `SHA256SUMS_FILE` constant.
 pub const SHA256SUMS_FILE: &str = "SHA256SUMS";
 
 /// Raft snapshot metadata, wire-compatible with Consul's `raft.SnapshotMeta`.
@@ -125,7 +127,9 @@ fn append_file<W: Write>(
 /// A parsed snapshot archive.
 #[derive(Debug, Clone)]
 pub struct ParsedArchive {
+/// The `meta` field.
     pub meta: SnapshotMeta,
+/// The `state` field.
     pub state: Vec<u8>,
 }
 

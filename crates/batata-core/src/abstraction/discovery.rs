@@ -124,33 +124,43 @@ pub trait BatchServiceDiscovery: ServiceDiscovery {
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryError {
     #[error("Service not found: {0}")]
+    /// The `ServiceNotFound` variant.
     ServiceNotFound(String),
 
     #[error("Instance not found: {0}")]
+    /// The `InstanceNotFound` variant.
     InstanceNotFound(String),
 
     #[error("Instance already exists: {0}")]
+    /// The `InstanceAlreadyExists` variant.
     InstanceAlreadyExists(String),
 
     #[error("Invalid request: {0}")]
+    /// The `InvalidRequest` variant.
     InvalidRequest(String),
 
     #[error("Namespace not found: {0}")]
+    /// The `NamespaceNotFound` variant.
     NamespaceNotFound(String),
 
     #[error("Permission denied: {0}")]
+    /// The `PermissionDenied` variant.
     PermissionDenied(String),
 
     #[error("Rate limit exceeded")]
+    /// The `RateLimitExceeded` variant.
     RateLimitExceeded,
 
     #[error("Storage error: {0}")]
+    /// The `StorageError` variant.
     StorageError(String),
 
     #[error("Network error: {0}")]
+    /// The `NetworkError` variant.
     NetworkError(String),
 
     #[error("Internal error: {0}")]
+    /// The `InternalError` variant.
     InternalError(String),
 }
 

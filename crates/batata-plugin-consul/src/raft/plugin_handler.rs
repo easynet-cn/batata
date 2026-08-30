@@ -51,6 +51,7 @@ enum HookDispatch {
     AclChange,
 }
 
+/// Represents `ConsulRaftPluginHandler`.
 pub struct ConsulRaftPluginHandler {
     /// Per-table index — updated on every apply to notify blocking queries.
     table_index: ConsulTableIndex,
@@ -63,6 +64,7 @@ pub struct ConsulRaftPluginHandler {
 }
 
 impl ConsulRaftPluginHandler {
+/// The `new` associated function.
     pub fn new(table_index: ConsulTableIndex) -> Self {
         Self {
             table_index,
@@ -70,6 +72,7 @@ impl ConsulRaftPluginHandler {
         }
     }
 
+/// The `new_arc` associated function.
     pub fn new_arc(table_index: ConsulTableIndex) -> Arc<Self> {
         Arc::new(Self::new(table_index))
     }
@@ -982,6 +985,7 @@ pub struct ConsulRaftWriter {
 }
 
 impl ConsulRaftWriter {
+/// The `new` associated function.
     pub fn new(core_raft: Arc<RaftNode>) -> Self {
         Self { core_raft }
     }

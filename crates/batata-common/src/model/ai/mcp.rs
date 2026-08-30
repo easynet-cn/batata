@@ -146,8 +146,11 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum McpCapability {
+    /// The `Tool` variant.
     Tool,
+    /// The `Prompt` variant.
     Prompt,
+    /// The `Resource` variant.
     Resource,
 }
 
@@ -393,22 +396,31 @@ impl Default for McpServerQuery {
 #[serde(rename_all = "camelCase")]
 pub struct McpServerBasicInfo {
     #[serde(default)]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default)]
+    /// The `id` field.
     pub id: String,
     #[serde(default)]
+    /// The `name` field.
     pub name: String,
     #[serde(default)]
+    /// The `protocol` field.
     pub protocol: String,
     #[serde(default)]
+    /// The `description` field.
     pub description: String,
     #[serde(default)]
+    /// The `version` field.
     pub version: String,
     #[serde(default)]
+    /// The `enabled` field.
     pub enabled: bool,
     #[serde(default = "default_mcp_status")]
+    /// The `status` field.
     pub status: String,
     #[serde(default)]
+    /// The `capabilities` field.
     pub capabilities: McpCapabilities,
 }
 
@@ -687,9 +699,14 @@ pub struct FrontEndpointConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpRegistryStats {
+    /// The `total_servers` field.
     pub total_servers: u32,
+    /// The `healthy_servers` field.
     pub healthy_servers: u32,
+    /// The `unhealthy_servers` field.
     pub unhealthy_servers: u32,
+    /// The `by_namespace` field.
     pub by_namespace: HashMap<String, u32>,
+    /// The `by_type` field.
     pub by_type: HashMap<String, u32>,
 }

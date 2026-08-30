@@ -39,9 +39,13 @@ fn default_listen_true() -> bool {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigRequest {
     #[serde(flatten)]
+    /// The `request` field.
     pub request: Request,
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `tenant` field.
     pub tenant: String,
     #[serde(
         serialize_with = "serialize_config_module",
@@ -51,6 +55,7 @@ pub struct ConfigRequest {
 }
 
 impl ConfigRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             request: Request::new(),
@@ -65,8 +70,11 @@ impl_request_trait!(base ConfigRequest, request);
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigCloneInfo {
+    /// The `config_id` field.
     pub config_id: i64,
+    /// The `target_group_name` field.
     pub target_group_name: String,
+    /// The `target_data_id` field.
     pub target_data_id: String,
 }
 
@@ -74,12 +82,16 @@ pub struct ConfigCloneInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigListenerInfo {
+    /// The `query_type` field.
     pub query_type: String,
+    /// The `listeners_status` field.
     pub listeners_status: HashMap<String, String>,
 }
 
 impl ConfigListenerInfo {
+    /// The `QUERY_TYPE_CONFIG` constant.
     pub const QUERY_TYPE_CONFIG: &str = "config";
+    /// The `QUERY_TYPE_IP` constant.
     pub const QUERY_TYPE_IP: &str = "ip";
 }
 
@@ -87,12 +99,16 @@ impl ConfigListenerInfo {
 #[derive(Default)]
 pub enum SameConfigPolicy {
     #[default]
+    /// The `variant` variant.
     Abort,
+    /// The `variant` variant.
     Skip,
+    /// The `variant` variant.
     Overwrite,
 }
 
 impl SameConfigPolicy {
+    /// The `as_str` method.
     pub fn as_str(self) -> &'static str {
         match self {
             SameConfigPolicy::Abort => "ABORT",
@@ -119,9 +135,13 @@ impl std::str::FromStr for SameConfigPolicy {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigListenContext {
+    /// The `group` field.
     pub group: String,
+    /// The `md5` field.
     pub md5: String,
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `tenant` field.
     pub tenant: String,
 }
 
@@ -130,13 +150,17 @@ pub struct ConfigListenContext {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigBatchListenRequest {
     #[serde(flatten)]
+    /// The `config_request` field.
     pub config_request: ConfigRequest,
     #[serde(default = "default_listen_true")]
+    /// The `listen` field.
     pub listen: bool,
+    /// The `config_listen_contexts` field.
     pub config_listen_contexts: Vec<ConfigListenContext>,
 }
 
 impl ConfigBatchListenRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_request: ConfigRequest::new(),
@@ -159,13 +183,18 @@ impl From<&Payload> for ConfigBatchListenRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigPublishRequest {
     #[serde(flatten)]
+    /// The `config_request` field.
     pub config_request: ConfigRequest,
+    /// The `content` field.
     pub content: String,
+    /// The `cas_md5` field.
     pub cas_md5: String,
+    /// The `addition_map` field.
     pub addition_map: HashMap<String, String>,
 }
 
 impl ConfigPublishRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_request: ConfigRequest::new(),
@@ -188,11 +217,14 @@ impl From<&Payload> for ConfigPublishRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigQueryRequest {
     #[serde(flatten)]
+    /// The `config_request` field.
     pub config_request: ConfigRequest,
+    /// The `tag` field.
     pub tag: String,
 }
 
 impl ConfigQueryRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_request: ConfigRequest::new(),
@@ -214,11 +246,14 @@ impl From<&Payload> for ConfigQueryRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigRemoveRequest {
     #[serde(flatten)]
+    /// The `config_request` field.
     pub config_request: ConfigRequest,
+    /// The `tag` field.
     pub tag: String,
 }
 
 impl ConfigRemoveRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_request: ConfigRequest::new(),
@@ -240,6 +275,7 @@ impl From<&Payload> for ConfigRemoveRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct FuzzyWatchNotifyRequest {
     #[serde(flatten)]
+    /// The `server_request` field.
     pub server_request: ServerRequest,
     #[serde(
         serialize_with = "serialize_config_module",
@@ -249,6 +285,7 @@ pub struct FuzzyWatchNotifyRequest {
 }
 
 impl FuzzyWatchNotifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
@@ -264,12 +301,16 @@ impl_request_trait!(base FuzzyWatchNotifyRequest, server_request);
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchChangeNotifyRequest {
     #[serde(flatten)]
+    /// The `fuzzy_watch_notify_request` field.
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
+    /// The `group_key` field.
     pub group_key: String,
+    /// The `change_type` field.
     pub change_type: String,
 }
 
 impl ConfigFuzzyWatchChangeNotifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             fuzzy_watch_notify_request: FuzzyWatchNotifyRequest::new(),
@@ -293,7 +334,9 @@ impl From<&Payload> for ConfigFuzzyWatchChangeNotifyRequest {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Context {
+    /// The `group_key` field.
     pub group_key: String,
+    /// The `change_type` field.
     pub change_type: String,
 }
 
@@ -302,15 +345,22 @@ pub struct Context {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchSyncRequest {
     #[serde(flatten)]
+    /// The `fuzzy_watch_notify_request` field.
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
+    /// The `group_key_pattern` field.
     pub group_key_pattern: String,
+    /// The `sync_type` field.
     pub sync_type: String,
+    /// The `total_batch` field.
     pub total_batch: i32,
+    /// The `current_batch` field.
     pub current_batch: i32,
+    /// The `contexts` field.
     pub contexts: HashSet<Context>,
 }
 
 impl ConfigFuzzyWatchSyncRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             fuzzy_watch_notify_request: FuzzyWatchNotifyRequest::new(),
@@ -331,14 +381,19 @@ impl From<&Payload> for ConfigFuzzyWatchSyncRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricsKey {
+    /// The `type` field.
     pub r#type: String,
+    /// The `key` field.
     pub key: String,
 }
 
 impl MetricsKey {
+    /// The `CACHE_DATA` constant.
     pub const CACHE_DATA: &str = "cacheData";
+    /// The `SNAPSHOT_DATA` constant.
     pub const SNAPSHOT_DATA: &str = "snapshotData";
 
+    /// Creates a new instance.
     pub fn new() -> Self {
         MetricsKey::default()
     }
@@ -349,7 +404,9 @@ impl MetricsKey {
 #[serde(rename_all = "camelCase", default)]
 pub struct ClientConfigMetricRequest {
     #[serde(flatten)]
+    /// The `server_request` field.
     pub server_request: ServerRequest,
+    /// The `metrics_keys` field.
     pub metrics_keys: Vec<MetricsKey>,
     #[serde(
         serialize_with = "serialize_config_module",
@@ -359,6 +416,7 @@ pub struct ClientConfigMetricRequest {
 }
 
 impl ClientConfigMetricRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
@@ -381,9 +439,13 @@ impl From<&Payload> for ClientConfigMetricRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigChangeNotifyRequest {
     #[serde(flatten)]
+    /// The `server_request` field.
     pub server_request: ServerRequest,
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `tenant` field.
     pub tenant: String,
     #[serde(
         serialize_with = "serialize_config_module",
@@ -393,6 +455,7 @@ pub struct ConfigChangeNotifyRequest {
 }
 
 impl ConfigChangeNotifyRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
@@ -424,10 +487,14 @@ impl From<&Payload> for ConfigChangeNotifyRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchRequest {
+    /// The `request` field.
     pub request: Request,
+    /// The `group_key_pattern` field.
     pub group_key_pattern: String,
     #[serde(default)]
+    /// The `received_group_keys` field.
     pub received_group_keys: HashSet<String>,
+    /// The `watch_type` field.
     pub watch_type: String,
     /// Jackson serializes Java `boolean isInitializing` as `initializing` (strips `is` prefix)
     #[serde(default, alias = "isInitializing")]
@@ -440,6 +507,7 @@ pub struct ConfigFuzzyWatchRequest {
 }
 
 impl ConfigFuzzyWatchRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             request: Request::new(),
@@ -461,12 +529,16 @@ impl From<&Payload> for ConfigFuzzyWatchRequest {
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigChangeClusterSyncRequest {
     #[serde(flatten)]
+    /// The `config_request` field.
     pub config_request: ConfigRequest,
+    /// The `last_modified` field.
     pub last_modified: i64,
+    /// The `gray_name` field.
     pub gray_name: String,
 }
 
 impl ConfigChangeClusterSyncRequest {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_request: ConfigRequest::new(),
@@ -487,8 +559,11 @@ impl From<&Payload> for ConfigChangeClusterSyncRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigContext {
+    /// The `group` field.
     pub group: String,
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `tenant` field.
     pub tenant: String,
 }
 
@@ -497,11 +572,14 @@ pub struct ConfigContext {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeBatchListenResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `changed_configs` field.
     pub changed_configs: Vec<ConfigContext>,
 }
 
 impl ConfigChangeBatchListenResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -523,10 +601,12 @@ impl From<ConfigChangeBatchListenResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigPublishResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigPublishResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -547,21 +627,33 @@ impl From<ConfigPublishResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigQueryResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `content` field.
     pub content: String,
+    /// The `encrypted_data_key` field.
     pub encrypted_data_key: String,
+    /// The `content_type` field.
     pub content_type: String,
+    /// The `md5` field.
     pub md5: String,
+    /// The `last_modified` field.
     pub last_modified: i64,
+    /// The `is_beta` field.
     pub is_beta: bool,
+    /// The `tag` field.
     pub tag: Option<String>,
 }
 
 impl ConfigQueryResponse {
+    /// The `CONFIG_NOT_FOUND` constant.
     pub const CONFIG_NOT_FOUND: i32 = 300;
+    /// The `CONFIG_QUERY_CONFLICT` constant.
     pub const CONFIG_QUERY_CONFLICT: i32 = 400;
+    /// The `NO_RIGHT` constant.
     pub const NO_RIGHT: i32 = 403;
 
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -583,10 +675,12 @@ impl From<ConfigQueryResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigRemoveResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigRemoveResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -607,10 +701,12 @@ impl From<ConfigRemoveResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchChangeNotifyResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigFuzzyWatchChangeNotifyResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -631,10 +727,12 @@ impl From<ConfigFuzzyWatchChangeNotifyResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchSyncResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigFuzzyWatchSyncResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -655,11 +753,14 @@ impl From<ConfigFuzzyWatchSyncResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigMetricResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
+    /// The `metrics` field.
     pub metrics: HashMap<String, Value>,
 }
 
 impl ClientConfigMetricResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -681,10 +782,12 @@ impl From<ClientConfigMetricResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeNotifyResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigChangeNotifyResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -705,10 +808,12 @@ impl From<ConfigChangeNotifyResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigFuzzyWatchResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),
@@ -729,10 +834,12 @@ impl From<ConfigFuzzyWatchResponse> for Any {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeClusterSyncResponse {
     #[serde(flatten)]
+    /// The `response` field.
     pub response: Response,
 }
 
 impl ConfigChangeClusterSyncResponse {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             response: Response::new(),

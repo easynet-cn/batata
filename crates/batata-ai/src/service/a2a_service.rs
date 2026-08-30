@@ -18,6 +18,7 @@ pub struct A2aServerOperationService {
 }
 
 impl A2aServerOperationService {
+    /// Creates a new `A2aServerOperationService` backed by the given persistence.
     pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
         Self { persistence }
     }

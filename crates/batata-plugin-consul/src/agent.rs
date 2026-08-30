@@ -42,6 +42,7 @@ pub struct ConsulAgentService {
 }
 
 impl ConsulAgentService {
+/// The `new` associated function.
     pub fn new(
         naming_store: Arc<ConsulNamingStore>,
         registry: Arc<InstanceCheckRegistry>,
@@ -1754,8 +1755,10 @@ pub async fn get_agent_metrics(
 #[derive(Debug, serde::Deserialize)]
 pub struct MonitorQueryParams {
     #[serde(default = "default_log_level")]
+/// The `loglevel` field.
     pub loglevel: String,
     #[serde(default)]
+/// The `logjson` field.
     pub logjson: Option<bool>,
 }
 

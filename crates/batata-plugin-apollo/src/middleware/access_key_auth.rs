@@ -218,6 +218,7 @@ fn parse_signature(header: &str) -> Option<&str> {
     Some(signature)
 }
 
+/// Performs the `compute_signature` operation.
 pub fn compute_signature(
     secret: &str,
     timestamp: i64,

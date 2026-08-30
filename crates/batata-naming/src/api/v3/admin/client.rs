@@ -444,6 +444,7 @@ async fn get_distro(
     Result::<serde_json::Value>::http_success(response)
 }
 
+/// Performs the `routes` operation.
 pub fn routes() -> actix_web::Scope {
     web::scope("/client")
         .service(list_clients)

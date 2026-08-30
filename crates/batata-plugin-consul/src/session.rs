@@ -716,7 +716,9 @@ fn current_unix_secs() -> u64 {
 /// Query parameters for session endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SessionQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `ns` field.
     pub ns: Option<String>,
 }
 

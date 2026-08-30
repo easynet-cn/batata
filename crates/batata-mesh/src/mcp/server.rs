@@ -66,17 +66,35 @@ pub struct McpServer {
 #[derive(Debug, Clone)]
 pub enum McpChangeEvent {
     /// ServiceEntry was updated
-    ServiceEntryUpdated { name: String },
+    ServiceEntryUpdated {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// ServiceEntry was removed
-    ServiceEntryRemoved { name: String },
+    ServiceEntryRemoved {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// VirtualService was updated
-    VirtualServiceUpdated { name: String },
+    VirtualServiceUpdated {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// VirtualService was removed
-    VirtualServiceRemoved { name: String },
+    VirtualServiceRemoved {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// DestinationRule was updated
-    DestinationRuleUpdated { name: String },
+    DestinationRuleUpdated {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// DestinationRule was removed
-    DestinationRuleRemoved { name: String },
+    DestinationRuleRemoved {
+        /// Name of the affected resource.
+        name: String,
+    },
     /// Full resync happened
     FullResync,
 }

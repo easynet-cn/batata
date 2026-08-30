@@ -612,6 +612,9 @@ impl BatataNamingService {
         Ok(filtered)
     }
 
+    /// Get the current connection status of the naming service.
+    ///
+    /// Returns `"UP"` when the gRPC channel is connected, `"DOWN"` otherwise.
     pub async fn get_server_status(&self) -> String {
         if self.grpc_client.is_connected().await {
             "UP".to_string()
@@ -780,6 +783,7 @@ pub struct NotifySubscriberHandler {
 }
 
 impl NotifySubscriberHandler {
+    /// Create a new handler with the given naming service.
     pub fn new(naming_service: Arc<BatataNamingService>) -> Self {
         Self { naming_service }
     }

@@ -31,6 +31,7 @@ pub struct ConsulSnapshotService {
 }
 
 impl ConsulSnapshotService {
+/// The `new` associated function.
     pub fn new() -> Self {
         Self {
             snapshot_data: Arc::new(tokio::sync::RwLock::new(None)),
@@ -252,6 +253,7 @@ pub struct ConsulSnapshotServicePersistent {
 }
 
 impl ConsulSnapshotServicePersistent {
+/// The `new` associated function.
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
         Self {
             db,

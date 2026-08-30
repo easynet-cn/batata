@@ -138,6 +138,7 @@ async fn update_coordinate_persistent(
 // Route registration
 // ============================================================================
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/coordinate")
         .service(get_coordinate_datacenters)
@@ -146,6 +147,7 @@ pub fn routes() -> Scope {
         .service(update_coordinate)
 }
 
+/// The `routes_persistent` function.
 pub fn routes_persistent() -> Scope {
     web::scope("/coordinate")
         .service(get_coordinate_datacenters_persistent)

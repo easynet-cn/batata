@@ -20,8 +20,11 @@ use tracing::debug;
 /// Health check result
 #[derive(Debug, Clone)]
 pub struct HealthCheckResult {
+    /// The `success` value.
     pub success: bool,
+    /// The `message` value.
     pub message: Option<String>,
+    /// The `response_time_ms` value.
     pub response_time_ms: u64,
 }
 
@@ -276,6 +279,7 @@ pub struct MysqlHealthChecker {
 }
 
 impl MysqlHealthChecker {
+    /// Creates a new instance.
     pub fn new(connect_timeout: Duration) -> Self {
         Self {
             connections: Arc::new(DashMap::new()),

@@ -160,10 +160,12 @@ pub struct DefaultWebhookPlugin {
 const DEFAULT_WEBHOOK_TIMEOUT_SECS: u64 = 30;
 
 impl DefaultWebhookPlugin {
+    /// Creates a new `DefaultWebhookPlugin` with the default HTTP timeout.
     pub fn new() -> Self {
         Self::with_timeout(DEFAULT_WEBHOOK_TIMEOUT_SECS)
     }
 
+    /// Creates a new `DefaultWebhookPlugin` with the given HTTP client timeout in seconds.
     pub fn with_timeout(timeout_secs: u64) -> Self {
         let (queue_tx, queue_rx) = mpsc::channel::<(WebhookConfig, WebhookEvent)>(10000);
         let http_client = Arc::new(WebhookHttpClient::with_timeout(timeout_secs));

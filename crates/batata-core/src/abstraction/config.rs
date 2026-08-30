@@ -69,13 +69,21 @@ pub trait ConfigWatch: Send + Sync {
 /// Configuration change event
 #[derive(Debug, Clone)]
 pub struct ConfigChangeEvent {
+    /// The `namespace` field.
     pub namespace: String,
+    /// The `group` field.
     pub group: String,
+    /// The `key` field.
     pub key: String,
+    /// The `old_value` field.
     pub old_value: Option<String>,
+    /// The `new_value` field.
     pub new_value: Option<String>,
+    /// The `change_type` field.
     pub change_type: ChangeType,
+    /// The `version` field.
     pub version: u64,
+    /// The `timestamp` field.
     pub timestamp: i64,
 }
 
@@ -122,10 +130,15 @@ pub enum ImportPolicy {
 /// Import operation result
 #[derive(Debug, Clone)]
 pub struct ImportResult {
+    /// The `created` field.
     pub created: u32,
+    /// The `updated` field.
     pub updated: u32,
+    /// The `skipped` field.
     pub skipped: u32,
+    /// The `failed` field.
     pub failed: u32,
+    /// The `errors` field.
     pub errors: Vec<String>,
 }
 
@@ -133,37 +146,53 @@ pub struct ImportResult {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("Configuration not found: {0}")]
+    /// The `NotFound` variant.
     NotFound(String),
 
     #[error("Configuration already exists: {0}")]
+    /// The `AlreadyExists` variant.
     AlreadyExists(String),
 
     #[error("Invalid configuration: {0}")]
+    /// The `InvalidConfig` variant.
     InvalidConfig(String),
 
     #[error("Version conflict: expected {expected}, got {actual}")]
-    VersionConflict { expected: u64, actual: u64 },
+    /// Version conflict between the expected and actual versions.
+    VersionConflict {
+        /// The expected version.
+        expected: u64,
+        /// The actual version.
+        actual: u64,
+    },
 
     #[error("Namespace not found: {0}")]
+    /// The `NamespaceNotFound` variant.
     NamespaceNotFound(String),
 
     #[error("Permission denied: {0}")]
+    /// The `PermissionDenied` variant.
     PermissionDenied(String),
 
     #[error("Rate limit exceeded")]
+    /// The `RateLimitExceeded` variant.
     RateLimitExceeded,
 
     #[error("Storage error: {0}")]
+    /// The `StorageError` variant.
     StorageError(String),
 
     #[error("Serialization error: {0}")]
+    /// The `SerializationError` variant.
     SerializationError(String),
 
     #[error("Internal error: {0}")]
+    /// The `InternalError` variant.
     InternalError(String),
 }
 
 impl ConfigError {
+    /// Status Code.
     pub fn status_code(&self) -> u16 {
         match self {
             ConfigError::NotFound(_) => 404,

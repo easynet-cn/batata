@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents the `ApolloPluginConfig` entity.
 pub struct ApolloPluginConfig {
     #[serde(default = "default_enabled")]
+    /// The `enabled` field.
     pub enabled: bool,
     #[serde(default = "default_port")]
+    /// The `port` field.
     pub port: u16,
     #[serde(default = "default_http_workers")]
+    /// The `http_workers` field.
     pub http_workers: usize,
 }
 
@@ -33,6 +37,7 @@ impl Default for ApolloPluginConfig {
 }
 
 impl ApolloPluginConfig {
+    /// Builds an `ApolloPluginConfig` from a `config::Config` source.
     pub fn from_config(config: &config::Config) -> Self {
         let enabled = config
             .get_bool("batata.plugin.apollo.enabled")

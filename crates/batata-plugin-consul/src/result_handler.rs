@@ -53,6 +53,7 @@ pub struct ConsulResultHandler {
 }
 
 impl ConsulResultHandler {
+/// The `new` associated function.
     pub fn new(
         naming_store: Arc<ConsulNamingStore>,
         index_provider: Arc<ConsulIndexProvider>,

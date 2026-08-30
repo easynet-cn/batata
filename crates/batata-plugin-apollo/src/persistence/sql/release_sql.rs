@@ -7,11 +7,13 @@ use crate::entity::apollo_release;
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::ReleasePersistence;
 
+/// Represents the `ReleaseSqlPersistence` entity.
 pub struct ReleaseSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl ReleaseSqlPersistence {
+    /// Creates a new `ReleaseSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

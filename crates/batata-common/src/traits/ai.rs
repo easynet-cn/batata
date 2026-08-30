@@ -16,6 +16,7 @@ use crate::model::ai::skill::{Skill, SkillBasicInfo, SkillMeta, SkillSummary};
 /// Trait for skill lifecycle operations (CRUD, draft, publish, etc.)
 #[async_trait::async_trait]
 pub trait SkillService: Send + Sync {
+    /// The `get_skill_detail` method.
     async fn get_skill_detail(
         &self,
         namespace_id: &str,
@@ -23,6 +24,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<SkillMeta>>;
 
+    /// The `get_skill_version_detail` method.
     async fn get_skill_version_detail(
         &self,
         namespace_id: &str,
@@ -31,6 +33,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
+    /// The `download_skill_version` method.
     async fn download_skill_version(
         &self,
         namespace_id: &str,
@@ -39,6 +42,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
+    /// The `delete_skill` method.
     async fn delete_skill(
         &self,
         namespace_id: &str,
@@ -46,6 +50,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `list_skills` method.
     async fn list_skills(
         &self,
         namespace_id: &str,
@@ -57,6 +62,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Page<SkillSummary>>;
 
+    /// The `upload_skill` method.
     async fn upload_skill(
         &self,
         namespace_id: &str,
@@ -66,6 +72,7 @@ pub trait SkillService: Send + Sync {
         overwrite: bool,
     ) -> anyhow::Result<String>;
 
+    /// The `create_draft` method.
     async fn create_draft(
         &self,
         namespace_id: &str,
@@ -76,6 +83,7 @@ pub trait SkillService: Send + Sync {
         author: &str,
     ) -> anyhow::Result<String>;
 
+    /// The `update_draft` method.
     async fn update_draft(
         &self,
         namespace_id: &str,
@@ -84,6 +92,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `delete_draft` method.
     async fn delete_draft(
         &self,
         namespace_id: &str,
@@ -91,6 +100,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `submit` method.
     async fn submit(
         &self,
         namespace_id: &str,
@@ -99,6 +109,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<String>;
 
+    /// The `publish` method.
     async fn publish(
         &self,
         namespace_id: &str,
@@ -108,6 +119,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_labels` method.
     async fn update_labels(
         &self,
         namespace_id: &str,
@@ -116,6 +128,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_biz_tags` method.
     async fn update_biz_tags(
         &self,
         namespace_id: &str,
@@ -124,6 +137,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `change_online_status` method.
     async fn change_online_status(
         &self,
         namespace_id: &str,
@@ -134,6 +148,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_scope` method.
     async fn update_scope(
         &self,
         namespace_id: &str,
@@ -142,6 +157,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `query_skill` method.
     async fn query_skill(
         &self,
         namespace_id: &str,
@@ -151,6 +167,7 @@ pub trait SkillService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>>;
 
+    /// The `search_skills` method.
     async fn search_skills(
         &self,
         namespace_id: &str,
@@ -164,6 +181,7 @@ pub trait SkillService: Send + Sync {
 /// Trait for agentspec lifecycle operations (CRUD, draft, publish, etc.)
 #[async_trait::async_trait]
 pub trait AgentSpecService: Send + Sync {
+    /// The `get_detail` method.
     async fn get_detail(
         &self,
         namespace_id: &str,
@@ -171,6 +189,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpecMeta>>;
 
+    /// The `get_version_detail` method.
     async fn get_version_detail(
         &self,
         namespace_id: &str,
@@ -179,6 +198,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>>;
 
+    /// The `delete` method.
     async fn delete(
         &self,
         namespace_id: &str,
@@ -186,6 +206,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `list` method.
     async fn list(
         &self,
         namespace_id: &str,
@@ -196,6 +217,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Page<AgentSpecSummary>>;
 
+    /// The `upload` method.
     async fn upload(
         &self,
         namespace_id: &str,
@@ -205,6 +227,7 @@ pub trait AgentSpecService: Send + Sync {
         overwrite: bool,
     ) -> anyhow::Result<String>;
 
+    /// The `create_draft` method.
     async fn create_draft(
         &self,
         namespace_id: &str,
@@ -215,6 +238,7 @@ pub trait AgentSpecService: Send + Sync {
         author: &str,
     ) -> anyhow::Result<String>;
 
+    /// The `update_draft` method.
     async fn update_draft(
         &self,
         namespace_id: &str,
@@ -223,6 +247,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `delete_draft` method.
     async fn delete_draft(
         &self,
         namespace_id: &str,
@@ -230,6 +255,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `submit` method.
     async fn submit(
         &self,
         namespace_id: &str,
@@ -238,6 +264,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<String>;
 
+    /// The `publish` method.
     async fn publish(
         &self,
         namespace_id: &str,
@@ -247,6 +274,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_labels` method.
     async fn update_labels(
         &self,
         namespace_id: &str,
@@ -255,6 +283,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_biz_tags` method.
     async fn update_biz_tags(
         &self,
         namespace_id: &str,
@@ -263,6 +292,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `change_online_status` method.
     async fn change_online_status(
         &self,
         namespace_id: &str,
@@ -273,6 +303,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `update_scope` method.
     async fn update_scope(
         &self,
         namespace_id: &str,
@@ -281,6 +312,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `query` method.
     async fn query(
         &self,
         namespace_id: &str,
@@ -290,6 +322,7 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>>;
 
+    /// The `search` method.
     async fn search(
         &self,
         namespace_id: &str,
@@ -303,12 +336,14 @@ pub trait AgentSpecService: Send + Sync {
 /// Trait for MCP server CRUD operations (config-backed persistence)
 #[async_trait::async_trait]
 pub trait McpServerService: Send + Sync {
+    /// The `create_mcp_server` method.
     async fn create_mcp_server(
         &self,
         namespace: &str,
         registration: &McpServerRegistration,
     ) -> anyhow::Result<String>;
 
+    /// The `get_mcp_server_detail` method.
     async fn get_mcp_server_detail(
         &self,
         namespace: &str,
@@ -317,12 +352,14 @@ pub trait McpServerService: Send + Sync {
         version: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>>;
 
+    /// The `update_mcp_server` method.
     async fn update_mcp_server(
         &self,
         namespace: &str,
         registration: &McpServerRegistration,
     ) -> anyhow::Result<()>;
 
+    /// The `delete_mcp_server` method.
     async fn delete_mcp_server(
         &self,
         namespace: &str,
@@ -331,6 +368,7 @@ pub trait McpServerService: Send + Sync {
         version: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `list_mcp_servers` method.
     fn list_mcp_servers(
         &self,
         namespace: &str,
@@ -362,6 +400,7 @@ pub trait McpServerService: Send + Sync {
 /// Trait for A2A agent CRUD operations (config-backed persistence)
 #[async_trait::async_trait]
 pub trait A2aAgentService: Send + Sync {
+    /// The `register_agent` method.
     async fn register_agent(
         &self,
         card: &AgentCard,
@@ -369,6 +408,7 @@ pub trait A2aAgentService: Send + Sync {
         registration_type: &str,
     ) -> anyhow::Result<String>;
 
+    /// The `get_agent_card` method.
     async fn get_agent_card(
         &self,
         namespace: &str,
@@ -376,6 +416,7 @@ pub trait A2aAgentService: Send + Sync {
         version: Option<&str>,
     ) -> anyhow::Result<Option<RegisteredAgent>>;
 
+    /// The `update_agent_card` method.
     async fn update_agent_card(
         &self,
         card: &AgentCard,
@@ -383,6 +424,7 @@ pub trait A2aAgentService: Send + Sync {
         registration_type: &str,
     ) -> anyhow::Result<()>;
 
+    /// The `delete_agent` method.
     async fn delete_agent(
         &self,
         namespace: &str,
@@ -390,6 +432,7 @@ pub trait A2aAgentService: Send + Sync {
         version: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// The `list_agents` method.
     async fn list_agents(
         &self,
         namespace: &str,
@@ -399,6 +442,7 @@ pub trait A2aAgentService: Send + Sync {
         page_size: u32,
     ) -> anyhow::Result<Page<AgentCardVersionInfo>>;
 
+    /// The `list_versions` method.
     async fn list_versions(
         &self,
         namespace: &str,
@@ -421,8 +465,10 @@ pub trait A2aAgentService: Send + Sync {
 /// Trait for pipeline query operations
 #[async_trait::async_trait]
 pub trait PipelineService: Send + Sync {
+    /// The `get_pipeline` method.
     async fn get_pipeline(&self, execution_id: &str) -> anyhow::Result<Option<PipelineExecution>>;
 
+    /// The `list_pipelines` method.
     async fn list_pipelines(
         &self,
         resource_type: &str,

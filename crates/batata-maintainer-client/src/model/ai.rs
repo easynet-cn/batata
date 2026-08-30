@@ -1,4 +1,4 @@
-// AI module model types (MCP and A2A/Agent)
+//! AI module model types (MCP and A2A/Agent)
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,25 +9,39 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct McpServerBasicInfo {
+    /// The `id` field.
     pub id: String,
+    /// The `name` field.
     pub name: String,
+    /// The `protocol` field.
     pub protocol: String,
+    /// The `front_protocol` field.
     pub front_protocol: String,
+    /// The `description` field.
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `repository` field.
     pub repository: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `packages` field.
     pub packages: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `version_detail` field.
     pub version_detail: Option<ServerVersionDetail>,
+    /// The `version` field.
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `remote_server_config` field.
     pub remote_server_config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `local_server_config` field.
     pub local_server_config: Option<HashMap<String, serde_json::Value>>,
+    /// The `enabled` field.
     pub enabled: bool,
+    /// The `status` field.
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `capabilities` field.
     pub capabilities: Option<Vec<serde_json::Value>>,
 }
 
@@ -36,15 +50,21 @@ pub struct McpServerBasicInfo {
 #[serde(rename_all = "camelCase", default)]
 pub struct McpServerDetailInfo {
     #[serde(flatten)]
+    /// The `basic_info` field.
     pub basic_info: McpServerBasicInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `backend_endpoints` field.
     pub backend_endpoints: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `frontend_endpoints` field.
     pub frontend_endpoints: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `tool_spec` field.
     pub tool_spec: Option<McpToolSpecification>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `all_versions` field.
     pub all_versions: Option<Vec<ServerVersionDetail>>,
+    /// The `namespace_id` field.
     pub namespace_id: String,
 }
 
@@ -52,14 +72,19 @@ pub struct McpServerDetailInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct McpToolSpecification {
+    /// The `specification_type` field.
     pub specification_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `encrypt_data` field.
     pub encrypt_data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `tools` field.
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `tools_meta` field.
     pub tools_meta: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `security_schemes` field.
     pub security_schemes: Option<Vec<serde_json::Value>>,
 }
 
@@ -67,7 +92,9 @@ pub struct McpToolSpecification {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct McpEndpointSpec {
+    /// The `type` field.
     pub r#type: String,
+    /// The `data` field.
     pub data: HashMap<String, String>,
 }
 
@@ -75,11 +102,15 @@ pub struct McpEndpointSpec {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerVersionDetail {
+    /// The `version` field.
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `created_at` field.
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `updated_at` field.
     pub updated_at: Option<String>,
+    /// The `is_latest` field.
     pub is_latest: bool,
 }
 
@@ -89,14 +120,21 @@ pub struct ServerVersionDetail {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentCardBasicInfo {
+    /// The `protocol_version` field.
     pub protocol_version: String,
+    /// The `name` field.
     pub name: String,
+    /// The `description` field.
     pub description: String,
+    /// The `version` field.
     pub version: String,
+    /// The `icon_url` field.
     pub icon_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `capabilities` field.
     pub capabilities: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `skills` field.
     pub skills: Option<Vec<serde_json::Value>>,
 }
 
@@ -105,23 +143,34 @@ pub struct AgentCardBasicInfo {
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentCard {
     #[serde(flatten)]
+    /// The `basic_info` field.
     pub basic_info: AgentCardBasicInfo,
+    /// The `url` field.
     pub url: String,
+    /// The `preferred_transport` field.
     pub preferred_transport: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `additional_interfaces` field.
     pub additional_interfaces: Option<Vec<AgentInterface>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `provider` field.
     pub provider: Option<serde_json::Value>,
+    /// The `documentation_url` field.
     pub documentation_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `security_schemes` field.
     pub security_schemes: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `security` field.
     pub security: Option<Vec<HashMap<String, Vec<String>>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `default_input_modes` field.
     pub default_input_modes: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `default_output_modes` field.
     pub default_output_modes: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `supports_authenticated_extended_card` field.
     pub supports_authenticated_extended_card: Option<bool>,
 }
 
@@ -130,9 +179,12 @@ pub struct AgentCard {
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentCardDetailInfo {
     #[serde(flatten)]
+    /// The `agent_card` field.
     pub agent_card: AgentCard,
+    /// The `registration_type` field.
     pub registration_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `latest_version` field.
     pub latest_version: Option<bool>,
 }
 
@@ -141,10 +193,14 @@ pub struct AgentCardDetailInfo {
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentCardVersionInfo {
     #[serde(flatten)]
+    /// The `basic_info` field.
     pub basic_info: AgentCardBasicInfo,
+    /// The `latest_published_version` field.
     pub latest_published_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `version_details` field.
     pub version_details: Option<Vec<AgentVersionDetail>>,
+    /// The `registration_type` field.
     pub registration_type: String,
 }
 
@@ -152,9 +208,13 @@ pub struct AgentCardVersionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentVersionDetail {
+    /// The `version` field.
     pub version: String,
+    /// The `created_at` field.
     pub created_at: String,
+    /// The `updated_at` field.
     pub updated_at: String,
+    /// The `is_latest` field.
     pub is_latest: bool,
 }
 
@@ -162,7 +222,9 @@ pub struct AgentVersionDetail {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentInterface {
+    /// The `url` field.
     pub url: String,
+    /// The `transport` field.
     pub transport: String,
 }
 

@@ -7,11 +7,13 @@ use crate::entity::apollo_item;
 use crate::persistence::shared::StoredItem;
 use crate::persistence::traits::ItemPersistence;
 
+/// Represents the `ItemSqlPersistence` entity.
 pub struct ItemSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl ItemSqlPersistence {
+    /// Creates a new `ItemSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

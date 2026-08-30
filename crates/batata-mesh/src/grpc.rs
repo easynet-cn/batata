@@ -24,116 +24,167 @@ pub mod proto {
     /// Discovery Request message
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct DiscoveryRequest {
+        /// Version information sent by the client (empty on the first request).
         pub version_info: String,
+        /// Node identifier describing the xDS client.
         pub node: Option<Node>,
+        /// Resource names the client is interested in (empty = all resources).
         pub resource_names: Vec<String>,
+        /// Type URL identifying the resource type being requested.
         pub type_url: String,
+        /// Nonce from the last response, used for ACK/NACK correlation.
         pub response_nonce: String,
+        /// Error detail, present when this message is a NACK.
         pub error_detail: Option<Status>,
     }
 
     /// Discovery Response message
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct DiscoveryResponse {
+        /// Version information for the resources in this response.
         pub version_info: String,
+        /// Serialized resources wrapped in [`Any`].
         pub resources: Vec<Any>,
+        /// Whether this response is part of a canary deployment.
         pub canary: bool,
+        /// Type URL identifying the resource type in this response.
         pub type_url: String,
+        /// Nonce for this response, used to correlate ACK/NACK.
         pub nonce: String,
+        /// Control plane that produced this response.
         pub control_plane: Option<ControlPlane>,
     }
 
     /// Delta Discovery Request
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct DeltaDiscoveryRequest {
+        /// Node identifier describing the xDS client.
         pub node: Option<Node>,
+        /// Type URL identifying the resource type being requested.
         pub type_url: String,
+        /// Resource names to subscribe to.
         pub resource_names_subscribe: Vec<String>,
+        /// Resource names to unsubscribe from.
         pub resource_names_unsubscribe: Vec<String>,
+        /// Known resource versions, used to compute incremental updates.
         pub initial_resource_versions: std::collections::HashMap<String, String>,
+        /// Nonce from the last response, used for ACK/NACK correlation.
         pub response_nonce: String,
+        /// Error detail, present when this message is a NACK.
         pub error_detail: Option<Status>,
     }
 
     /// Delta Discovery Response
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct DeltaDiscoveryResponse {
+        /// Version of the entire resource set.
         pub system_version_info: String,
+        /// Resources added or updated in this delta response.
         pub resources: Vec<Resource>,
+        /// Type URL identifying the resource type in this response.
         pub type_url: String,
+        /// Names of resources removed since the last response.
         pub removed_resources: Vec<String>,
+        /// Nonce for this response, used to correlate ACK/NACK.
         pub nonce: String,
+        /// Control plane that produced this response.
         pub control_plane: Option<ControlPlane>,
     }
 
     /// Resource wrapper
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Resource {
+        /// Resource name.
         pub name: String,
+        /// Alternative names for this resource.
         pub aliases: Vec<String>,
+        /// Version of this resource.
         pub version: String,
+        /// Serialized resource payload wrapped in [`Any`].
         pub resource: Option<Any>,
+        /// Time-to-live for this resource, if it is ephemeral.
         pub ttl: Option<Duration>,
+        /// Caching hints for this resource.
         pub cache_control: Option<CacheControl>,
     }
 
     /// Cache control
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct CacheControl {
+        /// Whether the resource should not be cached.
         pub do_not_cache: bool,
     }
 
     /// Duration
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Duration {
+        /// Whole seconds of the duration.
         pub seconds: i64,
+        /// Fractional seconds expressed in nanoseconds.
         pub nanos: i32,
     }
 
     /// Node identifier
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Node {
+        /// Unique node identifier.
         pub id: String,
+        /// Cluster the node belongs to.
         pub cluster: String,
+        /// Opaque metadata associated with the node.
         pub metadata: Option<Struct>,
+        /// Geographical locality of the node.
         pub locality: Option<Locality>,
+        /// Name of the client software.
         pub user_agent_name: String,
+        /// Version of the client software.
         pub user_agent_version: String,
+        /// Feature strings supported by the client.
         pub client_features: Vec<String>,
     }
 
     /// Locality
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Locality {
+        /// Region (e.g., "us-west-1").
         pub region: String,
+        /// Zone within the region (e.g., "us-west-1a").
         pub zone: String,
+        /// Sub-zone within the zone (e.g., "rack-1").
         pub sub_zone: String,
     }
 
     /// Status (error detail)
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Status {
+        /// Numeric status code.
         pub code: i32,
+        /// Human-readable status message.
         pub message: String,
+        /// Additional structured details.
         pub details: Vec<Any>,
     }
 
     /// Control plane identifier
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct ControlPlane {
+        /// Identifier of the control plane.
         pub identifier: String,
     }
 
     /// Any type wrapper
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Any {
+        /// Type URL identifying the contained message type.
         pub type_url: String,
+        /// Serialized message bytes.
         pub value: Vec<u8>,
     }
 
     /// Struct for metadata (simplified)
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Struct {
+        /// Map of field name to value.
         pub fields: std::collections::HashMap<String, Value>,
     }
 
@@ -141,11 +192,17 @@ pub mod proto {
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum Value {
         #[default]
+        /// Absent or null value.
         NullValue,
+        /// Boolean value.
         BoolValue(bool),
+        /// Floating-point number value.
         NumberValue(f64),
+        /// String value.
         StringValue(String),
+        /// List of values.
         ListValue(Vec<Value>),
+        /// Nested struct value.
         StructValue(Box<Struct>),
     }
 

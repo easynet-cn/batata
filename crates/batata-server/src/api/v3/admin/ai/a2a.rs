@@ -27,14 +27,19 @@ use crate::{
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AgentForm {
     #[serde(default, alias = "agentCard")]
+    /// `agent_card` field.
     pub agent_card: Option<String>,
     #[serde(default, alias = "agentName")]
+    /// `agent_name` field.
     pub agent_name: Option<String>,
     #[serde(default, alias = "namespaceId")]
+    /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(default, alias = "registrationType")]
+    /// `registration_type` field.
     pub registration_type: Option<String>,
     #[serde(default)]
+    /// `latest` field.
     pub latest: Option<bool>,
 }
 
@@ -318,10 +323,13 @@ async fn list_versions(
 #[serde(rename_all = "camelCase")]
 pub struct AgentEndpointQuery {
     #[serde(alias = "namespaceId")]
+    /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(alias = "agentName")]
+    /// `agent_name` field.
     pub agent_name: String,
     #[serde(alias = "endpointUrl")]
+    /// `endpoint_url` field.
     pub endpoint_url: Option<String>,
 }
 
@@ -384,6 +392,10 @@ async fn deregister_agent_endpoint(
     }
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/a2a")
         .service(list_agents)

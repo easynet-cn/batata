@@ -6,15 +6,18 @@ use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, Comm
 use chrono::Utc;
 use serde_json::json;
 
+/// Represents the `ItemSetService` entity.
 pub struct ItemSetService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ItemSetService {
+    /// Creates a new `ItemSetService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Updates an existing resource.
     pub async fn update_set(&self, app_id: &str, cluster_name: &str, namespace_name: &str, change_sets: ItemChangeSets) -> Result<(), anyhow::Error> {
         let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
             .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;

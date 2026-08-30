@@ -15,11 +15,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
+    /// The `prompt_key` field.
     pub prompt_key: String,
+    /// The `version` field.
     pub version: String,
+    /// The `template` field.
     pub template: String,
+    /// The `md5` field.
     pub md5: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `variables` field.
     pub variables: Option<Vec<PromptVariable>>,
 }
 
@@ -57,10 +62,13 @@ impl Prompt {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptVariable {
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `default_value` field.
     pub default_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
 }
 
@@ -73,15 +81,21 @@ pub struct PromptVariable {
 #[serde(rename_all = "camelCase")]
 pub struct PromptMetaSummary {
     #[serde(default = "default_schema_version")]
+    /// The `schema_version` field.
     pub schema_version: i32,
+    /// The `prompt_key` field.
     pub prompt_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     #[serde(default)]
+    /// The `biz_tags` field.
     pub biz_tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `latest_version` field.
     pub latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
 }
 
@@ -90,19 +104,27 @@ pub struct PromptMetaSummary {
 #[serde(rename_all = "camelCase")]
 pub struct PromptMetaInfo {
     #[serde(default = "default_schema_version")]
+    /// The `schema_version` field.
     pub schema_version: i32,
+    /// The `prompt_key` field.
     pub prompt_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     #[serde(default)]
+    /// The `biz_tags` field.
     pub biz_tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `latest_version` field.
     pub latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
     #[serde(default)]
+    /// The `versions` field.
     pub versions: Vec<String>,
     #[serde(default)]
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
 }
 
@@ -110,13 +132,18 @@ pub struct PromptMetaInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptVersionSummary {
+    /// The `prompt_key` field.
     pub prompt_key: String,
+    /// The `version` field.
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `commit_msg` field.
     pub commit_msg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `src_user` field.
     pub src_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
 }
 
@@ -124,18 +151,26 @@ pub struct PromptVersionSummary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptVersionInfo {
+    /// The `prompt_key` field.
     pub prompt_key: String,
+    /// The `version` field.
     pub version: String,
+    /// The `template` field.
     pub template: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `md5` field.
     pub md5: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `commit_msg` field.
     pub commit_msg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `src_user` field.
     pub src_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `variables` field.
     pub variables: Option<Vec<PromptVariable>>,
 }
 
@@ -162,13 +197,18 @@ impl PromptVersionInfo {
 #[serde(rename_all = "camelCase")]
 pub struct PromptDescriptor {
     #[serde(default = "default_schema_version")]
+    /// The `schema_version` field.
     pub schema_version: i32,
+    /// The `prompt_key` field.
     pub prompt_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     #[serde(default)]
+    /// The `biz_tags` field.
     pub biz_tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
 }
 
@@ -178,15 +218,21 @@ pub struct PromptDescriptor {
 #[serde(rename_all = "camelCase")]
 pub struct PromptLabelVersionMapping {
     #[serde(default = "default_schema_version")]
+    /// The `schema_version` field.
     pub schema_version: i32,
+    /// The `prompt_key` field.
     pub prompt_key: String,
     #[serde(default)]
+    /// The `versions` field.
     pub versions: Vec<String>,
     #[serde(default)]
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `latest_version` field.
     pub latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
 }
 

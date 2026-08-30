@@ -1,2 +1,3 @@
 //! RPC service implementations - re-exported from batata-core
+/// Re-exported item.
 pub use batata_core::handler::rpc::*;

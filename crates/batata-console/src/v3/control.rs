@@ -17,26 +17,38 @@ use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppSt
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Response describing the current control plugin status.
 pub struct ControlStatusResponse {
+    /// Whether the control plugin is enabled.
     pub enabled: bool,
+    /// Current control statistics.
     pub stats: ControlStats,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Request body for creating a rate limit rule.
 pub struct CreateRateLimitRuleRequest {
+    /// Name of the rate limit rule.
     pub name: String,
+    /// Optional description of the rule.
     #[serde(default)]
     pub description: String,
+    /// Target type the rule applies to (e.g. `Ip`, `Service`, `ApiPath`).
     #[serde(default = "default_target_type")]
     pub target_type: String,
+    /// Match type used to evaluate the target (e.g. `Exact`, `Prefix`, `Regex`).
     #[serde(default = "default_match_type")]
     pub match_type: String,
+    /// Target value to match against.
     #[serde(default)]
     pub target_value: String,
+    /// Maximum allowed transactions per second.
     pub max_tps: u32,
+    /// Maximum burst size allowed above `max_tps`.
     #[serde(default)]
     pub burst_size: u32,
+    /// Action taken when the limit is exceeded (e.g. `Reject`, `Queue`, `Warn`).
     #[serde(default = "default_exceed_action")]
     pub exceed_action: String,
 }

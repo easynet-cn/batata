@@ -26,7 +26,9 @@ const MCP_SERVER_SCHEMA: &str =
 /// Top-level response for `GET /v0/servers`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpRegistryServerList {
+    /// List of servers matching the query.
     pub servers: Vec<McpRegistryServerDetail>,
+    /// Optional pagination metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<ListMetadata>,
 }
@@ -34,8 +36,10 @@ pub struct McpRegistryServerList {
 /// Pagination metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListMetadata {
+    /// Cursor for fetching the next page of results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Total number of items in the current page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
 }
@@ -43,21 +47,30 @@ pub struct ListMetadata {
 /// Detail for a single MCP server (matches official schema)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpRegistryServerDetail {
+    /// JSON schema reference for this server entry.
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    /// Server name (identifier).
     pub name: String,
+    /// Optional human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional lifecycle status (e.g. `"active"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Optional version string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Optional source repository information.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository: Option<Repository>,
+    /// Optional list of distributable packages.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub packages: Option<Vec<Package>>,
+    /// Optional list of remote connection endpoints.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<Vec<Remote>>,
+    /// Optional official metadata.
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<OfficialMeta>,
 }
@@ -65,9 +78,12 @@ pub struct McpRegistryServerDetail {
 /// Remote connection info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Remote {
+    /// Transport type (e.g. `"http"`, `"sse"`, `"stdio"`).
     #[serde(rename = "type")]
     pub remote_type: String,
+    /// Connection URL.
     pub url: String,
+    /// Optional headers required to connect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<std::collections::HashMap<String, String>>,
 }
@@ -75,10 +91,13 @@ pub struct Remote {
 /// Repository info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Repository {
+    /// Optional repository URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Optional source identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Optional repository id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
@@ -86,10 +105,13 @@ pub struct Repository {
 /// Package info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
+    /// Optional registry type (e.g. `"npm"`, `"pip"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_type: Option<String>,
+    /// Optional package identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
+    /// Optional package version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
@@ -97,14 +119,19 @@ pub struct Package {
 /// Official metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfficialMeta {
+    /// Optional creation timestamp (RFC3339).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Optional last-update timestamp (RFC3339).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// Optional server id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_id: Option<String>,
+    /// Optional version id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_id: Option<String>,
+    /// Optional flag indicating the latest version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_latest: Option<bool>,
 }
@@ -112,6 +139,7 @@ pub struct OfficialMeta {
 /// Error response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpErrorResponse {
+    /// Human-readable error message.
     pub error: String,
 }
 
@@ -122,13 +150,16 @@ pub struct McpErrorResponse {
 /// Query parameters for `GET /v0/servers`
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListServersQuery {
+    /// Optional pagination cursor.
     pub cursor: Option<String>,
+    /// Optional maximum number of results.
     pub limit: Option<u32>,
 }
 
 /// Query parameters for `GET /v0/servers/{id}`
 #[derive(Debug, Clone, Deserialize)]
 pub struct GetServerQuery {
+    /// Optional specific version to fetch.
     pub version: Option<String>,
 }
 

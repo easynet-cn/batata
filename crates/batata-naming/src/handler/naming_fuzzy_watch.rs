@@ -29,7 +29,9 @@ impl Default for NamingFuzzyWatchLimits {
 /// Error type for naming fuzzy watch limit violations
 #[derive(Debug, Clone)]
 pub struct NamingFuzzyWatchLimitError {
+    /// The `code` value.
     pub code: i32,
+    /// The `message` value.
     pub message: String,
 }
 
@@ -44,9 +46,13 @@ impl std::error::Error for NamingFuzzyWatchLimitError {}
 /// Naming fuzzy watch pattern
 #[derive(Clone, Debug)]
 pub struct NamingFuzzyWatchPattern {
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_pattern` value.
     pub group_pattern: String,
+    /// The `service_name_pattern` value.
     pub service_name_pattern: String,
+    /// The `watch_type` value.
     pub watch_type: String,
 }
 
@@ -119,6 +125,7 @@ impl Default for NamingFuzzyWatchManager {
 }
 
 impl NamingFuzzyWatchManager {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             watchers: Arc::new(DashMap::new()),

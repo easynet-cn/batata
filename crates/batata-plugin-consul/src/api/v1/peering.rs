@@ -188,6 +188,7 @@ async fn list_peerings_persistent_handler(
     .await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/peering")
         .service(generate_peering_token)
@@ -200,6 +201,7 @@ pub fn routes() -> Scope {
         .service(delete_peering_persistent)
 }
 
+/// The `list_resource` function.
 pub fn list_resource() -> actix_web::Resource {
     web::resource("/peerings")
         .route(web::get().to(list_peerings_handler))

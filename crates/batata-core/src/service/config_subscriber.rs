@@ -12,12 +12,16 @@ use serde::{Deserialize, Serialize};
 /// Key for a configuration: (dataId, group, tenant/namespace)
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConfigKey {
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `tenant` field.
     pub tenant: String,
 }
 
 impl ConfigKey {
+    /// Creates a new instance.
     pub fn new(data_id: &str, group: &str, tenant: &str) -> Self {
         Self {
             data_id: data_id.to_string(),
@@ -85,6 +89,7 @@ impl Default for ConfigSubscriberManager {
 }
 
 impl ConfigSubscriberManager {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             config_subscribers: Arc::new(DashMap::new()),

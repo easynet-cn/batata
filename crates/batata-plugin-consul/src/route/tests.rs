@@ -2833,7 +2833,7 @@ async fn test_http_partition_list_excludes_deleted() {
 // OIDC HTTP Tests
 // ========================================================================
 
-/// 辅助函数：创建一个 OIDC auth method
+/// Helper: creates an OIDC auth method.
 async fn create_oidc_auth_method(app: &impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -2856,7 +2856,7 @@ async fn create_oidc_auth_method(app: &impl actix_web::dev::Service<
     assert_eq!(resp.status(), 200, "Creating OIDC auth method should return 200");
 }
 
-/// POST /v1/acl/oidc/auth-url - auth method 不存在时返回 404
+/// `POST /v1/acl/oidc/auth-url` - returns 404 when the auth method does not exist.
 #[actix_web::test]
 async fn test_http_oidc_auth_url_no_auth_method() {
     let app = create_test_app().await;
@@ -2872,12 +2872,12 @@ async fn test_http_oidc_auth_url_no_auth_method() {
     assert_eq!(resp.status(), 404);
 }
 
-/// POST /v1/acl/oidc/auth-url - auth method 类型不是 oidc 时返回 400
+/// `POST /v1/acl/oidc/auth-url` - returns 400 when the auth method type is not oidc.
 #[actix_web::test]
 async fn test_http_oidc_auth_url_invalid_method_type() {
     let app = create_test_app().await;
 
-    // 创建一个 jwt 类型的 auth method（不是 oidc）
+    // Create a jwt-type auth method (not oidc).
     let req = test::TestRequest::put()
         .uri("/v1/acl/auth-method")
         .set_json(serde_json::json!({
@@ -2891,7 +2891,7 @@ async fn test_http_oidc_auth_url_invalid_method_type() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 使用 jwt 类型的 auth method 请求 oidc auth-url，应该返回 400
+    // Requesting the oidc auth-url with a jwt-type auth method should return 400.
     let req = test::TestRequest::post()
         .uri("/v1/acl/oidc/auth-url")
         .set_json(serde_json::json!({
@@ -2903,13 +2903,13 @@ async fn test_http_oidc_auth_url_invalid_method_type() {
     assert_eq!(resp.status(), 400);
 }
 
-/// POST /v1/acl/oidc/auth-url - 成功生成授权 URL
+/// `POST /v1/acl/oidc/auth-url` - successfully generates an authorization URL.
 #[actix_web::test]
 async fn test_http_oidc_auth_url_success() {
-    // 启动 mock OIDC provider
+    // Start the mock OIDC provider.
     let mock_server = wiremock::MockServer::start().await;
 
-    // Mock OIDC discovery 端点
+    // Mock the OIDC discovery endpoint.
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/.well-known/openid-configuration"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -2924,11 +2924,11 @@ async fn test_http_oidc_auth_url_success() {
 
     let app = create_test_app().await;
 
-    // 创建 OIDC auth method
+    // Create an OIDC auth method.
     let discovery_url = format!("{}/.well-known/openid-configuration", mock_server.uri());
     create_oidc_auth_method(&app, "test-oidc-auth-url-success", &discovery_url).await;
 
-    // 请求 auth URL
+    // Request the auth URL.
     let req = test::TestRequest::post()
         .uri("/v1/acl/oidc/auth-url")
         .set_json(serde_json::json!({
@@ -2965,12 +2965,12 @@ async fn test_http_oidc_auth_url_success() {
     );
 }
 
-/// POST /v1/acl/oidc/callback - 无效的 state 返回 400
+/// `POST /v1/acl/oidc/callback` - returns 400 for an invalid state.
 #[actix_web::test]
 async fn test_http_oidc_callback_invalid_state() {
     let app = create_test_app().await;
 
-    // 创建 OIDC auth method（不需要 mock provider，因为 state 验证在请求 provider 之前）
+    // Create an OIDC auth method (no mock provider needed, since state validation happens before contacting the provider).
     let req = test::TestRequest::put()
         .uri("/v1/acl/auth-method")
         .set_json(serde_json::json!({
@@ -2987,7 +2987,7 @@ async fn test_http_oidc_callback_invalid_state() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 使用不存在的 state 调用 callback
+    // Call the callback with a non-existent state.
     let req = test::TestRequest::post()
         .uri("/v1/acl/oidc/callback")
         .set_json(serde_json::json!({
@@ -3000,12 +3000,12 @@ async fn test_http_oidc_callback_invalid_state() {
     assert_eq!(resp.status(), 400);
 }
 
-/// POST /v1/acl/oidc/callback - 缺少 code 参数返回 400
+/// `POST /v1/acl/oidc/callback` - returns 400 when the code parameter is missing.
 #[actix_web::test]
 async fn test_http_oidc_callback_missing_code() {
     let app = create_test_app().await;
 
-    // 创建 OIDC auth method
+    // Create an OIDC auth method.
     let req = test::TestRequest::put()
         .uri("/v1/acl/auth-method")
         .set_json(serde_json::json!({
@@ -3022,7 +3022,7 @@ async fn test_http_oidc_callback_missing_code() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 使用空 code 调用 callback
+    // Call the callback with an empty code.
     let req = test::TestRequest::post()
         .uri("/v1/acl/oidc/callback")
         .set_json(serde_json::json!({
@@ -3039,13 +3039,13 @@ async fn test_http_oidc_callback_missing_code() {
 // Keyring HTTP Tests
 // ========================================================================
 
-/// 生成有效的AES-256密钥（base64编码的32字节），用于HTTP测试
+/// Generates a valid AES-256 key (32 bytes base64-encoded), for HTTP tests.
 fn http_test_key(seed: u8) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode([seed; 32])
 }
 
-/// GET /v1/operator/keyring - 返回KeyringResponses格式
+/// `GET /v1/operator/keyring` - returns a `KeyringResponses`.
 #[actix_web::test]
 async fn test_http_keyring_list() {
     let app = create_test_app().await;
@@ -3056,7 +3056,7 @@ async fn test_http_keyring_list() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 验证返回KeyringResponses格式（包含Responses数组）
+    // Verify the response is a KeyringResponses (contains the Responses array).
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(
         body.is_object(),
@@ -3070,7 +3070,7 @@ async fn test_http_keyring_list() {
         "should have at least one keyring response"
     );
 
-    // 默认返回LAN和WAN两个response
+    // By default return both LAN and WAN responses.
     assert_eq!(responses.len(), 2);
     assert_eq!(responses[0]["WAN"], false);
     assert_eq!(responses[1]["WAN"], true);
@@ -3086,7 +3086,7 @@ async fn test_http_keyring_list() {
     );
 }
 
-/// GET /v1/operator/keyring?local-only=true - local_only只返回LAN response
+/// `GET /v1/operator/keyring?local-only=true` - local_only returns only the LAN response.
 #[actix_web::test]
 async fn test_http_keyring_list_local_only() {
     let app = create_test_app().await;
@@ -3109,7 +3109,7 @@ async fn test_http_keyring_list_local_only() {
     assert_eq!(responses[0]["WAN"], false);
 }
 
-/// POST /v1/operator/keyring - 安装key
+/// `POST /v1/operator/keyring` - installs a key.
 #[actix_web::test]
 async fn test_http_keyring_install() {
     let app = create_test_app().await;
@@ -3122,14 +3122,14 @@ async fn test_http_keyring_install() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 验证返回KeyringResponses
+    // Verify the response is a KeyringResponses.
     let body: serde_json::Value = test::read_body_json(resp).await;
     let responses = body["Responses"]
         .as_array()
         .expect("should have Responses array");
     assert!(responses.len() >= 1);
 
-    // 验证新key出现在Keys中
+    // Verify the new key appears in Keys.
     let keys = &responses[0]["Keys"];
     assert!(
         keys.get(&key).is_some(),
@@ -3137,13 +3137,13 @@ async fn test_http_keyring_install() {
     );
 }
 
-/// PUT /v1/operator/keyring - 切换primary key
+/// `PUT /v1/operator/keyring` - switches the primary key.
 #[actix_web::test]
 async fn test_http_keyring_use() {
     let app = create_test_app().await;
     let key = http_test_key(0x99);
 
-    // 先安装key
+    // Install the key first.
     let req = test::TestRequest::post()
         .uri("/v1/operator/keyring")
         .set_json(serde_json::json!({ "Key": key }))
@@ -3151,7 +3151,7 @@ async fn test_http_keyring_use() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 切换primary key
+    // Switches the primary key.
     let req = test::TestRequest::put()
         .uri("/v1/operator/keyring")
         .set_json(serde_json::json!({ "Key": key }))
@@ -3159,7 +3159,7 @@ async fn test_http_keyring_use() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 验证primary key已切换
+    // Verify the primary key has switched.
     let body: serde_json::Value = test::read_body_json(resp).await;
     let responses = body["Responses"]
         .as_array()
@@ -3171,12 +3171,12 @@ async fn test_http_keyring_use() {
     );
 }
 
-/// DELETE /v1/operator/keyring - 移除非primary key
+/// `DELETE /v1/operator/keyring` - removes a non-primary key.
 #[actix_web::test]
 async fn test_http_keyring_remove() {
     let app = create_test_app().await;
 
-    // 获取初始primary key
+    // Get the initial primary key.
     let req = test::TestRequest::get()
         .uri("/v1/operator/keyring")
         .to_request();
@@ -3190,7 +3190,7 @@ async fn test_http_keyring_remove() {
         .cloned()
         .unwrap();
 
-    // 安装一个新key（非primary）
+    // Install a new key (non-primary).
     let new_key = http_test_key(0x55);
     let req = test::TestRequest::post()
         .uri("/v1/operator/keyring")
@@ -3199,7 +3199,7 @@ async fn test_http_keyring_remove() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 移除新key（非primary，应成功）
+    // Remove the new key (non-primary, should succeed).
     let req = test::TestRequest::delete()
         .uri("/v1/operator/keyring")
         .set_json(serde_json::json!({ "Key": new_key }))
@@ -3207,26 +3207,26 @@ async fn test_http_keyring_remove() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // 验证key已被移除
+    // Verify the key has been removed.
     let body: serde_json::Value = test::read_body_json(resp).await;
     let keys = &body["Responses"][0]["Keys"];
     assert!(
         keys.get(&new_key).is_none(),
         "removed key should not be in keyring"
     );
-    // primary key应仍然存在
+    // The primary key should still exist.
     assert!(
         keys.get(&initial_primary).is_some(),
         "primary key should still be present"
     );
 }
 
-/// DELETE /v1/operator/keyring - 移除primary key返回400
+/// `DELETE /v1/operator/keyring` - removing the primary key returns 400.
 #[actix_web::test]
 async fn test_http_keyring_remove_primary_fails() {
     let app = create_test_app().await;
 
-    // 获取初始primary key
+    // Get the initial primary key.
     let req = test::TestRequest::get()
         .uri("/v1/operator/keyring")
         .to_request();
@@ -3240,7 +3240,7 @@ async fn test_http_keyring_remove_primary_fails() {
         .cloned()
         .unwrap();
 
-    // 尝试移除primary key应返回400
+    // Attempting to remove the primary key should return 400.
     let req = test::TestRequest::delete()
         .uri("/v1/operator/keyring")
         .set_json(serde_json::json!({ "Key": primary_key }))
@@ -3253,12 +3253,12 @@ async fn test_http_keyring_remove_primary_fails() {
     );
 }
 
-/// POST /v1/operator/keyring - 无效key格式返回400
+/// `POST /v1/operator/keyring` - invalid key format returns 400.
 #[actix_web::test]
 async fn test_http_keyring_invalid_key_format() {
     let app = create_test_app().await;
 
-    // 无效base64 key
+    // Invalid base64 key.
     let req = test::TestRequest::post()
         .uri("/v1/operator/keyring")
         .set_json(serde_json::json!({ "Key": "not-a-valid-key!!!" }))
@@ -3266,7 +3266,7 @@ async fn test_http_keyring_invalid_key_format() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 400);
 
-    // 长度不对的key（16字节而非32字节）
+    // Key with wrong length (16 bytes instead of 32).
     use base64::Engine;
     let short_key = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
     let req = test::TestRequest::post()
@@ -3277,7 +3277,7 @@ async fn test_http_keyring_invalid_key_format() {
     assert_eq!(resp.status(), 400);
 }
 
-/// POST /v1/operator/keyring?relay-factor=6 - relay_factor超出范围返回400
+/// `POST /v1/operator/keyring?relay-factor=6` - relay_factor out of range returns 400.
 #[actix_web::test]
 async fn test_http_keyring_relay_factor_out_of_range() {
     let app = create_test_app().await;
@@ -3291,7 +3291,7 @@ async fn test_http_keyring_relay_factor_out_of_range() {
     assert_eq!(resp.status(), 400);
 }
 
-/// POST /v1/operator/keyring?local-only=true - local_only对非list操作返回400
+/// `POST /v1/operator/keyring?local-only=true` - local_only on non-list operations returns 400.
 #[actix_web::test]
 async fn test_http_keyring_local_only_on_install_fails() {
     let app = create_test_app().await;

@@ -28,10 +28,12 @@ pub struct ExternalDbApolloPersistence {
 }
 
 impl ExternalDbApolloPersistence {
+    /// Creates a new `ExternalDbApolloPersistence`.
     pub fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 
+    /// Performs the `db` operation.
     pub fn db(&self) -> &std::sync::Arc<DatabaseConnection> {
         &self.db
     }

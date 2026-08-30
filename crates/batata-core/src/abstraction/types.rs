@@ -195,6 +195,7 @@ pub struct HealthCheck {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Enumeration of Health Check Type.
 pub enum HealthCheckType {
     /// TTL-based (client heartbeat)
     Ttl,
@@ -209,11 +210,16 @@ pub enum HealthCheckType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Enumeration of Health Status.
 pub enum HealthStatus {
+    /// The `Passing` variant.
     Passing,
+    /// The `Warning` variant.
     Warning,
+    /// The `Critical` variant.
     Critical,
     #[default]
+    /// The `Unknown` variant.
     Unknown,
 }
 
@@ -266,13 +272,18 @@ pub struct ConfigQuery {
 /// Paginated result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagedResult<T> {
+    /// The `items` field.
     pub items: Vec<T>,
+    /// The `total` field.
     pub total: u64,
+    /// The `page` field.
     pub page: u32,
+    /// The `page_size` field.
     pub page_size: u32,
 }
 
 impl<T> PagedResult<T> {
+    /// Empty.
     pub fn empty() -> Self {
         Self {
             items: Vec::new(),
@@ -282,6 +293,7 @@ impl<T> PagedResult<T> {
         }
     }
 
+    /// Creates a new instance.
     pub fn new(items: Vec<T>, total: u64, page: u32, page_size: u32) -> Self {
         Self {
             items,
@@ -297,32 +309,47 @@ impl<T> PagedResult<T> {
 pub enum ChangeEvent {
     /// Service instance changed
     ServiceChanged {
+        /// The namespace of the changed service.
         namespace: String,
+        /// The group of the changed service.
         group: String,
+        /// The name of the changed service.
         service: String,
+        /// The current instances of the changed service.
         instances: Vec<ServiceInstance>,
     },
     /// Configuration changed
     ConfigChanged {
+        /// The namespace of the changed configuration.
         namespace: String,
+        /// The group of the changed configuration.
         group: String,
+        /// The configuration key (dataId) that changed.
         key: String,
+        /// The new configuration content, if available.
         content: Option<String>,
+        /// The type of change (created, updated, or deleted).
         change_type: ChangeType,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Enumeration of Change Type.
 pub enum ChangeType {
+    /// The `Created` variant.
     Created,
+    /// The `Updated` variant.
     Updated,
+    /// The `Deleted` variant.
     Deleted,
 }
 
 /// Registry type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryType {
+    /// The `Batata` variant.
     Batata,
+    /// The `Consul` variant.
     Consul,
 }
 

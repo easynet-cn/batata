@@ -10,30 +10,50 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// `RaftOpsParam` struct.
 pub struct RaftOpsParam {
+    /// `command` field.
     pub command: String,
     #[serde(default, alias = "groupId")]
+    /// `group_id` field.
     pub group_id: Option<String>,
     #[serde(default)]
+    /// `value` field.
     pub value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// `LogUpdateParam` struct.
 pub struct LogUpdateParam {
     #[serde(alias = "logName")]
+    /// `log_name` field.
     pub log_name: String,
     #[serde(alias = "logLevel")]
+    /// `log_level` field.
     pub log_level: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// `IdsResponse` struct.
 pub struct IdsResponse {
+    /// `node_id` field.
     pub node_id: String,
+    /// `cluster_id` field.
     pub cluster_id: String,
 }
 
+/// `do_raft_ops` function.
+///
+/// # Arguments
+/// - `req`: `req : & HttpRequest . ty`.
+/// - `data`: `data : & web :: Data < AppState > . ty`.
+/// - `params`: `params : & RaftOpsParam . ty`.
+/// - `api_type`: `api_type : ApiType . ty`.
+///
+/// # Returns
+/// `actix_web :: HttpResponse`.
 pub async fn do_raft_ops(
     req: &HttpRequest,
     data: &web::Data<AppState>,
@@ -59,6 +79,15 @@ pub async fn do_raft_ops(
     Result::<String>::http_success(format!("Raft command '{}' acknowledged", params.command))
 }
 
+/// `do_get_ids` function.
+///
+/// # Arguments
+/// - `req`: `req : & HttpRequest . ty`.
+/// - `data`: `data : & web :: Data < AppState > . ty`.
+/// - `api_type`: `api_type : ApiType . ty`.
+///
+/// # Returns
+/// `actix_web :: HttpResponse`.
 pub async fn do_get_ids(
     req: &HttpRequest,
     data: &web::Data<AppState>,
@@ -83,6 +112,16 @@ pub async fn do_get_ids(
     Result::<IdsResponse>::http_success(response)
 }
 
+/// `do_set_log_level` function.
+///
+/// # Arguments
+/// - `req`: `req : & HttpRequest . ty`.
+/// - `data`: `data : & web :: Data < AppState > . ty`.
+/// - `params`: `params : & LogUpdateParam . ty`.
+/// - `api_type`: `api_type : ApiType . ty`.
+///
+/// # Returns
+/// `actix_web :: HttpResponse`.
 pub async fn do_set_log_level(
     req: &HttpRequest,
     data: &web::Data<AppState>,

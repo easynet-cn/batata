@@ -31,6 +31,7 @@ pub struct TokenBucket {
 }
 
 impl TokenBucket {
+    /// Create a new token bucket allowing `max_tps` tokens per second with `burst_size` burst capacity.
     pub fn new(max_tps: u32, burst_size: u32) -> Self {
         let max_tokens = (burst_size as u64) * 1000;
         Self {
@@ -41,6 +42,7 @@ impl TokenBucket {
         }
     }
 
+    /// Attempt to consume `count` tokens, returning `true` if allowed.
     pub async fn try_acquire(&self, count: u32) -> bool {
         self.refill().await;
 
@@ -82,6 +84,7 @@ impl TokenBucket {
         }
     }
 
+    /// Returns the number of whole tokens currently remaining in the bucket.
     pub fn remaining(&self) -> u32 {
         (self.tokens.load(Ordering::Relaxed) / 1000) as u32
     }
@@ -99,6 +102,7 @@ pub struct SlidingWindowLimiter {
 }
 
 impl SlidingWindowLimiter {
+    /// Create a new sliding window limiter allowing `max_requests` per `window_seconds`.
     pub fn new(max_requests: u32, window_seconds: u64) -> Self {
         Self {
             window_seconds,
@@ -107,6 +111,7 @@ impl SlidingWindowLimiter {
         }
     }
 
+    /// Attempt to acquire a single request slot, returning `true` if allowed.
     pub fn try_acquire(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -151,6 +156,7 @@ impl SlidingWindowLimiter {
         true
     }
 
+    /// Return the estimated number of remaining requests allowed in the current window.
     pub fn remaining(&self) -> u32 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -186,6 +192,7 @@ pub struct ConnectionLimiter {
 }
 
 impl ConnectionLimiter {
+    /// Create a new connection limiter with global, per-IP, and per-client limits.
     pub fn new(max: u32, max_per_ip: u32, max_per_client: u32) -> Self {
         Self {
             current: AtomicU32::new(0),
@@ -300,6 +307,7 @@ impl ConnectionLimiter {
         }
     }
 
+    /// Return the current number of active connections.
     pub fn current_count(&self) -> u32 {
         self.current.load(Ordering::Relaxed)
     }
@@ -339,6 +347,7 @@ pub struct DefaultControlPlugin {
 }
 
 impl DefaultControlPlugin {
+    /// Create a new default control plugin with the given configuration.
     pub fn new(config: ControlPluginConfig) -> Self {
         let rule_store: Arc<dyn RuleStore> = Arc::new(MemoryRuleStore::new());
 
@@ -361,6 +370,7 @@ impl DefaultControlPlugin {
         }
     }
 
+    /// Replace the rule store used by this plugin and return `self`.
     pub fn with_rule_store(mut self, store: Arc<dyn RuleStore>) -> Self {
         self.rule_store = store;
         self
@@ -578,6 +588,7 @@ pub struct ConnectionGuard {
 }
 
 impl ConnectionGuard {
+    /// Create a new connection guard bound to a plugin and its control context.
     pub fn new(plugin: Arc<dyn ControlPlugin>, ctx: ControlContext) -> Self {
         Self { plugin, ctx }
     }

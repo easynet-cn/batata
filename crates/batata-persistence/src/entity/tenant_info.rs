@@ -5,18 +5,28 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "tenant_info")]
+/// ORM model for a row in the `tenant_info` table.
 pub struct Model {
+    /// Primary key.
     #[sea_orm(primary_key)]
     pub id: i64,
+    /// Unique key/primary identifier (kp).
     pub kp: String,
+    /// Tenant ID (namespace).
     pub tenant_id: Option<String>,
+    /// Tenant name.
     pub tenant_name: Option<String>,
+    /// Tenant description.
     pub tenant_desc: Option<String>,
+    /// Source used to create the tenant.
     pub create_source: Option<String>,
+    /// Creation time (epoch millis).
     pub gmt_create: i64,
+    /// Last modification time (epoch millis).
     pub gmt_modified: i64,
 }
 
+/// Relation definitions for the `tenant_info` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

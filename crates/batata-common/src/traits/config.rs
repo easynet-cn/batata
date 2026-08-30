@@ -50,37 +50,56 @@ pub trait ConsoleDataSource: Send + Sync {
 /// Namespace information
 #[derive(Debug, Clone, Default)]
 pub struct NamespaceInfo {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `namespace_name` field.
     pub namespace_name: String,
+    /// The `namespace_desc` field.
     pub namespace_desc: String,
+    /// The `quota` field.
     pub quota: i32,
+    /// The `config_count` field.
     pub config_count: i32,
+    /// The `namespace_type` field.
     pub namespace_type: i32,
 }
 
 /// Connection metadata for trait-based access
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionInfo {
+    /// The `connection_id` field.
     pub connection_id: String,
+    /// The `client_ip` field.
     pub client_ip: String,
+    /// The `client_port` field.
     pub client_port: u16,
+    /// The `app_name` field.
     pub app_name: String,
+    /// The `sdk` field.
     pub sdk: String,
+    /// The `version` field.
     pub version: String,
+    /// The `std` field.
     pub labels: std::collections::HashMap<String, String>,
+    /// The `create_time` field.
     pub create_time: u64,
+    /// The `last_active_time` field.
     pub last_active_time: u64,
 }
 
 /// Key for a configuration subscription
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ConfigSubscriptionKey {
+    /// The `data_id` field.
     pub data_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `tenant` field.
     pub tenant: String,
 }
 
 impl ConfigSubscriptionKey {
+    /// Creates a new config item with the given identifiers.
     pub fn new(data_id: &str, group: &str, tenant: &str) -> Self {
         Self {
             data_id: data_id.to_string(),
@@ -93,9 +112,13 @@ impl ConfigSubscriptionKey {
 /// Information about a config subscriber
 #[derive(Clone, Debug)]
 pub struct ConfigSubscriberInfo {
+    /// The `connection_id` field.
     pub connection_id: String,
+    /// The `client_ip` field.
     pub client_ip: String,
+    /// The `md5` field.
     pub md5: String,
+    /// The `client_tenant` field.
     pub client_tenant: String,
 }
 

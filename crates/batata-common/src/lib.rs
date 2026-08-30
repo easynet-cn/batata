@@ -6,12 +6,14 @@
 //! - Utility functions
 //! - Common constants
 //! - Configuration encryption
-
+#![warn(missing_docs)]
 pub mod bincode;
 pub mod crypto;
 pub mod error;
+/// Shared macros used across Batata components.
 #[macro_use]
 pub mod macros;
+/// Data models shared across Batata components.
 pub mod model;
 pub mod traits;
 pub mod utils;
@@ -133,21 +135,29 @@ pub fn paginate(page_no: u64, page_size: u64, total: usize) -> (usize, usize) {
 
 /// Query parameter names
 pub const TENANT: &str = "tenant";
+/// Query parameter for the namespace ID.
 pub const NAMESPACE_ID: &str = "namespaceId";
+/// Query parameter for the group name.
 pub const GROUP: &str = "group";
+/// Query parameter for the group name (alternate key).
 pub const GROUP_NAME: &str = "groupName";
+/// Query parameter for the data ID.
 pub const DATA_ID: &str = "dataId";
+/// Query parameter for the service name.
 pub const SERVICE_NAME: &str = "serviceName";
 
 /// Action types for permission control
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionTypes {
     #[default]
+    /// The `Read` variant.
     Read,
+    /// The `Write` variant.
     Write,
 }
 
 impl ActionTypes {
+    /// The `as_str` method.
     pub fn as_str(self) -> &'static str {
         match self {
             ActionTypes::Read => "r",
@@ -178,15 +188,22 @@ impl std::str::FromStr for ActionTypes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SignType {
     #[default]
+    /// The `Naming` variant.
     Naming,
+    /// The `Config` variant.
     Config,
+    /// The `Lock` variant.
     Lock,
+    /// The `Ai` variant.
     Ai,
+    /// The `Console` variant.
     Console,
+    /// The `Specified` variant.
     Specified,
 }
 
 impl SignType {
+    /// The `as_str` method.
     pub fn as_str(&self) -> &'static str {
         match self {
             SignType::Naming => "naming",
@@ -224,14 +241,19 @@ impl std::str::FromStr for SignType {
 /// API access types with different permission levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ApiType {
+    /// The `AdminApi` variant.
     AdminApi,
+    /// The `ConsoleApi` variant.
     ConsoleApi,
     #[default]
+    /// The `OpenApi` variant.
     OpenApi,
+    /// The `InnerApi` variant.
     InnerApi,
 }
 
 impl ApiType {
+    /// The `description` method.
     pub fn description(&self) -> &'static str {
         match self {
             ApiType::AdminApi => "ADMIN_API",

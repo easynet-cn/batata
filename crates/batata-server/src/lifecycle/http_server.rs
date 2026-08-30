@@ -17,26 +17,42 @@ use crate::initializer::traits::{
 /// HTTP server configuration
 #[derive(Clone)]
 pub struct HttpServerConfig {
+    /// `port` field.
     pub port: u16,
+    /// `address` field.
     pub address: String,
+    /// `context_path` field.
     pub context_path: String,
+    /// `workers` field.
     pub workers: usize,
+    /// `keep_alive_secs` field.
     pub keep_alive_secs: u64,
+    /// `max_payload_size` field.
     pub max_payload_size: usize,
+    /// `max_json_size` field.
     pub max_json_size: usize,
+    /// `compression_enabled` field.
     pub compression_enabled: bool,
+    /// `access_log_enabled` field.
     pub access_log_enabled: bool,
 }
 
 /// HTTP server kind
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpServerKind {
+    /// `Main` variant.
     Main,
+    /// `Console` variant.
     Console,
+    /// `Plugin` variant.
     Plugin(String),
 }
 
 impl HttpServerKind {
+    /// `as_str` function.
+    ///
+    /// # Returns
+    /// `Cow < 'static , str >`.
     pub fn as_str(&self) -> Cow<'static, str> {
         match self {
             HttpServerKind::Main => "HttpMain".into(),
@@ -62,16 +78,28 @@ pub struct HttpServerState {
 }
 
 impl HttpServerState {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self {
             health: AtomicU8::new(ServerHealth::Starting as u8),
         }
     }
 
+    /// `set_health` function.
+    ///
+    /// # Arguments
+    /// - `health`: `health : ServerHealth . ty`.
     pub fn set_health(&self, health: ServerHealth) {
         self.health.store(health as u8, Ordering::SeqCst);
     }
 
+    /// `health` function.
+    ///
+    /// # Returns
+    /// `ServerHealth`.
     pub fn health(&self) -> ServerHealth {
         match self.health.load(Ordering::SeqCst) {
             0 => ServerHealth::Starting,

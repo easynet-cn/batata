@@ -320,11 +320,16 @@ pub enum HealthCheckType {
     Tcp,
     /// HTTP health check
     Http {
+        /// Path to send the health check request to.
         path: String,
+        /// HTTP status codes considered a healthy response.
         expected_statuses: Vec<u32>,
     },
     /// gRPC health check
-    Grpc { service_name: Option<String> },
+    Grpc {
+        /// Name of the gRPC service to health check.
+        service_name: Option<String>,
+    },
 }
 
 /// Circuit breaker configuration
@@ -434,7 +439,9 @@ impl ListenerAddress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ListenerProtocol {
     #[default]
+    /// Transmission Control Protocol.
     Tcp,
+    /// User Datagram Protocol.
     Udp,
 }
 
@@ -573,9 +580,13 @@ pub enum NetworkFilterType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum HttpCodecType {
     #[default]
+    /// Automatically negotiate the HTTP protocol version.
     Auto,
+    /// HTTP/1.1.
     Http1,
+    /// HTTP/2.
     Http2,
+    /// HTTP/3.
     Http3,
 }
 
@@ -834,7 +845,12 @@ pub enum HeaderMatchType {
     /// Header presence check
     Present,
     /// Range match (for numeric headers)
-    Range { start: i64, end: i64 },
+    Range {
+        /// Inclusive lower bound of the range.
+        start: i64,
+        /// Inclusive upper bound of the range.
+        end: i64,
+    },
 }
 
 /// Query parameter matcher
@@ -1043,13 +1059,18 @@ pub enum RateLimitAction {
     DestinationCluster,
     /// Request headers
     RequestHeaders {
+        /// Name of the request header to use as the rate limit key.
         header_name: String,
+        /// Descriptor key associated with the matched header.
         descriptor_key: String,
     },
     /// Remote address
     RemoteAddress,
     /// Generic key
-    GenericKey { descriptor_value: String },
+    GenericKey {
+        /// Descriptor value for the generic rate limit key.
+        descriptor_value: String,
+    },
 }
 
 /// Header value option

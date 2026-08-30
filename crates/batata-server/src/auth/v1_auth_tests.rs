@@ -1,3 +1,4 @@
+//! Module `auth::v1_auth_tests` of the `batata-server` crate.
 // Test for V1 Auth API compatibility with Nacos SDK
 //
 // This test verifies that the /v1/auth/users/login endpoint works correctly

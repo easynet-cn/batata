@@ -22,6 +22,7 @@ struct NodeListParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LookupSwitchParam {
+    /// `r#type` field.
     pub r#type: String,
 }
 
@@ -300,6 +301,10 @@ async fn cluster_health(
     Result::<ClusterHealthResponse>::http_success(resp)
 }
 
+/// `routes` function.
+///
+/// # Returns
+/// `actix_web :: Scope`.
 pub fn routes() -> actix_web::Scope {
     web::scope("/cluster")
         .service(cluster_health)

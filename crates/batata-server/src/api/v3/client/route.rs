@@ -1,7 +1,12 @@
+//! Module `api::v3::client::route` of the `batata-server` crate.
 use actix_web::{Scope, web};
 
 use super::{cs, ns};
 
+/// `client_routes` function.
+///
+/// # Returns
+/// `Scope`.
 pub fn client_routes() -> Scope {
     web::scope("/v3/client")
         .service(web::scope("/ns").service(ns::instance::routes()))

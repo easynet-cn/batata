@@ -20,6 +20,7 @@ pub struct PromptOperationService {
 }
 
 impl PromptOperationService {
+    /// Creates a new `PromptOperationService` backed by the given persistence.
     pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
         Self { persistence }
     }

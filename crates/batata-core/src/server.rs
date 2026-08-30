@@ -78,6 +78,7 @@ pub struct ServerStateTracker {
 }
 
 impl ServerStateTracker {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             state: Arc::new(AtomicU8::new(ServerState::Created as u8)),
@@ -90,30 +91,36 @@ impl ServerStateTracker {
         ServerState::from_u8(self.state.load(Ordering::Relaxed))
     }
 
+    /// Returns `true` if running.
     pub fn is_running(&self) -> bool {
         self.state.load(Ordering::Relaxed) == ServerState::Running as u8
     }
 
+    /// Sets the starting.
     pub fn set_starting(&self) {
         self.state
             .store(ServerState::Starting as u8, Ordering::Relaxed);
     }
 
+    /// Sets the running.
     pub fn set_running(&self) {
         self.state
             .store(ServerState::Running as u8, Ordering::Relaxed);
     }
 
+    /// Sets the draining.
     pub fn set_draining(&self) {
         self.state
             .store(ServerState::Draining as u8, Ordering::Relaxed);
     }
 
+    /// Sets the stopped.
     pub fn set_stopped(&self) {
         self.state
             .store(ServerState::Stopped as u8, Ordering::Relaxed);
     }
 
+    /// Sets the failed.
     pub fn set_failed(&self) {
         self.state
             .store(ServerState::Failed as u8, Ordering::Relaxed);
@@ -232,30 +239,52 @@ pub trait ManagedServer: Send + Sync {
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
     #[error("Server '{name}' failed to start: {reason}")]
-    StartupFailed { name: String, reason: String },
+    /// Server failed to start.
+    StartupFailed {
+        /// The name of the server that failed to start.
+        name: String,
+        /// The reason for the startup failure.
+        reason: String,
+    },
 
     #[error("Server '{name}' failed to shutdown: {reason}")]
-    ShutdownFailed { name: String, reason: String },
+    /// Server failed to shut down.
+    ShutdownFailed {
+        /// The name of the server that failed to shut down.
+        name: String,
+        /// The reason for the shutdown failure.
+        reason: String,
+    },
 
     #[error("Server '{name}' bind error on {addr}: {reason}")]
+    /// Server failed to bind to its address.
     BindError {
+        /// The name of the server that failed to bind.
         name: String,
+        /// The address the server attempted to bind to.
         addr: String,
+        /// The reason for the bind failure.
         reason: String,
     },
 
     #[error("{0}")]
+    /// The `Other` variant.
     Other(#[from] anyhow::Error),
 }
 
 /// Health status of a single server, returned by the orchestrator.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ServerHealthInfo {
+    /// The `name` field.
     pub name: String,
+    /// The `server_type` field.
     pub server_type: String,
+    /// The `state` field.
     pub state: String,
+    /// The `healthy` field.
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `error` field.
     pub error: Option<String>,
 }
 
@@ -272,6 +301,7 @@ pub struct ServerRegistry {
 }
 
 impl ServerRegistry {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self::default()
     }
@@ -340,6 +370,7 @@ pub struct ServerOrchestrator {
 }
 
 impl ServerOrchestrator {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             servers: BTreeMap::new(),

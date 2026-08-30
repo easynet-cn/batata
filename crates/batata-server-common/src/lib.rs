@@ -1,25 +1,31 @@
-// Shared server infrastructure for Batata
-//
-// This crate provides common types, middleware, and configuration used by
-// both batata-server (SDK API + gRPC) and batata-console (management console).
-//
-// Provides:
-// - AppState (central application state)
-// - Configuration (CLI args, config file loading)
-// - Constants (shared constant strings)
-// - Response types (Result, ErrorResult, ConsoleException)
-// - Middleware (Authentication, RateLimiter, Tracing)
-// - Error types (AppError, BatataError re-exports)
-// - TLS configuration (GrpcTlsConfig)
-// - Secured / secured! macro (auth guard)
-// - ConsoleDataSource trait (console data abstraction)
-// - Console model types (Member, ClusterHealthResponse, etc.)
+#![warn(missing_docs)]
+//! Shared server infrastructure for Batata.
+//!
+//! This crate provides common types, middleware, and configuration used by
+//! both batata-server (SDK API + gRPC) and batata-console (management console).
+//!
+//! Provides:
+//! - `AppState` (central application state)
+//! - `Configuration` (CLI args, config file loading)
+//! - Constants (shared constant strings)
+//! - Response types (`Result`, `ErrorResult`, `ConsoleException`)
+//! - Middleware (Authentication, RateLimiter, Tracing)
+//! - Error types (`AppError`, `BatataError` re-exports)
+//! - TLS configuration (`GrpcTlsConfig`)
+//! - Secured / `secured!` macro (auth guard)
+//! - `ConsoleDataSource` trait (console data abstraction)
+//! - Console model types (`Member`, `ClusterHealthResponse`, etc.)
 
+/// Provides the `api` module.
 pub mod api; // HTTP API handlers (auth, etc.)
+/// Provides the `console` module.
 pub mod console; // Console shared types (trait, models)
+/// Provides the `error` module.
 pub mod error; // Error handling and types
+/// Provides the `middleware` module.
 pub mod middleware; // HTTP middleware
 pub mod model; // Data models and types
+/// Provides the `secured` module.
 pub mod secured; // Security context and secured! macro
 
 // Re-export common types from batata-common to maintain backward compatibility

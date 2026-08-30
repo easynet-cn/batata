@@ -14,10 +14,12 @@ pub struct IdentityContext {
 }
 
 impl IdentityContext {
+    /// Create an empty identity context with no headers.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a header to the identity context and return the updated context.
     pub fn with_header(mut self, key: &str, value: &str) -> Self {
         self.headers.insert(key.to_string(), value.to_string());
         self
@@ -32,9 +34,13 @@ impl IdentityContext {
 /// Resource being accessed (for signing/authorization)
 #[derive(Debug, Clone, Default)]
 pub struct RequestResource {
+    /// Namespace of the resource.
     pub namespace: String,
+    /// Group of the resource.
     pub group: String,
+    /// Resource name or path.
     pub resource: String,
+    /// Type of the resource.
     pub resource_type: String,
 }
 
@@ -69,6 +75,7 @@ pub struct JwtAuthProvider {
 }
 
 impl JwtAuthProvider {
+    /// Create a JWT auth provider from username, password, and context path.
     pub fn new(username: &str, password: &str, context_path: &str) -> Self {
         Self {
             username: username.to_string(),
@@ -173,6 +180,7 @@ pub struct AccessKeyAuthProvider {
 }
 
 impl AccessKeyAuthProvider {
+    /// Create an access-key auth provider from the given key pair.
     pub fn new(access_key: &str, secret_key: &str) -> Self {
         Self {
             access_key: access_key.to_string(),
@@ -211,6 +219,7 @@ pub struct SecurityProxy {
 }
 
 impl SecurityProxy {
+    /// Create an empty security proxy with no registered providers.
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),

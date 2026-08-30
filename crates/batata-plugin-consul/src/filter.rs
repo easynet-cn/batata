@@ -21,16 +21,16 @@ use std::collections::HashMap;
 pub enum FilterExpr {
     /// `field op "value"` or `field op value`
     Compare {
-        field: String,
-        op: CompareOp,
-        value: String,
+        #[doc = "The `field` field."] field: String,
+        #[doc = "The `op` field."] op: CompareOp,
+        #[doc = "The `value` field."] value: String,
     },
     /// `"value" in field`
-    In { value: String, field: String },
+    In { #[doc = "The value to match against the field."] value: String, #[doc = "The field path to inspect."] field: String },
     /// `field contains "value"`
-    Contains { field: String, value: String },
+    Contains { #[doc = "The field path to inspect."] field: String, #[doc = "The substring value to look for."] value: String },
     /// `field is empty` / `field is not empty`
-    IsEmpty { field: String, negated: bool },
+    IsEmpty { #[doc = "The field path to inspect."] field: String, #[doc = "Whether the emptiness check is negated."] negated: bool },
     /// `expr and expr`
     And(Box<FilterExpr>, Box<FilterExpr>),
     /// `expr or expr`
@@ -40,10 +40,18 @@ pub enum FilterExpr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Enumerates `None`.
+/// Enumerates `CompareOp`.
 pub enum CompareOp {
+/// The `The` variant.
+/// The `Eq` variant.
     Eq,
+/// The `The` variant.
+/// The `Ne` variant.
     Ne,
+/// The `Matches` variant.
     Matches, // regex match (simplified to substring for now)
+/// The `NotMatches` variant.
     NotMatches,
 }
 

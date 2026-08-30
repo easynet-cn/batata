@@ -4,15 +4,18 @@ use crate::persistence::shared::StoredNamespaceLock;
 use crate::persistence::traits::{ApolloPersistenceService, NamespaceLockPersistence};
 use chrono::Utc;
 
+/// Represents the `NamespaceLockService` entity.
 pub struct NamespaceLockService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl NamespaceLockService {
+    /// Creates a new `NamespaceLockService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }
 
+    /// Performs the `lock` operation.
     pub async fn lock(&self, app_id: &str, cluster_name: &str, namespace_name: &str, locked_by: &str) -> Result<(), anyhow::Error> {
         let existing = self.persistence.get(app_id, cluster_name, namespace_name).await?;
 
@@ -41,6 +44,7 @@ impl NamespaceLockService {
         Ok(())
     }
 
+    /// Performs the `unlock` operation.
     pub async fn unlock(&self, app_id: &str, cluster_name: &str, namespace_name: &str, locked_by: &str) -> Result<(), anyhow::Error> {
         let lock = self.persistence.get(app_id, cluster_name, namespace_name).await?;
 
@@ -54,10 +58,12 @@ impl NamespaceLockService {
         Ok(())
     }
 
+    /// Returns the requested value.
     pub async fn get_lock(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<StoredNamespaceLock>, anyhow::Error> {
         self.persistence.get(app_id, cluster_name, namespace_name).await
     }
 
+    /// Returns whether the condition holds.
     pub async fn is_locked(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<bool, anyhow::Error> {
         self.persistence.is_locked(app_id, cluster_name, namespace_name).await
     }

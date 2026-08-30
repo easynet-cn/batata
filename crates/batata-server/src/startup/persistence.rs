@@ -109,12 +109,17 @@ async fn release_migration_lock<C: ConnectionTrait>(
 /// Contains all resources created during persistence setup, grouped together
 /// to avoid an unwieldy tuple return.
 pub struct PersistenceContext {
+    /// `database_connection` field.
     pub database_connection: Option<sea_orm::DatabaseConnection>,
+    /// `server_member_manager` field.
     pub server_member_manager: Option<Arc<ServerMemberManager>>,
+    /// `cluster_manager` field.
     pub cluster_manager: Option<Arc<dyn ClusterManager>>,
+    /// `persistence` field.
     pub persistence: Option<Arc<dyn PersistenceService>>,
     /// Keep RocksDB handle alive for the duration of the process.
     pub rocks_db: Option<Arc<rocksdb::DB>>,
+    /// `raft_node` field.
     pub raft_node: Option<Arc<RaftNode>>,
 }
 

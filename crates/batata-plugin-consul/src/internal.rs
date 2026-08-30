@@ -30,30 +30,39 @@ use crate::naming_store::ConsulNamingStore;
 #[derive(Debug, Clone, Serialize)]
 pub struct UINode {
     #[serde(rename = "ID")]
+/// The `id` field.
     pub id: String,
     #[serde(rename = "Node")]
+/// The `node` field.
     pub node: String,
     #[serde(rename = "Address")]
+/// The `address` field.
     pub address: String,
     #[serde(rename = "TaggedAddresses")]
+/// The `tagged_addresses` field.
     pub tagged_addresses: HashMap<String, String>,
     #[serde(rename = "Meta")]
+/// The `meta` field.
     pub meta: HashMap<String, String>,
     #[serde(rename = "Services")]
+/// The `services` field.
     pub services: Vec<crate::model::AgentService>,
     #[serde(rename = "Checks")]
+/// The `checks` field.
     pub checks: Vec<crate::model::HealthCheck>,
 }
 
 /// Query parameters for UI node list
 #[derive(Debug, Deserialize)]
 pub struct UINodeQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
 }
 
 /// Query parameters for UI exported services
 #[derive(Debug, Deserialize)]
 pub struct UIExportedServicesQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
 }
 
@@ -61,11 +70,16 @@ pub struct UIExportedServicesQueryParams {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopology {
+/// The `protocol` field.
     pub protocol: String,
+/// The `transparent_proxy` field.
     pub transparent_proxy: bool,
+/// The `upstreams` field.
     pub upstreams: Vec<ServiceTopologySummary>,
+/// The `downstreams` field.
     pub downstreams: Vec<ServiceTopologySummary>,
     #[serde(rename = "FilteredByACLs")]
+/// The `filtered_by_acls` field.
     pub filtered_by_acls: bool,
 }
 
@@ -73,9 +87,13 @@ pub struct ServiceTopology {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopologySummary {
+/// The `name` field.
     pub name: String,
+/// The `datacenter` field.
     pub datacenter: String,
+/// The `namespace` field.
     pub namespace: String,
+/// The `intention` field.
     pub intention: ServiceTopologyIntention,
 }
 
@@ -83,15 +101,20 @@ pub struct ServiceTopologySummary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopologyIntention {
+/// The `allowed` field.
     pub allowed: bool,
+/// The `has_permissions` field.
     pub has_permissions: bool,
+/// The `external_source` field.
     pub external_source: String,
 }
 
 /// Query parameters for service topology
 #[derive(Debug, Deserialize)]
 pub struct UIServiceTopologyQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
+/// The `kind` field.
     pub kind: Option<String>,
 }
 
@@ -99,8 +122,11 @@ pub struct UIServiceTopologyQueryParams {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CatalogSummary {
+/// The `nodes` field.
     pub nodes: CatalogCountSummary,
+/// The `services` field.
     pub services: CatalogCountSummary,
+/// The `checks` field.
     pub checks: CatalogCountSummary,
 }
 
@@ -108,9 +134,13 @@ pub struct CatalogSummary {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CatalogCountSummary {
+/// The `total` field.
     pub total: i64,
+/// The `passing` field.
     pub passing: i64,
+/// The `warning` field.
     pub warning: i64,
+/// The `critical` field.
     pub critical: i64,
 }
 
@@ -118,10 +148,14 @@ pub struct CatalogCountSummary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct FederationState {
+/// The `datacenter` field.
     pub datacenter: String,
+/// The `mesh_gateways` field.
     pub mesh_gateways: Vec<serde_json::Value>,
+/// The `primary_datacenter` field.
     pub primary_datacenter: String,
     #[serde(rename = "PrimaryModifyIndex")]
+/// The `primary_modifyindex` field.
     pub primary_modifyindex: u64,
 }
 
@@ -129,6 +163,7 @@ pub struct FederationState {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AssignServiceVIPsRequest {
+/// The `service_name` field.
     pub service_name: String,
 }
 
@@ -136,13 +171,16 @@ pub struct AssignServiceVIPsRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AssignServiceVIPsResponse {
+/// The `service_name` field.
     pub service_name: String,
+/// The `found` field.
     pub found: bool,
 }
 
 /// Query parameters for UI catalog overview
 #[derive(Debug, Deserialize)]
 pub struct UICatalogOverviewQueryParams {
+/// The `dc` field.
     pub dc: Option<String>,
 }
 

@@ -6,6 +6,8 @@
 //! - Cluster management UI API
 //! - Metrics API
 
+#![warn(missing_docs)]
+
 pub mod datasource;
 pub mod model;
 pub mod v2;

@@ -13,9 +13,13 @@ use tokio::sync::RwLock;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerStatus {
+    /// The server is still starting up.
     Starting = 0,
+    /// The server is up and serving traffic.
     Up = 1,
+    /// The server is down.
     Down = 2,
+    /// The server is draining: finishing in-flight requests before shutdown.
     Draining = 3,
 }
 
@@ -53,6 +57,7 @@ pub struct ServerStatusManager {
 }
 
 impl ServerStatusManager {
+/// Performs the `new` operation.
     pub fn new() -> Self {
         Self {
             status: Arc::new(AtomicU8::new(ServerStatus::Starting as u8)),
@@ -70,20 +75,24 @@ impl ServerStatusManager {
         self.status.load(Ordering::Relaxed) == ServerStatus::Up as u8
     }
 
+/// Performs the `set_up` operation.
     pub fn set_up(&self) {
         self.status.store(ServerStatus::Up as u8, Ordering::Relaxed);
     }
 
+/// Performs the `set_down` operation.
     pub fn set_down(&self) {
         self.status
             .store(ServerStatus::Down as u8, Ordering::Relaxed);
     }
 
+/// Performs the `set_draining` operation.
     pub fn set_draining(&self) {
         self.status
             .store(ServerStatus::Draining as u8, Ordering::Relaxed);
     }
 
+/// Performs the `set_starting` operation.
     pub fn set_starting(&self) {
         self.status
             .store(ServerStatus::Starting as u8, Ordering::Relaxed);

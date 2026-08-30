@@ -16,12 +16,19 @@ use crate::initializer::traits::{
 /// xDS server configuration
 #[derive(Clone)]
 pub struct XdsServerConfig {
+    /// `enabled` field.
     pub enabled: bool,
+    /// `port` field.
     pub port: u16,
+    /// `server_id` field.
     pub server_id: String,
+    /// `sync_interval_ms` field.
     pub sync_interval_ms: u64,
+    /// `generate_listeners` field.
     pub generate_listeners: bool,
+    /// `generate_routes` field.
     pub generate_routes: bool,
+    /// `default_listener_port` field.
     pub default_listener_port: u16,
 }
 
@@ -45,16 +52,28 @@ pub struct XdsServerState {
 }
 
 impl XdsServerState {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self {
             health: AtomicU8::new(ServerHealth::Starting as u8),
         }
     }
 
+    /// `set_health` function.
+    ///
+    /// # Arguments
+    /// - `health`: `health : ServerHealth . ty`.
     pub fn set_health(&self, health: ServerHealth) {
         self.health.store(health as u8, Ordering::SeqCst);
     }
 
+    /// `health` function.
+    ///
+    /// # Returns
+    /// `ServerHealth`.
     pub fn health(&self) -> ServerHealth {
         match self.health.load(Ordering::SeqCst) {
             0 => ServerHealth::Starting,

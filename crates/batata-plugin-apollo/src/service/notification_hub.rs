@@ -16,11 +16,13 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 #[derive(Default)]
+/// Represents the `ApolloNotificationHub` entity.
 pub struct ApolloNotificationHub {
     waiters: Mutex<HashMap<String, Vec<Arc<Notify>>>>,
 }
 
 impl ApolloNotificationHub {
+    /// Creates a new `ApolloNotificationHub`.
     pub fn new() -> Self {
         Self::default()
     }

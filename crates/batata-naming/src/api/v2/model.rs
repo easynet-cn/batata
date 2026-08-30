@@ -262,16 +262,26 @@ impl BatchMetadataParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceResponse {
+    /// The `instance_id` value.
     pub instance_id: String,
+    /// The `ip` value.
     pub ip: String,
+    /// The `port` value.
     pub port: i32,
+    /// The `weight` value.
     pub weight: f64,
+    /// The `healthy` value.
     pub healthy: bool,
+    /// The `enabled` value.
     pub enabled: bool,
+    /// The `ephemeral` value.
     pub ephemeral: bool,
+    /// The `cluster_name` value.
     pub cluster_name: String,
+    /// The `service_name` value.
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `metadata` value.
     pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -279,14 +289,22 @@ pub struct InstanceResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceListResponse {
+    /// The `name` value.
     pub name: String,
+    /// The `group_name` value.
     pub group_name: String,
+    /// The `clusters` value.
     pub clusters: String,
+    /// The `cache_millis` value.
     pub cache_millis: i64,
+    /// The `hosts` value.
     pub hosts: Vec<InstanceResponse>,
+    /// The `last_ref_time` value.
     pub last_ref_time: i64,
+    /// The `checksum` value.
     pub checksum: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `reach_protection_threshold` value.
     pub reach_protection_threshold: Option<bool>,
 }
 
@@ -455,16 +473,24 @@ impl ServiceListParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDetailResponse {
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_name` value.
     pub group_name: String,
+    /// The `service_name` value.
     pub service_name: String,
+    /// The `protect_threshold` value.
     pub protect_threshold: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `metadata` value.
     pub metadata: Option<std::collections::HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `selector` value.
     pub selector: Option<SelectorResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `cluster_map` value.
     pub cluster_map: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// The `ephemeral` value.
     pub ephemeral: bool,
 }
 
@@ -472,8 +498,10 @@ pub struct ServiceDetailResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectorResponse {
+    /// The `type` value.
     pub r#type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `expression` value.
     pub expression: Option<String>,
 }
 
@@ -481,7 +509,9 @@ pub struct SelectorResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceListResponse {
+    /// The `count` value.
     pub count: i32,
+    /// The `services` value.
     pub services: Vec<String>,
 }
 
@@ -546,7 +576,9 @@ impl ServiceClientListParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientListResponse {
+    /// The `count` value.
     pub count: i32,
+    /// The `client_ids` value.
     pub client_ids: Vec<String>,
 }
 
@@ -554,17 +586,26 @@ pub struct ClientListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientDetailResponse {
+    /// The `client_id` value.
     pub client_id: String,
+    /// The `client_type` value.
     pub client_type: String,
+    /// The `client_ip` value.
     pub client_ip: String,
+    /// The `client_port` value.
     pub client_port: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `connect_type` value.
     pub connect_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `app_name` value.
     pub app_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `version` value.
     pub version: Option<String>,
+    /// The `create_time` value.
     pub create_time: i64,
+    /// The `last_active_time` value.
     pub last_active_time: i64,
 }
 
@@ -572,8 +613,11 @@ pub struct ClientDetailResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientServiceInfo {
+    /// The `namespace` value.
     pub namespace: String,
+    /// The `group_name` value.
     pub group_name: String,
+    /// The `service_name` value.
     pub service_name: String,
 }
 
@@ -581,7 +625,9 @@ pub struct ClientServiceInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientServiceListResponse {
+    /// The `count` value.
     pub count: i32,
+    /// The `services` value.
     pub services: Vec<ClientServiceInfo>,
 }
 
@@ -589,8 +635,11 @@ pub struct ClientServiceListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceClientInfo {
+    /// The `client_id` value.
     pub client_id: String,
+    /// The `client_ip` value.
     pub client_ip: String,
+    /// The `client_port` value.
     pub client_port: u16,
 }
 
@@ -598,7 +647,9 @@ pub struct ServiceClientInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceClientListResponse {
+    /// The `count` value.
     pub count: i32,
+    /// The `clients` value.
     pub clients: Vec<ServiceClientInfo>,
 }
 
@@ -626,26 +677,46 @@ pub struct SwitchesResponse {
     /// Fixed constant: UtilsAndCommons.SWITCH_DOMAIN_NAME
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `masters` value.
     pub masters: Option<Vec<String>>,
+    /// The `default_push_cache_millis` value.
     pub default_push_cache_millis: i64,
+    /// The `client_beat_interval` value.
     pub client_beat_interval: i64,
+    /// The `default_cache_millis` value.
     pub default_cache_millis: i64,
+    /// The `distro_threshold` value.
     pub distro_threshold: f32,
+    /// The `health_check_enabled` value.
     pub health_check_enabled: bool,
+    /// The `auto_change_health_check_enabled` value.
     pub auto_change_health_check_enabled: bool,
+    /// The `distro_enabled` value.
     pub distro_enabled: bool,
+    /// The `enable_standalone` value.
     pub enable_standalone: bool,
+    /// The `push_enabled` value.
     pub push_enabled: bool,
+    /// The `check_times` value.
     pub check_times: i32,
+    /// The `http_health_params` value.
     pub http_health_params: SwitchHealthParams,
+    /// The `tcp_health_params` value.
     pub tcp_health_params: SwitchHealthParams,
+    /// The `mysql_health_params` value.
     pub mysql_health_params: SwitchHealthParams,
+    /// The `incremental_list` value.
     pub incremental_list: Vec<String>,
+    /// The `default_instance_ephemeral` value.
     pub default_instance_ephemeral: bool,
+    /// The `light_beat_enabled` value.
     pub light_beat_enabled: bool,
+    /// The `disable_add_ip` value.
     pub disable_add_ip: bool,
+    /// The `send_beat_only` value.
     pub send_beat_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `overridden_server_status` value.
     pub overridden_server_status: Option<String>,
 }
 
@@ -653,8 +724,11 @@ pub struct SwitchesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchHealthParams {
+    /// The `max` value.
     pub max: i32,
+    /// The `min` value.
     pub min: i32,
+    /// The `factor` value.
     pub factor: f32,
 }
 

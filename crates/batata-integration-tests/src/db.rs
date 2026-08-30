@@ -249,7 +249,7 @@ impl From<DbErr> for TestDatabaseError {
     }
 }
 
-/// Helper macro to skip test if database is not available
+/// Helper macro that skips the current test when `TEST_DATABASE_URL` is not set.
 #[macro_export]
 macro_rules! skip_if_no_db {
     () => {
@@ -260,7 +260,7 @@ macro_rules! skip_if_no_db {
     };
 }
 
-/// Helper macro to run test with both MySQL and PostgreSQL
+/// Helper macro that runs the given test function against both MySQL and PostgreSQL.
 #[macro_export]
 macro_rules! test_both_databases {
     ($test_fn:ident) => {

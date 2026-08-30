@@ -1,5 +1,6 @@
-// Raft gRPC service implementation
-// Handles incoming Raft RPC requests from other cluster nodes
+//! Raft gRPC service implementation.
+//!
+//! Handles incoming Raft RPC requests from other cluster nodes.
 
 use crate::bincode;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub struct RaftGrpcService {
 }
 
 impl RaftGrpcService {
+    /// Create a new gRPC service wrapping the given (optionally uninitialized) Raft node slot.
     pub fn new(raft: Arc<RwLock<Option<Arc<RaftNode>>>>) -> Self {
         Self { raft }
     }
@@ -240,6 +242,7 @@ pub struct RaftManagementGrpcService {
 }
 
 impl RaftManagementGrpcService {
+    /// Create a new Raft management gRPC service wrapping the given (optionally uninitialized) Raft node slot.
     pub fn new(raft: Arc<RwLock<Option<Arc<RaftNode>>>>) -> Self {
         Self { raft }
     }

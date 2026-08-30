@@ -23,28 +23,40 @@ use crate::persistence::traits::{
 
 /// Upstream `ReleaseOperation` constants.
 pub mod release_operation {
+    /// The `NORMAL_RELEASE` constant.
     pub const NORMAL_RELEASE: i16 = 0;
+    /// The `ROLLBACK` constant.
     pub const ROLLBACK: i16 = 1;
+    /// The `GRAY_RELEASE` constant.
     pub const GRAY_RELEASE: i16 = 2;
+    /// The `APPLY_GRAY_RULES` constant.
     pub const APPLY_GRAY_RULES: i16 = 3;
     #[allow(dead_code)]
+    /// The `GRAY_RELEASE_MERGE_TO_MASTER` constant.
     pub const GRAY_RELEASE_MERGE_TO_MASTER: i16 = 4;
+    /// The `MASTER_NORMAL_RELEASE_MERGE_TO_GRAY` constant.
     pub const MASTER_NORMAL_RELEASE_MERGE_TO_GRAY: i16 = 5;
+    /// The `MASTER_ROLLBACK_MERGE_TO_GRAY` constant.
     pub const MASTER_ROLLBACK_MERGE_TO_GRAY: i16 = 6;
+    /// The `ABANDON_GRAY_RELEASE` constant.
     pub const ABANDON_GRAY_RELEASE: i16 = 7;
+    /// The `GRAY_RELEASE_DELETED_AFTER_MERGE` constant.
     pub const GRAY_RELEASE_DELETED_AFTER_MERGE: i16 = 8;
 }
 
 /// Upstream `NamespaceBranchStatus`.
 pub const BRANCH_STATUS_ACTIVE: i16 = 1;
 #[allow(dead_code)]
+/// Namespace branch status: merged.
 pub const BRANCH_STATUS_MERGED: i16 = 2;
 
+/// Represents the `NamespaceBranchService` entity.
 pub struct NamespaceBranchService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl NamespaceBranchService {
+    /// Creates a new `NamespaceBranchService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }

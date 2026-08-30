@@ -29,11 +29,20 @@ const REACTOR_CHANNEL_CAPACITY: usize = 4096;
 #[derive(Debug)]
 pub enum ReactorMessage {
     /// Schedule a new health check task
-    Schedule { task: Box<HealthCheckTask> },
+    Schedule {
+        /// The task to schedule.
+        task: Box<HealthCheckTask>,
+    },
     /// Cancel a health check task
-    Cancel { task_id: String },
+    Cancel {
+        /// The identifier of the task to cancel.
+        task_id: String,
+    },
     /// Schedule a registry-driven check
-    ScheduleRegistryCheck { check_key: String },
+    ScheduleRegistryCheck {
+        /// The registry check key to schedule.
+        check_key: String,
+    },
     /// Shutdown the reactor
     Shutdown,
 }

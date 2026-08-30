@@ -7,11 +7,13 @@ use crate::entity::apollo_release_message;
 use crate::persistence::shared::StoredReleaseMessage;
 use crate::persistence::traits::ReleaseMessagePersistence;
 
+/// Represents the `ReleaseMessageSqlPersistence` entity.
 pub struct ReleaseMessageSqlPersistence {
     db: DatabaseConnection,
 }
 
 impl ReleaseMessageSqlPersistence {
+    /// Creates a new `ReleaseMessageSqlPersistence`.
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }

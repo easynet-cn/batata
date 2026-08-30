@@ -17,6 +17,8 @@
 //! manager.register(Arc::new(DefaultVisibilityService::new()));
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod constants;
 pub mod default_impl;
 pub mod manager;

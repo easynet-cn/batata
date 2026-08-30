@@ -101,12 +101,16 @@ impl GrpcTlsConfig {
 /// Result of TLS configuration validation
 #[derive(Debug)]
 pub struct TlsValidationResult {
+    /// Whether the TLS configuration is valid.
     pub valid: bool,
+    /// Validation errors that must be fixed.
     pub errors: Vec<String>,
+    /// Non-fatal validation warnings.
     pub warnings: Vec<String>,
 }
 
 impl TlsValidationResult {
+/// Performs the `new` operation.
     pub fn new() -> Self {
         Self {
             valid: true,
@@ -115,11 +119,13 @@ impl TlsValidationResult {
         }
     }
 
+/// Performs the `add_error` operation.
     pub fn add_error(&mut self, error: &str) {
         self.valid = false;
         self.errors.push(error.to_string());
     }
 
+/// Performs the `add_warning` operation.
     pub fn add_warning(&mut self, warning: &str) {
         self.warnings.push(warning.to_string());
     }

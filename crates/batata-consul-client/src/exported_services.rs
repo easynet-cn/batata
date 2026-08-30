@@ -39,8 +39,10 @@ pub struct ResolvedExportedService {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ResolvedConsumers {
     #[serde(rename = "Peers", default, skip_serializing_if = "Vec::is_empty")]
+    /// Peers consuming the exported services.
     pub peers: Vec<String>,
     #[serde(rename = "Partitions", default, skip_serializing_if = "Vec::is_empty")]
+    /// Admin partitions consuming the exported services.
     pub partitions: Vec<String>,
 }
 

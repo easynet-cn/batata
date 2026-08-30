@@ -50,6 +50,7 @@ fn make_cache_key(roles: &[String]) -> u64 {
     hasher.finish()
 }
 
+/// Look up a single permission binding by its `(role, resource, action)` key.
 pub async fn find_by_id(
     db: &DatabaseConnection,
     role: &str,
@@ -68,6 +69,7 @@ pub async fn find_by_id(
     Ok(permission)
 }
 
+/// Query permission bindings filtered by role, paginated.
 pub async fn search_page(
     db: &DatabaseConnection,
     role: &str,
@@ -110,6 +112,7 @@ pub async fn search_page(
     Ok(Page::<PermissionInfo>::default())
 }
 
+/// Return all permission bindings for the given roles, using the cache when possible.
 pub async fn find_by_roles(
     db: &DatabaseConnection,
     roles: Vec<String>,
@@ -173,6 +176,7 @@ pub fn invalidate_all_permissions_cache() {
     ROLE_CACHE_INDEX.clear();
 }
 
+/// Create a new permission binding and invalidate affected caches.
 pub async fn create(
     db: &DatabaseConnection,
     role: &str,
@@ -192,6 +196,7 @@ pub async fn create(
     Ok(())
 }
 
+/// Delete a permission binding and invalidate affected caches.
 pub async fn delete(
     db: &DatabaseConnection,
     role: &str,

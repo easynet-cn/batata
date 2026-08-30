@@ -1,7 +1,9 @@
+//! Module `api::model` of the `batata-server` crate.
 // Common API models and constants for Batata application
 // This file re-exports common types and constants from batata_api
 
 // Re-export all common types and constants from batata_api
+/// Re-exported item.
 pub use batata_api::model::*;
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ use batata_common::ClusterManager;
 /// When a node fires an event, it broadcasts to all peers. Each peer's handler
 /// ingests the event into its local ring buffer, matching Consul's gossip behavior.
 pub struct ConsulEventBroadcastHandler {
+    /// `event_service` field.
     pub event_service: ConsulEventService,
 }
 
@@ -97,6 +98,14 @@ pub struct ConsulEventBroadcasterImpl {
 }
 
 impl ConsulEventBroadcasterImpl {
+    /// `new` function.
+    ///
+    /// # Arguments
+    /// - `client_manager`: `client_manager : Arc < ClusterClientManager > . ty`.
+    /// - `cluster_manager`: `cluster_manager : Arc < dyn ClusterManager > . ty`.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new(
         client_manager: Arc<ClusterClientManager>,
         cluster_manager: Arc<dyn ClusterManager>,

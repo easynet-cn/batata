@@ -24,6 +24,7 @@ pub struct CoreResultHandler {
 }
 
 impl CoreResultHandler {
+    /// Creates a new instance.
     pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self {
             naming_service,

@@ -7,8 +7,10 @@
 //! - Log storage
 //! - Distributed locking (ADV-001 to ADV-005)
 
+#![warn(missing_docs)]
 #![allow(clippy::result_large_err)]
 
+/// Re-export of [`bincode`] (de)serialization helpers used throughout the crate.
 pub mod bincode {
     pub use batata_common::bincode::{deserialize, serialize};
 }

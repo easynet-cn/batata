@@ -1,4 +1,4 @@
-// Model types for maintainer client API responses
+//! Model types for maintainer client API responses
 
 pub mod ai;
 pub mod client;

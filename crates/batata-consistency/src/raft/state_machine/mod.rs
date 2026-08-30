@@ -1,5 +1,6 @@
-// Raft state machine implementation
-// Applies committed log entries to the application state using RocksDB
+//! Raft state machine implementation.
+//!
+//! Applies committed log entries to the application state using RocksDB.
 
 // Allow many arguments for Raft apply operations - parameters are logically coupled
 #![allow(clippy::too_many_arguments)]
@@ -52,46 +53,84 @@ fn sm_error(
 }
 
 // Column family names for state machine
+/// RocksDB column family holding published configuration entries.
 pub const CF_CONFIG: &str = "batata_config";
+/// RocksDB column family holding configuration change history entries.
 pub const CF_CONFIG_HISTORY: &str = "batata_config_history";
+/// RocksDB column family holding gray (beta) configuration entries.
 pub const CF_CONFIG_GRAY: &str = "batata_config_gray";
+/// RocksDB column family holding namespace entries.
 pub const CF_NAMESPACE: &str = "batata_namespace";
+/// RocksDB column family holding user entries.
 pub const CF_USERS: &str = "batata_users";
+/// RocksDB column family holding role assignment entries.
 pub const CF_ROLES: &str = "batata_roles";
+/// RocksDB column family holding permission entries.
 pub const CF_PERMISSIONS: &str = "batata_permissions";
+/// RocksDB column family holding persistent service instance entries.
 pub const CF_INSTANCES: &str = "batata_instances";
+/// RocksDB column family holding distributed lock entries.
 pub const CF_LOCKS: &str = "batata_locks";
+/// RocksDB column family holding AI resource entries.
 pub const CF_AI_RESOURCE: &str = "batata_ai_resource";
+/// RocksDB column family holding AI resource version entries.
 pub const CF_AI_RESOURCE_VERSION: &str = "batata_ai_resource_version";
+/// RocksDB column family holding pipeline execution entries.
 pub const CF_PIPELINE_EXECUTION: &str = "batata_pipeline_execution";
 const CF_META: &str = "batata_meta";
 
 // Apollo plugin column families
+/// Apollo plugin column family for applications.
 pub const CF_APOLLO_APP: &str = "apollo_app";
+/// Apollo plugin column family for clusters.
 pub const CF_APOLLO_CLUSTER: &str = "apollo_cluster";
+/// Apollo plugin column family for namespaces.
 pub const CF_APOLLO_NAMESPACE: &str = "apollo_namespace";
+/// Apollo plugin column family for configuration items.
 pub const CF_APOLLO_ITEM: &str = "apollo_item";
+/// Apollo plugin column family for releases.
 pub const CF_APOLLO_RELEASE: &str = "apollo_release";
+/// Apollo plugin column family for commits.
 pub const CF_APOLLO_COMMIT: &str = "apollo_commit";
+/// Apollo plugin column family for gray rules.
 pub const CF_APOLLO_GRAY_RULE: &str = "apollo_gray_rule";
+/// Apollo plugin column family for instances.
 pub const CF_APOLLO_INSTANCE: &str = "apollo_instance";
+/// Apollo plugin column family for access keys.
 pub const CF_APOLLO_ACCESS_KEY: &str = "apollo_access_key";
+/// Apollo plugin column family for release messages.
 pub const CF_APOLLO_RELEASE_MSG: &str = "apollo_release_msg";
+/// Apollo plugin column family for namespace locks.
 pub const CF_APOLLO_NAMESPACE_LOCK: &str = "apollo_namespace_lock";
+/// Apollo plugin column family for release history.
 pub const CF_APOLLO_RELEASE_HISTORY: &str = "apollo_release_history";
+/// Apollo plugin column family for application-namespace mappings.
 pub const CF_APOLLO_APP_NAMESPACE: &str = "apollo_app_namespace";
+/// Apollo plugin column family for audit records.
 pub const CF_APOLLO_AUDIT: &str = "apollo_audit";
+/// Apollo plugin column family for consumers.
 pub const CF_APOLLO_CONSUMER: &str = "apollo_consumer";
+/// Apollo plugin column family for consumer tokens.
 pub const CF_APOLLO_CONSUMER_TOKEN: &str = "apollo_consumer_token";
+/// Apollo plugin column family for consumer audit records.
 pub const CF_APOLLO_CONSUMER_AUDIT: &str = "apollo_consumer_audit";
+/// Apollo plugin column family for permissions.
 pub const CF_APOLLO_PERMISSION: &str = "apollo_permission";
+/// Apollo plugin column family for roles.
 pub const CF_APOLLO_ROLE: &str = "apollo_role";
+/// Apollo plugin column family for role-permission mappings.
 pub const CF_APOLLO_ROLE_PERMISSION: &str = "apollo_role_permission";
+/// Apollo plugin column family for user-role mappings.
 pub const CF_APOLLO_USER_ROLE: &str = "apollo_user_role";
+/// Apollo plugin column family for users.
 pub const CF_APOLLO_USERS: &str = "apollo_users";
+/// Apollo plugin column family for favorites.
 pub const CF_APOLLO_FAVORITE: &str = "apollo_favorite";
+/// Apollo plugin column family for server config.
 pub const CF_APOLLO_SERVER_CONFIG: &str = "apollo_server_config";
+/// Apollo plugin column family for service registry.
 pub const CF_APOLLO_SERVICE_REGISTRY: &str = "apollo_service_registry";
+/// Apollo plugin column family for instance config.
 pub const CF_APOLLO_INSTANCE_CONFIG: &str = "apollo_instance_config";
 
 // Meta keys

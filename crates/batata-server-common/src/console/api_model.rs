@@ -10,15 +10,25 @@ use serde::{Deserialize, Serialize};
 // Basic configuration information structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Configuration for `ConfigBasicInfo`.
 pub struct ConfigBasicInfo {
+    /// The config ID.
     pub id: i64,
+    /// The namespace the config belongs to.
     pub namespace_id: String,
+    /// The group the config belongs to.
     pub group_name: String,
+    /// The data ID of the config.
     pub data_id: String,
+    /// The MD5 checksum of the config content.
     pub md5: String,
+    /// The config content type.
     pub r#type: String,
+    /// The associated application name.
     pub app_name: String,
+    /// The creation time in milliseconds.
     pub create_time: i64,
+    /// The last modification time in milliseconds.
     pub modify_time: i64,
 }
 
@@ -40,14 +50,22 @@ impl From<batata_persistence::ConfigStorageData> for ConfigBasicInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Configuration for `ConfigDetailInfo`.
 pub struct ConfigDetailInfo {
     #[serde(flatten)]
+    /// The basic config information.
     pub config_basic_info: ConfigBasicInfo,
+    /// The config content.
     pub content: String,
+    /// The description of the config.
     pub desc: String,
+    /// The encrypted data key.
     pub encrypted_data_key: String,
+    /// The user who created the config.
     pub create_user: String,
+    /// The IP the config was created from.
     pub create_ip: String,
+    /// Comma-separated config tags.
     pub config_tags: String,
 }
 
@@ -77,21 +95,31 @@ impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Configuration for `ConfigGrayInfo`.
 pub struct ConfigGrayInfo {
     #[serde(flatten)]
+    /// The underlying config detail.
     pub config_detail_info: ConfigDetailInfo,
+    /// The name of the gray release.
     pub gray_name: String,
+    /// The gray rule expression.
     pub gray_rule: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Configuration for `ConfigHistoryBasicInfo`.
 pub struct ConfigHistoryBasicInfo {
     #[serde(flatten)]
+    /// The basic config information at the time of the change.
     pub config_basic_info: ConfigBasicInfo,
+    /// The IP the operation originated from.
     pub src_ip: String,
+    /// The user who performed the operation.
     pub src_user: String,
+    /// The operation type (e.g. insert, update, delete).
     pub op_type: String,
+    /// The publish type (formal or gray).
     pub publish_type: String,
 }
 
@@ -119,12 +147,18 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryBasicIn
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Configuration for `ConfigHistoryDetailInfo`.
 pub struct ConfigHistoryDetailInfo {
     #[serde(flatten)]
+    /// The basic history information.
     pub config_history_basic_info: ConfigHistoryBasicInfo,
+    /// The config content at the time of the change.
     pub content: String,
+    /// The encrypted data key.
     pub encrypted_data_key: String,
+    /// The gray release name, if applicable.
     pub gray_name: String,
+    /// Extended information about the change.
     pub ext_info: String,
 }
 
@@ -160,9 +194,13 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryDetailI
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
+    /// The number of successfully imported configs.
     pub success_count: u32,
+    /// The number of skipped configs.
     pub skip_count: u32,
+    /// The number of failed configs.
     pub fail_count: u32,
+    /// Details of the failed items.
     pub fail_data: Vec<ImportFailItem>,
 }
 
@@ -170,8 +208,11 @@ pub struct ImportResult {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportFailItem {
+    /// The data ID of the failed config.
     pub data_id: String,
+    /// The group of the failed config.
     pub group: String,
+    /// The failure reason.
     pub reason: String,
 }
 

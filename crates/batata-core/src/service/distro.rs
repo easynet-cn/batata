@@ -110,6 +110,7 @@ pub struct DistroMapper {
 }
 
 impl DistroMapper {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             healthy_members: Arc::new(std::sync::RwLock::new(Vec::new())),
@@ -204,6 +205,7 @@ pub struct DistroData {
 }
 
 impl DistroData {
+    /// Creates a new instance.
     pub fn new(data_type: DistroDataType, key: String, content: Vec<u8>, source: String) -> Self {
         Self {
             data_type,
@@ -218,10 +220,15 @@ impl DistroData {
 /// Sync task for delayed synchronization
 #[derive(Clone, Debug)]
 pub struct DistroSyncTask {
+    /// The `data_type` field.
     pub data_type: DistroDataType,
+    /// The `key` field.
     pub key: String,
+    /// The `target_address` field.
     pub target_address: String,
+    /// The `scheduled_time` field.
     pub scheduled_time: i64,
+    /// The `retry_count` field.
     pub retry_count: u32,
 }
 
@@ -263,12 +270,19 @@ pub trait DistroDataHandler: Send + Sync {
 /// Snapshot of distro protocol health metrics for monitoring
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DistroMetrics {
+    /// The `sync_success_total` field.
     pub sync_success_total: u64,
+    /// The `sync_failure_total` field.
     pub sync_failure_total: u64,
+    /// The `verify_success_total` field.
     pub verify_success_total: u64,
+    /// The `verify_failure_total` field.
     pub verify_failure_total: u64,
+    /// The `pending_sync_tasks` field.
     pub pending_sync_tasks: usize,
+    /// The `initialized` field.
     pub initialized: bool,
+    /// The `member_count` field.
     pub member_count: usize,
 }
 
@@ -325,6 +339,7 @@ pub struct DistroProtocol {
 }
 
 impl DistroProtocol {
+    /// Creates a new instance.
     pub fn new(
         local_address: String,
         config: DistroConfig,

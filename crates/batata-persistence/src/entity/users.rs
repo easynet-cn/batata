@@ -5,16 +5,21 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "users")]
+/// ORM model for a row in the `users` table.
 pub struct Model {
+    /// Primary key: username.
     #[sea_orm(primary_key, auto_increment = false)]
     pub username: String,
+    /// Hashed password.
     pub password: String,
+    /// Whether the account is enabled.
     pub enabled: bool,
     /// Identity source: "local" (password), "oauth", or "ldap".
     /// Nullable for backwards compatibility with pre-existing rows.
     pub source: Option<String>,
 }
 
+/// Relation definitions for the `users` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

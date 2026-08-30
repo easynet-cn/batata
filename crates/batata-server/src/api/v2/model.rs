@@ -4,9 +4,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Re-exported item.
 pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
 
 // Re-export config/history V2 model types from batata-config
+/// Re-exported item.
 pub use batata_config::api::v2::model::{
     ConfigDeleteParam, ConfigGetParam, ConfigHistoryInfoDetail, ConfigInfoResponse,
     ConfigPublishParam, ConfigResponse, ConfigSearchDetailParam, HistoryDetailParam,
@@ -14,6 +16,7 @@ pub use batata_config::api::v2::model::{
 };
 
 // Re-export naming V2 model types from batata-naming
+/// Re-exported item.
 pub use batata_naming::api::v2::model::{
     BatchMetadataParam, ClientDetailParam, ClientDetailResponse, ClientListParam,
     ClientListResponse, ClientServiceInfo, ClientServiceListParam, ClientServiceListResponse,

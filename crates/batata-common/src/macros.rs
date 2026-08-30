@@ -26,6 +26,7 @@ macro_rules! impl_or_default {
         }
     };
     (pub, $method_name:ident, $field:ident, $default:expr) => {
+        /// Returns the value of the associated field, falling back to its default when empty.
         pub fn $method_name(&self) -> &str {
             self.$field
                 .as_deref()

@@ -8,6 +8,8 @@
 //! - Server push handling for config change notifications and service updates
 //! - Automatic redo on reconnect
 
+#![warn(missing_docs)]
+
 pub mod ai;
 pub mod api;
 pub mod auth;

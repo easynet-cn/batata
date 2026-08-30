@@ -11,16 +11,24 @@ use std::sync::Arc;
 /// Config request for filtering before publishing
 #[derive(Debug, Clone)]
 pub struct ConfigRequest {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Config tenant/namespace ID.
     pub tenant: String,
+    /// Config content.
     pub content: String,
+    /// Config type (e.g. "text", "yaml", "json").
     pub r#type: String,
+    /// Encrypted data key, if the content is encrypted.
     pub encrypted_data_key: String,
+    /// Additional metadata for the request.
     pub addition_map: dashmap::DashMap<String, String>,
 }
 
 impl ConfigRequest {
+    /// Create a new config request with the given identifiers.
     pub fn new(data_id: String, group: String, tenant: String) -> Self {
         Self {
             data_id,
@@ -37,12 +45,19 @@ impl ConfigRequest {
 /// Config response for filtering after querying
 #[derive(Debug, Clone)]
 pub struct ConfigResponse {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Config tenant/namespace ID.
     pub tenant: String,
+    /// Config content.
     pub content: String,
+    /// Encrypted data key, if the content is encrypted.
     pub encrypted_data_key: String,
+    /// Config type (e.g. "text", "yaml", "json").
     pub r#type: String,
+    /// Additional metadata for the response.
     pub addition_map: dashmap::DashMap<String, String>,
 }
 
@@ -53,6 +68,7 @@ impl Default for ConfigResponse {
 }
 
 impl ConfigResponse {
+    /// Create a new empty config response.
     pub fn new() -> Self {
         Self {
             data_id: String::new(),
@@ -65,6 +81,7 @@ impl ConfigResponse {
         }
     }
 
+    /// Build a response from a request, copying identifiers and content.
     pub fn from_request(req: &ConfigRequest) -> Self {
         Self {
             data_id: req.data_id.clone(),
@@ -100,6 +117,7 @@ pub struct ConfigFilterChainManager {
 }
 
 impl ConfigFilterChainManager {
+    /// Create an empty filter chain manager.
     pub fn new() -> Self {
         Self {
             filters: Vec::new(),
@@ -173,6 +191,7 @@ pub struct LoggingConfigFilter {
 }
 
 impl LoggingConfigFilter {
+    /// Create a logging filter with the given order.
     pub fn new(order: i32) -> Self {
         Self { order }
     }

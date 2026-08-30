@@ -1,5 +1,6 @@
-// Raft configuration
-// Provides configuration settings for the Raft consensus implementation
+//! Raft configuration.
+//!
+//! Provides configuration settings for the Raft consensus implementation.
 
 use std::path::PathBuf;
 use std::time::Duration;

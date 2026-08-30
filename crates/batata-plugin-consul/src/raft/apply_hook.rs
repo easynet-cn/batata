@@ -41,6 +41,7 @@ pub trait ConsulApplyHook: Send + Sync {
 /// construction and consulted on every apply.
 pub type SharedConsulApplyHook = Arc<tokio::sync::RwLock<Option<Arc<dyn ConsulApplyHook>>>>;
 
+/// The `new_shared_hook` function.
 pub fn new_shared_hook() -> SharedConsulApplyHook {
     Arc::new(tokio::sync::RwLock::new(None))
 }

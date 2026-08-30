@@ -15,11 +15,13 @@ use crate::persistence::traits::{ApolloPersistenceService, ReleaseMessagePersist
 /// Upstream `ConfigConsts.CLUSTER_NAMESPACE_SEPARATOR`.
 pub const CLUSTER_NAMESPACE_SEPARATOR: char = '+';
 
+/// Represents the `ReleaseMessageService` entity.
 pub struct ReleaseMessageService {
     persistence: Arc<dyn ApolloPersistenceService>,
 }
 
 impl ReleaseMessageService {
+    /// Creates a new `ReleaseMessageService`.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self { persistence }
     }

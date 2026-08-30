@@ -1,3 +1,4 @@
+//! The catalog of nodes, services, and checks.
 use std::collections::HashMap;
 
 use crate::client::ConsulClient;

@@ -246,6 +246,7 @@ async fn derby_import(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
     )
 }
 
+/// Builds the Actix web `Scope` of routes for this module.
 pub fn routes() -> actix_web::Scope {
     web::scope("/ops")
         .service(dump_local_cache)

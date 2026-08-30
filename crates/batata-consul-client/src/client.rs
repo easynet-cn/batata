@@ -1,3 +1,4 @@
+//! HTTP connection, TLS, and retry machinery.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use reqwest::{Client, Response, StatusCode};

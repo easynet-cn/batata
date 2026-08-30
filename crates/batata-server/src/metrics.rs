@@ -1,3 +1,4 @@
+//! Module `metrics` of the `batata-server` crate.
 // Metrics module for observability
 // Provides counters, gauges, and histograms for monitoring application performance
 
@@ -347,12 +348,20 @@ pub struct Timer {
 }
 
 impl Timer {
+    /// `new` function.
+    ///
+    /// # Returns
+    /// `Self`.
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
         }
     }
 
+    /// `elapsed_secs` function.
+    ///
+    /// # Returns
+    /// `f64`.
     pub fn elapsed_secs(&self) -> f64 {
         self.start.elapsed().as_secs_f64()
     }

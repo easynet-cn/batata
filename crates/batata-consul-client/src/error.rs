@@ -1,19 +1,31 @@
+//! Error types and the `Result` alias.
 use thiserror::Error;
 
+/// Errors returned by every `batata-consul-client` operation.
 #[derive(Error, Debug)]
 pub enum ConsulError {
+    /// Transport-level HTTP error from `reqwest`.
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Consul returned a non-2xx API response.
     #[error("API error (status {status}): {message}")]
-    Api { status: u16, message: String },
+    Api {
+        /// The HTTP status code returned by Consul.
+        status: u16,
+        /// The error message returned by Consul.
+        message: String,
+    },
 
+    /// The requested resource does not exist.
     #[error("Not found")]
     NotFound,
 
+    /// JSON (de)serialization error.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// An arbitrary error carrying a message.
     #[error("{0}")]
     Other(String),
 }
@@ -34,4 +46,5 @@ impl ConsulError {
     }
 }
 
+/// Convenience alias for `std::result::Result<T, ConsulError>`.
 pub type Result<T> = std::result::Result<T, ConsulError>;

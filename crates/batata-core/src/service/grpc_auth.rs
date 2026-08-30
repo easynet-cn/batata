@@ -14,8 +14,11 @@ use crate::model::Connection;
 
 /// Constants for gRPC authentication
 pub const ACCESS_TOKEN: &str = "accessToken";
+/// Header key carrying the username in gRPC authentication requests.
 pub const USERNAME: &str = "username";
+/// Header key carrying the password in gRPC authentication requests.
 pub const PASSWORD: &str = "password";
+/// Role name reserved for global administrators.
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 
 /// Trait for looking up user roles and permissions from the database.
@@ -32,21 +35,29 @@ pub trait GrpcAuthRoleProvider: Send + Sync {
 /// Role info for gRPC auth
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcRoleInfo {
+    /// The `username` field.
     pub username: String,
+    /// The `role` field.
     pub role: String,
 }
 
 /// Resource types for permission checking
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceType {
+    /// The `Config` variant.
     Config,
+    /// The `Naming` variant.
     Naming,
+    /// The `Internal` variant.
     Internal,
+    /// The `Ai` variant.
     Ai,
+    /// The `Lock` variant.
     Lock,
 }
 
 impl ResourceType {
+    /// As Str.
     pub fn as_str(&self) -> &'static str {
         match self {
             ResourceType::Config => "config",
@@ -61,11 +72,14 @@ impl ResourceType {
 /// Permission action types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionAction {
+    /// The `Read` variant.
     Read,
+    /// The `Write` variant.
     Write,
 }
 
 impl PermissionAction {
+    /// As Str.
     pub fn as_str(&self) -> &'static str {
         match self {
             PermissionAction::Read => "r",
@@ -133,14 +147,20 @@ impl GrpcAuthContext {
 /// Resource for permission checking
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GrpcResource {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `group` field.
     pub group: String,
+    /// The `name` field.
     pub name: String,
+    /// The `resource_type` field.
     pub resource_type: String,
 }
 
 impl GrpcResource {
+    /// The `SPLITTER` constant.
     pub const SPLITTER: &str = ":";
+    /// The `ANY` constant.
     pub const ANY: &str = "*";
 
     /// Create a new resource
@@ -207,19 +227,25 @@ impl GrpcResource {
 /// Permission info for checking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcPermissionInfo {
+    /// The `role` field.
     pub role: String,
+    /// The `resource` field.
     pub resource: String,
+    /// The `action` field.
     pub action: String,
 }
 
 /// Result of permission check
 #[derive(Debug, Clone)]
 pub struct PermissionCheckResult {
+    /// The `passed` field.
     pub passed: bool,
+    /// The `message` field.
     pub message: Option<String>,
 }
 
 impl PermissionCheckResult {
+    /// Pass.
     pub fn pass() -> Self {
         Self {
             passed: true,
@@ -227,6 +253,7 @@ impl PermissionCheckResult {
         }
     }
 
+    /// Deny.
     pub fn deny(message: &str) -> Self {
         Self {
             passed: false,

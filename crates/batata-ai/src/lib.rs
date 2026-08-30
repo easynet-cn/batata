@@ -7,10 +7,14 @@
 //! - HTTP API handlers for AI routes
 //! - Console API handlers for AI management
 
+#![warn(missing_docs)]
+
 pub mod api;
+/// gRPC handlers for MCP and A2A management.
 pub mod handler;
 pub mod model;
 pub mod registry;
+/// Config-backed persistent services for MCP and A2A.
 pub mod service;
 
 // Re-export key types

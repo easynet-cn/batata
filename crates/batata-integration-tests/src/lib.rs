@@ -6,12 +6,18 @@
 //! - Fixtures: Test data builders
 //! - Server: Test server management
 
+#![warn(missing_docs)]
+
+/// HTTP test client utilities.
 #[allow(dead_code, unused_imports)]
 pub mod client;
+/// Database test utilities.
 #[allow(dead_code, unused_imports)]
 pub mod db;
+/// Test data fixture builders.
 #[allow(dead_code, unused_imports)]
 pub mod fixtures;
+/// Test server management utilities.
 #[allow(dead_code, unused_imports)]
 pub mod server;
 
@@ -22,8 +28,9 @@ pub use client::TestClient;
 #[allow(unused_imports)]
 pub use db::TestDatabase;
 
-/// Default test credentials
+/// Default test credentials.
 pub const TEST_USERNAME: &str = "nacos";
+/// Default test password for authentication.
 pub const TEST_PASSWORD: &str = "nacos";
 
 /// Server URLs
@@ -32,15 +39,17 @@ pub const MAIN_BASE_URL: &str = "http://127.0.0.1:8848";
 /// Console HTTP server for auth and management endpoints (/v3/auth/*)
 pub const CONSOLE_BASE_URL: &str = "http://127.0.0.1:8081";
 
-/// Test namespaces
+/// Test namespaces.
 #[allow(dead_code)]
 pub const TEST_NAMESPACE: &str = "public";
+/// Custom test namespace identifier.
 #[allow(dead_code)]
 pub const TEST_NAMESPACE_CUSTOM: &str = "test-namespace";
 
-/// Test groups
+/// Test groups.
 #[allow(dead_code)]
 pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+/// Custom test group identifier.
 #[allow(dead_code)]
 pub const TEST_GROUP: &str = "TEST_GROUP";
 

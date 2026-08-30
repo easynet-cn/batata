@@ -5,30 +5,49 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "his_config_info")]
+/// ORM model for a row in the `his_config_info` table.
 pub struct Model {
+    /// Auto-increment ID.
     pub id: i64,
+    /// Primary key (unique history row ID).
     #[sea_orm(primary_key)]
     pub nid: i64,
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group_id: String,
+    /// Owning application name.
     pub app_name: Option<String>,
+    /// Config content at this historical version.
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     pub content: String,
+    /// MD5 hash of the content.
     pub md5: Option<String>,
+    /// Creation timestamp.
     pub gmt_create: DateTime,
+    /// Last modification timestamp.
     pub gmt_modified: DateTime,
+    /// User who performed the operation.
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,
+    /// Source IP of the operation.
     pub src_ip: Option<String>,
+    /// Operation type (`I`, `U`, `D`).
     pub op_type: Option<String>,
+    /// Tenant ID (namespace).
     pub tenant_id: Option<String>,
+    /// Encrypted data key.
     pub encrypted_data_key: String,
+    /// Publish type (e.g. `formal`).
     pub publish_type: Option<String>,
+    /// Gray (beta) config name, if applicable.
     pub gray_name: Option<String>,
+    /// Serialized extension info (tags, desc, etc.).
     #[sea_orm(column_type = "custom(\"LONGTEXT\")", nullable)]
     pub ext_info: Option<String>,
 }
 
+/// Relation definitions for the `his_config_info` entity.
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 

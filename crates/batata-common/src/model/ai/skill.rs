@@ -27,23 +27,31 @@ pub const MAX_UPLOAD_ZIP_BYTES: u64 = 10 * 1024 * 1024;
 // Version statuses
 // ============================================================================
 
+/// Version status: draft (not yet submitted for review).
 pub const VERSION_STATUS_DRAFT: &str = "draft";
+/// Version status: under review.
 pub const VERSION_STATUS_REVIEWING: &str = "reviewing";
+/// Version status: published online.
 pub const VERSION_STATUS_ONLINE: &str = "online";
+/// Version status: taken offline.
 pub const VERSION_STATUS_OFFLINE: &str = "offline";
 
 // ============================================================================
 // Resource statuses
 // ============================================================================
 
+/// Resource status: enabled.
 pub const RESOURCE_STATUS_ENABLE: &str = "enable";
+/// Resource status: disabled.
 pub const RESOURCE_STATUS_DISABLE: &str = "disable";
 
 // ============================================================================
 // Scope values
 // ============================================================================
 
+/// Scope value: publicly visible.
 pub const SCOPE_PUBLIC: &str = "PUBLIC";
+/// Scope value: visible to the owner only.
 pub const SCOPE_PRIVATE: &str = "PRIVATE";
 
 // ============================================================================
@@ -55,10 +63,13 @@ pub const SCOPE_PRIVATE: &str = "PRIVATE";
 #[serde(rename_all = "camelCase")]
 pub struct Skill {
     #[serde(default)]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default)]
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     /// SKILL.md content
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,16 +83,21 @@ pub struct Skill {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillResource {
+    /// The `name` field.
     pub name: String,
     #[serde(rename = "type")]
+    /// The `resource_type` field.
     pub resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `content` field.
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// The `metadata` field.
     pub metadata: HashMap<String, String>,
 }
 
 impl SkillResource {
+    /// The `resource_identifier` method.
     pub fn resource_identifier(&self) -> String {
         format!("{}::{}", self.resource_type, self.name)
     }
@@ -91,30 +107,43 @@ impl SkillResource {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillMeta {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_time: Option<i64>,
     #[serde(default)]
+    /// The `enable` field.
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `biz_tags` field.
     pub biz_tags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `from` field.
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `scope` field.
     pub scope: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `editing_version` field.
     pub editing_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `reviewing_version` field.
     pub reviewing_version: Option<String>,
+    /// The `online_cnt` field.
     pub online_cnt: i64,
+    /// The `download_count` field.
     pub download_count: i64,
     #[serde(default)]
+    /// The `versions` field.
     pub versions: Vec<SkillVersionSummary>,
 }
 
@@ -122,28 +151,40 @@ pub struct SkillMeta {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSummary {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_time: Option<i64>,
     #[serde(default)]
+    /// The `enable` field.
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `biz_tags` field.
     pub biz_tags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `from` field.
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `scope` field.
     pub scope: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `editing_version` field.
     pub editing_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `reviewing_version` field.
     pub reviewing_version: Option<String>,
+    /// The `online_cnt` field.
     pub online_cnt: i64,
+    /// The `download_count` field.
     pub download_count: i64,
 }
 
@@ -151,11 +192,15 @@ pub struct SkillSummary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillVersionSummary {
+    /// The `version` field.
     pub version: String,
+    /// The `status` field.
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `author` field.
     pub author: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,7 +209,9 @@ pub struct SkillVersionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_time: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `publish_pipeline_info` field.
     pub publish_pipeline_info: Option<String>,
+    /// The `download_count` field.
     pub download_count: i64,
 }
 
@@ -173,12 +220,16 @@ pub struct SkillVersionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct SkillVersionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `editing_version` field.
     pub editing_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `reviewing_version` field.
     pub reviewing_version: Option<String>,
     #[serde(default)]
+    /// The `online_cnt` field.
     pub online_cnt: i64,
     #[serde(default)]
+    /// The `labels` field.
     pub labels: HashMap<String, String>,
 }
 
@@ -186,9 +237,12 @@ pub struct SkillVersionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillBasicInfo {
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `description` field.
     pub description: Option<String>,
     /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,18 +258,24 @@ pub struct SkillBasicInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SkillStorage {
     #[serde(default)]
+    /// The `files` field.
     pub files: Vec<SkillStorageFile>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `storage_key` field.
     pub storage_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The `SkillStorageFile` struct.
 pub struct SkillStorageFile {
+    /// The `name` field.
     pub name: String,
     #[serde(rename = "type")]
+    /// The `file_type` field.
     pub file_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `content` field.
     pub content: Option<String>,
 }
 
@@ -228,9 +288,12 @@ pub struct SkillStorageFile {
 #[serde(rename_all = "camelCase")]
 pub struct SkillForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: Option<String>,
+    /// The `version` field.
     pub version: Option<String>,
 }
 
@@ -239,15 +302,21 @@ pub struct SkillForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillListForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: Option<String>,
+    /// The `search` field.
     pub search: Option<String>,
     #[serde(alias = "orderBy")]
+    /// The `order_by` field.
     pub order_by: Option<String>,
     #[serde(default = "default_page_no", alias = "pageNo")]
+    /// The `page_no` field.
     pub page_no: u64,
     #[serde(default = "default_page_size", alias = "pageSize")]
+    /// The `page_size` field.
     pub page_size: u64,
 }
 
@@ -260,6 +329,7 @@ pub struct SkillListForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillDraftCreateForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     /// Skill name — optional when creating new skill (can be in skillCard JSON)
     #[serde(alias = "skillName")]
@@ -284,14 +354,18 @@ pub struct SkillDraftCreateForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillUpdateForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default, alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: Option<String>,
+    /// The `version` field.
     pub version: Option<String>,
     /// Full skill content as JSON string
     #[serde(alias = "skillCard")]
     pub skill_card: Option<String>,
     #[serde(default, alias = "setAsLatest")]
+    /// The `set_as_latest` field.
     pub set_as_latest: bool,
 }
 
@@ -300,9 +374,12 @@ pub struct SkillUpdateForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillSubmitForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
+    /// The `version` field.
     pub version: String,
 }
 
@@ -311,11 +388,15 @@ pub struct SkillSubmitForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillPublishForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
+    /// The `version` field.
     pub version: String,
     #[serde(default = "default_true", alias = "updateLatestLabel")]
+    /// The `update_latest_label` field.
     pub update_latest_label: bool,
 }
 
@@ -324,8 +405,10 @@ pub struct SkillPublishForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillLabelsUpdateForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
     /// Labels as JSON string: {"latest": "0.0.1", "stable": "0.0.0"}
     pub labels: String,
@@ -336,8 +419,10 @@ pub struct SkillLabelsUpdateForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillBizTagsUpdateForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
     /// Biz tags as JSON array string
     #[serde(alias = "bizTags")]
@@ -349,11 +434,14 @@ pub struct SkillBizTagsUpdateForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillOnlineForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
     /// "skill" for global online/offline, otherwise version-level
     pub scope: Option<String>,
+    /// The `version` field.
     pub version: Option<String>,
 }
 
@@ -362,8 +450,10 @@ pub struct SkillOnlineForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillScopeForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
+    /// The `skill_name` field.
     pub skill_name: String,
     /// "PUBLIC" or "PRIVATE"
     pub scope: String,
@@ -374,11 +464,15 @@ pub struct SkillScopeForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `keyword` field.
     pub keyword: Option<String>,
     #[serde(default = "default_page_no", alias = "pageNo")]
+    /// The `page_no` field.
     pub page_no: u64,
     #[serde(default = "default_page_size", alias = "pageSize")]
+    /// The `page_size` field.
     pub page_size: u64,
 }
 
@@ -387,9 +481,13 @@ pub struct SkillSearchForm {
 #[serde(rename_all = "camelCase")]
 pub struct SkillQueryForm {
     #[serde(default, alias = "namespaceId")]
+    /// The `namespace_id` field.
     pub namespace_id: String,
+    /// The `name` field.
     pub name: String,
+    /// The `version` field.
     pub version: Option<String>,
+    /// The `label` field.
     pub label: Option<String>,
 }
 

@@ -1,3 +1,7 @@
+//! V3 Console namespace management API endpoints.
+//!
+//! Provides endpoints for listing, creating, and managing namespaces.
+
 use std::sync::LazyLock;
 
 use actix_web::{HttpRequest, Responder, Scope, delete, get, http::StatusCode, post, put, web};
@@ -326,6 +330,7 @@ fn namespace_name_check(namespace_name: &str) -> bool {
     RE.is_match(namespace_name)
 }
 
+/// Register the namespace management routes under `/core/namespace`.
 pub fn routes() -> Scope {
     web::scope("/core/namespace")
         .service(get)

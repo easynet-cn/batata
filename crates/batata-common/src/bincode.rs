@@ -6,9 +6,11 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 #[derive(Debug)]
+/// The `EncodeError` struct.
 pub struct EncodeError(postcard::Error);
 
 #[derive(Debug)]
+/// The `DecodeError` struct.
 pub struct DecodeError(postcard::Error);
 
 impl std::fmt::Display for EncodeError {
@@ -39,10 +41,12 @@ impl From<postcard::Error> for DecodeError {
     }
 }
 
+/// Serialize a value into a bincode-encoded byte vector.
 pub fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
     postcard::to_stdvec(value).map_err(EncodeError::from)
 }
 
+/// Deserialize a bincode-encoded byte vector into a value.
 pub fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
     postcard::from_bytes(bytes).map_err(DecodeError::from)
 }

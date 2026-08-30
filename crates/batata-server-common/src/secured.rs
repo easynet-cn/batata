@@ -50,6 +50,7 @@ impl<'a> From<&Secured<'a>> for Resource {
 }
 
 impl<'a> Secured<'a> {
+/// Performs the `builder` operation.
     pub fn builder(
         req: &'a HttpRequest,
         data: &'a web::Data<AppState>,
@@ -58,10 +59,12 @@ impl<'a> Secured<'a> {
         SecuredBuilder::new(req, data, resource)
     }
 
+/// Performs the `has_update_password_permission` operation.
     pub fn has_update_password_permission(&self) -> bool {
         self.tags.iter().any(|e| e == UPDATE_PASSWORD_ENTRY_POINT)
     }
 
+/// Performs the `only_identity` operation.
     pub fn only_identity(&self) -> bool {
         self.tags.iter().any(|e| e == ONLY_IDENTITY)
     }
@@ -79,6 +82,7 @@ pub struct SecuredBuilder<'a> {
 }
 
 impl<'a> SecuredBuilder<'a> {
+/// Performs the `new` operation.
     pub fn new(req: &'a HttpRequest, data: &'a web::Data<AppState>, resource: &'a str) -> Self {
         SecuredBuilder::<'a> {
             req,
@@ -91,31 +95,37 @@ impl<'a> SecuredBuilder<'a> {
         }
     }
 
+/// Performs the `action` operation.
     pub fn action(mut self, action: crate::ActionTypes) -> Self {
         self.action = action;
         self
     }
 
+/// Performs the `resource` operation.
     pub fn resource(mut self, resource: &'a str) -> Self {
         self.resource = resource;
         self
     }
 
+/// Performs the `sign_type` operation.
     pub fn sign_type(mut self, sign_type: crate::SignType) -> Self {
         self.sign_type = sign_type;
         self
     }
 
+/// Performs the `tags` operation.
     pub fn tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self
     }
 
+/// Performs the `api_type` operation.
     pub fn api_type(mut self, api_type: crate::ApiType) -> Self {
         self.api_type = api_type;
         self
     }
 
+/// Performs the `build` operation.
     pub fn build(self) -> Secured<'a> {
         Secured::<'a> {
             req: self.req,
@@ -304,9 +314,11 @@ macro_rules! secured {
     };
 }
 
+/// Configuration for `ConfigHttpResourceParser`.
 pub struct ConfigHttpResourceParser {}
 
 impl ConfigHttpResourceParser {
+/// Performs the `parse` operation.
     pub fn parse(req: &HttpRequest, secured: &Secured) -> Resource {
         let namespace_id = ConfigHttpResourceParser::get_namespace_id(req);
         let group = ConfigHttpResourceParser::get_group(req);
@@ -333,6 +345,7 @@ impl ConfigHttpResourceParser {
         }
     }
 
+/// Performs the `get_namespace_id` operation.
     pub fn get_namespace_id(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -346,6 +359,7 @@ impl ConfigHttpResourceParser {
             .unwrap_or_default()
     }
 
+/// Performs the `get_group` operation.
     pub fn get_group(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -359,6 +373,7 @@ impl ConfigHttpResourceParser {
             .unwrap_or_default()
     }
 
+/// Performs the `get_resource_name` operation.
     pub fn get_resource_name(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -372,6 +387,7 @@ impl ConfigHttpResourceParser {
 pub struct NamingHttpResourceParser {}
 
 impl NamingHttpResourceParser {
+/// Performs the `parse` operation.
     pub fn parse(req: &HttpRequest, secured: &Secured) -> Resource {
         let namespace_id = NamingHttpResourceParser::get_namespace_id(req);
         let group = NamingHttpResourceParser::get_group(req);
@@ -398,6 +414,7 @@ impl NamingHttpResourceParser {
         }
     }
 
+/// Performs the `get_namespace_id` operation.
     pub fn get_namespace_id(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -411,6 +428,7 @@ impl NamingHttpResourceParser {
             .unwrap_or_default()
     }
 
+/// Performs the `get_group` operation.
     pub fn get_group(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -424,6 +442,7 @@ impl NamingHttpResourceParser {
             .unwrap_or_default()
     }
 
+/// Performs the `get_resource_name` operation.
     pub fn get_resource_name(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
@@ -434,6 +453,7 @@ impl NamingHttpResourceParser {
     }
 }
 
+/// Performs the `join_resource` operation.
 pub fn join_resource(resource: &Resource) -> String {
     if crate::SignType::Specified.as_str() == resource.r#type {
         return resource.name.to_string();

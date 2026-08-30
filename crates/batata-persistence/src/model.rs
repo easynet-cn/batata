@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 /// Basic user information returned from persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
+    /// Username (unique login identifier).
     pub username: String,
+    /// Hashed password. Empty/sentinel for externally sourced users.
     pub password: String,
+    /// Whether the account is enabled.
     pub enabled: bool,
     /// Identity source: "local" (default), "oauth", or "ldap".
     #[serde(default = "default_user_source")]
@@ -24,7 +27,9 @@ fn default_user_source() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleInfo {
+    /// Role name (e.g. `ROLE_ADMIN`).
     pub role: String,
+    /// Username this role assignment belongs to.
     pub username: String,
 }
 
@@ -32,8 +37,11 @@ pub struct RoleInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionInfo {
+    /// Role this permission is granted to.
     pub role: String,
+    /// Resource pattern the permission applies to.
     pub resource: String,
+    /// Allowed action on the resource (e.g. `r`, `w`).
     pub action: String,
 }
 
@@ -45,21 +53,37 @@ pub struct PermissionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiResourceInfo {
+    /// Primary key.
     pub id: i64,
+    /// Resource name.
     pub name: String,
+    /// Resource type (e.g. `skill`, `agentspec`).
     pub resource_type: String,
+    /// Optional human-readable description.
     pub description: Option<String>,
+    /// Optional lifecycle status.
     pub status: Option<String>,
+    /// Owning namespace ID.
     pub namespace_id: String,
+    /// Optional comma-separated business tags.
     pub biz_tags: Option<String>,
+    /// Optional opaque extension JSON.
     pub ext: Option<String>,
+    /// Origin of the resource (e.g. `user`, `system`).
     pub from: String,
+    /// Optional serialized version metadata.
     pub version_info: Option<String>,
+    /// Optimistic-lock version for `version_info` updates.
     pub meta_version: i64,
+    /// Visibility scope (e.g. `PUBLIC`, `PRIVATE`).
     pub scope: String,
+    /// Owner username.
     pub owner: String,
+    /// Number of downloads.
     pub download_count: i64,
+    /// Creation timestamp (string form).
     pub gmt_create: Option<String>,
+    /// Last modification timestamp (string form).
     pub gmt_modified: Option<String>,
 }
 
@@ -67,18 +91,31 @@ pub struct AiResourceInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiResourceVersionInfo {
+    /// Primary key.
     pub id: i64,
+    /// Resource type (e.g. `skill`, `agentspec`).
     pub resource_type: String,
+    /// Optional author username.
     pub author: Option<String>,
+    /// Resource name.
     pub name: String,
+    /// Optional description.
     pub description: Option<String>,
+    /// Lifecycle status.
     pub status: String,
+    /// Version string.
     pub version: String,
+    /// Owning namespace ID.
     pub namespace_id: String,
+    /// Optional serialized storage location.
     pub storage: Option<String>,
+    /// Optional serialized publish pipeline metadata.
     pub publish_pipeline_info: Option<String>,
+    /// Number of downloads.
     pub download_count: i64,
+    /// Creation timestamp (string form).
     pub gmt_create: Option<String>,
+    /// Last modification timestamp (string form).
     pub gmt_modified: Option<String>,
 }
 
@@ -86,14 +123,23 @@ pub struct AiResourceVersionInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineExecutionInfo {
+    /// Unique execution ID.
     pub execution_id: String,
+    /// Resource type the pipeline ran for.
     pub resource_type: String,
+    /// Resource name the pipeline ran for.
     pub resource_name: String,
+    /// Optional owning namespace ID.
     pub namespace_id: Option<String>,
+    /// Optional resource version.
     pub version: Option<String>,
+    /// Execution status.
     pub status: String,
+    /// Serialized pipeline definition.
     pub pipeline: String,
+    /// Creation time (epoch millis).
     pub create_time: i64,
+    /// Last update time (epoch millis).
     pub update_time: i64,
 }
 
@@ -103,8 +149,11 @@ pub struct PipelineExecutionInfo {
 /// visibility-aware filtering (scope, owner) alongside name search.
 #[derive(Debug, Clone, Default)]
 pub struct AiResourceListFilter<'a> {
+    /// Optional name substring (or exact) match.
     pub name_filter: Option<&'a str>,
+    /// When true, `name_filter` matches exactly instead of as a substring.
     pub search_accurate: bool,
+    /// When true, order results by download count descending.
     pub order_by_downloads: bool,
     /// Filter by exact scope value (e.g., "PUBLIC", "PRIVATE")
     pub scope_filter: Option<&'a str>,
@@ -115,26 +164,31 @@ pub struct AiResourceListFilter<'a> {
 }
 
 impl<'a> AiResourceListFilter<'a> {
+    /// Create an empty filter with default (no-op) settings.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the name filter and whether matching is exact.
     pub fn with_name_filter(mut self, name: Option<&'a str>, accurate: bool) -> Self {
         self.name_filter = name;
         self.search_accurate = accurate;
         self
     }
 
+    /// Enable or disable ordering results by download count.
     pub fn with_order_by_downloads(mut self, enabled: bool) -> Self {
         self.order_by_downloads = enabled;
         self
     }
 
+    /// Set the exact scope filter.
     pub fn with_scope(mut self, scope: Option<&'a str>) -> Self {
         self.scope_filter = scope;
         self
     }
 
+    /// Set the exact owner filter and whether PUBLIC resources are included.
     pub fn with_owner(mut self, owner: Option<&'a str>, include_public: bool) -> Self {
         self.owner_filter = owner;
         self.include_public_for_owner = include_public;
@@ -204,7 +258,7 @@ impl StorageMode {
         }
     }
 
-    /// Get the storage backend
+    /// Return the storage backend of this mode.
     pub fn backend(&self) -> StorageBackend {
         match self {
             StorageMode::ExternalDb => StorageBackend::ExternalDb,
@@ -214,7 +268,7 @@ impl StorageMode {
         }
     }
 
-    /// Get the deploy topology
+    /// Return the deploy topology of this mode.
     pub fn topology(&self) -> DeployTopology {
         match self {
             StorageMode::ExternalDb | StorageMode::StandaloneEmbedded => DeployTopology::Standalone,
@@ -250,54 +304,93 @@ impl std::str::FromStr for StorageMode {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NamespaceInfo {
+    /// Unique namespace identifier.
     pub namespace_id: String,
+    /// Human-readable namespace name.
     pub namespace_name: String,
+    /// Namespace description.
     pub namespace_desc: String,
+    /// Number of configs contained in the namespace.
     pub config_count: i64,
+    /// Config quota for the namespace.
     pub quota: i32,
 }
 
 /// Config information stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigStorageData {
+    /// Primary key.
     pub id: i64,
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Tenant ID (namespace).
     pub tenant: String,
+    /// Config content.
     pub content: String,
+    /// MD5 hash of the content.
     pub md5: String,
+    /// Owning application name.
     pub app_name: String,
+    /// Config type (e.g. `properties`, `yaml`).
     pub config_type: String,
+    /// Description.
     pub desc: String,
+    /// Usage notes.
     pub r#use: String,
+    /// Effect description.
     pub effect: String,
+    /// Schema.
     pub schema: String,
+    /// Comma-separated config tags.
     pub config_tags: String,
+    /// Encrypted data key (for encrypted content).
     pub encrypted_data_key: String,
+    /// User who created/modified the config.
     pub src_user: String,
+    /// Source IP of the last modification.
     pub src_ip: String,
+    /// Creation time (epoch millis).
     pub created_time: i64,
+    /// Modification time (epoch millis).
     pub modified_time: i64,
 }
 
 /// Config history entry stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigHistoryStorageData {
+    /// Primary key of the history entry.
     pub id: i64,
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Tenant ID (namespace).
     pub tenant: String,
+    /// Config content at this historical version.
     pub content: String,
+    /// MD5 hash of the content.
     pub md5: String,
+    /// Owning application name.
     pub app_name: String,
+    /// User who performed the operation.
     pub src_user: String,
+    /// Source IP of the operation.
     pub src_ip: String,
+    /// Operation type (`I`, `U`, `D`).
     pub op_type: String,
+    /// Publish type (e.g. `formal`).
     pub publish_type: String,
+    /// Gray (beta) config name, if applicable.
     pub gray_name: String,
+    /// Serialized extension info (tags, desc, etc.).
     pub ext_info: String,
+    /// Encrypted data key.
     pub encrypted_data_key: String,
+    /// Creation time (epoch millis).
     pub created_time: i64,
+    /// Modification time (epoch millis).
     pub modified_time: i64,
 }
 
@@ -325,18 +418,31 @@ pub struct CapacityInfo {
 /// Gray config data stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigGrayStorageData {
+    /// Config data ID.
     pub data_id: String,
+    /// Config group.
     pub group: String,
+    /// Tenant ID (namespace).
     pub tenant: String,
+    /// Gray config content.
     pub content: String,
+    /// MD5 hash of the content.
     pub md5: String,
+    /// Owning application name.
     pub app_name: String,
+    /// Gray (beta) config name.
     pub gray_name: String,
+    /// Gray rule expression.
     pub gray_rule: String,
+    /// Encrypted data key.
     pub encrypted_data_key: String,
+    /// User who created/modified the config.
     pub src_user: String,
+    /// Source IP of the last modification.
     pub src_ip: String,
+    /// Creation time (epoch millis).
     pub created_time: i64,
+    /// Modification time (epoch millis).
     pub modified_time: i64,
 }
 

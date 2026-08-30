@@ -104,6 +104,7 @@ async fn explain_query(
     crate::query::explain_query(req, path, acl_service, query_service, index_provider).await
 }
 
+/// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/query")
         .service(create_query)

@@ -22,9 +22,13 @@ static NAMESPACE_ID_REGEX: LazyLock<Regex> =
 /// Parameter info extracted from a gRPC request
 #[derive(Debug, Default)]
 pub struct ParamInfo {
+    /// The `namespace_id` field.
     pub namespace_id: Option<String>,
+    /// The `group` field.
     pub group: Option<String>,
+    /// The `data_id` field.
     pub data_id: Option<String>,
+    /// The `service_name` field.
     pub service_name: Option<String>,
 }
 

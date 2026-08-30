@@ -69,14 +69,20 @@ impl HealthCheckConfig {
 /// Member health status tracker
 #[derive(Clone, Debug)]
 pub struct MemberHealthStatus {
+    /// The `address` field.
     pub address: String,
+    /// The `fail_count` field.
     pub fail_count: i32,
+    /// The `last_check_time` field.
     pub last_check_time: i64,
+    /// The `last_success_time` field.
     pub last_success_time: i64,
+    /// The `state` field.
     pub state: NodeState,
 }
 
 impl MemberHealthStatus {
+    /// Creates a new instance.
     pub fn new(address: String) -> Self {
         Self {
             address,
@@ -87,12 +93,14 @@ impl MemberHealthStatus {
         }
     }
 
+    /// Record Success.
     pub fn record_success(&mut self) {
         self.fail_count = 0;
         self.last_success_time = chrono::Utc::now().timestamp_millis();
         self.state = NodeState::Up;
     }
 
+    /// Record Failure.
     pub fn record_failure(&mut self, config: &HealthCheckConfig) {
         self.fail_count += 1;
         if self.fail_count >= config.max_fail_count {
@@ -118,6 +126,7 @@ pub struct MemberHealthState {
 }
 
 impl MemberHealthState {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             consecutive_failures: AtomicU32::new(0),
@@ -178,6 +187,7 @@ pub struct MemberHealthChecker {
 }
 
 impl MemberHealthChecker {
+    /// Creates a new instance.
     pub fn new(
         members: Arc<DashMap<String, Member>>,
         local_address: String,

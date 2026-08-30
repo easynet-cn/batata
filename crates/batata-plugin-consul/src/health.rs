@@ -69,6 +69,7 @@ pub struct ConsulHealthService {
 }
 
 impl ConsulHealthService {
+/// The `new` associated function.
     pub fn new(registry: Arc<InstanceCheckRegistry>, check_index: Arc<ConsulCheckIndex>) -> Self {
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
@@ -81,6 +82,7 @@ impl ConsulHealthService {
         }
     }
 
+/// The `with_node_name` method.
     pub fn with_node_name(mut self, node_name: String) -> Self {
         self.node_name = node_name;
         self

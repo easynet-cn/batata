@@ -10,17 +10,28 @@ use std::str::FromStr;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NacosConfigMetadata {
+    /// The data ID of the config.
     pub data_id: String,
+    /// The group of the config.
     pub group: String,
+    /// The namespace ID of the config.
     pub namespace_id: String,
     #[serde(rename = "type")]
+    /// The content type of the config.
     pub content_type: String,
+    /// The associated application name.
     pub app_name: String,
+    /// The description of the config.
     pub desc: String,
+    /// Comma-separated config tags.
     pub config_tags: String,
+    /// The MD5 checksum of the config content.
     pub md5: String,
+    /// The encrypted data key.
     pub encrypted_data_key: String,
+    /// The creation time in milliseconds.
     pub create_time: i64,
+    /// The last modification time in milliseconds.
     pub modify_time: i64,
 }
 
@@ -28,7 +39,9 @@ pub struct NacosConfigMetadata {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NacosExportItem {
+    /// The metadata of the config.
     pub metadata: NacosConfigMetadata,
+    /// The config content.
     pub content: String,
 }
 
@@ -36,9 +49,13 @@ pub struct NacosExportItem {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
+    /// The number of successfully imported configs.
     pub success_count: u32,
+    /// The number of skipped configs.
     pub skip_count: u32,
+    /// The number of failed configs.
     pub fail_count: u32,
+    /// Details of the failed items.
     pub fail_data: Vec<ImportFailItem>,
 }
 
@@ -46,8 +63,11 @@ pub struct ImportResult {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportFailItem {
+    /// The data ID of the failed config.
     pub data_id: String,
+    /// The group of the failed config.
     pub group: String,
+    /// The failure reason.
     pub reason: String,
 }
 
@@ -55,11 +75,14 @@ pub struct ImportFailItem {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConsulKVExportItem {
     #[serde(rename = "Key")]
-    pub key: String, // Format: namespace/group/dataId
+    /// The Consul KV key, formatted as `namespace/group/dataId`.
+    pub key: String,
     #[serde(rename = "Flags")]
+    /// The Consul KV flags.
     pub flags: u64,
     #[serde(rename = "Value")]
-    pub value: String, // Base64 encoded content
+    /// The base64-encoded config content.
+    pub value: String,
 }
 
 /// Import conflict resolution policy
@@ -105,12 +128,17 @@ impl FromStr for SameConfigPolicy {
 #[serde(default, rename_all = "camelCase")]
 pub struct ExportRequest {
     #[serde(alias = "namespaceId")]
+    /// The namespace to export from.
     pub namespace_id: String,
+    /// The group to export (optional).
     pub group: Option<String>,
     #[serde(alias = "dataIds")]
-    pub data_ids: Option<String>, // Comma-separated dataIds
-    pub ids: Option<String>, // Comma-separated config IDs
+    /// Comma-separated data IDs to export (optional).
+    pub data_ids: Option<String>,
+    /// Comma-separated config IDs to export (optional).
+    pub ids: Option<String>,
     #[serde(alias = "appName")]
+    /// Filter by application name (optional).
     pub app_name: Option<String>,
 }
 
@@ -119,11 +147,14 @@ pub struct ExportRequest {
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportRequest {
     #[serde(alias = "namespaceId")]
+    /// The namespace to import into.
     pub namespace_id: String,
-    pub policy: Option<String>, // ABORT, SKIP, OVERWRITE
+    /// The conflict resolution policy: `ABORT`, `SKIP` or `OVERWRITE`.
+    pub policy: Option<String>,
 }
 
 impl ImportRequest {
+    /// Parse the conflict resolution policy, defaulting to [`SameConfigPolicy::Abort`].
     pub fn get_policy(&self) -> SameConfigPolicy {
         self.policy
             .as_ref()
@@ -136,7 +167,9 @@ impl ImportRequest {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ConsulExportRequest {
+    /// The namespace to export from (optional).
     pub namespace_id: Option<String>,
+    /// The key prefix to export (optional).
     pub prefix: Option<String>,
 }
 
@@ -144,20 +177,30 @@ pub struct ConsulExportRequest {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ConsulImportRequest {
+    /// The namespace to import into (optional).
     pub namespace_id: Option<String>,
 }
 
 /// Intermediate structure for config import
 #[derive(Clone, Debug, Default)]
 pub struct ConfigImportItem {
+    /// The namespace ID of the config.
     pub namespace_id: String,
+    /// The group of the config.
     pub group: String,
+    /// The data ID of the config.
     pub data_id: String,
+    /// The config content.
     pub content: String,
+    /// The config content type.
     pub config_type: String,
+    /// The associated application name.
     pub app_name: String,
+    /// The description of the config.
     pub desc: String,
+    /// Comma-separated config tags.
     pub config_tags: String,
+    /// The encrypted data key.
     pub encrypted_data_key: String,
 }
 
