@@ -17,4 +17,6 @@ pub trait InstancePersistence: Send + Sync {
     async fn delete_expired(&self, before_timestamp: i64) -> anyhow::Result<usize>;
     /// Returns the requested value.
     async fn list_all(&self) -> anyhow::Result<Vec<StoredInstance>>;
+    /// Looks up a single instance by its primary key.
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<StoredInstance>>;
 }

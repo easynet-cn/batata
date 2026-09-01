@@ -4,14 +4,14 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredItem` entity.
 pub struct StoredItem {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `namespace_id` field.
-    pub namespace_id: i32,
+    pub namespace_id: i64,
     /// The `key` field.
     pub key: String,
     #[serde(rename = "type")]
     /// The `type` field.
-    pub r#type: i16,
+    pub r#type: i32,
     /// The `value` field.
     pub value: String,
     /// The `comment` field.

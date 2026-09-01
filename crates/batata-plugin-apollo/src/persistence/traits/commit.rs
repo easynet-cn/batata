@@ -8,7 +8,7 @@ pub trait CommitPersistence: Send + Sync {
     /// Performs the `create` operation.
     async fn create(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit>;
     /// Returns the requested value.
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredCommit>>;
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>>;
     /// Returns the requested value.
     async fn list_by_namespace(
         &self,

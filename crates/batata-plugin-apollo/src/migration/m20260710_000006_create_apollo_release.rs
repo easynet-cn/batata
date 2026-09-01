@@ -16,7 +16,7 @@ impl MigrationTrait for Migration {
                     .table(ApolloRelease::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloRelease::Id, backend).auto_increment().primary_key())
-                    .col(string_len_default(ApolloRelease::ReleaseKey, 64, ""))
+                    .col(string_len_default(ApolloRelease::ReleaseKey, 256, ""))
                     .col(string_len_default(ApolloRelease::Name, 64, "default"))
                     .col(string_len_null(ApolloRelease::Comment, 256))
                     .col(string_len_default(ApolloRelease::AppId, 64, "default"))

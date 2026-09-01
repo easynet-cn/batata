@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredGrayReleaseRule` entity.
 pub struct StoredGrayReleaseRule {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -18,7 +18,7 @@ pub struct StoredGrayReleaseRule {
     /// The `release_id` field.
     pub release_id: i64,
     /// The `branch_status` field.
-    pub branch_status: Option<i16>,
+    pub branch_status: Option<i32>,
     /// The `is_deleted` field.
     pub is_deleted: bool,
     /// The `deleted_at` field.

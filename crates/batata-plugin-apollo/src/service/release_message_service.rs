@@ -78,7 +78,7 @@ impl ReleaseMessageService {
     /// prunes per-key on write; SQL accumulates history until invoked.
     pub async fn prune(&self) -> anyhow::Result<usize> {
         let all = self.persistence.list_all().await?;
-        let mut newest_per_key: HashMap<&str, i32> = HashMap::new();
+        let mut newest_per_key: HashMap<&str, i64> = HashMap::new();
         for m in &all {
             let e = newest_per_key.entry(m.message.as_str()).or_insert(m.id);
             *e = (*e).max(m.id);

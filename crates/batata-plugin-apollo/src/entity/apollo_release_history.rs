@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -17,11 +17,11 @@ pub struct Model {
     /// The `branch_name` field.
     pub branch_name: String,
     /// The `release_id` field.
-    pub release_id: i32,
+    pub release_id: i64,
     /// The `previous_release_id` field.
-    pub previous_release_id: i32,
+    pub previous_release_id: i64,
     /// The `operation` field.
-    pub operation: i16,
+    pub operation: i32,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     /// The `operation_context` field.
     pub operation_context: String,

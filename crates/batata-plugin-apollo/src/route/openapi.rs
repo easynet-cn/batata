@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::Utc;
 use crate::persistence::shared::StoredRelease;
-use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence};
+use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, NamespacePersistence};
 use crate::service::{AppService, NamespaceService, ItemService, ItemSetService, ReleaseService, ClusterService, InstanceService, AccessKeyService, GrayReleaseRuleService, AppNamespaceService, CommitService, ConsumerService, AuditService, FavoriteService, SearchService};
 use crate::api::dto::{AppDTO, NamespaceDTO, ItemDTO, ErrorResponse, ClusterDTO, GrayReleaseRuleDTO, AppNamespaceDTO, CommitDTO, ItemChangeSets, ConfigImportDTO, ConfigExportDTO};
 
@@ -65,7 +65,7 @@ pub struct OpenItemDTO {
     pub comment: String,
     #[serde(default = "default_item_type")]
     /// The `type` field.
-    pub r#type: i16,
+    pub r#type: i32,
     #[serde(default)]
     /// The `data_change_created_by` field.
     pub data_change_created_by: Option<String>,
@@ -74,7 +74,7 @@ pub struct OpenItemDTO {
     pub data_change_last_modified_by: Option<String>,
 }
 
-fn default_item_type() -> i16 {
+fn default_item_type() -> i32 {
     0
 }
 
@@ -154,9 +154,9 @@ pub struct OpenEnvCluster {
 /// Represents the `OpenRelease` entity.
 pub struct OpenRelease {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `release_id` field.
-    pub release_id: i32,
+    pub release_id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -697,7 +697,7 @@ async fn find_active_releases(
 
 async fn rollback_release(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, String, String, String, i32)>,
+    path: web::Path<(String, String, String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name, release_id) = path.into_inner();
@@ -814,7 +814,7 @@ async fn list_access_keys(
 
 async fn delete_access_key(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, i32)>,
+    path: web::Path<(String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, id) = path.into_inner();
@@ -905,7 +905,7 @@ async fn update_branch_rule(
 
     let rules = body.get("rules").and_then(|v| v.as_str()).map(|s| s.to_string());
     let release_id = body.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
-    let branch_status = body.get("branchStatus").and_then(|v| v.as_i64()).map(|v| v as i16);
+    let branch_status = body.get("branchStatus").and_then(|v| v.as_i64()).map(|v| v as i32);
     let operator = body.get("dataChangeLastModifiedBy").and_then(|v| v.as_str()).unwrap_or("admin");
 
     let dto = GrayReleaseRuleDTO {
@@ -970,7 +970,7 @@ async fn merge_branch(
             id: None,
             key: item.key,
             value: item.value,
-            r#type: Some(item.r#type as i16),
+            r#type: Some(item.r#type as i32),
             comment: if item.comment.is_empty() { None } else { Some(item.comment) },
             line_num: None,
             data_change_created_by: item.data_change_created_by,
@@ -1077,7 +1077,7 @@ async fn create_commit_openapi(
 
 async fn get_commit_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    commit_id: web::Path<i32>,
+    commit_id: web::Path<i64>,
 ) -> impl Responder {
     let id = commit_id.into_inner();
     let service = CommitService::new(data.get_ref().clone());
@@ -1206,7 +1206,7 @@ async fn delete_namespace(
 
 async fn get_release_by_id(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, i32)>,
+    path: web::Path<(String, i64)>,
 ) -> impl Responder {
     let (_env, release_id) = path.into_inner();
     let service = ReleaseService::new(data.get_ref().clone());
@@ -1240,8 +1240,8 @@ async fn compare_releases(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
+    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
     let service = ReleaseService::new(data.get_ref().clone());
     match service.compare(base, to_compare).await {
         Ok(result) => HttpResponse::Ok().json(result),
@@ -1254,12 +1254,12 @@ async fn compare_releases(
 
 async fn rollback_release_by_id(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, i32)>,
+    path: web::Path<(String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, release_id) = path.into_inner();
     let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
-    let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64()).map(|v| v as i64);
     let service = ReleaseService::new(data.get_ref().clone());
     match service.rollback_by_id(release_id, to_release_id, operator).await {
         Ok(release) => {
@@ -1572,7 +1572,7 @@ async fn search_openapi(
 // PMISC-006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/activation - enable access key
 async fn enable_access_key_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, String, i32)>,
+    path: web::Path<(String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, _env, id) = path.into_inner();
@@ -1593,7 +1593,7 @@ async fn enable_access_key_openapi(
 // PMISC-006: PUT /openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/deactivation - disable access key
 async fn disable_access_key_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    path: web::Path<(String, String, i32)>,
+    path: web::Path<(String, String, i64)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, _env, id) = path.into_inner();
@@ -1739,84 +1739,74 @@ async fn create_missing_namespaces_openapi(
 /// Performs the `configure_openapi_routes` operation.
 pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::resource("/openapi/v1/apps")
+        web::resource("/openapi/v1/apps").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(create_app))
             .route(web::get().to(list_apps)),
     )
     .service(
         // PORT-003: authorized app listings
-        web::resource("/openapi/v1/apps/authorized")
+        web::resource("/openapi/v1/apps/authorized").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_apps_authorized)),
     )
     .service(
-        web::resource("/openapi/v1/apps/by-self")
+        web::resource("/openapi/v1/apps/by-self").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_apps_by_self)),
     )
     .service(
         // PORT-025: same payload as adminservice publish_info
-        web::resource("/openapi/v1/apps/{app_id}/namespaces/releases/status")
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/releases/status").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_releases_status)),
     )
     .service(
         // PORT-021: POST /openapi/v1/namespaces (create namespace via OpenAPI)
-        web::resource("/openapi/v1/namespaces")
+        web::resource("/openapi/v1/namespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(openapi_create_namespace)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}")
+        web::resource("/openapi/v1/apps/{app_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_app))
             .route(web::put().to(update_app))
             .route(web::delete().to(delete_app)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/envclusters")
+        web::resource("/openapi/v1/apps/{app_id}/envclusters").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_env_clusters)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/appnamespaces")
+        web::resource("/openapi/v1/apps/{app_id}/appnamespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(create_app_namespace))
             .route(web::get().to(list_app_namespaces_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{namespace_name}")
+        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{namespace_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_app_namespace))
             .route(web::delete().to(delete_app_namespace)),
     )
     .service(
-        web::resource("/openapi/v1/envs")
+        web::resource("/openapi/v1/envs").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_envs)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(create_cluster)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_cluster))
         .route(web::delete().to(delete_cluster)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(create_namespace))
         .route(web::get().to(list_namespaces)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_namespace))
         .route(web::delete().to(delete_namespace)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(create_item))
         .route(web::get().to(find_items_by_namespace))
         // PITEM-003: bulk text update (full properties text, editor save)
@@ -1824,199 +1814,264 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     )
     // PITEM-011: syntax validation
     .service(
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/items/validation")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/items/validation").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(openapi_validate_items_text))
     )
     // PITEM-012: revert unpublished changes back to latest release
     .service(
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/items/revocation")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/items/revocation").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(openapi_revert_items))
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items/{key}",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items/{key}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_item))
         .route(web::put().to(update_item))
         .route(web::delete().to(delete_item)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(publish_release))
         .route(web::get().to(find_active_releases)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/latest",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/latest").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_latest_release)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/{release_id}/rollback",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/{release_id}/rollback").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(rollback_release)),
     )
     .service(
-        web::resource("/openapi/v1/envs/{env}/releases/{release_id}")
+        web::resource("/openapi/v1/envs/{env}/releases/{release_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_release_by_id)),
     )
     .service(
-        web::resource("/openapi/v1/envs/{env}/releases/compare")
+        web::resource("/openapi/v1/envs/{env}/releases/compare").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(compare_releases)),
     )
     .service(
-        web::resource("/openapi/v1/envs/{env}/releases/{release_id}/rollback")
+        web::resource("/openapi/v1/envs/{env}/releases/{release_id}/rollback").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::put().to(rollback_release_by_id)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/history",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/history").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_release_history)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/instances",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/instances").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(list_instances)),
     )
     .service(
         // PORT-022: GET/POST /openapi/v1/appnamespaces
-        web::resource("/openapi/v1/appnamespaces")
+        web::resource("/openapi/v1/appnamespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_list_appnamespaces))
             .route(web::post().to(openapi_create_appnamespace)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{ns_name}")
+        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{ns_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::delete().to(openapi_delete_appnamespace)),
     )
     .service(
         // PORT-026: public namespaces not yet linked to this cluster
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/missing-namespaces")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/missing-namespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_missing_namespaces)),
     )
     .service(
         // PORT-020: GET .../namespaces/{namespaceName}/lock
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/lock")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/lock").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_get_namespace_lock)),
     )
     // PITEM-007: base64-key item access
     .service(
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/encodedItems/{b64key}")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/encodedItems/{b64key}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_get_encoded_item))
             .route(web::put().to(openapi_put_encoded_item))
             .route(web::delete().to(openapi_delete_encoded_item))
     )
     // PITEM-008: branch items
     .service(
-        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/branches/{branch_name}/items")
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{ns_name}/branches/{branch_name}/items").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_find_branch_items))
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/accesskeys")
+        web::resource("/openapi/v1/apps/{app_id}/accesskeys").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(create_access_key))
             .route(web::get().to(list_access_keys)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/accesskeys/{id}")
+        web::resource("/openapi/v1/apps/{app_id}/accesskeys/{id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::delete().to(delete_access_key)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(list_branches))
         .route(web::post().to(create_branch)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_branch_rule))
         .route(web::put().to(update_branch_rule))
         .route(web::delete().to(delete_branch)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/merge",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/merge").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(merge_branch)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/releases",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/releases").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(create_gray_release)),
     )
     .service(
-        web::resource(
-            "/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/commits",
-        )
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/commits").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(list_commits_openapi))
         .route(web::post().to(create_commit_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/commits/{commit_id}")
+        web::resource("/openapi/v1/commits/{commit_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_commit_openapi)),
     )
     // PMISC-014: Consumer list and single consumer lookup
     .service(
-        web::resource("/openapi/v1/consumers")
+        web::resource("/openapi/v1/consumers").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_consumers_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/consumers/{app_id}")
+        web::resource("/openapi/v1/consumers/{app_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_consumer_openapi)),
     )
     // PMISC-015: Config export/import
     .service(
-        web::resource(
-            "/openapi/v1/configs/{app_id}/{cluster_name}/{namespace_name}/export",
-        )
+        web::resource("/openapi/v1/configs/{app_id}/{cluster_name}/{namespace_name}/export").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(export_configs_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/configs/import")
+        web::resource("/openapi/v1/configs/import").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(import_configs_openapi)),
     )
     // PMISC-018: Audit log query
     .service(
-        web::resource("/openapi/v1/apollo/audit")
+        web::resource("/openapi/v1/apollo/audit").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_audit_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/apollo/audit/by-entity")
+        web::resource("/openapi/v1/apollo/audit/by-entity").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_audit_by_entity_openapi)),
     )
     // PMISC-019: Favorites list
     .service(
-        web::resource("/openapi/v1/favorites")
+        web::resource("/openapi/v1/favorites").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_favorites_openapi)),
     )
     // PMISC-020: Global search
     .service(
-        web::resource("/openapi/v1/global-search/item-info/by-key-or-value")
+        web::resource("/openapi/v1/global-search/item-info/by-key-or-value").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(search_openapi)),
     )
     // PMISC-006: AccessKey activation/deactivation
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/activation")
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/activation").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::put().to(enable_access_key_openapi)),
     )
     .service(
-        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/deactivation")
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}/deactivation").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::put().to(disable_access_key_openapi)),
     )
     // PORT-026: Missing namespaces
     .service(
-        web::resource(
-            "/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/missing-namespaces",
-        )
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/missing-namespaces").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(find_missing_namespaces_openapi))
         .route(web::post().to(create_missing_namespaces_openapi)),
+    )
+    // PMISC-001: paged instance configs of a namespace
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/instances").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(openapi_list_instances)),
+    )
+    // PMISC-002: instance configs bound to a release (by release ids)
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/instances/by-release").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(openapi_list_instances_by_release)),
+    )
+    // PMISC-003: instance count of a namespace
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/instances/by-namespace").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(openapi_count_instances)),
+    )
+    // PMISC-004: instance configs whose release is not in the given release ids
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/instances/by-release-not-in").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(openapi_list_instances_by_release_not_in)),
+    )
+    // PITEM-009: diff source items against each target namespace
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/items/diff").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::post().to(openapi_items_diff)),
+    )
+    // PITEM-010: synchronize source items into the target namespaces (PUT)
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/{namespace_name}/items").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::put().to(openapi_items_synchronize)),
+    )
+    // PORT-009: env + cluster info of an app
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/env-cluster-info").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_env_cluster_info)),
+    )
+    // PORT-010: environments the app has NOT been created in
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/miss-envs").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_miss_envs)),
+    )
+    // PORT-011: create the app's namespaces in a given env
+    .service(
+        web::resource("/openapi/v1/apps/envs/{env}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_create_app_env)),
+    )
+    // PORT-024: where an app namespace is used
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{namespace_name}/usage").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_appnamespace_usage)),
+    )
+    // PMISC-007: current user is super admin (single-tenant: always true)
+    .service(
+        web::resource("/openapi/v1/permissions/root").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_permissions_root)),
+    )
+    // PMISC-008: whether the current user has a permission type on an app
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/permissions/{permission_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_permissions_app)),
+    )
+    // PMISC-009: role members of an app role type
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_roles)),
+    )
+    // PMISC-010: organization list (single-tenant: default list)
+    .service(
+        web::resource("/openapi/v1/organizations").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_organizations)),
+    )
+    // PMISC-011: current user (single-tenant: fixed admin)
+    .service(
+        web::resource("/openapi/v1/user").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_current_user)),
+    )
+    // PMISC-012: user management
+    .service(
+        web::resource("/openapi/v1/users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_list_users))
+            .route(web::post().to(openapi_create_user)),
+    )
+    .service(
+        web::resource("/openapi/v1/users/{username}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::put().to(openapi_update_user))
+            .route(web::delete().to(openapi_delete_user)),
+    )
+    // PMISC-016: system information
+    .service(
+        web::resource("/openapi/v1/system-info").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_system_info)),
     );
 }
 
@@ -2467,4 +2522,447 @@ async fn openapi_missing_namespaces(
         }
     }
     HttpResponse::Ok().json(missing)
+}
+
+// ===========================================================================
+// PMISC-001~004: OpenAPI instance endpoints
+// ===========================================================================
+
+/// PMISC-001 — list the instance configs of a namespace, paged.
+///
+/// Upstream `apollo-portal` `OpenApiController.listInstances` returns a
+/// `PageDTO<OpenInstanceDTO>` (default page size 20). `instanceAppId` is an
+/// optional query filter matching the owning `configAppId`.
+async fn openapi_list_instances(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    q: web::Query<InstancePageQuery>,
+) -> impl Responder {
+    let (app_id, _env, cluster, namespace_name) = path.into_inner();
+    // batata keys instance configs by (configAppId, clusterName, namespaceName)
+    // and reuses `appId` as the config app id. `env` is accepted for upstream
+    // parity but ignored (single env model).
+    let service = InstanceService::new(data.get_ref().clone());
+    let page = q.page.max(1) as u64;
+    let size = if q.size == 0 { 20 } else { q.size } as u64;
+    match service
+        .list_open_instances(&app_id, &cluster, &namespace_name, q.instance_app_id.as_deref(), page, size)
+        .await
+    {
+        Ok(dto) => HttpResponse::Ok().json(dto),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+/// PMISC-002 — list instance configs whose release is in `releaseIds`.
+///
+/// Upstream throws 404 (`findReleaseOrThrow`) if any requested release id does
+/// not exist. `releaseIds` is a comma-separated query parameter.
+async fn openapi_list_instances_by_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    q: web::Query<ReleaseIdsQuery>,
+) -> impl Responder {
+    let (_app_id, _env, _cluster, _ns) = path.into_inner();
+    let release_ids = parse_release_ids(&q.release_ids);
+    let service = InstanceService::new(data.get_ref().clone());
+    match service.list_open_instances_by_release(&release_ids).await {
+        Ok(items) => HttpResponse::Ok().json(items),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+/// PMISC-003 — distinct instance count of a namespace.
+async fn openapi_count_instances(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (app_id, _env, cluster, namespace_name) = path.into_inner();
+    let service = InstanceService::new(data.get_ref().clone());
+    match service.count_open_instances(&app_id, &cluster, &namespace_name).await {
+        Ok(count) => HttpResponse::Ok().json(count),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+/// PMISC-004 — instance configs of a namespace whose release is NOT in
+/// `releaseIds`.
+async fn openapi_list_instances_by_release_not_in(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    q: web::Query<ReleaseIdsQuery>,
+) -> impl Responder {
+    let (app_id, _env, cluster, namespace_name) = path.into_inner();
+    let release_ids = parse_release_ids(&q.release_ids);
+    let service = InstanceService::new(data.get_ref().clone());
+    match service
+        .list_open_instances_by_release_not_in(&app_id, &cluster, &namespace_name, &release_ids)
+        .await
+    {
+        Ok(items) => HttpResponse::Ok().json(items),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct InstancePageQuery {
+    #[serde(default = "one")]
+    page: usize,
+    #[serde(default = "twenty")]
+    size: usize,
+    #[serde(default)]
+    instance_app_id: Option<String>,
+}
+fn one() -> usize { 1 }
+fn twenty() -> usize { 20 }
+
+#[derive(serde::Deserialize)]
+struct ReleaseIdsQuery {
+    #[serde(default)]
+    release_ids: String,
+}
+
+/// Parses a comma-separated release id list into `i64` values, dropping any
+/// non-numeric token (upstream ignores malformed ids; here we keep only valid
+/// integers so an empty/garbage list yields an empty result rather than a 500).
+fn parse_release_ids(raw: &str) -> Vec<i64> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<i64>().ok())
+        .collect()
+}
+
+// ===========================================================================
+// PITEM-009 / PITEM-010: items diff and synchronize
+// ===========================================================================
+
+/// PITEM-009 — diff the source change sets against each target namespace.
+///
+/// Upstream `portal/controller/ItemController.java:180-203`
+/// `configService.compare(syncToNamespaces, syncItems)` returns one diff per
+/// target namespace (create/update/delete item lists). `appId`/`env`/`cluster`
+/// identify the source namespace; the body is a `NamespaceSyncModel`.
+async fn openapi_items_diff(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    body: web::Json<crate::api::dto::NamespaceSyncModel>,
+) -> impl Responder {
+    let (app_id, _env, cluster, namespace_name) = path.into_inner();
+    let model = body.into_inner();
+    let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
+    match service
+        .compare(&app_id, &cluster, &namespace_name, &model.sync_to_namespaces, &model.sync_items)
+        .await
+    {
+        Ok(diffs) => HttpResponse::Ok().json(diffs),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+/// PITEM-010 — synchronize the source change sets into every target namespace.
+///
+/// Upstream `portal/controller/ItemController.java:205-230` is
+/// `PUT /apps/{appId}/namespaces/{namespaceName}/items` (note: PUT, not POST,
+/// and no env/cluster in the path). The body is a `NamespaceSyncModel`.
+async fn openapi_items_synchronize(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    body: web::Json<crate::api::dto::NamespaceSyncModel>,
+) -> impl Responder {
+    let (app_id, namespace_name) = path.into_inner();
+    let model = body.into_inner();
+    // batata stores namespaces per (appId, cluster); for the openapi sync we
+    // target the `default` cluster (upstream synchronizes public app namespaces
+    // which live under the default cluster of each app).
+    let operator = "apollo";
+    let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
+    match service
+        .synchronize(&app_id, "default", &namespace_name, &model.sync_to_namespaces, &model.sync_items, operator)
+        .await
+    {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+// ===========================================================================
+// PORT-009 / PORT-010 / PORT-011 / PORT-024: portal app & namespace endpoints
+// ===========================================================================
+
+/// PORT-009 — env + cluster info of an app.
+///
+/// Upstream `apollo-portal` `AppController.envClusterInfo` returns
+/// `EnvClusterInfoDTO`. batata has no per-env cluster separation, so every
+/// canonical env the app has namespaces in maps to the app's root clusters.
+async fn openapi_env_cluster_info(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    use crate::persistence::traits::ClusterPersistence;
+    let app_id = path.into_inner();
+    let clusters = data.get_ref().list(&app_id).await.unwrap_or_default();
+    let root_clusters: Vec<crate::api::dto::ClusterInfoDTO> = clusters
+        .into_iter()
+        .filter(|c| !c.is_deleted && c.parent_cluster_id == 0)
+        .map(|c| crate::api::dto::ClusterInfoDTO {
+            cluster_name: c.name,
+            parent_cluster_name: None,
+            config_app_id: Some(app_id.clone()),
+        })
+        .collect();
+    let envs = ["DEV", "FAT", "UAT", "PRO"];
+    let env_cluster_info: Vec<crate::api::dto::EnvClusterInfo> = envs
+        .iter()
+        .map(|env| crate::api::dto::EnvClusterInfo {
+            env: env.to_string(),
+            clusters: root_clusters.clone(),
+        })
+        .collect();
+    HttpResponse::Ok().json(crate::api::dto::EnvClusterInfoDTO { env_cluster_info })
+}
+
+/// PORT-010 — environments the app has NOT been created in yet.
+///
+/// Upstream returns the set of all envs minus the envs the app already has a
+/// namespace in. batata keeps namespaces across all envs uniformly, so this is
+/// the complement of the envs that contain at least one namespace of the app.
+async fn openapi_miss_envs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let app_id = path.into_inner();
+    let namespaces = <dyn NamespacePersistence>::list_by_app(data.get_ref(), &app_id).await.unwrap_or_default();
+    // batata does not persist an env per namespace; treat any namespace as
+    // "present in all envs" so an app with at least one namespace reports no
+    // missing envs.
+    let present = !namespaces.is_empty();
+    let all = ["DEV", "FAT", "UAT", "PRO"];
+    let miss: Vec<String> = if present {
+        Vec::new()
+    } else {
+        all.iter().map(|s| s.to_string()).collect()
+    };
+    HttpResponse::Ok().json(miss)
+}
+
+/// PORT-011 — create the app's public app namespaces under a given env.
+///
+/// Upstream `AppNamespaceController.createAppNamespace` instantiates a public
+/// app namespace into the cluster. batata stores namespaces globally per app,
+/// so we create each requested namespace (from the body) under the default
+/// cluster. The body is a list of `AppNamespaceDTO`.
+async fn openapi_create_app_env(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<String>,
+    body: web::Json<Vec<crate::api::dto::AppNamespaceDTO>>,
+) -> impl Responder {
+    let items = body.into_inner();
+    let service = crate::service::AppNamespaceService::new(data.get_ref().clone());
+    let mut created = Vec::new();
+    for mut dto in items {
+        if dto.data_change_created_by.is_none() {
+            dto.data_change_created_by = Some("apollo".to_string());
+        }
+        match service.create(dto).await {
+            Ok(c) => created.push(c),
+            Err(e) => return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        }
+    }
+    HttpResponse::Ok().json(created)
+}
+
+/// PORT-024 — where an app namespace is used (which envs / clusters / apps).
+///
+/// Upstream `AppNamespaceController.usage`. batata tracks usage via the
+/// namespaces table (appId + cluster + namespaceName). We collect the distinct
+/// clusters and the owning app for the given app namespace name.
+async fn openapi_appnamespace_usage(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (_app_id, namespace_name) = path.into_inner();
+    // All namespaces sharing this name across apps/clusters.
+    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref()).await.unwrap_or_default();
+    let mut envs = Vec::new();
+    let mut clusters = Vec::new();
+    let mut used_by = Vec::new();
+    for ns in all_ns {
+        if ns.namespace_name == namespace_name && !ns.is_deleted {
+            if !clusters.contains(&ns.cluster_name) {
+                clusters.push(ns.cluster_name.clone());
+            }
+            if !used_by.contains(&ns.app_id) {
+                used_by.push(ns.app_id.clone());
+            }
+        }
+    }
+    if !clusters.is_empty() {
+        envs = vec!["DEV".to_string(), "FAT".to_string(), "UAT".to_string(), "PRO".to_string()];
+    }
+    HttpResponse::Ok().json(crate::api::dto::AppNamespaceUsageDTO {
+        namespace_name,
+        envs,
+        clusters,
+        used_by,
+    })
+}
+
+// ===========================================================================
+// PMISC-007~013 / 016: single-tenant degraded permission / user / system
+// ===========================================================================
+
+/// PMISC-007 — whether the current user is a super admin.
+///
+/// Upstream `UserInfoHolder.isSuperAdmin()` gated by `@PreAuthorize
+/// hasRootPermission`. batata is single-tenant with no auth system, so every
+/// caller is treated as having root permission.
+async fn openapi_permissions_root(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    // Upstream returns a boolean `hasRootPermission`.
+    HttpResponse::Ok().json(serde_json::json!({ "hasRootPermission": true }))
+}
+
+/// PMISC-008 — whether the current user has `permissionType` on `appId`.
+///
+/// Upstream `PermissionController.isAppRolePermission` returns a
+/// `PermissionDTO` with `hasPermission`. batata degrades to "allowed".
+async fn openapi_permissions_app(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (app_id, permission_type) = path.into_inner();
+    // Single-tenant: every permission type on every app is granted.
+    HttpResponse::Ok().json(serde_json::json!({
+        "hasPermission": true,
+        "permissionType": permission_type,
+        "appId": app_id,
+        "targetId": app_id,
+    }))
+}
+
+/// PMISC-009 — members of an app role type.
+///
+/// Upstream `RoleController.listAppRoles` returns `RoleDTO` per role type with
+/// its `users`. batata has no role store populated, so we return a single role
+/// with no members for the requested type.
+async fn openapi_roles(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (app_id, role_type) = path.into_inner();
+    let role_name = format!("{}-{}", role_type.to_uppercase(), app_id);
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_name,
+        "users": [],
+    }))
+}
+
+/// PMISC-010 — the organization list.
+///
+/// Upstream `OrganizationController.findAllOrganizations` returns
+/// `List<OrganizationDTO>`. batata is single-tenant; we return a fixed default
+/// organization so portal UI can render without a user directory.
+async fn openapi_organizations(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([{ "orgId": "1", "orgName": "default" }]))
+}
+
+/// PMISC-011 — the current user.
+///
+/// Upstream `UserInfoController.currentUser`. batata is single-tenant, so the
+/// fixed admin user is returned.
+async fn openapi_current_user(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "username": "apollo",
+        "email": "apollo@localhost",
+        "realName": "Apollo",
+        "roles": ["ROLE_ADMIN"],
+    }))
+}
+
+/// PMISC-012 — list users.
+async fn openapi_list_users(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    // Single-tenant: always include the fixed admin. The persistence layer may
+    // be empty, so we synthesize the admin entry directly.
+    let mut users = vec![serde_json::json!({
+        "username": "apollo",
+        "email": "apollo@localhost",
+        "realName": "Apollo",
+        "roles": ["ROLE_ADMIN"],
+    })];
+    if let Ok(persisted) = data.list_users().await {
+        for u in persisted {
+            if u.username == "apollo" {
+                continue;
+            }
+            users.push(serde_json::json!({
+                "username": u.username,
+                "email": u.email,
+                "realName": u.username,
+                "roles": [],
+            }));
+        }
+    }
+    HttpResponse::Ok().json(users)
+}
+
+/// PMISC-012 — create a user.
+async fn openapi_create_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<crate::api::dto::UserDTO>,
+) -> impl Responder {
+    let dto = body.into_inner();
+    match data.create_user(dto).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+/// PMISC-012 — update a user.
+async fn openapi_update_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<String>,
+    body: web::Json<crate::api::dto::UserDTO>,
+) -> impl Responder {
+    let username = path.into_inner();
+    let dto = body.into_inner();
+    match data.update_user(&username, dto).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+/// PMISC-012 — delete a user.
+async fn openapi_delete_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let username = path.into_inner();
+    match data.delete_user(&username).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+/// PMISC-016 — system information.
+///
+/// Upstream `SystemInfoController.getSystemInfo` returns
+/// `SystemInfoDTO` (`apolloVersion` + `gitCommitId`). batata fills these from
+/// the build-time cargo environment.
+async fn openapi_system_info(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let commit = option_env!("GIT_COMMIT_ID").unwrap_or("unknown").to_string();
+    HttpResponse::Ok().json(serde_json::json!({
+        "apolloVersion": version,
+        "gitCommitId": commit,
+    }))
 }

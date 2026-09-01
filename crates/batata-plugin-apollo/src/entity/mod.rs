@@ -57,3 +57,5 @@ pub mod apollo_users;
 pub mod apollo_access_key;
 /// Release history entity.
 pub mod apollo_release_history;
+/// User token entity (portal session / openapi user token).
+pub mod apollo_user_token;

@@ -133,4 +133,11 @@ impl InstancePersistence for InstanceSqlPersistence {
             .await?;
         Ok(results.into_iter().map(|m| m.into()).collect())
     }
+
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<StoredInstance>> {
+        Ok(apollo_instance::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?
+            .map(|m| m.into()))
+    }
 }

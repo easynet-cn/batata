@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `role_id` field.
-    pub role_id: i32,
+    pub role_id: i64,
     /// The `permission_id` field.
-    pub permission_id: i32,
+    pub permission_id: i64,
     /// The `data_change_created_by` field.
     pub data_change_created_by: String,
     /// The `data_change_created_time` field.

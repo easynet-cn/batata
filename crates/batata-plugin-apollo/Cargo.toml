@@ -31,6 +31,9 @@ sea-orm-migration = { workspace = true }
 config = { workspace = true }
 rocksdb = { workspace = true }
 base64 = "0.22.0"
+futures = { workspace = true }
+sha2 = "0.10"
+uuid = { workspace = true }
 hmac = { workspace = true }
 rand = { workspace = true }
 sha1 = "0.10"

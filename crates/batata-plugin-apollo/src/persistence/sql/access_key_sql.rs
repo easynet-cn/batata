@@ -113,7 +113,7 @@ impl AccessKeyPersistence for AccessKeySqlPersistence {
         Ok(updated.into())
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let existing = apollo_access_key::Entity::find_by_id(id)
             .filter(apollo_access_key::Column::IsDeleted.eq(false))
             .one(&self.db)

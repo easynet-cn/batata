@@ -134,7 +134,7 @@ impl NamespacePersistence for SqlApolloPersistence {
         self.namespace.create(namespace).await
     }
 
-    async fn get(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredNamespace>> {
+    async fn get(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredNamespace>> {
         self.namespace.get(id).await
     }
 
@@ -159,7 +159,7 @@ impl NamespacePersistence for SqlApolloPersistence {
         self.namespace.update(namespace).await
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.namespace.delete(id).await
     }
 }
@@ -170,15 +170,15 @@ impl ItemPersistence for SqlApolloPersistence {
         self.item.create(item).await
     }
 
-    async fn get_by_key(&self, namespace_id: i32, key: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
+    async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
         self.item.get_by_key(namespace_id, key).await
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
         self.item.get_by_id(id).await
     }
 
-    async fn list_by_namespace(&self, namespace_id: i32) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
+    async fn list_by_namespace(&self, namespace_id: i64) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         self.item.list_by_namespace(namespace_id).await
     }
 
@@ -186,7 +186,7 @@ impl ItemPersistence for SqlApolloPersistence {
         self.item.update(item).await
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.item.delete(id).await
     }
 
@@ -194,10 +194,10 @@ impl ItemPersistence for SqlApolloPersistence {
         self.item.batch_create(items).await
     }
 
-    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
+    async fn list_deleted_items(&self, namespace_id: i64) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         self.item.list_deleted_items(namespace_id).await
     }
-    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i64>> {
         self.item.find_namespace_ids_by_item_key(key).await
     }
 }
@@ -208,7 +208,7 @@ impl ReleasePersistence for SqlApolloPersistence {
         self.release.create(release).await
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
         self.release.get_by_id(id).await
     }
 
@@ -230,7 +230,7 @@ impl ReleasePersistence for SqlApolloPersistence {
         self.release.list_by_namespace(app_id, cluster_name, namespace_name).await
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.release.delete(id).await
     }
 
@@ -255,7 +255,7 @@ impl CommitPersistence for SqlApolloPersistence {
         self.commit.create(commit).await
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredCommit>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredCommit>> {
         self.commit.get_by_id(id).await
     }
 
@@ -299,14 +299,14 @@ impl GrayReleasePersistence for SqlApolloPersistence {
 
     async fn update_rules(
         &self,
-        id: i32,
+        id: i64,
         rules: String,
         release_id: i64,
     ) -> anyhow::Result<crate::persistence::shared::StoredGrayReleaseRule> {
         self.gray_release.update_rules(id, rules, release_id).await
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.gray_release.delete(id).await
     }
 
@@ -336,6 +336,10 @@ impl InstancePersistence for SqlApolloPersistence {
     async fn list_all(&self) -> anyhow::Result<Vec<crate::persistence::shared::StoredInstance>> {
         self.instance.list_all().await
     }
+
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredInstance>> {
+        self.instance.get_instance_by_id(id).await
+    }
 }
 
 #[async_trait]
@@ -356,7 +360,7 @@ impl AccessKeyPersistence for SqlApolloPersistence {
         self.access_key.update(access_key).await
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.access_key.delete(id).await
     }
 }
@@ -371,7 +375,7 @@ impl ReleaseMessagePersistence for SqlApolloPersistence {
         self.release_message.find_latest_by_message(message).await
     }
 
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
         self.release_message.delete_by_id(id).await
     }
 
@@ -383,7 +387,7 @@ impl ReleaseMessagePersistence for SqlApolloPersistence {
         self.release_message.list_all().await
     }
 
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
         self.release_message.delete_old(before_id).await
     }
 }

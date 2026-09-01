@@ -97,7 +97,7 @@ impl EmbeddedApolloPersistence {
     ///
     /// Key layouts are defined next to each store (`{prefix}{id}`); keep this
     /// list in sync when adding an entity (guarded by recovery round-trip test).
-    fn recover_core_max_id(db: &DB) -> Option<i32> {
+    fn recover_core_max_id(db: &DB) -> Option<i64> {
         const CF_PREFIXES: &[(&str, &str)] = &[
             (batata_consistency::raft::state_machine::CF_APOLLO_NAMESPACE, "ns_id:"),
             (batata_consistency::raft::state_machine::CF_APOLLO_ITEM, "item_id:"),
@@ -107,13 +107,13 @@ impl EmbeddedApolloPersistence {
             (batata_consistency::raft::state_machine::CF_APOLLO_ACCESS_KEY, "ak_id:"),
             (batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG, "rm_id:"),
         ];
-        let mut max: Option<i32> = None;
+        let mut max: Option<i64> = None;
         for (cf_name, prefix) in CF_PREFIXES {
             let Some(cf) = db.cf_handle(cf_name) else { continue };
             for item in db.prefix_iterator_cf(cf, prefix.as_bytes()).flatten() {
                 let Ok(key) = std::str::from_utf8(&item.0) else { continue };
                 let Some(rest) = key.strip_prefix(prefix) else { continue };
-                if let Ok(id) = rest.parse::<i32>() {
+                if let Ok(id) = rest.parse::<i64>() {
                     max = Some(max.unwrap_or(0).max(id));
                 }
             }
@@ -122,7 +122,7 @@ impl EmbeddedApolloPersistence {
     }
 
     /// Portal stores key rows as `id:{n}` inside per-entity column families.
-    fn recover_portal_max_id(db: &DB) -> Option<i32> {
+    fn recover_portal_max_id(db: &DB) -> Option<i64> {
         use batata_consistency::raft::state_machine as sm;
         const PORTAL_CFS: &[&str] = &[
             sm::CF_APOLLO_APP_NAMESPACE,
@@ -130,6 +130,7 @@ impl EmbeddedApolloPersistence {
             sm::CF_APOLLO_CONSUMER,
             sm::CF_APOLLO_CONSUMER_TOKEN,
             sm::CF_APOLLO_CONSUMER_AUDIT,
+            sm::CF_APOLLO_CONSUMER_ROLE,
             sm::CF_APOLLO_PERMISSION,
             sm::CF_APOLLO_ROLE,
             sm::CF_APOLLO_ROLE_PERMISSION,
@@ -140,13 +141,13 @@ impl EmbeddedApolloPersistence {
             sm::CF_APOLLO_INSTANCE_CONFIG,
             sm::CF_APOLLO_RELEASE_HISTORY,
         ];
-        let mut max: Option<i32> = None;
+        let mut max: Option<i64> = None;
         for cf_name in PORTAL_CFS {
             let Some(cf) = db.cf_handle(cf_name) else { continue };
             for item in db.prefix_iterator_cf(cf, b"id:").flatten() {
                 let Ok(key) = std::str::from_utf8(&item.0) else { continue };
                 let Some(rest) = key.strip_prefix("id:") else { continue };
-                if let Ok(id) = rest.parse::<i32>() {
+                if let Ok(id) = rest.parse::<i64>() {
                     max = Some(max.unwrap_or(0).max(id));
                 }
             }
@@ -201,7 +202,7 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
     async fn create(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
         self.namespace.create(namespace).await
     }
-    async fn get(&self, id: i32) -> anyhow::Result<Option<StoredNamespace>> {
+    async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
         self.namespace.get(id).await
     }
     async fn get_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredNamespace>> {
@@ -216,7 +217,7 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
         self.namespace.update(namespace).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.namespace.delete(id).await
     }
 }
@@ -226,28 +227,28 @@ impl crate::persistence::traits::ItemPersistence for EmbeddedApolloPersistence {
     async fn create(&self, item: StoredItem) -> anyhow::Result<StoredItem> {
         self.item.create(item).await
     }
-    async fn get_by_key(&self, namespace_id: i32, key: &str) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<StoredItem>> {
         self.item.get_by_key(namespace_id, key).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredItem>> {
         self.item.get_by_id(id).await
     }
-    async fn list_by_namespace(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_by_namespace(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         self.item.list_by_namespace(namespace_id).await
     }
     async fn update(&self, item: StoredItem) -> anyhow::Result<StoredItem> {
         self.item.update(item).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.item.delete(id).await
     }
     async fn batch_create(&self, items: Vec<StoredItem>) -> anyhow::Result<Vec<StoredItem>> {
         self.item.batch_create(items).await
     }
-    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_deleted_items(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         self.item.list_deleted_items(namespace_id).await
     }
-    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i64>> {
         self.item.find_namespace_ids_by_item_key(key).await
     }
 }
@@ -257,7 +258,7 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
     async fn create(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
         self.release.create(release).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredRelease>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
         self.release.get_by_id(id).await
     }
     async fn get_latest(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredRelease>> {
@@ -266,7 +267,7 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
     async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<StoredRelease>> {
         self.release.list_by_namespace(app_id, cluster_name, namespace_name).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.release.delete(id).await
     }
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>> {
@@ -290,7 +291,7 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
     async fn create(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
         self.commit.create(commit).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredCommit>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {
         self.commit.get_by_id(id).await
     }
     async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<StoredCommit>> {
@@ -312,10 +313,10 @@ impl crate::persistence::traits::GrayReleasePersistence for EmbeddedApolloPersis
     async fn get_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredGrayReleaseRule>> {
         self.gray_release.get_by_namespace(app_id, cluster_name, namespace_name).await
     }
-    async fn update_rules(&self, id: i32, rules: String, release_id: i64) -> anyhow::Result<StoredGrayReleaseRule> {
+    async fn update_rules(&self, id: i64, rules: String, release_id: i64) -> anyhow::Result<StoredGrayReleaseRule> {
         self.gray_release.update_rules(id, rules, release_id).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.gray_release.delete(id).await
     }
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredGrayReleaseRule>> {
@@ -337,6 +338,9 @@ impl crate::persistence::traits::InstancePersistence for EmbeddedApolloPersisten
     async fn list_all(&self) -> anyhow::Result<Vec<StoredInstance>> {
         self.instance.list_all().await
     }
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<StoredInstance>> {
+        self.instance.get_instance_by_id(id).await
+    }
 }
 
 #[async_trait]
@@ -353,7 +357,7 @@ impl crate::persistence::traits::AccessKeyPersistence for EmbeddedApolloPersiste
     async fn update(&self, access_key: StoredAccessKey) -> anyhow::Result<StoredAccessKey> {
         self.access_key.update(access_key).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.access_key.delete(id).await
     }
 }
@@ -369,7 +373,7 @@ impl crate::persistence::traits::ReleaseMessagePersistence for EmbeddedApolloPer
     ) -> anyhow::Result<Option<StoredReleaseMessage>> {
         self.release_message.find_latest_by_message(message).await
     }
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
         self.release_message.delete_by_id(id).await
     }
     async fn get_latest(&self) -> anyhow::Result<Option<StoredReleaseMessage>> {
@@ -378,7 +382,7 @@ impl crate::persistence::traits::ReleaseMessagePersistence for EmbeddedApolloPer
     async fn list_all(&self) -> anyhow::Result<Vec<StoredReleaseMessage>> {
         self.release_message.list_all().await
     }
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
         self.release_message.delete_old(before_id).await
     }
 }
@@ -411,6 +415,7 @@ impl ApolloPersistenceService for EmbeddedApolloPersistence {
             CF_APOLLO_NAMESPACE_LOCK, CF_APOLLO_RELEASE_HISTORY,
             CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_CONSUMER,
             CF_APOLLO_CONSUMER_TOKEN, CF_APOLLO_CONSUMER_AUDIT, CF_APOLLO_PERMISSION,
+            CF_APOLLO_CONSUMER_ROLE,
             CF_APOLLO_ROLE, CF_APOLLO_ROLE_PERMISSION, CF_APOLLO_USER_ROLE,
             CF_APOLLO_USERS, CF_APOLLO_FAVORITE, CF_APOLLO_SERVER_CONFIG,
             CF_APOLLO_INSTANCE_CONFIG,

@@ -79,7 +79,7 @@ impl NamespacePersistence for NamespaceSqlPersistence {
         Ok(model.into())
     }
 
-    async fn get(&self, id: i32) -> anyhow::Result<Option<StoredNamespace>> {
+    async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
         let result = apollo_namespace::Entity::find_by_id(id)
             .filter(apollo_namespace::Column::IsDeleted.eq(false))
             .one(&self.db)
@@ -142,7 +142,7 @@ impl NamespacePersistence for NamespaceSqlPersistence {
         Ok(updated.into())
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let existing = apollo_namespace::Entity::find_by_id(id)
             .filter(apollo_namespace::Column::IsDeleted.eq(false))
             .one(&self.db)

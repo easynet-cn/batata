@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use crate::api::dto::ItemChangeSets;
+use crate::api::dto::{ConfigChangeContent, ItemChangeSets, ItemPair, ItemDTO};
 use crate::persistence::shared::{StoredItem, StoredCommit};
 use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, CommitPersistence, NamespacePersistence};
 use chrono::Utc;
-use serde_json::json;
 
 /// Represents the `ItemSetService` entity.
 pub struct ItemSetService {
@@ -29,7 +28,9 @@ impl ItemSetService {
             .and_then(|item| item.data_change_created_by.clone())
             .unwrap_or_else(|| "admin".to_string());
 
-        let mut change_records = Vec::new();
+        // Upstream `ConfigChangeContentBuilder`: the commit row stores full item
+        // snapshots (and old/new pairs for updates), not a flat change log.
+        let mut content = ConfigChangeContent::default();
 
         for item in change_sets.create_items {
             let existing = self.persistence.get_by_key(namespace.id, &item.key).await?;
@@ -54,21 +55,18 @@ impl ItemSetService {
                 data_change_last_time: Some(now),
             };
 
-            <dyn ItemPersistence>::create(&self.persistence, stored).await?;
+            let created = <dyn ItemPersistence>::create(&self.persistence, stored).await?;
 
-            change_records.push(json!({
-                "field": "item",
-                "oldValue": "",
-                "newValue": format!("{}={}", item.key, item.value),
-                "changeType": "ADD"
-            }));
+            content.create_items.push(created.into());
         }
 
         for item in change_sets.update_items {
             let stored = self.persistence.get_by_key(namespace.id, &item.key).await?;
 
             if let Some(mut stored_item) = stored {
-                let old_value = stored_item.value.clone();
+                // Snapshot the item before applying the mutation so the commit
+                // keeps a full before/after record.
+                let old_item: ItemDTO = stored_item.clone().into();
 
                 stored_item.r#type = item.r#type.unwrap_or(stored_item.r#type);
                 stored_item.value = item.value.clone();
@@ -77,14 +75,16 @@ impl ItemSetService {
                 stored_item.data_change_last_modified_by = Some(operator.clone());
                 stored_item.data_change_last_time = Some(now);
 
-                <dyn ItemPersistence>::update(&self.persistence, stored_item).await?;
+                let updated = <dyn ItemPersistence>::update(&self.persistence, stored_item).await?;
 
-                change_records.push(json!({
-                    "field": "item",
-                    "oldValue": format!("{}={}", item.key, old_value),
-                    "newValue": format!("{}={}", item.key, item.value),
-                    "changeType": "MODIFY"
-                }));
+                // Upstream `ConfigChangeContentBuilder.updateItem` only records a
+                // pair when the value actually changed.
+                if old_item.value != updated.value {
+                    content.update_items.push(ItemPair {
+                        old_item,
+                        new_item: updated.into(),
+                    });
+                }
             }
         }
 
@@ -92,21 +92,18 @@ impl ItemSetService {
             let stored = self.persistence.get_by_key(namespace.id, &item.key).await?;
 
             if let Some(stored_item) = stored {
-                let old_value = stored_item.value.clone();
+                // Snapshot the item before it is removed so the commit keeps a
+                // full record of what was deleted.
+                let deleted: ItemDTO = stored_item.clone().into();
 
                 <dyn ItemPersistence>::delete(&self.persistence, stored_item.id).await?;
 
-                change_records.push(json!({
-                    "field": "item",
-                    "oldValue": format!("{}={}", item.key, old_value),
-                    "newValue": "",
-                    "changeType": "DELETE"
-                }));
+                content.delete_items.push(deleted);
             }
         }
 
-        if !change_records.is_empty() {
-            let change_sets_json = serde_json::to_string(&change_records)?;
+        if content.has_content() {
+            let change_sets_json = serde_json::to_string(&content)?;
 
             let commit_stored = StoredCommit {
                 id: 0,

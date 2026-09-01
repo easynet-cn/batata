@@ -23,6 +23,8 @@ pub mod middleware;
 pub mod service;
 /// HTTP route registration for the Apollo plugin.
 pub mod route;
+/// Authentication and authorization for the Apollo plugin.
+pub mod auth;
 /// Raft integration for the Apollo plugin.
 pub mod raft;
 

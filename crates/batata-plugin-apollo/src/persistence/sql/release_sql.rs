@@ -85,7 +85,7 @@ impl ReleasePersistence for ReleaseSqlPersistence {
         Ok(model.into())
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredRelease>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
         let result = apollo_release::Entity::find_by_id(id)
             .filter(apollo_release::Column::IsDeleted.eq(false))
             .filter(apollo_release::Column::IsAbandoned.eq(false))
@@ -130,7 +130,7 @@ impl ReleasePersistence for ReleaseSqlPersistence {
         Ok(results.into_iter().map(|m| m.into()).collect())
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let existing = apollo_release::Entity::find_by_id(id)
             .filter(apollo_release::Column::IsDeleted.eq(false))
             .one(&self.db)

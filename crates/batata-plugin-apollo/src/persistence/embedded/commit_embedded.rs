@@ -32,7 +32,7 @@ impl CommitEmbedded {
     }
 
     /// Build key for commit by id: "commit:{commit_id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("commit:{}", id)
     }
 
@@ -42,7 +42,7 @@ impl CommitEmbedded {
     }
 
     /// Build index key for listing: "commit_by_ns:{app_id}:{cluster}:{namespace}:{commit_id}"
-    fn index_key(app_id: &str, cluster: &str, namespace: &str, commit_id: i32) -> String {
+    fn index_key(app_id: &str, cluster: &str, namespace: &str, commit_id: i64) -> String {
         format!("commit_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, commit_id)
     }
 }
@@ -75,7 +75,7 @@ impl CommitPersistence for CommitEmbedded {
         Ok(commit)
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredCommit>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {
         let cf = self.cf()?;
         let key = Self::key_by_id(id);
         match self.db.get_cf(cf, key.as_bytes())? {

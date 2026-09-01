@@ -91,11 +91,15 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     );
 
     // ---- Consumer + ConsumerToken ----
+    // NOTE: `apollo_consumer.app_id` carries a UNIQUE constraint and the
+    // consumer is never deleted, so the app id must be unique per run to keep
+    // the suite rerunnable against a persistent SQL database.
+    let consumer_app_id = format!("app1-{}", chrono::Utc::now().timestamp_millis());
     let consumer = ConsumerPersistence::create_consumer(
         &p,
         ConsumerDTO {
             id: None,
-            app_id: "app1".into(),
+            app_id: consumer_app_id.clone(),
             name: "c1".into(),
             org_id: "o".into(),
             org_name: "on".into(),
@@ -111,7 +115,7 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     assert!(ConsumerPersistence::get_consumer(&p, consumer.id).await.unwrap().is_some());
     assert!(!ConsumerPersistence::list_consumers(&p).await.unwrap().is_empty());
     assert!(
-        ConsumerPersistence::get_consumer_by_app(&p, "app1")
+        ConsumerPersistence::get_consumer_by_app(&p, &consumer_app_id)
             .await
             .unwrap()
             .is_some()
@@ -144,12 +148,16 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     );
 
     // ---- Permission + Role (+role_permission/user_role) ----
-    let perm = PermissionPersistence::create_permission(&p, 1, "target1", "tester")
+    // Same rerun-safety note as the consumer: (target_id, permission_type) is
+    // UNIQUE and the permission is never deleted, so the target must be
+    // unique per run.
+    let perm_target = format!("target1-{}", chrono::Utc::now().timestamp_millis());
+    let perm = PermissionPersistence::create_permission(&p, 1, &perm_target, "tester")
         .await
         .unwrap();
     assert!(perm.id > 0);
     assert!(
-        !PermissionPersistence::list_permission_by_target(&p, "target1")
+        !PermissionPersistence::list_permission_by_target(&p, &perm_target)
             .await
             .unwrap()
             .is_empty()
@@ -318,11 +326,14 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     );
 
     // ---- Namespace / Item / Release (core) + list_all / list_deleted_items ----
+    // `apollo_namespace` is UNIQUE on (app_id, cluster, name, deleted_at) and
+    // the namespace is never deleted, so the app id must be unique per run.
+    let ns_app_id = format!("nsapp-{}", chrono::Utc::now().timestamp_millis());
     let namespace = NamespacePersistence::create(
         &p,
         StoredNamespace {
             id: 0,
-            app_id: "nsapp".into(),
+            app_id: ns_app_id,
             cluster_name: "default".into(),
             namespace_name: "ns1".into(),
             format: "properties".into(),
@@ -377,11 +388,14 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
         "list_all should include the created namespace"
     );
 
+    // `apollo_release.release_key` is UNIQUE and the release is never
+    // deleted — timestamp it so reruns against a persistent DB don't collide.
+    let release_key = format!("rk1-{}", chrono::Utc::now().timestamp_millis());
     let release = ReleasePersistence::create(
         &p,
         StoredRelease {
             id: 0,
-            release_key: "rk1".into(),
+            release_key,
             name: "r".into(),
             comment: None,
             app_id: "app1".into(),

@@ -8,7 +8,7 @@ pub trait ReleasePersistence: Send + Sync {
     /// Performs the `create` operation.
     async fn create(&self, release: StoredRelease) -> anyhow::Result<StoredRelease>;
     /// Returns the requested value.
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredRelease>>;
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>>;
     /// Returns the requested value.
     async fn get_latest(
         &self,
@@ -24,7 +24,7 @@ pub trait ReleasePersistence: Send + Sync {
         namespace_name: &str,
     ) -> anyhow::Result<Vec<StoredRelease>>;
     /// Performs the `delete` operation.
-    async fn delete(&self, id: i32) -> anyhow::Result<()>;
+    async fn delete(&self, id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>>;
     /// Persist mutations to an existing row (e.g. upstream sets

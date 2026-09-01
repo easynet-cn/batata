@@ -99,7 +99,7 @@ impl GrayReleasePersistence for GrayReleaseSqlPersistence {
 
     async fn update_rules(
         &self,
-        id: i32,
+        id: i64,
         rules: String,
         release_id: i64,
     ) -> anyhow::Result<StoredGrayReleaseRule> {
@@ -118,7 +118,7 @@ impl GrayReleasePersistence for GrayReleaseSqlPersistence {
         Ok(updated.into())
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let existing = apollo_gray_release_rule::Entity::find_by_id(id)
             .filter(apollo_gray_release_rule::Column::IsDeleted.eq(false))
             .one(&self.db)

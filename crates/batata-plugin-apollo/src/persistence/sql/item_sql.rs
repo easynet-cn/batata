@@ -79,7 +79,7 @@ impl ItemPersistence for ItemSqlPersistence {
         Ok(model.into())
     }
 
-    async fn get_by_key(&self, namespace_id: i32, key: &str) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<StoredItem>> {
         let result = apollo_item::Entity::find()
             .filter(apollo_item::Column::NamespaceId.eq(namespace_id))
             .filter(apollo_item::Column::Key.eq(key))
@@ -89,7 +89,7 @@ impl ItemPersistence for ItemSqlPersistence {
         Ok(result.map(|m| m.into()))
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredItem>> {
         let result = apollo_item::Entity::find_by_id(id)
             .filter(apollo_item::Column::IsDeleted.eq(false))
             .one(&self.db)
@@ -97,7 +97,7 @@ impl ItemPersistence for ItemSqlPersistence {
         Ok(result.map(|m| m.into()))
     }
 
-    async fn list_by_namespace(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_by_namespace(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         let results = apollo_item::Entity::find()
             .filter(apollo_item::Column::NamespaceId.eq(namespace_id))
             .filter(apollo_item::Column::IsDeleted.eq(false))
@@ -129,7 +129,7 @@ impl ItemPersistence for ItemSqlPersistence {
         Ok(updated.into())
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let existing = apollo_item::Entity::find_by_id(id)
             .filter(apollo_item::Column::IsDeleted.eq(false))
             .one(&self.db)
@@ -166,19 +166,19 @@ impl ItemPersistence for ItemSqlPersistence {
         Ok(created_items.into_iter().map(|m| m.into()).collect())
     }
 
-    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i64>> {
         let rows = apollo_item::Entity::find()
             .filter(apollo_item::Column::Key.eq(key))
             .filter(apollo_item::Column::IsDeleted.eq(false))
             .all(&self.db)
             .await?;
-        let mut ids: Vec<i32> = rows.into_iter().map(|m| m.namespace_id).collect();
+        let mut ids: Vec<i64> = rows.into_iter().map(|m| m.namespace_id).collect();
         ids.sort_unstable();
         ids.dedup();
         Ok(ids)
     }
 
-    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_deleted_items(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         let results = apollo_item::Entity::find()
             .filter(apollo_item::Column::NamespaceId.eq(namespace_id))
             .filter(apollo_item::Column::IsDeleted.eq(true))

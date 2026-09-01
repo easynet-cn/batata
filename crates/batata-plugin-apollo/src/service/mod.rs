@@ -50,6 +50,8 @@ pub mod release_message_service;
 pub mod notification_hub;
 /// Config sync service.
 pub mod config_sync_service;
+/// User token service (portal session / openapi user token).
+pub mod user_token_service;
 
 pub use app_service::AppService;
 pub use cluster_service::ClusterService;
@@ -76,3 +78,4 @@ pub use favorite_service::FavoriteService;
 pub use search_service::SearchService;
 pub use release_message_service::ReleaseMessageService;
 pub use config_sync_service::ConfigSyncService;
+pub use user_token_service::UserTokenService;

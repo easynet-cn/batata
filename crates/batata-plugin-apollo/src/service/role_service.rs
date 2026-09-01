@@ -22,7 +22,7 @@ impl RoleService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, id: i32) -> Result<Option<RoleDTO>, anyhow::Error> {
+    pub async fn get(&self, id: i64) -> Result<Option<RoleDTO>, anyhow::Error> {
         let model = self.persistence.get_role(id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
@@ -34,36 +34,36 @@ impl RoleService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, id: i32) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, id: i64) -> Result<(), anyhow::Error> {
         self.persistence.delete_role(id).await?;
         Ok(())
     }
 
     /// Performs the `assign_permission` operation.
-    pub async fn assign_permission(&self, role_id: i32, permission_id: i32, created_by: &str) -> Result<(), anyhow::Error> {
+    pub async fn assign_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> Result<(), anyhow::Error> {
         self.persistence.assign_role_permission(role_id, permission_id, created_by).await?;
         Ok(())
     }
 
     /// Deletes the specified resource.
-    pub async fn remove_permission(&self, role_id: i32, permission_id: i32) -> Result<(), anyhow::Error> {
+    pub async fn remove_permission(&self, role_id: i64, permission_id: i64) -> Result<(), anyhow::Error> {
         self.persistence.remove_role_permission(role_id, permission_id).await?;
         Ok(())
     }
 
     /// Returns the requested value.
-    pub async fn list_permissions(&self, role_id: i32) -> Result<Vec<i32>, anyhow::Error> {
+    pub async fn list_permissions(&self, role_id: i64) -> Result<Vec<i64>, anyhow::Error> {
         self.persistence.list_role_permissions(role_id).await
     }
 
     /// Performs the `assign_role_to_user` operation.
-    pub async fn assign_role_to_user(&self, user_id: &str, role_id: i32, created_by: &str) -> Result<(), anyhow::Error> {
+    pub async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> Result<(), anyhow::Error> {
         self.persistence.assign_role_to_user(user_id, role_id, created_by).await?;
         Ok(())
     }
 
     /// Deletes the specified resource.
-    pub async fn remove_role_from_user(&self, user_id: &str, role_id: i32) -> Result<(), anyhow::Error> {
+    pub async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> Result<(), anyhow::Error> {
         self.persistence.remove_role_from_user(user_id, role_id).await?;
         Ok(())
     }

@@ -22,7 +22,7 @@ impl InstanceConfigService {
     }
 
     /// Returns the requested value.
-    pub async fn get_by_instance(&self, instance_id: i32) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
+    pub async fn get_by_instance(&self, instance_id: i64) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
         let models = self.persistence.get_instance_config_by_instance(instance_id).await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
@@ -34,7 +34,7 @@ impl InstanceConfigService {
     }
 
     /// Deletes the specified resource.
-    pub async fn delete_by_instance(&self, instance_id: i32) -> Result<(), anyhow::Error> {
+    pub async fn delete_by_instance(&self, instance_id: i64) -> Result<(), anyhow::Error> {
         self.persistence.delete_instance_config_by_instance(instance_id).await?;
         Ok(())
     }

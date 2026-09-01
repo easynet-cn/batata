@@ -31,9 +31,10 @@ pub use release_message::ReleaseMessagePersistence;
 pub use service_registry::{ServiceRegistryEntry, ServiceRegistryPersistence};
 pub use namespace_lock::NamespaceLockPersistence;
 pub use portal::{
-    AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerTokenPersistence,
-    FavoritePersistence, InstanceConfigPersistence, PermissionPersistence,
-    ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
+    AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
+    ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence, PermissionPersistence,
+    ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence, UserPersistence,
+    UserTokenPersistence,
 };
 
 use async_trait::async_trait;
@@ -63,6 +64,9 @@ pub trait ApolloPersistenceService:
     + InstanceConfigPersistence
     + ReleaseHistoryPersistence
     + ConsumerTokenPersistence
+    + ConsumerRolePersistence
+    + UserPersistence
+    + UserTokenPersistence
     + ServiceRegistryPersistence
     + Send
     + Sync
@@ -122,7 +126,7 @@ impl<T: ApolloPersistenceService + ?Sized> NamespacePersistence for Arc<T> {
     async fn create(&self, namespace: crate::persistence::shared::StoredNamespace) -> anyhow::Result<crate::persistence::shared::StoredNamespace> {
         NamespacePersistence::create(&**self, namespace).await
     }
-    async fn get(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredNamespace>> {
+    async fn get(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredNamespace>> {
         NamespacePersistence::get(&**self, id).await
     }
     async fn get_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredNamespace>> {
@@ -137,7 +141,7 @@ impl<T: ApolloPersistenceService + ?Sized> NamespacePersistence for Arc<T> {
     async fn update(&self, namespace: crate::persistence::shared::StoredNamespace) -> anyhow::Result<crate::persistence::shared::StoredNamespace> {
         NamespacePersistence::update(&**self, namespace).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         NamespacePersistence::delete(&**self, id).await
     }
 }
@@ -147,28 +151,28 @@ impl<T: ApolloPersistenceService + ?Sized> ItemPersistence for Arc<T> {
     async fn create(&self, item: crate::persistence::shared::StoredItem) -> anyhow::Result<crate::persistence::shared::StoredItem> {
         ItemPersistence::create(&**self, item).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
         ItemPersistence::get_by_id(&**self, id).await
     }
-    async fn get_by_key(&self, namespace_id: i32, key: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
+    async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredItem>> {
         ItemPersistence::get_by_key(&**self, namespace_id, key).await
     }
-    async fn list_by_namespace(&self, namespace_id: i32) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
+    async fn list_by_namespace(&self, namespace_id: i64) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         ItemPersistence::list_by_namespace(&**self, namespace_id).await
     }
     async fn update(&self, item: crate::persistence::shared::StoredItem) -> anyhow::Result<crate::persistence::shared::StoredItem> {
         ItemPersistence::update(&**self, item).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         ItemPersistence::delete(&**self, id).await
     }
     async fn batch_create(&self, items: Vec<crate::persistence::shared::StoredItem>) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         ItemPersistence::batch_create(&**self, items).await
     }
-    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
+    async fn list_deleted_items(&self, namespace_id: i64) -> anyhow::Result<Vec<crate::persistence::shared::StoredItem>> {
         ItemPersistence::list_deleted_items(&**self, namespace_id).await
     }
-    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i64>> {
         ItemPersistence::find_namespace_ids_by_item_key(&**self, key).await
     }
 }
@@ -178,7 +182,7 @@ impl<T: ApolloPersistenceService + ?Sized> ReleasePersistence for Arc<T> {
     async fn create(&self, release: crate::persistence::shared::StoredRelease) -> anyhow::Result<crate::persistence::shared::StoredRelease> {
         ReleasePersistence::create(&**self, release).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
         ReleasePersistence::get_by_id(&**self, id).await
     }
     async fn get_latest(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
@@ -187,7 +191,7 @@ impl<T: ApolloPersistenceService + ?Sized> ReleasePersistence for Arc<T> {
     async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<crate::persistence::shared::StoredRelease>> {
         ReleasePersistence::list_by_namespace(&**self, app_id, cluster_name, namespace_name).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         ReleasePersistence::delete(&**self, id).await
     }
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredRelease>> {
@@ -210,7 +214,7 @@ impl<T: ApolloPersistenceService + ?Sized> CommitPersistence for Arc<T> {
     async fn create(&self, commit: crate::persistence::shared::StoredCommit) -> anyhow::Result<crate::persistence::shared::StoredCommit> {
         CommitPersistence::create(&**self, commit).await
     }
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<crate::persistence::shared::StoredCommit>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredCommit>> {
         CommitPersistence::get_by_id(&**self, id).await
     }
     async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<crate::persistence::shared::StoredCommit>> {
@@ -232,10 +236,10 @@ impl<T: ApolloPersistenceService + ?Sized> GrayReleasePersistence for Arc<T> {
     async fn get_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredGrayReleaseRule>> {
         GrayReleasePersistence::get_by_namespace(&**self, app_id, cluster_name, namespace_name).await
     }
-    async fn update_rules(&self, id: i32, rules: String, release_id: i64) -> anyhow::Result<crate::persistence::shared::StoredGrayReleaseRule> {
+    async fn update_rules(&self, id: i64, rules: String, release_id: i64) -> anyhow::Result<crate::persistence::shared::StoredGrayReleaseRule> {
         GrayReleasePersistence::update_rules(&**self, id, rules, release_id).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         GrayReleasePersistence::delete(&**self, id).await
     }
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<crate::persistence::shared::StoredGrayReleaseRule>> {
@@ -257,6 +261,9 @@ impl<T: ApolloPersistenceService + ?Sized> InstancePersistence for Arc<T> {
     async fn list_all(&self) -> anyhow::Result<Vec<crate::persistence::shared::StoredInstance>> {
         InstancePersistence::list_all(&**self).await
     }
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<crate::persistence::shared::StoredInstance>> {
+        InstancePersistence::get_instance_by_id(&**self, id).await
+    }
 }
 
 #[async_trait]
@@ -273,7 +280,7 @@ impl<T: ApolloPersistenceService + ?Sized> AccessKeyPersistence for Arc<T> {
     async fn update(&self, access_key: crate::persistence::shared::StoredAccessKey) -> anyhow::Result<crate::persistence::shared::StoredAccessKey> {
         AccessKeyPersistence::update(&**self, access_key).await
     }
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         AccessKeyPersistence::delete(&**self, id).await
     }
 }
@@ -286,7 +293,7 @@ impl<T: ApolloPersistenceService + ?Sized> ReleaseMessagePersistence for Arc<T> 
     async fn find_latest_by_message(&self, message: &str) -> anyhow::Result<Option<crate::persistence::shared::StoredReleaseMessage>> {
         ReleaseMessagePersistence::find_latest_by_message(&**self, message).await
     }
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
         ReleaseMessagePersistence::delete_by_id(&**self, id).await
     }
     async fn get_latest(&self) -> anyhow::Result<Option<crate::persistence::shared::StoredReleaseMessage>> {
@@ -295,7 +302,7 @@ impl<T: ApolloPersistenceService + ?Sized> ReleaseMessagePersistence for Arc<T> 
     async fn list_all(&self) -> anyhow::Result<Vec<crate::persistence::shared::StoredReleaseMessage>> {
         ReleaseMessagePersistence::list_all(&**self).await
     }
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
         ReleaseMessagePersistence::delete_old(&**self, before_id).await
     }
 }
@@ -331,5 +338,36 @@ impl<T: ApolloPersistenceService + ?Sized> ServiceRegistryPersistence for Arc<T>
         window_secs: i64,
     ) -> anyhow::Result<Vec<crate::persistence::traits::service_registry::ServiceRegistryEntry>> {
         ServiceRegistryPersistence::find_alive(&**self, service_name, window_secs).await
+    }
+}
+
+#[async_trait]
+impl<T: ApolloPersistenceService + ?Sized> UserTokenPersistence for Arc<T> {
+    async fn create_user_token(
+        &self,
+        user_id: &str,
+        name: &str,
+        token_prefix: &str,
+        token_hash: &str,
+        scopes: Option<&str>,
+        expires: chrono::DateTime<chrono::Utc>,
+        created_by: &str,
+    ) -> anyhow::Result<crate::entity::apollo_user_token::Model> {
+        UserTokenPersistence::create_user_token(&**self, user_id, name, token_prefix, token_hash, scopes, expires, created_by).await
+    }
+    async fn get_user_token_by_prefix(
+        &self,
+        token_prefix: &str,
+    ) -> anyhow::Result<Option<crate::entity::apollo_user_token::Model>> {
+        UserTokenPersistence::get_user_token_by_prefix(&**self, token_prefix).await
+    }
+    async fn list_user_tokens(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<crate::entity::apollo_user_token::Model>> {
+        UserTokenPersistence::list_user_tokens(&**self, user_id).await
+    }
+    async fn delete_user_token(&self, id: i64) -> anyhow::Result<()> {
+        UserTokenPersistence::delete_user_token(&**self, id).await
     }
 }

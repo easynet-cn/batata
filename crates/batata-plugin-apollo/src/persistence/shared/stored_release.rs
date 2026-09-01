@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredRelease` entity.
 pub struct StoredRelease {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `release_key` field.
     pub release_key: String,
     /// The `name` field.

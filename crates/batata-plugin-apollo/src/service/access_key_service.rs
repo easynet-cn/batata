@@ -31,7 +31,9 @@ impl AccessKeyService {
             deleted_at: 0,
             data_change_created_by: operator.to_string(),
             data_change_created_time: now,
-            data_change_last_modified_by: None,
+            // Upstream sets `dataChangeLastModifiedBy` to the creator on
+            // create, and the column is NOT NULL — never leave it empty here.
+            data_change_last_modified_by: Some(operator.to_string()),
             data_change_last_time: None,
         };
 
@@ -46,13 +48,13 @@ impl AccessKeyService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, _app_id: &str, id: i32, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, _app_id: &str, id: i64, _operator: &str) -> Result<(), anyhow::Error> {
         self.persistence.delete(id).await?;
         Ok(())
     }
 
     /// Performs the `enable` operation.
-    pub async fn enable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+    pub async fn enable(&self, app_id: &str, id: i64, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list
             .into_iter()
@@ -66,7 +68,7 @@ impl AccessKeyService {
     }
 
     /// Performs the `disable` operation.
-    pub async fn disable(&self, app_id: &str, id: i32, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+    pub async fn disable(&self, app_id: &str, id: i64, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list
             .into_iter()

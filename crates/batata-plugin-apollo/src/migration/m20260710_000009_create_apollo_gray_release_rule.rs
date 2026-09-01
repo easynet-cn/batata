@@ -22,7 +22,7 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloGrayReleaseRule::BranchName, 32, "default"))
                     .col(string_len_default(ApolloGrayReleaseRule::Rules, 16000, "[]"))
                     .col(unsigned_int(ApolloGrayReleaseRule::ReleaseId, backend).default(0))
-                    .col(tiny_int_null(ApolloGrayReleaseRule::BranchStatus, backend))
+                    .col(signed_int_null(ApolloGrayReleaseRule::BranchStatus, backend))
                     .col(bit(ApolloGrayReleaseRule::IsDeleted, None))
                     .col(unsigned_big_int(ApolloGrayReleaseRule::DeletedAt, backend).default(0))
                     .col(string_len_default(ApolloGrayReleaseRule::DataChangeCreatedBy, 64, "default"))

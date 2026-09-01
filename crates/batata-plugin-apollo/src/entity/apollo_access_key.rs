@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `secret` field.
     pub secret: String,
     /// The `mode` field.
-    pub mode: i16,
+    pub mode: i32,
     /// The `is_enabled` field.
     pub is_enabled: bool,
     /// The `is_deleted` field.

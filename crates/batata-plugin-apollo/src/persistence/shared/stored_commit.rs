@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredCommit` entity.
 pub struct StoredCommit {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `change_sets` field.
     pub change_sets: String,
     /// The `app_id` field.

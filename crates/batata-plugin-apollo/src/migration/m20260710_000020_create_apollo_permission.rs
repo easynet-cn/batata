@@ -16,7 +16,7 @@ impl MigrationTrait for Migration {
                     .table(ApolloPermission::Table)
                     .if_not_exists()
                     .col(unsigned_int(ApolloPermission::Id, backend).auto_increment().primary_key())
-                    .col(unsigned_int(ApolloPermission::PermissionType, backend))
+                    .col(signed_int(ApolloPermission::PermissionType, backend))
                     .col(string_len_default(ApolloPermission::TargetId, 256, ""))
                     .col(string_len_default(ApolloPermission::DataChangeCreatedBy, 64, "default"))
                     .col(date_time(ApolloPermission::DataChangeCreatedTime))

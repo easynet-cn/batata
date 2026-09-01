@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `instance_id` field.
-    pub instance_id: i32,
+    pub instance_id: i64,
     /// The `config_app_id` field.
     pub config_app_id: String,
     /// The `namespace_name` field.

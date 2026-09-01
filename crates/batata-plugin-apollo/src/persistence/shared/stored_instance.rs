@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredInstance` entity.
 pub struct StoredInstance {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.

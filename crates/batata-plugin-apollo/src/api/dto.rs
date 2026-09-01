@@ -69,14 +69,14 @@ pub struct NamespaceDTO {
 pub struct ItemDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `key` field.
     pub key: String,
     /// The `value` field.
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `type` field.
-    pub r#type: Option<i16>,
+    pub r#type: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `comment` field.
     pub comment: Option<String>,
@@ -103,7 +103,7 @@ pub struct ItemDTO {
 pub struct ReleaseDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `release_key` field.
     pub release_key: String,
     /// The `name` field.
@@ -199,7 +199,7 @@ pub struct ClusterDTO {
     pub app_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `parent_cluster_id` field.
-    pub parent_cluster_id: Option<i32>,
+    pub parent_cluster_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `comment` field.
     pub comment: Option<String>,
@@ -223,7 +223,7 @@ pub struct ClusterDTO {
 pub struct CommitDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `change_sets` field.
     pub change_sets: String,
     /// The `app_id` field.
@@ -249,7 +249,7 @@ pub struct CommitDTO {
 pub struct GrayReleaseRuleDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -265,7 +265,7 @@ pub struct GrayReleaseRuleDTO {
     pub release_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `branch_status` field.
-    pub branch_status: Option<i16>,
+    pub branch_status: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `priority` field.
     pub priority: Option<i32>,
@@ -286,7 +286,7 @@ pub struct GrayReleaseRuleDTO {
 pub struct InstanceDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -328,13 +328,13 @@ pub struct ServerConfigDTO {
 pub struct AccessKeyDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `app_id` field.
     pub app_id: String,
     /// The `secret` field.
     pub secret: String,
     /// The `mode` field.
-    pub mode: i16,
+    pub mode: i32,
     /// The `is_enabled` field.
     pub is_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -351,7 +351,7 @@ pub struct AccessKeyDTO {
 pub struct ReleaseHistoryDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.
@@ -361,11 +361,11 @@ pub struct ReleaseHistoryDTO {
     /// The `branch_name` field.
     pub branch_name: String,
     /// The `release_id` field.
-    pub release_id: i32,
+    pub release_id: i64,
     /// The `previous_release_id` field.
-    pub previous_release_id: i32,
+    pub previous_release_id: i64,
     /// The `operation` field.
-    pub operation: i16,
+    pub operation: i32,
     /// The `operation_context` field.
     pub operation_context: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -382,7 +382,7 @@ pub struct ReleaseHistoryDTO {
 pub struct AppNamespaceDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `name` field.
     pub name: String,
     /// The `app_id` field.
@@ -415,13 +415,55 @@ pub struct ItemChangeSets {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Item snapshot before and after an update.
+///
+/// Upstream `ConfigChangeContentBuilder.ItemPair`.
+pub struct ItemPair {
+    /// The item snapshot before the update.
+    pub old_item: ItemDTO,
+    /// The item snapshot after the update.
+    pub new_item: ItemDTO,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Change-set payload persisted into `apollo_commit.change_sets`.
+///
+/// Upstream stores the serialized `ConfigChangeContentBuilder`
+/// (`apollo-biz/.../utils/ConfigChangeContentBuilder.java`) verbatim in the
+/// commit row: `createItems` and `deleteItems` hold full item snapshots while
+/// `updateItems` holds `{oldItem, newItem}` pairs. This is deliberately
+/// distinct from `ItemChangeSets`, which is the OpenAPI request contract where
+/// `updateItems` is a plain list of item DTOs.
+pub struct ConfigChangeContent {
+    /// Items created by the change set.
+    pub create_items: Vec<ItemDTO>,
+    /// Item snapshots before and after each update.
+    pub update_items: Vec<ItemPair>,
+    /// Items deleted by the change set.
+    pub delete_items: Vec<ItemDTO>,
+}
+
+impl ConfigChangeContent {
+    /// Whether the change set carries any item mutation.
+    ///
+    /// Upstream `ConfigChangeContentBuilder.hasContent()`.
+    pub fn has_content(&self) -> bool {
+        !self.create_items.is_empty()
+            || !self.update_items.is_empty()
+            || !self.delete_items.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// Represents the `InstanceConfigDTO` entity.
 pub struct InstanceConfigDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `instance_id` field.
-    pub instance_id: i32,
+    pub instance_id: i64,
     #[serde(default)]
     /// The `config_app_id` field.
     pub config_app_id: Option<String>,
@@ -451,7 +493,7 @@ pub struct InstanceConfigDTO {
 pub struct AuditDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `audit_key` field.
     pub audit_key: String,
     /// The `entity_name` field.
@@ -480,7 +522,7 @@ pub struct AuditDTO {
 pub struct ConsumerDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `app_id` field.
     pub app_id: String,
     /// The `name` field.
@@ -507,9 +549,9 @@ pub struct ConsumerDTO {
 pub struct ConsumerTokenDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `consumer_id` field.
-    pub consumer_id: i32,
+    pub consumer_id: i64,
     /// The `token` field.
     pub token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -526,7 +568,7 @@ pub struct ConsumerTokenDTO {
 pub struct PermissionDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `permission_type` field.
     pub permission_type: i32,
     /// The `target_id` field.
@@ -545,7 +587,7 @@ pub struct PermissionDTO {
 pub struct RoleDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `role_name` field.
     pub role_name: String,
     /// The `role_type` field.
@@ -562,15 +604,72 @@ pub struct RoleDTO {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// A portal user.
+///
+/// Upstream `apollo-portal` `UserInfo` / `apollo_users`. The `password` field is
+/// never serialized back to clients: upstream strips it from every response and
+/// the OpenAPI user endpoint only ever returns the username.
+pub struct UserDTO {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `id` field.
+    pub id: Option<i64>,
+    /// The account name, which upstream uses as the primary key too.
+    pub username: String,
+    #[serde(default, skip_serializing)]
+    /// The stored password hash. Never returned to clients.
+    pub password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The contact email.
+    pub email: Option<String>,
+    #[serde(default = "default_user_enabled")]
+    /// Whether the account can log in.
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `data_change_created_by` field.
+    pub data_change_created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `data_change_created_time` field.
+    pub data_change_created_time: Option<String>,
+}
+
+/// Default for `UserDTO::enabled` — a freshly created account can log in.
+fn default_user_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Links an open-platform consumer to a role.
+///
+/// Upstream `apollo_consumer_role`; this is what grants an OpenAPI consumer its
+/// permissions.
+pub struct ConsumerRoleDTO {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `id` field.
+    pub id: Option<i64>,
+    /// The consumer this link belongs to.
+    pub consumer_id: i64,
+    /// The granted role.
+    pub role_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `data_change_created_by` field.
+    pub data_change_created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `data_change_created_time` field.
+    pub data_change_created_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// Represents the `UserRoleDTO` entity.
 pub struct UserRoleDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `user_id` field.
     pub user_id: String,
     /// The `role_id` field.
-    pub role_id: i32,
+    pub role_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `data_change_created_by` field.
     pub data_change_created_by: Option<String>,
@@ -585,7 +684,7 @@ pub struct UserRoleDTO {
 pub struct FavoriteDTO {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `id` field.
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     /// The `user_id` field.
     pub user_id: String,
     /// The `app_id` field.
@@ -667,4 +766,168 @@ pub struct NamespaceGrayReleaseDTO {
     /// Whether to delete the branch after merging (the upstream portal defaults to `true`).
     #[serde(default)]
     pub delete_branch: bool,
+}
+
+/// A single instance config view returned by the OpenAPI instance endpoints.
+///
+/// Upstream `apollo-portal` `OpenApiController` -> `OpenInstanceDTO`. It joins
+/// the `InstanceConfig` (release binding) with the underlying `Instance`
+/// (`ip`, `dataCenter`). `instance_app_id` is the app that *owns* the instance
+/// config (the upstream `configAppId`); `app_id` is the namespace's app.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenInstanceDTO {
+    /// The namespace's app id (`appId`).
+    pub app_id: String,
+    /// The app that owns this instance config (`instanceAppId` / `configAppId`).
+    pub instance_app_id: String,
+    /// The cluster name.
+    pub cluster_name: String,
+    /// The namespace name.
+    pub namespace_name: String,
+    /// The data center the instance belongs to (`dataCenter`).
+    pub data_center: Option<String>,
+    /// The instance IP address (`ip`).
+    pub ip: String,
+    /// The release key this instance is currently bound to (`releaseKey`).
+    pub release_key: Option<String>,
+    /// The release id this instance is currently bound to (`releaseId`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<i64>,
+    /// The last time this instance config was modified (`lastModifiedTime`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified_time: Option<String>,
+}
+
+/// Paged response for the OpenAPI instance endpoints.
+///
+/// Upstream wraps a `PageDTO<OpenInstanceDTO>` in `OpenInstancePageDTO` so the
+/// same envelope is used by every instance listing endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenInstancePageDTO {
+    /// The paged content.
+    pub content: Vec<OpenInstanceDTO>,
+    /// 1-based page index.
+    pub page: i32,
+    /// Page size.
+    pub size: i32,
+    /// Total number of matching rows.
+    pub total: i64,
+}
+
+/// A single namespace's diff produced by the `items/diff` endpoint.
+///
+/// Upstream `apollo-portal` `ItemController.diff(...)` returns
+/// `Map<namespaceName, ItemDiffs>`; each value carries the create/update/delete
+/// item lists that would result from synchronizing the source items into that
+/// target namespace. `namespace_name` identifies the target.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemDiffs {
+    /// The target namespace name these diffs apply to.
+    pub namespace_name: String,
+    /// Items to create in the target namespace.
+    pub create_items: Vec<ItemDTO>,
+    /// Items to update in the target namespace.
+    pub update_items: Vec<ItemDTO>,
+    /// Items to delete in the target namespace.
+    pub delete_items: Vec<ItemDTO>,
+}
+
+/// Request body for the `items/diff` and `items` (synchronize) endpoints.
+///
+/// Upstream `apollo-portal` `NamespaceSyncModel`: the items to sync plus the
+/// list of target namespaces (`sync_to_namespaces`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamespaceSyncModel {
+    /// The namespace name of the source (the item set being synchronized from).
+    pub namespace_name: String,
+    /// The change sets (create/update/delete items) to synchronize.
+    pub sync_items: ItemChangeSets,
+    /// The target namespaces to synchronize the items into.
+    #[serde(default)]
+    pub sync_to_namespaces: Vec<String>,
+}
+
+/// Per-env cluster info returned by `env-cluster-info`.
+///
+/// Upstream `apollo-portal` `EnvClusterInfoDTO` carries `env` plus the list of
+/// `ClusterInfoDTO` describing each cluster of that env.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvClusterInfo {
+    /// The environment name (e.g. `DEV`, `PRO`).
+    pub env: String,
+    /// The clusters present under this env.
+    pub clusters: Vec<ClusterInfoDTO>,
+}
+
+/// Env + cluster listing for an app.
+///
+/// Upstream `apollo-portal` `EnvClusterInfoDTO` is returned by
+/// `openapi/v1/apps/{appId}/env-cluster-info`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvClusterInfoDTO {
+    /// One entry per environment the app exists in.
+    pub env_cluster_info: Vec<EnvClusterInfo>,
+}
+
+/// A cluster summary inside `EnvClusterInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterInfoDTO {
+    /// The cluster name.
+    pub cluster_name: String,
+    /// The cluster's parent (empty for the default cluster).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_cluster_name: Option<String>,
+    /// The config app id (cluster app label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_app_id: Option<String>,
+}
+
+/// Where an app namespace is used (which envs / clusters), returned by
+/// `appnamespaces/{namespaceName}/usage`.
+///
+/// Upstream `apollo-portal` `AppNamespaceUsageDTO`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppNamespaceUsageDTO {
+    /// The app namespace name.
+    pub namespace_name: String,
+    /// The environments where this app namespace is used.
+    pub envs: Vec<String>,
+    /// The clusters where this app namespace is used.
+    pub clusters: Vec<String>,
+    /// The apps that use this app namespace.
+    pub used_by: Vec<String>,
+}
+
+/// An organization entry returned by `GET /openapi/v1/organizations`.
+///
+/// Upstream `apollo-portal` `OrganizationDTO` (`orgId` + `orgName`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationDTO {
+    /// The organization id.
+    pub org_id: String,
+    /// The organization name.
+    pub org_name: String,
+}
+
+/// System information returned by `GET /openapi/v1/system-info`.
+///
+/// Upstream `apollo-portal` `SystemInfoDTO` (`apolloVersion` +
+/// `gitCommitId`). batata fills these from the build-time cargo environment
+/// variables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemInfoDTO {
+    /// The build version string.
+    pub apollo_version: String,
+    /// The git commit id of the build.
+    pub git_commit_id: String,
 }

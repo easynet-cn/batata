@@ -14,5 +14,5 @@ pub trait AccessKeyPersistence: Send + Sync {
     /// Performs the `update` operation.
     async fn update(&self, access_key: StoredAccessKey) -> anyhow::Result<StoredAccessKey>;
     /// Performs the `delete` operation.
-    async fn delete(&self, id: i32) -> anyhow::Result<()>;
+    async fn delete(&self, id: i64) -> anyhow::Result<()>;
 }

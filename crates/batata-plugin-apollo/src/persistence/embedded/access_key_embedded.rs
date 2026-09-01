@@ -32,12 +32,12 @@ impl AccessKeyEmbedded {
     }
 
     /// Build key for access key by app and id: "ak:{app_id}:{id}"
-    fn key(app_id: &str, id: i32) -> String {
+    fn key(app_id: &str, id: i64) -> String {
         format!("ak:{}:{}", app_id, id)
     }
 
     /// Build key for access key by id only: "ak_id:{id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("ak_id:{}", id)
     }
 
@@ -145,7 +145,7 @@ impl AccessKeyPersistence for AccessKeyEmbedded {
         Ok(access_key)
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let cf = self.cf()?;
         // First get to find all keys
         let key_id = Self::key_by_id(id);

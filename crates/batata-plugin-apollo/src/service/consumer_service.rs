@@ -22,7 +22,7 @@ impl ConsumerService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, id: i32) -> Result<Option<ConsumerDTO>, anyhow::Error> {
+    pub async fn get(&self, id: i64) -> Result<Option<ConsumerDTO>, anyhow::Error> {
         let model = self.persistence.get_consumer(id).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }

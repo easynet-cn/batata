@@ -4,7 +4,7 @@ use async_trait::async_trait;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceRegistryEntry {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `service_name` field.
     pub service_name: String,
     /// The `uri` field.

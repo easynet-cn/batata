@@ -85,14 +85,14 @@ impl ReleaseMessagePersistence for ReleaseMessageSqlPersistence {
         Ok(results.into_iter().map(|m| m.into()).collect())
     }
 
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
         apollo_release_message::Entity::delete_by_id(id)
             .exec(&self.db)
             .await?;
         Ok(())
     }
 
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
         let results = apollo_release_message::Entity::find()
             .filter(apollo_release_message::Column::Id.lt(before_id))
             .all(&self.db)

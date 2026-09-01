@@ -163,7 +163,7 @@ impl ReleaseService {
     }
 
     /// Returns the requested value.
-    pub async fn get_by_id(&self, release_id: i32) -> Result<Option<ReleaseDTO>, anyhow::Error> {
+    pub async fn get_by_id(&self, release_id: i64) -> Result<Option<ReleaseDTO>, anyhow::Error> {
         let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?;
         Ok(stored.map(|s| s.into()))
     }
@@ -175,7 +175,7 @@ impl ReleaseService {
     /// publish returns the row id too, so look up by pk first; fall back to
     /// the timestamp `release_id` column for legacy rows only.
     pub async fn get_gray_release(&self, release_id: i64) -> Result<Option<ReleaseDTO>, anyhow::Error> {
-        let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id as i32).await?;
+        let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?;
         if stored.is_some() {
             return Ok(stored.map(|s| s.into()));
         }
@@ -196,7 +196,7 @@ impl ReleaseService {
         configurations: HashMap<String, String>,
         release_name: String,
         operator: &str,
-        operation: i16,
+        operation: i32,
     ) -> Result<(), anyhow::Error> {
         let now = Utc::now().timestamp_millis();
         let stored = StoredRelease {
@@ -248,7 +248,7 @@ impl ReleaseService {
     /// previously active release becomes effective because all queries filter
     /// abandoned rows. When a gray branch exists, an auto branch release
     /// (op MASTER_ROLLBACK_MERGE_TO_GRAY) keeps gray clients consistent.
-    pub async fn rollback(&self, app_id: &str, cluster_name: &str, namespace_name: &str, release_id: i32, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
+    pub async fn rollback(&self, app_id: &str, cluster_name: &str, namespace_name: &str, release_id: i64, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
         let actives = ReleasePersistence::list_active(&self.persistence, app_id, cluster_name, namespace_name).await?;
         if actives.len() < 2 {
             return Err(anyhow::anyhow!("At least two active releases are required for rollback"));
@@ -267,7 +267,7 @@ impl ReleaseService {
 
     /// Port of upstream `rollbackTo`: abandon every active release between the
     /// target and the current one (both inclusive bounds kept distinct).
-    pub async fn rollback_by_id(&self, release_id: i32, to_release_id: Option<i32>, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
+    pub async fn rollback_by_id(&self, release_id: i64, to_release_id: Option<i64>, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
         let current = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?
             .ok_or_else(|| anyhow::anyhow!("Release not found: {}", release_id))?;
         let to_id = to_release_id.unwrap_or(release_id);
@@ -319,7 +319,7 @@ impl ReleaseService {
         parent_cluster_name: &str,
         namespace_name: &str,
         operator: &str,
-        operation: i16,
+        operation: i32,
     ) -> Result<(), anyhow::Error> {
         use crate::service::namespace_branch_service::NamespaceBranchService;
         let branch_svc = NamespaceBranchService::new(self.persistence.clone());
@@ -360,7 +360,7 @@ impl ReleaseService {
     }
 
     /// Performs the `compare` operation.
-    pub async fn compare(&self, base_release_id: i32, to_compare_release_id: i32) -> Result<Value, anyhow::Error> {
+    pub async fn compare(&self, base_release_id: i64, to_compare_release_id: i64) -> Result<Value, anyhow::Error> {
         let base = <dyn ReleasePersistence>::get_by_id(&self.persistence, base_release_id).await?;
         let other = <dyn ReleasePersistence>::get_by_id(&self.persistence, to_compare_release_id).await?;
 
@@ -519,9 +519,9 @@ impl ReleaseService {
         cluster_name: &str,
         namespace_name: &str,
         branch_name: &str,
-        release_id: i32,
-        previous_release_id: i32,
-        operation: i16,
+        release_id: i64,
+        previous_release_id: i64,
+        operation: i32,
         operator: &str,
         context: &str,
     ) {

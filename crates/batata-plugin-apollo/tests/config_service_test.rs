@@ -10,9 +10,19 @@ fn unique_test_id(prefix: &str) -> String {
     format!("{}_test_{}", prefix, Uuid::new_v4().to_string().split('-').next().unwrap())
 }
 
+/// HTTP client for the live-server suite.
+///
+/// `no_proxy()` is deliberate: reqwest 0.12+ picks up the macOS system proxy
+/// by default and (unlike curl) does not honor the `localhost` bypass entry,
+/// so with a system proxy enabled every request to the local server comes
+/// back as a 502 from the proxy instead of reaching batata.
+fn test_http_client() -> Client {
+    Client::builder().no_proxy().build().expect("failed to build http client")
+}
+
 #[tokio::test]
 async fn test_config_service_gray_release() {
-    let client = Client::new();
+    let client = test_http_client();
     let app_id = unique_test_id("gray");
 
     let create_app_resp = client
@@ -29,7 +39,11 @@ async fn test_config_service_gray_release() {
         .send()
         .await
         .expect("Create app failed");
-    assert!(create_app_resp.status().is_success(), "Create app failed: {:?}", create_app_resp.text().await);
+    assert!(
+        create_app_resp.status().is_success(),
+        "Create app failed: {:?}",
+        create_app_resp.text().await
+    );
 
     let create_ns_resp = client
         .post(format!("{}/apps/{}/clusters/default/namespaces", APOLLO_ADMIN_URL, app_id))
@@ -171,7 +185,7 @@ async fn test_config_service_gray_release() {
 
 #[tokio::test]
 async fn test_namespace_lock() {
-    let client = Client::new();
+    let client = test_http_client();
     let app_id = unique_test_id("lock");
 
     let create_app_resp = client
@@ -250,7 +264,7 @@ async fn test_namespace_lock() {
 
 #[tokio::test]
 async fn test_commit_openapi() {
-    let client = Client::new();
+    let client = test_http_client();
     let app_id = unique_test_id("commit");
 
     let create_app_resp = client

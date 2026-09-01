@@ -32,7 +32,7 @@ impl NamespaceEmbedded {
     }
 
     /// Build key for namespace by id: "ns_id:{id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("ns_id:{}", id)
     }
 
@@ -69,7 +69,7 @@ impl NamespacePersistence for NamespaceEmbedded {
         Ok(namespace)
     }
 
-    async fn get(&self, id: i32) -> anyhow::Result<Option<StoredNamespace>> {
+    async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
         let cf = self.cf()?;
         let key = Self::key_by_id(id);
         match self.db.get_cf(cf, key.as_bytes())? {
@@ -131,7 +131,7 @@ impl NamespacePersistence for NamespaceEmbedded {
 
     async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>> {
         let cf = self.cf()?;
-        let mut seen: std::collections::HashMap<i32, StoredNamespace> = std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<i64, StoredNamespace> = std::collections::HashMap::new();
         for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let ns: StoredNamespace = bincode::deserialize(&value)?;
@@ -162,7 +162,7 @@ impl NamespacePersistence for NamespaceEmbedded {
         Ok(namespace)
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let cf = self.cf()?;
         // First get to find composite key
         let key_id = Self::key_by_id(id);

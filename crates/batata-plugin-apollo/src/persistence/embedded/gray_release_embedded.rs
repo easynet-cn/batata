@@ -37,7 +37,7 @@ impl GrayReleaseEmbedded {
     }
 
     /// Build key for gray rule by id: "gray_id:{id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("gray_id:{}", id)
     }
 
@@ -94,7 +94,7 @@ impl GrayReleasePersistence for GrayReleaseEmbedded {
 
     async fn update_rules(
         &self,
-        id: i32,
+        id: i64,
         rules: String,
         release_id: i64,
     ) -> anyhow::Result<StoredGrayReleaseRule> {
@@ -127,7 +127,7 @@ impl GrayReleasePersistence for GrayReleaseEmbedded {
         Ok(rule)
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let cf = self.cf()?;
         // First get to find composite key
         let key_id = Self::key_by_id(id);

@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use crate::api::dto::ItemDTO;
+use crate::api::dto::{ConfigChangeContent, ItemDTO};
 use crate::persistence::shared::StoredItem;
-use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, NamespacePersistence};
+use crate::persistence::traits::{
+    ApolloPersistenceService, CommitPersistence, ItemPersistence, NamespacePersistence,
+    ReleasePersistence,
+};
 use chrono::Utc;
 
 /// Represents the `ItemService` entity.
@@ -63,26 +66,26 @@ impl ItemService {
     }
 
     /// Returns the requested value.
-    pub async fn get_by_id(&self, item_id: i32) -> Result<Option<ItemDTO>, anyhow::Error> {
-        let stored = self.persistence.get_by_id(item_id).await?;
+    pub async fn get_by_id(&self, item_id: i64) -> Result<Option<ItemDTO>, anyhow::Error> {
+        let stored = <dyn ItemPersistence>::get_by_id(&self.persistence, item_id).await?;
         Ok(stored.map(|s| s.into()))
     }
 
     /// Performs the `list` operation.
     pub async fn list(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ItemDTO>, anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+        let namespace = <dyn NamespacePersistence>::get_by_app_cluster(&self.persistence, app_id, cluster_name, namespace_name).await?;
 
         if namespace.is_none() {
             return Ok(vec![]);
         }
 
-        let stored_list = self.persistence.list_by_namespace(namespace.unwrap().id).await?;
+        let stored_list = <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.unwrap().id).await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, item_id: i32, dto: ItemDTO) -> Result<ItemDTO, anyhow::Error> {
-        let stored = self.persistence.get_by_id(item_id).await?
+    pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, item_id: i64, dto: ItemDTO) -> Result<ItemDTO, anyhow::Error> {
+        let stored = <dyn ItemPersistence>::get_by_id(&self.persistence, item_id).await?
             .ok_or_else(|| anyhow::anyhow!("Item not found: {}", item_id))?;
 
         let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
@@ -145,7 +148,7 @@ impl ItemService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, item_id: i32, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, item_id: i64, _operator: &str) -> Result<(), anyhow::Error> {
         ItemPersistence::delete(&self.persistence, item_id).await?;
         Ok(())
     }
@@ -171,6 +174,80 @@ impl ItemService {
         };
         let stored = self.persistence.list_deleted_items(namespace_id).await?;
         Ok(stored.into_iter().map(|s| s.into()).collect())
+    }
+
+    /// List the items deleted since the latest active release.
+    ///
+    /// Upstream semantics (`adminservice` `ItemController.findDeletedItems`,
+    /// lines 207-231): resolve the latest active release for the namespace; when
+    /// one exists only the commits created at or after that release are
+    /// inspected, otherwise every commit is. The deleted items are then read out
+    /// of each commit's `changeSets` payload, which upstream persists as a
+    /// serialized `ConfigChangeContentBuilder`.
+    ///
+    /// Note this is NOT the set of currently soft-deleted items: an item that was
+    /// deleted (and even re-created) since the last publish is still reported
+    /// here, matching upstream behaviour.
+    pub async fn list_deleted_since_last_release(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<ItemDTO>, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?;
+
+        if namespace.is_none() {
+            return Ok(vec![]);
+        }
+
+        // Upstream `releaseService.findLatestActiveRelease`: the newest
+        // non-abandoned release for the namespace. `list_active` already returns
+        // releases newest-id-first, so the first entry is the one we want.
+        let latest_release = <dyn ReleasePersistence>::list_active(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?
+        .into_iter()
+        .next();
+
+        let commits = <dyn CommitPersistence>::list_by_namespace(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
+
+        let since = latest_release.map(|release| release.data_change_created_time);
+
+        let mut deleted = Vec::new();
+
+        for commit in commits {
+            // Upstream narrows the commits to those created at or after the
+            // latest release (`commitService.find(..., releaseTime, null)`).
+            if let Some(since) = since {
+                if commit.data_change_created_time < since {
+                    continue;
+                }
+            }
+
+            // A commit persisted in an older (or empty) format contributes no
+            // deleted items rather than failing the whole request.
+            let content: ConfigChangeContent = match serde_json::from_str(&commit.change_sets) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+
+            deleted.extend(content.delete_items);
+        }
+
+        Ok(deleted)
     }
 }
 

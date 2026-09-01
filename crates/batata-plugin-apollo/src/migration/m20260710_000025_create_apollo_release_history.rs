@@ -22,7 +22,7 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloReleaseHistory::BranchName, 32, "default"))
                     .col(unsigned_int(ApolloReleaseHistory::ReleaseId, backend).default(0))
                     .col(unsigned_int(ApolloReleaseHistory::PreviousReleaseId, backend).default(0))
-                    .col(tiny_int(ApolloReleaseHistory::Operation, backend).default(0))
+                    .col(signed_int(ApolloReleaseHistory::Operation, backend).default(0))
                     .col(long_text(ApolloReleaseHistory::OperationContext, backend))
                     .col(bit(ApolloReleaseHistory::IsDeleted, None))
                     .col(unsigned_big_int(ApolloReleaseHistory::DeletedAt, backend).default(0))

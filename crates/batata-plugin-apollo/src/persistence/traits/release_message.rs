@@ -19,7 +19,7 @@ pub trait ReleaseMessagePersistence: Send + Sync {
     /// Returns the requested value.
     async fn list_all(&self) -> anyhow::Result<Vec<StoredReleaseMessage>>;
     /// Delete one exact row by id.
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()>;
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()>;
     /// Delete rows with id < before_id (upstream prunes old rows per key).
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize>;
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize>;
 }

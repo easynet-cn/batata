@@ -128,4 +128,17 @@ impl InstancePersistence for InstanceEmbedded {
         }
         Ok(results)
     }
+
+    async fn get_instance_by_id(&self, id: i64) -> anyhow::Result<Option<StoredInstance>> {
+        let cf = self.cf()?;
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let instance: StoredInstance = bincode::deserialize(&value)?;
+            if instance.id == id {
+                return Ok(Some(instance));
+            }
+        }
+        Ok(None)
+    }
 }

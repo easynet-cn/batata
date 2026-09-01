@@ -38,7 +38,7 @@ impl<T> CachedEntry<T> {
 /// Represents the `InstanceAuditService` entity.
 pub struct InstanceAuditService {
     persistence: Arc<dyn ApolloPersistenceService>,
-    instance_cache: std::sync::Mutex<HashMap<String, CachedEntry<i32>>>,
+    instance_cache: std::sync::Mutex<HashMap<String, CachedEntry<i64>>>,
     release_key_cache: std::sync::Mutex<HashMap<String, CachedEntry<String>>>,
 }
 
@@ -144,7 +144,7 @@ impl InstanceAuditService {
         cluster_name: &str,
         data_center: &str,
         ip: &str,
-    ) -> anyhow::Result<i32> {
+    ) -> anyhow::Result<i64> {
         let cache_key = format!("{}|{}|{}|{}", app_id, cluster_name, ip, data_center);
         if let Some(hit) = self.instance_cache.lock().unwrap().get(&cache_key) {
             if hit.fresh(INSTANCE_CACHE_TTL) {

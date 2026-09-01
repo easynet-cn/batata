@@ -8,7 +8,7 @@ pub trait NamespacePersistence: Send + Sync {
     /// Performs the `create` operation.
     async fn create(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace>;
     /// Performs the `get` operation.
-    async fn get(&self, id: i32) -> anyhow::Result<Option<StoredNamespace>>;
+    async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>>;
     /// Returns the requested value.
     async fn get_by_app_cluster(
         &self,
@@ -23,5 +23,5 @@ pub trait NamespacePersistence: Send + Sync {
     /// Performs the `update` operation.
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace>;
     /// Performs the `delete` operation.
-    async fn delete(&self, id: i32) -> anyhow::Result<()>;
+    async fn delete(&self, id: i64) -> anyhow::Result<()>;
 }

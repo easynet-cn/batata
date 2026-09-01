@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `namespace_id` field.
-    pub namespace_id: i32,
+    pub namespace_id: i64,
     /// The `key` field.
     pub key: String,
     /// The `type` field.
-    pub r#type: i16,
+    pub r#type: i32,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     /// The `value` field.
     pub value: String,

@@ -77,7 +77,7 @@ impl CommitPersistence for CommitSqlPersistence {
         Ok(model.into())
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredCommit>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {
         let result = apollo_commit::Entity::find_by_id(id)
             .filter(apollo_commit::Column::IsDeleted.eq(false))
             .one(&self.db)

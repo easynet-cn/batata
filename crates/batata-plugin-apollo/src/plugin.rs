@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use batata_plugin::{PluginContext, PluginStateProvider, ProtocolAdapterPlugin};
 
-use crate::model::config::ApolloPluginConfig;
+use crate::model::config::{ApolloPluginConfig, AuthConfig};
 use crate::persistence::{
     ApolloPersistenceService, EmbeddedApolloPersistence, SqlApolloPersistence,
 };
@@ -79,6 +79,7 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             CF_APOLLO_CONSUMER.to_string(),
             CF_APOLLO_CONSUMER_TOKEN.to_string(),
             CF_APOLLO_CONSUMER_AUDIT.to_string(),
+            CF_APOLLO_CONSUMER_ROLE.to_string(),
             CF_APOLLO_PERMISSION.to_string(),
             CF_APOLLO_ROLE.to_string(),
             CF_APOLLO_ROLE_PERMISSION.to_string(),
@@ -171,6 +172,8 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
         let inner = self.inner();
         // Use Data::new (not Data::from) because handlers expect web::Data<Arc<dyn ApolloPersistenceService>>
         cfg.app_data(actix_web::web::Data::new(inner.persistence.clone()));
+        // Authentication configuration shared with the auth middleware.
+        cfg.app_data(actix_web::web::Data::new(AuthConfig::from_env()));
 
         if let Some(db) = inner.persistence.get_db_connection() {
             tracing::info!("Apollo plugin: registering DatabaseConnection as app data");

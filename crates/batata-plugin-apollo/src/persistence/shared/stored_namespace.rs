@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the `StoredNamespace` entity.
 pub struct StoredNamespace {
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     /// The `app_id` field.
     pub app_id: String,
     /// The `cluster_name` field.

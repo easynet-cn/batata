@@ -28,7 +28,7 @@ impl FavoriteService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, id: i32, user_id: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, id: i64, user_id: &str) -> Result<(), anyhow::Error> {
         self.persistence.delete_favorite(id, user_id).await?;
         Ok(())
     }

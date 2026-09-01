@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     /// The `id` field.
-    pub id: i32,
+    pub id: i64,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
     /// The `change_sets` field.
     pub change_sets: String,

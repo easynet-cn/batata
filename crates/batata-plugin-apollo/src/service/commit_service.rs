@@ -41,7 +41,7 @@ impl CommitService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, id: i32) -> Result<Option<CommitDTO>, anyhow::Error> {
+    pub async fn get(&self, id: i64) -> Result<Option<CommitDTO>, anyhow::Error> {
         let stored = self.persistence.get_by_id(id).await?;
         Ok(stored.map(|s| s.into()))
     }
@@ -53,7 +53,7 @@ impl CommitService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, id: i32, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, id: i64, _operator: &str) -> Result<(), anyhow::Error> {
         let stored = self.persistence.get_by_id(id).await?
             .ok_or_else(|| anyhow::anyhow!("Commit not found: {}", id))?;
 

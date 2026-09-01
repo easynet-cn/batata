@@ -32,7 +32,7 @@ impl ReleaseEmbedded {
     }
 
     /// Build key for release by id: "release:{release_id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("release:{}", id)
     }
 
@@ -47,7 +47,7 @@ impl ReleaseEmbedded {
     }
 
     /// Build index key for listing: "release_by_ns:{app_id}:{cluster}:{namespace}:{release_id}"
-    fn index_key(app_id: &str, cluster: &str, namespace: &str, release_id: i32) -> String {
+    fn index_key(app_id: &str, cluster: &str, namespace: &str, release_id: i64) -> String {
         format!("release_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, release_id)
     }
 }
@@ -91,7 +91,7 @@ impl ReleasePersistence for ReleaseEmbedded {
         Ok(release)
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredRelease>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
         let cf = self.cf()?;
         let key = Self::key_by_id(id);
         match self.db.get_cf(cf, key.as_bytes())? {
@@ -157,7 +157,7 @@ impl ReleasePersistence for ReleaseEmbedded {
         Ok(results)
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let cf = self.cf()?;
         // First get to find all keys
         let key_id = Self::key_by_id(id);

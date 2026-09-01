@@ -47,7 +47,7 @@ impl ReleaseMessageEmbedded {
         format!("{}{}", KEY_PREFIX, message)
     }
 
-    fn row_key(id: i32) -> String {
+    fn row_key(id: i64) -> String {
         format!("{}{}", ROW_PREFIX, id)
     }
 }
@@ -101,12 +101,12 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
         Ok(results)
     }
 
-    async fn delete_by_id(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
         JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG)
             .delete(Self::row_key(id).as_bytes())
     }
 
-    async fn delete_old(&self, before_id: i32) -> anyhow::Result<usize> {
+    async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
         let cf = self.cf()?;
         let mut keys_to_delete = Vec::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);

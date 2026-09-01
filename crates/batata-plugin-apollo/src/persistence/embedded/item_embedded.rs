@@ -33,22 +33,22 @@ impl ItemEmbedded {
     }
 
     /// Build key for item by id: "item_id:{id}"
-    fn key_by_id(id: i32) -> String {
+    fn key_by_id(id: i64) -> String {
         format!("item_id:{}", id)
     }
 
     /// Build key for item by namespace and key: "item:{namespace_id}:{key}"
-    fn key(namespace_id: i32, key: &str) -> String {
+    fn key(namespace_id: i64, key: &str) -> String {
         format!("item:{}:{}", namespace_id, key)
     }
 
     /// Build reverse index key for listing by namespace: "item_by_ns:{namespace_id}:{item_id}"
-    fn index_key(namespace_id: i32, item_id: i32) -> String {
+    fn index_key(namespace_id: i64, item_id: i64) -> String {
         format!("item_by_ns:{}:{}", namespace_id, item_id)
     }
 
     /// Build prefix for listing by namespace: "item_by_ns:{namespace_id}:"
-    fn prefix_by_namespace(namespace_id: i32) -> String {
+    fn prefix_by_namespace(namespace_id: i64) -> String {
         format!("item_by_ns:{}:", namespace_id)
     }
 }
@@ -82,7 +82,7 @@ impl ItemPersistence for ItemEmbedded {
         Ok(item)
     }
 
-    async fn get_by_key(&self, namespace_id: i32, key: &str) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<StoredItem>> {
         let cf = self.cf()?;
         let comp_key = Self::key(namespace_id, key);
         match self.db.get_cf(cf, comp_key.as_bytes())? {
@@ -99,7 +99,7 @@ impl ItemPersistence for ItemEmbedded {
         }
     }
 
-    async fn get_by_id(&self, id: i32) -> anyhow::Result<Option<StoredItem>> {
+    async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredItem>> {
         let cf = self.cf()?;
         let key = Self::key_by_id(id);
         match self.db.get_cf(cf, key.as_bytes())? {
@@ -116,7 +116,7 @@ impl ItemPersistence for ItemEmbedded {
         }
     }
 
-    async fn list_by_namespace(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_by_namespace(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         let cf = self.cf()?;
         let prefix = Self::prefix_by_namespace(namespace_id);
         let mut results = Vec::new();
@@ -163,7 +163,7 @@ impl ItemPersistence for ItemEmbedded {
         Ok(item)
     }
 
-    async fn delete(&self, id: i32) -> anyhow::Result<()> {
+    async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let cf = self.cf()?;
         let key_id = Self::key_by_id(id);
         if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
@@ -211,7 +211,7 @@ impl ItemPersistence for ItemEmbedded {
         Ok(result_items)
     }
 
-    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i32>> {
+    async fn find_namespace_ids_by_item_key(&self, key: &str) -> anyhow::Result<Vec<i64>> {
         let cf = self.cf()?;
         let mut ids = std::collections::HashSet::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
@@ -225,7 +225,7 @@ impl ItemPersistence for ItemEmbedded {
         Ok(ids.into_iter().collect())
     }
 
-    async fn list_deleted_items(&self, namespace_id: i32) -> anyhow::Result<Vec<StoredItem>> {
+    async fn list_deleted_items(&self, namespace_id: i64) -> anyhow::Result<Vec<StoredItem>> {
         let prefix = Self::prefix_by_namespace(namespace_id);
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(self.cf()?, prefix.as_bytes());

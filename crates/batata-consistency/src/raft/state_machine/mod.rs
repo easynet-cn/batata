@@ -114,6 +114,8 @@ pub const CF_APOLLO_CONSUMER: &str = "apollo_consumer";
 pub const CF_APOLLO_CONSUMER_TOKEN: &str = "apollo_consumer_token";
 /// Apollo plugin column family for consumer audit records.
 pub const CF_APOLLO_CONSUMER_AUDIT: &str = "apollo_consumer_audit";
+/// Apollo plugin column family for consumer-role mappings.
+pub const CF_APOLLO_CONSUMER_ROLE: &str = "apollo_consumer_role";
 /// Apollo plugin column family for permissions.
 pub const CF_APOLLO_PERMISSION: &str = "apollo_permission";
 /// Apollo plugin column family for roles.
@@ -132,6 +134,8 @@ pub const CF_APOLLO_SERVER_CONFIG: &str = "apollo_server_config";
 pub const CF_APOLLO_SERVICE_REGISTRY: &str = "apollo_service_registry";
 /// Apollo plugin column family for instance config.
 pub const CF_APOLLO_INSTANCE_CONFIG: &str = "apollo_instance_config";
+/// Apollo plugin column family for user tokens (portal session / openapi user token).
+pub const CF_APOLLO_USER_TOKEN: &str = "apollo_user_token";
 
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
@@ -355,6 +359,7 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_APOLLO_FAVORITE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_SERVER_CONFIG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_INSTANCE_CONFIG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_APOLLO_USER_TOKEN, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_SERVICE_REGISTRY, cf_opts.clone()),
 
             ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
@@ -1413,6 +1418,7 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_APOLLO_FAVORITE,
             CF_APOLLO_SERVER_CONFIG,
             CF_APOLLO_INSTANCE_CONFIG,
+            CF_APOLLO_USER_TOKEN,
             CF_APOLLO_SERVICE_REGISTRY,
         ] {
             if let Some(cf) = self.db.cf_handle(cf_name) {

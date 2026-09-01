@@ -70,8 +70,14 @@ pub fn tiny_int_null<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> 
     def.take()
 }
 
-/// Performs the `unsigned_int` operation.
-pub fn unsigned_int<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+/// Performs the `signed_int` operation.
+///
+/// A true 4-byte `INTEGER` on both backends for `i32` semantic fields
+/// (enum-ish columns such as `role_type`, `permission_type`, `line_num`).
+/// ID columns must use [`unsigned_int`] (now `BIGINT`) instead — the entity
+/// layer widened all primary/foreign keys to `i64`, and PostgreSQL rejects
+/// decoding `INT8` into `i32`.
+pub fn signed_int<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
     let mut def = ColumnDef::new(col);
     match backend {
         sea_orm::DatabaseBackend::MySql => {
@@ -84,8 +90,8 @@ pub fn unsigned_int<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> C
     def.take()
 }
 
-/// Performs the `unsigned_int_null` operation.
-pub fn unsigned_int_null<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+/// Nullable counterpart of [`signed_int`].
+pub fn signed_int_null<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
     let mut def = ColumnDef::new(col);
     match backend {
         sea_orm::DatabaseBackend::MySql => {
@@ -93,6 +99,41 @@ pub fn unsigned_int_null<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend)
         }
         _ => {
             def.integer().null();
+        }
+    }
+    def.take()
+}
+
+/// Performs the `unsigned_int` operation.
+///
+/// Despite the MySQL-inherited name, this maps to `BIGINT` on both backends:
+/// all Apollo primary keys and integer foreign keys are `i64` in the entity
+/// layer, and PostgreSQL has no `UNSIGNED` integer types at all. Emitting a
+/// 4-byte `INTEGER` here would overflow once ids exceed `i32::MAX`.
+pub fn unsigned_int<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+    let mut def = ColumnDef::new(col);
+    match backend {
+        sea_orm::DatabaseBackend::MySql => {
+            def.big_integer().not_null();
+        }
+        _ => {
+            def.big_integer().not_null();
+        }
+    }
+    def.take()
+}
+
+/// Performs the `unsigned_int_null` operation.
+///
+/// Nullable counterpart of [`unsigned_int`]; also `BIGINT`.
+pub fn unsigned_int_null<T: IntoIden>(col: T, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+    let mut def = ColumnDef::new(col);
+    match backend {
+        sea_orm::DatabaseBackend::MySql => {
+            def.big_integer().null();
+        }
+        _ => {
+            def.big_integer().null();
         }
     }
     def.take()
