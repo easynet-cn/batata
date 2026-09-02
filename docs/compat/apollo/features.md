@@ -269,6 +269,19 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 ---
 
+# Section 14 — Storage-layer capabilities (vs upstream `EncryptionDecorator`)
+
+> 本节追踪 apollo 原项目中**非 HTTP 契约**的存储层能力。它们不在 legacy WebAPI / OpenAPI contract 内，
+> 而是 `apollo-biz` 对 Item `value` 的装饰器逻辑或后台任务。此前 Sections 1–13 只覆盖外部契约，
+> 故在此补齐，使"与 apollo 原项目对比"完整。
+
+| ID | Capability | Upstream ref | Status | Notes |
+|----|-----------|--------------|--------|-------|
+| F-APO-STORE-001 | 配置值加密存储（AES, `EncryptionDecorator` / `StorageDecorator` + `apollo.encrypted` 开关 + 密钥管理） | `apollo-biz` `EncryptionDecorator` | ⚪ | **NOT implemented.** batata's `batata.config.encryption` (`aes-gcm`, default `enabled: true` in `conf/application.yml`; `ConfigEncryptionService` in `batata-config`) is the **Nacos-side** feature and operates on batata's own (Nacos-aligned) config storage — it does **NOT** flow into the apollo plugin's separate storage layer, so apollo `Item.value` is **not** encrypted by it. The apollo-specific `EncryptionDecorator` (which keys off `apollo.encrypted` and manages its own keystore) is a genuine gap and must be re-implemented against the apollo Item model if/when config-value encryption is required for apollo namespaces. |
+| F-APO-STORE-002 | 加密密钥管理（key rotation / KMS 集成） | `apollo-biz` | ⚪ | NOT implemented — same as F-APO-STORE-001; apollo-specific keystore / rotation not wired. batata's Nacos-side `batata.config.encryption.key` does not apply to apollo storage. |
+
+---
+
 # Summary (auto-updated)
 
 | Section | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Total | Impl rate |
@@ -286,7 +299,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
 | 12 portal misc | 13 | 3 | 0 | 5 | 0 | 21 | 69% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
-| **Total** | 144 | 5 | 0 | 30 | 0 | 179 | 82% |
+| 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
+| **Total** | 144 | 5 | 0 | 32 | 0 | 181 | 81% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >
@@ -309,6 +323,8 @@ Orphan-migration disposition: `apollo_service_registry` now wired (metaservice);
 > 2026-09-01 semantic-column round: all `i16` semantic columns (item.type, access_key.mode, release_history.operation, gray_release_rule.branch_status + the ReleaseOperation/BRANCH_STATUS consts) widened to **`i32`**, mirroring the `i64` id round — the integer type system is now exactly two tiers (`i64` ids, `i32` semantics) and the `tiny_int`/`unsigned_tiny_int` helpers are retired in favor of `signed_int`/`signed_int_null` (4-byte `INTEGER` on both backends). This removes the last MySQL/PG column-type fork and the i8→"char" class of pitfalls. The persistence_test suite was made rerun-safe against persistent SQL databases (consumer/permission/namespace/release keys timestamped per run — their UNIQUE constraints and no-cleanup pattern collided on second run). The live-server suite (`config_service_test`) now builds its reqwest client with `no_proxy()`: reqwest 0.12+ picks up the macOS system proxy by default and ignores its `localhost` bypass entry, so a system proxy turns every request into a 502. Full regression: embedded 34/0, MySQL (fresh schema) 34/0, PostgreSQL (fresh schema) 34/0, live-server suite 3/3. Pre-existing SQL databases must be rebuilt for the widened columns.
 >
 > 2026-09-01 doc-audit correction (markers vs. code): **ADMSVC-005 🟡→🟢** and **ADMSVC-006 ⚪→🟢** — both access-key route groups are in fact registered on the admin path (`admin.rs`: `/apps/{app_id}/accesskeys` POST+GET, `/{id}` DELETE, `/{id}/enable` and `/{id}/disable` PUT); the "NOT registered / NOT implemented" notes were stale. Section 4 impl rate 84% → 95%. This is the same class of drift the audit phase flagged (markers based on assumed rather than verified state), so remaining ⚪/🟡 cells should still be re-checked against the route tables before being treated as gaps.
+>
+> 2026-09-02 upstream parity review (vs `~/work/github/easynet-cn/apollo`): reconciled the feature matrix against upstream source. Confirmed **configs/sync (`admin.rs` `/configs/sync` + `/configs/sync/app`, and openapi `items/synchronize`) IS implemented** — a prior verbal claim of "namespace sync not implemented" was wrong (search-noise false negative); `F-APO-ADMSVC-017` 🟢 and `F-APO-PITEM-010` 🟢 stand. Added **Section 14 (storage-layer capabilities)** for non-HTTP upstream behaviors. Corrected an earlier mistaken claim: batata's `batata.config.encryption` (Nacos-side, `aes-gcm`, default on) does **NOT** apply to the apollo plugin's separate storage and therefore does **NOT** cover apollo's `EncryptionDecorator` config-value encryption — `F-APO-STORE-001/002` are **⚪ not implemented** (genuine gap, separate from batata/nacos encryption). Total 179→181, 🟢 144, ⚪ 32, impl rate **81%**. Net: all external Apollo HTTP contracts faithfully ported; only genuine gaps are legacy WebUI (SSO/signin, deprecated) and apollo config-value encryption.
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 calibration: CFGSVC-006/PMISC-006 verified implemented ⚪→🟢; CFGSVC-007 AccessKey exists but opt-in-only ⚪→🟡; META-001~003 placeholder host-echo ⚪→🟡; LONGPOL notes corrected to reflect actual hold-behavior.
 

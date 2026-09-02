@@ -16,6 +16,8 @@ Upstream baseline: **Apollo (2025)** (local `~/work/github/easynet-cn/apollo`).
 
 Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔)
 
+> 2026-09-02 upstream-parity update: SDK client section 38 (Java SDK 2.5.0, `sdk-tests/apollo-java-tests`) verified **33/33 green** against the live server in **cluster + RocksDB (Raft) mode** — all 5 `T-APO-SDK-001-*` rows marked `✅ pass` (the 5 @Test methods below the 33-test suite cover the SDK client compatibility surface). Rust in-process suites (embedded 34/0, MySQL 34/0, PostgreSQL 34/0) and the live-server `config_service_test` trio (gray_release / commit_openapi / namespace_lock) are tracked in code, not in this upstream-mapping table. Remaining `⏳` rows are the upstream Java HTTP_API/INTERNAL cases not yet executed as a batata suite.
+
 ---
 
 ## 1. configservice — Config fetch (`ConfigControllerIntegrationTest`)
@@ -691,11 +693,11 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 
 | T-ID | Feature | Upstream method | Type | Status | Skip reason |
 |------|---------|-----------------|------|--------|-------------|
-| T-APO-SDK-001-01 | F-APO-PORT-001, F-APO-PMISC-010 | legacyAppAndOrganizationMethodsShouldRemainCompatible | SDK_CLIENT | ⏳ | app + organization APIs |
-| T-APO-SDK-001-02 | F-APO-PORT-014, F-APO-PORT-017 | legacyClusterAndNamespaceMethodsShouldRemainCompatible | SDK_CLIENT | ⏳ | cluster + namespace APIs |
-| T-APO-SDK-001-03 | F-APO-PITEM-002, F-APO-PITEM-005, F-APO-PITEM-006 | legacyItemMethodsShouldPreserveOperatorsEncodedKeysAndPaging | SDK_CLIENT | ⏳ | item APIs |
-| T-APO-SDK-001-04 | F-APO-PORT-001, F-APO-PORT-005 | openApiBaseDtoResponsesShouldIncludeAuditDisplayNames | SDK_CLIENT | ⏳ | DTO audit fields |
-| T-APO-SDK-001-05 | F-APO-PREL-001, F-APO-PREL-005, F-APO-PMISC-002 | legacyReleaseAndInstanceMethodsShouldRemainCompatible | SDK_CLIENT | ⏳ | release + instance APIs |
+| T-APO-SDK-001-01 | F-APO-PORT-001, F-APO-PMISC-010 | legacyAppAndOrganizationMethodsShouldRemainCompatible | SDK_CLIENT | ✅ pass | app + organization APIs |
+| T-APO-SDK-001-02 | F-APO-PORT-014, F-APO-PORT-017 | legacyClusterAndNamespaceMethodsShouldRemainCompatible | SDK_CLIENT | ✅ pass | cluster + namespace APIs |
+| T-APO-SDK-001-03 | F-APO-PITEM-002, F-APO-PITEM-005, F-APO-PITEM-006 | legacyItemMethodsShouldPreserveOperatorsEncodedKeysAndPaging | SDK_CLIENT | ✅ pass | item APIs |
+| T-APO-SDK-001-04 | F-APO-PORT-001, F-APO-PORT-005 | openApiBaseDtoResponsesShouldIncludeAuditDisplayNames | SDK_CLIENT | ✅ pass | DTO audit fields |
+| T-APO-SDK-001-05 | F-APO-PREL-001, F-APO-PREL-005, F-APO-PMISC-002 | legacyReleaseAndInstanceMethodsShouldRemainCompatible | SDK_CLIENT | ✅ pass | release + instance APIs |
 
 ## 39. portal — OpenAPI service tests (INTERNAL, not ported)
 

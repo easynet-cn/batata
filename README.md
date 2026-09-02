@@ -21,6 +21,7 @@
 
 - **Nacos API** - Full compatibility with Nacos V2 and V3 APIs (V1 intentionally not supported)
 - **Consul API** - Compatible with Consul Agent, Health, Catalog, KV, and ACL APIs
+- **Apollo API** - Compatible with Apollo Config Service (`/configs`, `/configfiles`, `/notifications/v2`, `/releaseMessage`), Admin Service, and OpenAPI (apps, clusters, namespaces, items, releases, gray release, access keys). See [`docs/compat/apollo/`](docs/compat/apollo/).
 - **gRPC Support** - High-performance bidirectional streaming for SDK clients
 
 ### Advanced Features
@@ -37,6 +38,7 @@
 - **Distributed Lock** - Raft-based distributed locking
 - **AI Integration** - MCP (Model Content Protocol) and A2A (Agent-to-Agent) registry
 - **Database Migration** - Automatic schema migration on startup via `batata-migration` crate
+- **Apollo Compatibility** - Drop-in Apollo Config Service + Admin Service + OpenAPI; existing Apollo Java/Go SDKs and Apollo Portal contract work unchanged. In cluster mode, Apollo writes (releases, release messages, gray-release rules) are Raft-replicated for cross-node ID consistency. See [`docs/compat/apollo/`](docs/compat/apollo/).
 
 ### Performance
 
@@ -129,12 +131,13 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | Cluster Management | **95%** | Single Raft group (Multi-Raft partial) |
 | Authentication | **100%** | JWT, LDAP, OAuth2/OIDC |
 | API Compatibility | **100%+** | Full Nacos V2/V3 + Consul APIs |
+| Apollo Compatibility | **~81%** | Apollo Config/Admin/OpenAPI fully ported (see `docs/compat/apollo/`); legacy WebUI (SSO/signin) and apollo config-value encryption (`EncryptionDecorator`) not ported |
 | Cloud Native | **85%** | K8s, Prometheus, xDS (basic) |
 | **Overall** | **~98%** | Production ready |
 
 ## Project Structure
 
-Batata uses a multi-crate workspace architecture with **19 internal crates** for modularity and maintainability:
+Batata uses a multi-crate workspace architecture with **24 internal crates** for modularity and maintainability:
 
 ```
 batata/
@@ -151,6 +154,7 @@ batata/
 │   ├── batata-naming/            # Service discovery
 │   ├── batata-plugin/            # Plugin interfaces
 │   ├── batata-plugin-consul/     # Consul compatibility plugin
+│   ├── batata-plugin-apollo/     # Apollo compatibility plugin (Config/Admin/OpenAPI)
 │   ├── batata-plugin-cloud/      # Prometheus & Kubernetes plugin
 │   ├── batata-console/           # Console backend service
 │   ├── batata-client/            # Client SDK
@@ -158,6 +162,9 @@ batata/
 │   ├── batata-consul-client/     # Consul client utilities
 │   ├── batata-ai/                # AI integration (MCP/A2A)
 │   ├── batata-mesh/              # Service mesh (xDS, Istio MCP)
+│   ├── batata-copilot/           # AI copilot / operations assistant
+│   ├── batata-visibility/        # Metrics & observability
+│   ├── batata-integration-tests/ # Cross-crate integration tests
 │   └── batata-server/            # Main server (HTTP, gRPC, Console)
 │       ├── src/
 │       │   ├── api/              # API handlers (HTTP, gRPC, Consul)
@@ -269,6 +276,7 @@ cargo build --release -p batata-server
 |------|---------|-------------|
 | 8848 | Main HTTP API | Nacos-compatible API |
 | 8081 | Console HTTP API | Web management console |
+| 8080 | Apollo HTTP API | Apollo-compatible Config/Admin/OpenAPI (default; use independent ports per node in cluster, e.g. 18080/18081/18082) |
 | 9848 | SDK gRPC | Client SDK communication |
 | 9849 | Cluster gRPC | Inter-node communication |
 | 15010 | xDS gRPC | Service mesh xDS/ADS protocol |
@@ -423,6 +431,14 @@ export RUST_LOG=info
 | `batata.plugin.consul.enabled` | `false` | Enable Consul API compatibility |
 | `batata.plugin.consul.port` | `8500` | Consul API port |
 | `batata.plugin.consul.datacenter` | `dc1` | Consul datacenter name |
+
+#### Apollo Compatibility Plugin
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `batata.plugin.apollo.enabled` | `true` | Enable Apollo Config Service / Admin Service / OpenAPI compatibility |
+| `batata.plugin.apollo.port` | `8080` | Apollo HTTP API port (use independent ports per node in cluster mode, e.g. 18080/18081/18082) |
+| `batata.plugin.apollo.openapi.token` | `admin` | Default token for Apollo OpenAPI access-key auth |
 
 #### AI / MCP Registry
 
@@ -857,6 +873,23 @@ client = nacos.NacosClient(server_addresses="localhost:8848")
 config = client.get_config("dataId", "group")
 ```
 
+### Java (Apollo SDK)
+
+```java
+// Apollo client reads config from the Apollo-compatible Config Service on port 8080
+Config config = ConfigService.getConfig("application", "default", 5000);
+String value = config.getProperty("key", "default");
+```
+
+```java
+// Apollo OpenAPI (admin operations) — uses the OpenAPI access token
+ApolloOpenApiClient client = ApolloOpenApiClient.newBuilder()
+    .withPortalUrl("http://localhost:8080")
+    .withToken("admin")
+    .build();
+OpenAppDTO app = client.createApp(new OpenAppDTO().setName("demo").setAppId("demo"));
+```
+
 ## Monitoring
 
 Prometheus metrics available at `/nacos/actuator/prometheus`:
@@ -917,6 +950,7 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 - [Nacos](https://nacos.io/) - For the original design and API specification
 - [Consul](https://www.consul.io/) - For the KV store and service discovery API design
+- [Apollo](https://github.com/apolloconfig/apollo) - For the Config Service / Admin Service / OpenAPI design that the `batata-plugin-apollo` compatibility plugin ports
 - [OpenRaft](https://github.com/datafuselabs/openraft) - For the Raft consensus implementation
 - [SeaORM](https://www.sea-ql.org/SeaORM/) - For the async ORM framework
 - [Actix-web](https://actix.rs/) - For the high-performance web framework

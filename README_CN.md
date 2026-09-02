@@ -21,6 +21,7 @@
 
 - **Nacos API** - 完全兼容 Nacos V2 和 V3 API（V1 API 不支持）
 - **Consul API** - 兼容 Consul Agent、Health、Catalog、KV 和 ACL API
+- **Apollo API** - 兼容 Apollo Config Service（`/configs`、`/configfiles`、`/notifications/v2`、`/releaseMessage`）、Admin Service 和 OpenAPI（应用、集群、命名空间、配置项、发布、灰度、AccessKey）。详见 [`docs/compat/apollo/`](docs/compat/apollo/)。
 - **gRPC 支持** - 高性能双向流式通信，支持 SDK 客户端
 
 ### 高级特性
@@ -36,6 +37,7 @@
 - **DNS 服务** - 基于 UDP 的 DNS 服务发现
 - **分布式锁** - 基于 Raft 的分布式锁
 - **AI 集成** - MCP (模型内容协议) 和 A2A (Agent-to-Agent) 注册中心
+- **Apollo 兼容** - 开箱即用的 Apollo Config Service / Admin Service / OpenAPI，现有 Apollo Java/Go SDK 与 Apollo Portal 契约可直接使用。集群模式下，Apollo 写操作（发布、ReleaseMessage、灰度规则）通过 Raft 复制，保证跨节点 ID 一致。详见 [`docs/compat/apollo/`](docs/compat/apollo/)。
 
 ### 性能优势
 
@@ -127,12 +129,13 @@ Batata 已实现 **~98% 的 Nacos 功能**，可作为生产环境的替代方�
 | 集群管理 | **95%** | 单 Raft 组（多 Raft 部分支持） |
 | 认证授权 | **100%** | JWT、LDAP、OAuth2/OIDC |
 | API 兼容性 | **100%+** | 完整 Nacos V2/V3 + Consul API |
+| Apollo 兼容 | **~81%** | Apollo Config/Admin/OpenAPI 已完整移植（见 `docs/compat/apollo/`）；遗留 WebUI（SSO/登录）与 apollo 配置值加密（`EncryptionDecorator`）未移植 |
 | 云原生 | **85%** | K8s、Prometheus、xDS（基础） |
 | **总体** | **~98%** | 生产就绪 |
 
 ## 项目结构
 
-Batata 采用多 crate 工作空间架构，包含 19 个内部 crate，提高模块化和可维护性：
+Batata 采用多 crate 工作空间架构，包含 24 个内部 crate，提高模块化和可维护性：
 
 ```
 batata/
@@ -148,6 +151,7 @@ batata/
 │   ├── batata-naming/            # 服务发现
 │   ├── batata-plugin/            # 插件接口
 │   ├── batata-plugin-consul/     # Consul 兼容插件
+│   ├── batata-plugin-apollo/     # Apollo 兼容插件 (Config/Admin/OpenAPI)
 │   ├── batata-plugin-cloud/      # Prometheus/K8s 云插件
 │   ├── batata-console/           # 控制台后端服务
 │   ├── batata-client/            # 客户端 SDK
@@ -155,6 +159,9 @@ batata/
 │   ├── batata-consul-client/     # Consul 客户端
 │   ├── batata-mesh/              # 服务网格 (xDS, Istio MCP)
 │   ├── batata-ai/                # AI 集成 (MCP/A2A)
+│   ├── batata-copilot/           # AI 运维助手
+│   ├── batata-visibility/        # 指标与可观测性
+│   ├── batata-integration-tests/ # 跨 crate 集成测试
 │   ├── batata-server-common/     # 共享服务器基础设施
 │   └── batata-server/            # 主服务器 (HTTP, gRPC, 控制台)
 │       ├── src/
@@ -265,6 +272,7 @@ cargo build --release -p batata-server
 |------|------|------|
 | 8848 | 主 HTTP API | Nacos 兼容 API |
 | 8081 | 控制台 HTTP API | Web 管理控制台 |
+| 8080 | Apollo HTTP API | Apollo 兼容的 Config/Admin/OpenAPI（默认；集群模式下每节点使用独立端口，如 18080/18081/18082） |
 | 9848 | SDK gRPC | 客户端 SDK 通信 |
 | 9849 | 集群 gRPC | 节点间通信 |
 | 15010 | xDS gRPC | 服务网格 xDS/ADS 协议 |
@@ -461,6 +469,14 @@ batata.mesh.xds.default.listener.port: 15001
 | `batata.plugin.consul.enabled` | `false` | 启用 Consul 兼容 |
 | `batata.plugin.consul.port` | `8500` | Consul HTTP 端口 |
 | `batata.plugin.consul.datacenter` | `dc1` | 数据中心名称 |
+
+### Apollo 兼容插件
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `batata.plugin.apollo.enabled` | `true` | 启用 Apollo Config Service / Admin Service / OpenAPI 兼容 |
+| `batata.plugin.apollo.port` | `8080` | Apollo HTTP API 端口（集群模式下每节点使用独立端口，如 18080/18081/18082） |
+| `batata.plugin.apollo.openapi.token` | `admin` | Apollo OpenAPI access-key 鉴权默认 token |
 
 ### AI 集成
 
@@ -762,7 +778,7 @@ sea-orm-cli generate entity \
 ### 项目统计
 
 - **~50,000+ 行** Rust 代码
-- **19 个内部 crate** 工作空间
+- **24 个内部 crate** 工作空间
 - **333 个单元测试**，全面覆盖
 - **3 套性能基准测试**
 
@@ -805,6 +821,23 @@ kv, _, _ := client.KV().Get("key", nil)
 import nacos
 client = nacos.NacosClient(server_addresses="localhost:8848")
 config = client.get_config("dataId", "group")
+```
+
+### Java (Apollo SDK)
+
+```java
+// Apollo 客户端从 8080 端口的 Apollo 兼容 Config Service 读取配置
+Config config = ConfigService.getConfig("application", "default", 5000);
+String value = config.getProperty("key", "default");
+```
+
+```java
+// Apollo OpenAPI（管理操作）—— 使用 OpenAPI access token
+ApolloOpenApiClient client = ApolloOpenApiClient.newBuilder()
+    .withPortalUrl("http://localhost:8080")
+    .withToken("admin")
+    .build();
+OpenAppDTO app = client.createApp(new OpenAppDTO().setName("demo").setAppId("demo"));
 ```
 
 ## 监控
@@ -866,6 +899,7 @@ batata_cluster_member_count 3
 
 - [Nacos](https://nacos.io/) - 原始设计和 API 规范
 - [Consul](https://www.consul.io/) - KV 存储和服务发现 API 设计
+- [Apollo](https://github.com/apolloconfig/apollo) - `batata-plugin-apollo` 兼容插件所移植的 Config Service / Admin Service / OpenAPI 设计
 - [OpenRaft](https://github.com/datafuselabs/openraft) - Raft 共识实现
 - [SeaORM](https://www.sea-ql.org/SeaORM/) - 异步 ORM 框架
 - [Actix-web](https://actix.rs/) - 高性能 Web 框架
