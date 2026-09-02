@@ -51,35 +51,71 @@ impl ItemEmbedded {
     fn prefix_by_namespace(namespace_id: i64) -> String {
         format!("item_by_ns:{}:", namespace_id)
     }
+
+    /// Writes a fully-formed `StoredItem` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, item: &StoredItem) -> anyhow::Result<StoredItem> {
+        let cf = db
+            .cf_handle(CF_APOLLO_ITEM)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_ITEM))?;
+        let bytes = bincode::serialize(item)?;
+
+        // Store by id
+        let key_id = Self::key_by_id(item.id);
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store by namespace and key
+        let key_comp = Self::key(item.namespace_id, &item.key);
+        db.put_cf(cf, key_comp.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store reverse index for listing
+        let index_key = Self::index_key(item.namespace_id, item.id);
+        db.put_cf(cf, index_key.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        Ok(item.clone())
+    }
+
+    /// Soft-deletes an item by `id` (marks `is_deleted`, keeps it queryable via
+    /// `list_deleted_items`). Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_ITEM)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_ITEM))?;
+        let key_id = Self::key_by_id(id);
+        if let Some(data) = db.get_cf(cf, key_id.as_bytes())? {
+            let mut item: StoredItem = bincode::deserialize(&data)?;
+            // Soft delete so the item remains queryable via list_deleted_items
+            // (Apollo semantics: deleted items are tracked for the
+            // `.../items/deleted` endpoint).
+            item.is_deleted = true;
+            item.deleted_at = Utc::now().timestamp_millis();
+            let bytes = bincode::serialize(&item)?;
+            let key_comp = Self::key(item.namespace_id, &item.key);
+            let index_key = Self::index_key(item.namespace_id, item.id);
+            db.put_cf(cf, key_id.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+            db.put_cf(cf, key_comp.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+            db.put_cf(cf, index_key.as_bytes(), &bytes)
+                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl ItemPersistence for ItemEmbedded {
     async fn create(&self, item: StoredItem) -> anyhow::Result<StoredItem> {
-        let cf = self.cf()?;
         let mut item = item;
         item.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&item)?;
-
-        // Store by id
-        let key_id = Self::key_by_id(item.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store by namespace and key
-        let key_comp = Self::key(item.namespace_id, &item.key);
-        self.db
-            .put_cf(cf, key_comp.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store reverse index for listing
-        let index_key = Self::index_key(item.namespace_id, item.id);
-        self.db
-            .put_cf(cf, index_key.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        Ok(item)
+        Self::write_raw(&self.db, &item)
     }
 
     async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<StoredItem>> {
@@ -164,29 +200,7 @@ impl ItemPersistence for ItemEmbedded {
     }
 
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        let cf = self.cf()?;
-        let key_id = Self::key_by_id(id);
-        if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let mut item: StoredItem = bincode::deserialize(&data)?;
-            // Soft delete so the item remains queryable via list_deleted_items
-            // (Apollo semantics: deleted items are tracked for the
-            // `.../items/deleted` endpoint).
-            item.is_deleted = true;
-            item.deleted_at = Utc::now().timestamp_millis();
-            let bytes = bincode::serialize(&item)?;
-            let key_comp = Self::key(item.namespace_id, &item.key);
-            let index_key = Self::index_key(item.namespace_id, item.id);
-            self.db
-                .put_cf(cf, key_id.as_bytes(), &bytes)
-                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-            self.db
-                .put_cf(cf, key_comp.as_bytes(), &bytes)
-                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-            self.db
-                .put_cf(cf, index_key.as_bytes(), &bytes)
-                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-        }
-        Ok(())
+        Self::delete_raw(&self.db, id)
     }
 
     async fn batch_create(&self, items: Vec<StoredItem>) -> anyhow::Result<Vec<StoredItem>> {

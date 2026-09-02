@@ -31,21 +31,67 @@ impl ClusterEmbedded {
     fn key(app_id: &str, cluster_name: &str) -> String {
         format!("cluster:{}:{}", app_id, cluster_name)
     }
+
+    /// Reverse index keyed by the numeric `id`, so the Raft apply / delete
+    /// phase (which only carries the id) can locate the business key.
+    fn key_by_id(id: i64) -> String {
+        format!("cluster_id:{}", id)
+    }
+
+    /// Writes a fully-formed `StoredCluster` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, cluster: &StoredCluster) -> anyhow::Result<StoredCluster> {
+        let cf = db
+            .cf_handle(CF_APOLLO_CLUSTER)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_CLUSTER))?;
+        let key = Self::key(&cluster.app_id, &cluster.name);
+        let bytes = bincode::serialize(cluster)?;
+        db.put_cf(cf, key.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        // Maintain the id -> business-key reverse index for raft delete.
+        let key_id = Self::key_by_id(cluster.id);
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(cluster.clone())
+    }
+
+    /// Soft-deletes a cluster by its numeric `id` (deterministic counterpart to
+    /// `write_raw`, callable from the Raft apply phase where only `&DB` is
+    /// available).
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_CLUSTER)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_CLUSTER))?;
+        let key_id = Self::key_by_id(id);
+        match db.get_cf(cf, key_id.as_bytes())? {
+            Some(data) => {
+                let mut cluster: StoredCluster = bincode::deserialize(&data)?;
+                cluster.is_deleted = true;
+                cluster.deleted_at = chrono::Utc::now().timestamp_millis();
+                let bytes = bincode::serialize(&cluster)?;
+                let key = Self::key(&cluster.app_id, &cluster.name);
+                db.put_cf(cf, key.as_bytes(), &bytes)
+                    .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+                db.put_cf(cf, key_id.as_bytes(), &bytes)
+                    .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+                Ok(())
+            }
+            None => anyhow::bail!("Cluster not found: id={}", id),
+        }
+    }
 }
 
 #[async_trait]
 impl ClusterPersistence for ClusterEmbedded {
     async fn create(&self, mut cluster: StoredCluster) -> anyhow::Result<StoredCluster> {
-        let cf = self.cf()?;
         // Upstream Cluster.Id is a DB auto-increment consumed by
         // ParentClusterId; without it branch relationships cannot work.
         cluster.id = self.id_gen.next_id();
-        let key = Self::key(&cluster.app_id, &cluster.name);
-        let bytes = bincode::serialize(&cluster)?;
-        self.db
-            .put_cf(cf, key.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-        Ok(cluster)
+        Self::write_raw(&self.db, &cluster)
     }
 
     async fn get(&self, app_id: &str, cluster_name: &str) -> anyhow::Result<Option<StoredCluster>> {

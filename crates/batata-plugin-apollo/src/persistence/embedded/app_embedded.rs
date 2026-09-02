@@ -33,6 +33,33 @@ impl AppEmbedded {
     fn key(app_id: &str) -> String {
         format!("app:{}", app_id)
     }
+
+    /// Writes a fully-formed `StoredApp` to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create`/`update` and the
+    /// Raft apply phase. `StoredApp` has no numeric auto-increment id (it is
+    /// keyed by `app_id`), so no `log_index` derivation is needed.
+    pub fn write_raw(db: &DB, app: &StoredApp) -> anyhow::Result<StoredApp> {
+        let cf = db
+            .cf_handle(CF_APOLLO_APP)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_APP))?;
+        let key = Self::key(&app.app_id);
+        let bytes = bincode::serialize(app)?;
+        db.put_cf(cf, key.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(app.clone())
+    }
+
+    /// Deletes an app by `app_id`. Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, app_id: &str) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_APP)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_APP))?;
+        let key = Self::key(app_id);
+        db.delete_cf(cf, key.as_bytes())
+            .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        Ok(())
+    }
 }
 
 #[async_trait]

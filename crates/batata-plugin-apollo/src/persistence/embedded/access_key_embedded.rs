@@ -50,35 +50,67 @@ impl AccessKeyEmbedded {
     fn prefix_by_app(app_id: &str) -> String {
         format!("ak:{}:", app_id)
     }
+
+    /// Writes a fully-formed `StoredAccessKey` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, access_key: &StoredAccessKey) -> anyhow::Result<StoredAccessKey> {
+        let cf = db
+            .cf_handle(CF_APOLLO_ACCESS_KEY)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_ACCESS_KEY))?;
+        let bytes = bincode::serialize(access_key)?;
+
+        // Store by id
+        let key_id = Self::key_by_id(access_key.id);
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store by app and id
+        let key_app = Self::key(&access_key.app_id, access_key.id);
+        db.put_cf(cf, key_app.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store by secret for lookup
+        let key_secret = Self::key_by_secret(&access_key.secret);
+        db.put_cf(cf, key_secret.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        Ok(access_key.clone())
+    }
+
+    /// Deletes an access key by `id` (removes id/app/secret keys).
+    /// Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_ACCESS_KEY)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_ACCESS_KEY))?;
+        // First get to find all keys
+        let key_id = Self::key_by_id(id);
+        if let Some(data) = db.get_cf(cf, key_id.as_bytes())? {
+            let ak: StoredAccessKey = bincode::deserialize(&data)?;
+            let key_app = Self::key(&ak.app_id, ak.id);
+            let key_secret = Self::key_by_secret(&ak.secret);
+            // Delete all keys
+            db.delete_cf(cf, key_id.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            db.delete_cf(cf, key_app.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            db.delete_cf(cf, key_secret.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl AccessKeyPersistence for AccessKeyEmbedded {
     async fn create(&self, access_key: StoredAccessKey) -> anyhow::Result<StoredAccessKey> {
-        let cf = self.cf()?;
         let mut access_key = access_key;
         access_key.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&access_key)?;
-
-        // Store by id
-        let key_id = Self::key_by_id(access_key.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store by app and id
-        let key_app = Self::key(&access_key.app_id, access_key.id);
-        self.db
-            .put_cf(cf, key_app.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store by secret for lookup
-        let key_secret = Self::key_by_secret(&access_key.secret);
-        self.db
-            .put_cf(cf, key_secret.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        Ok(access_key)
+        Self::write_raw(&self.db, &access_key)
     }
 
     async fn get_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredAccessKey>> {
@@ -146,24 +178,6 @@ impl AccessKeyPersistence for AccessKeyEmbedded {
     }
 
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        let cf = self.cf()?;
-        // First get to find all keys
-        let key_id = Self::key_by_id(id);
-        if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let ak: StoredAccessKey = bincode::deserialize(&data)?;
-            let key_app = Self::key(&ak.app_id, ak.id);
-            let key_secret = Self::key_by_secret(&ak.secret);
-            // Delete all keys
-            self.db
-                .delete_cf(cf, key_id.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            self.db
-                .delete_cf(cf, key_app.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            self.db
-                .delete_cf(cf, key_secret.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-        }
-        Ok(())
+        Self::delete_raw(&self.db, id)
     }
 }

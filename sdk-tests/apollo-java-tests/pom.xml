@@ -88,9 +88,9 @@
                 <configuration>
                     <useManifestOnlyJar>false</useManifestOnlyJar>
                     <systemPropertyVariables>
-                        <apollo.meta>http://127.0.0.1:8080</apollo.meta>
+                        <apollo.meta>http://127.0.0.1:18080</apollo.meta>
                         <apollo.openapi.token>admin</apollo.openapi.token>
-                        <apollo.openapi.url>http://127.0.0.1:8080</apollo.openapi.url>
+                        <apollo.openapi.url>http://127.0.0.1:18080</apollo.openapi.url>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

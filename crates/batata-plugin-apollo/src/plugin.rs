@@ -117,7 +117,22 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             _ => {
                 let db = rocks_db
                     .ok_or_else(|| anyhow::anyhow!("RocksDB not available"))?;
-                Arc::new(EmbeddedApolloPersistence::new(db))
+                let mut embedded = EmbeddedApolloPersistence::new(db);
+                // In cluster mode the server hands us a running Raft node
+                // through the plugin context. Register the Apollo Raft handler
+                // and route all writes through it so IDs are derived
+                // deterministically from the Raft log index and replicated to
+                // every replica (instead of the standalone local AtomicI64).
+                if let Some(raft_node) = ctx.get::<batata_consistency::RaftNode>("raft_node") {
+                    use crate::raft::{register_apollo_raft, ApolloRaftWriter};
+                    register_apollo_raft(&raft_node).await
+                        .map_err(|e| anyhow::anyhow!("register apollo raft handler: {}", e))?;
+                    embedded = embedded.with_raft_writer(ApolloRaftWriter::new_arc(raft_node));
+                    tracing::info!("Apollo plugin running in cluster mode (Raft-replicated writes)");
+                } else {
+                    tracing::info!("Apollo plugin running in standalone mode (local RocksDB)");
+                }
+                Arc::new(embedded)
             }
         };
 

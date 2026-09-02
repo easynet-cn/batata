@@ -50,20 +50,22 @@ impl ReleaseEmbedded {
     fn index_key(app_id: &str, cluster: &str, namespace: &str, release_id: i64) -> String {
         format!("release_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, release_id)
     }
-}
 
-#[async_trait]
-impl ReleasePersistence for ReleaseEmbedded {
-    async fn create(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
-        let cf = self.cf()?;
-        let mut release = release;
-        release.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&release)?;
+    /// Writes a fully-formed `StoredRelease` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, release: &StoredRelease) -> anyhow::Result<StoredRelease> {
+        let cf = db
+            .cf_handle(CF_APOLLO_RELEASE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_RELEASE))?;
+        let bytes = bincode::serialize(release)?;
 
         // Store by id
         let key_id = Self::key_by_id(release.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
         // Store index for listing
@@ -73,8 +75,7 @@ impl ReleasePersistence for ReleaseEmbedded {
             &release.namespace_name,
             release.id,
         );
-        self.db
-            .put_cf(cf, index_key.as_bytes(), &bytes)
+        db.put_cf(cf, index_key.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
         // Update latest release pointer
@@ -83,12 +84,45 @@ impl ReleasePersistence for ReleaseEmbedded {
             &release.cluster_name,
             &release.namespace_name,
         );
-        // Store the release id as the latest (just the id, not full data)
-        self.db
-            .put_cf(cf, key_latest.as_bytes(), &bytes)
+        db.put_cf(cf, key_latest.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
-        Ok(release)
+        Ok(release.clone())
+    }
+
+    /// Deletes a release by `id` (removes the id key and namespace index key).
+    /// Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_RELEASE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_RELEASE))?;
+        // First get to find all keys
+        let key_id = Self::key_by_id(id);
+        if let Some(data) = db.get_cf(cf, key_id.as_bytes())? {
+            let release: StoredRelease = bincode::deserialize(&data)?;
+            let index_key = Self::index_key(
+                &release.app_id,
+                &release.cluster_name,
+                &release.namespace_name,
+                release.id,
+            );
+            // Delete all keys
+            db.delete_cf(cf, key_id.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            db.delete_cf(cf, index_key.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            // Note: we don't delete the latest pointer as there might be an older release
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ReleasePersistence for ReleaseEmbedded {
+    async fn create(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        let mut release = release;
+        release.id = self.id_gen.next_id();
+        Self::write_raw(&self.db, &release)
     }
 
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
@@ -158,27 +192,7 @@ impl ReleasePersistence for ReleaseEmbedded {
     }
 
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        let cf = self.cf()?;
-        // First get to find all keys
-        let key_id = Self::key_by_id(id);
-        if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let release: StoredRelease = bincode::deserialize(&data)?;
-            let index_key = Self::index_key(
-                &release.app_id,
-                &release.cluster_name,
-                &release.namespace_name,
-                release.id,
-            );
-            // Delete all keys
-            self.db
-                .delete_cf(cf, key_id.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            self.db
-                .delete_cf(cf, index_key.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            // Note: we don't delete the latest pointer as there might be an older release
-        }
-        Ok(())
+        Self::delete_raw(&self.db, id)
     }
 
     async fn update(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {

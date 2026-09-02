@@ -50,23 +50,51 @@ impl ReleaseMessageEmbedded {
     fn row_key(id: i64) -> String {
         format!("{}{}", ROW_PREFIX, id)
     }
+
+    /// Writes a fully-formed `StoredReleaseMessage` (including its `id`) to
+    /// RocksDB, pruning any previous row for the same watch key.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, message: &StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
+        let cf = db
+            .cf_handle(CF_APOLLO_RELEASE_MSG)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_RELEASE_MSG))?;
+
+        // Prune the previous row for this watch key before overwriting it.
+        let composite = Self::key(&message.message);
+        if let Some(old) = db.get_cf(cf, composite.as_bytes())? {
+            let old: StoredReleaseMessage = serde_json::from_slice(&old)?;
+            db.delete_cf(cf, Self::row_key(old.id).as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        }
+
+        let bytes = serde_json::to_vec(message)?;
+        db.put_cf(cf, composite.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        db.put_cf(cf, Self::row_key(message.id).as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        Ok(message.clone())
+    }
+
+    /// Deletes a release message row by `id` (deterministic counterpart to
+    /// `write_raw`).
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_RELEASE_MSG)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_RELEASE_MSG))?;
+        db.delete_cf(cf, Self::row_key(id).as_bytes())
+            .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))
+    }
 }
 
 #[async_trait]
 impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
     async fn create(&self, mut message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
-        let store = JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG);
-
-        // Prune the previous row for this watch key before overwriting it.
-        let composite = Self::key(&message.message);
-        if let Some(old) = store.get::<StoredReleaseMessage>(composite.as_bytes())? {
-            store.delete(Self::row_key(old.id).as_bytes())?;
-        }
-
         message.id = self.id_gen.next_id();
-        store.put(composite.as_bytes(), &message)?;
-        store.put(Self::row_key(message.id).as_bytes(), &message)?;
-        Ok(message)
+        Self::write_raw(&self.db, &message)
     }
 
     async fn find_latest_by_message(

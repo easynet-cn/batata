@@ -45,20 +45,22 @@ impl CommitEmbedded {
     fn index_key(app_id: &str, cluster: &str, namespace: &str, commit_id: i64) -> String {
         format!("commit_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, commit_id)
     }
-}
 
-#[async_trait]
-impl CommitPersistence for CommitEmbedded {
-    async fn create(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
-        let cf = self.cf()?;
-        let mut commit = commit;
-        commit.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&commit)?;
+    /// Writes a fully-formed `StoredCommit` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, commit: &StoredCommit) -> anyhow::Result<StoredCommit> {
+        let cf = db
+            .cf_handle(CF_APOLLO_COMMIT)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_COMMIT))?;
+        let bytes = bincode::serialize(commit)?;
 
         // Store by id
         let key_id = Self::key_by_id(commit.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
         // Store index for listing
@@ -68,11 +70,19 @@ impl CommitPersistence for CommitEmbedded {
             &commit.namespace_name,
             commit.id,
         );
-        self.db
-            .put_cf(cf, index_key.as_bytes(), &bytes)
+        db.put_cf(cf, index_key.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
-        Ok(commit)
+        Ok(commit.clone())
+    }
+}
+
+#[async_trait]
+impl CommitPersistence for CommitEmbedded {
+    async fn create(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
+        let mut commit = commit;
+        commit.id = self.id_gen.next_id();
+        Self::write_raw(&self.db, &commit)
     }
 
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {

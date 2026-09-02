@@ -24,6 +24,7 @@ use rocksdb::DB;
 
 use crate::persistence::traits::ApolloPersistenceService;
 use crate::persistence::shared::*;
+use crate::raft::{ApolloRaftRequest, ApolloRaftWriter};
 pub use id_generator::IdGenerator;
 pub use store::JsonStore;
 
@@ -60,6 +61,9 @@ pub struct EmbeddedApolloPersistence {
     service_registry: ServiceRegistryEmbedded,
     namespace_lock: NamespaceLockEmbedded,
     portal_id_gen: Arc<IdGenerator>,
+    /// When set, write operations are replicated through the unified Raft
+    /// group instead of being applied directly. `None` in standalone mode.
+    raft_writer: Option<Arc<ApolloRaftWriter>>,
 }
 
 impl EmbeddedApolloPersistence {
@@ -88,8 +92,18 @@ impl EmbeddedApolloPersistence {
             service_registry: ServiceRegistryEmbedded::new(db.clone()),
             namespace_lock: NamespaceLockEmbedded::new(db.clone()),
             portal_id_gen,
+            raft_writer: None,
             db,
         }
+    }
+
+    /// Attach a Raft writer. Caller must also have registered the
+    /// `ApolloRaftPluginHandler` with the same Raft node. In cluster mode every
+    /// write goes through this writer so the operation is replicated and the
+    /// primary key is derived deterministically from the Raft `log_index`.
+    pub fn with_raft_writer(mut self, writer: Arc<ApolloRaftWriter>) -> Self {
+        self.raft_writer = Some(writer);
+        self
     }
 
     /// Scan the by-id key prefixes of every core column family and return the
@@ -159,6 +173,19 @@ impl EmbeddedApolloPersistence {
 #[async_trait]
 impl crate::persistence::traits::ClusterPersistence for EmbeddedApolloPersistence {
     async fn create(&self, cluster: StoredCluster) -> anyhow::Result<StoredCluster> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ClusterCreate(cluster.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            // Apply has landed on the local state machine; read it back by
+            // business key so the returned object carries the Raft-derived id.
+            return self
+                .cluster
+                .get(&cluster.app_id, &cluster.name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("cluster not found after raft apply"));
+        }
         self.cluster.create(cluster).await
     }
     async fn get(&self, app_id: &str, cluster_name: &str) -> anyhow::Result<Option<StoredCluster>> {
@@ -168,9 +195,31 @@ impl crate::persistence::traits::ClusterPersistence for EmbeddedApolloPersistenc
         self.cluster.list(app_id).await
     }
     async fn update(&self, cluster: StoredCluster) -> anyhow::Result<StoredCluster> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ClusterUpdate(cluster.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .cluster
+                .get(&cluster.app_id, &cluster.name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("cluster not found after raft apply"));
+        }
         self.cluster.update(cluster).await
     }
     async fn delete(&self, app_id: &str, cluster_name: &str) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            let cluster = self
+                .cluster
+                .get(app_id, cluster_name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("cluster not found before raft delete"))?;
+            return writer
+                .write(ApolloRaftRequest::ClusterDelete { id: cluster.id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.cluster.delete(app_id, cluster_name).await
     }
 }
@@ -178,6 +227,17 @@ impl crate::persistence::traits::ClusterPersistence for EmbeddedApolloPersistenc
 #[async_trait]
 impl crate::persistence::traits::AppPersistence for EmbeddedApolloPersistence {
     async fn create(&self, app: StoredApp) -> anyhow::Result<StoredApp> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::AppCreate(app.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .app
+                .get(&app.app_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("app not found after raft apply"));
+        }
         self.app.create(app).await
     }
     async fn get(&self, app_id: &str) -> anyhow::Result<Option<StoredApp>> {
@@ -190,9 +250,28 @@ impl crate::persistence::traits::AppPersistence for EmbeddedApolloPersistence {
         self.app.list().await
     }
     async fn update(&self, app: StoredApp) -> anyhow::Result<StoredApp> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::AppUpdate(app.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .app
+                .get(&app.app_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("app not found after raft apply"));
+        }
         self.app.update(app).await
     }
     async fn delete(&self, app_id: &str) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            return writer
+                .write(ApolloRaftRequest::AppDelete {
+                    app_id: app_id.to_string(),
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.app.delete(app_id).await
     }
 }
@@ -200,6 +279,21 @@ impl crate::persistence::traits::AppPersistence for EmbeddedApolloPersistence {
 #[async_trait]
 impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersistence {
     async fn create(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::NamespaceCreate(namespace.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .namespace
+                .get_by_app_cluster(
+                    &namespace.app_id,
+                    &namespace.cluster_name,
+                    &namespace.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("namespace not found after raft apply"));
+        }
         self.namespace.create(namespace).await
     }
     async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
@@ -215,9 +309,30 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
         self.namespace.list_all().await
     }
     async fn update(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::NamespaceUpdate(namespace.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .namespace
+                .get_by_app_cluster(
+                    &namespace.app_id,
+                    &namespace.cluster_name,
+                    &namespace.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("namespace not found after raft apply"));
+        }
         self.namespace.update(namespace).await
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            return writer
+                .write(ApolloRaftRequest::NamespaceDelete { id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.namespace.delete(id).await
     }
 }
@@ -225,6 +340,17 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
 #[async_trait]
 impl crate::persistence::traits::ItemPersistence for EmbeddedApolloPersistence {
     async fn create(&self, item: StoredItem) -> anyhow::Result<StoredItem> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ItemCreate(item.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .item
+                .get_by_key(item.namespace_id, &item.key)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("item not found after raft apply"));
+        }
         self.item.create(item).await
     }
     async fn get_by_key(&self, namespace_id: i64, key: &str) -> anyhow::Result<Option<StoredItem>> {
@@ -237,9 +363,26 @@ impl crate::persistence::traits::ItemPersistence for EmbeddedApolloPersistence {
         self.item.list_by_namespace(namespace_id).await
     }
     async fn update(&self, item: StoredItem) -> anyhow::Result<StoredItem> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ItemUpdate(item.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .item
+                .get_by_key(item.namespace_id, &item.key)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("item not found after raft apply"));
+        }
         self.item.update(item).await
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            return writer
+                .write(ApolloRaftRequest::ItemDelete { id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.item.delete(id).await
     }
     async fn batch_create(&self, items: Vec<StoredItem>) -> anyhow::Result<Vec<StoredItem>> {
@@ -256,6 +399,21 @@ impl crate::persistence::traits::ItemPersistence for EmbeddedApolloPersistence {
 #[async_trait]
 impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistence {
     async fn create(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ReleaseCreate(release.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .release
+                .get_latest(
+                    &release.app_id,
+                    &release.cluster_name,
+                    &release.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("release not found after raft apply"));
+        }
         self.release.create(release).await
     }
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
@@ -268,12 +426,33 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
         self.release.list_by_namespace(app_id, cluster_name, namespace_name).await
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            return writer
+                .write(ApolloRaftRequest::ReleaseDelete { id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.release.delete(id).await
     }
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>> {
         self.release.get_by_release_id(release_id).await
     }
     async fn update(&self, release: StoredRelease) -> anyhow::Result<StoredRelease> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::ReleaseUpdate(release.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .release
+                .get_latest(
+                    &release.app_id,
+                    &release.cluster_name,
+                    &release.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("release not found after raft apply"));
+        }
         self.release.update(release).await
     }
     async fn list_active(
@@ -289,6 +468,21 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
 #[async_trait]
 impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence {
     async fn create(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::CommitCreate(commit.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .commit
+                .get_latest(
+                    &commit.app_id,
+                    &commit.cluster_name,
+                    &commit.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("commit not found after raft apply"));
+        }
         self.commit.create(commit).await
     }
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {
@@ -301,6 +495,21 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
         self.commit.get_latest(app_id, cluster_name, namespace_name).await
     }
     async fn update(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::CommitCreate(commit.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .commit
+                .get_latest(
+                    &commit.app_id,
+                    &commit.cluster_name,
+                    &commit.namespace_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("commit not found after raft apply"));
+        }
         self.commit.update(commit).await
     }
 }
@@ -308,16 +517,51 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
 #[async_trait]
 impl crate::persistence::traits::GrayReleasePersistence for EmbeddedApolloPersistence {
     async fn create(&self, rule: StoredGrayReleaseRule) -> anyhow::Result<StoredGrayReleaseRule> {
-        self.gray_release.create(rule).await
+        if let Some(writer) = &self.raft_writer {
+            // Replicate so every node sees the same gray rule (the id is
+            // assigned by the Raft apply phase from the log_index).
+            writer
+                .write(ApolloRaftRequest::GrayReleaseCreate(rule.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            // Read back the applied rule (id is now deterministic).
+            self.gray_release
+                .get_by_namespace(&rule.app_id, &rule.cluster_name, &rule.namespace_name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("gray release rule missing after raft apply"))
+        } else {
+            self.gray_release.create(rule).await
+        }
     }
     async fn get_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredGrayReleaseRule>> {
         self.gray_release.get_by_namespace(app_id, cluster_name, namespace_name).await
     }
     async fn update_rules(&self, id: i64, rules: String, release_id: i64) -> anyhow::Result<StoredGrayReleaseRule> {
-        self.gray_release.update_rules(id, rules, release_id).await
+        if let Some(writer) = &self.raft_writer {
+            // Reconstruct the full updated rule locally, then replicate the whole
+            // object so the apply phase can write both keys deterministically.
+            let mut rule = GrayReleaseEmbedded::get_by_id(&self.db, id)?;
+            rule.rules = rules;
+            rule.release_id = release_id;
+            rule.data_change_last_time = Some(chrono::Utc::now().timestamp_millis());
+            writer
+                .write(ApolloRaftRequest::GrayReleaseUpdate(rule.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(rule)
+        } else {
+            self.gray_release.update_rules(id, rules, release_id).await
+        }
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        self.gray_release.delete(id).await
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::GrayReleaseDelete { id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        } else {
+            self.gray_release.delete(id).await
+        }
     }
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredGrayReleaseRule>> {
         self.gray_release.list_by_app(app_id).await
@@ -346,6 +590,17 @@ impl crate::persistence::traits::InstancePersistence for EmbeddedApolloPersisten
 #[async_trait]
 impl crate::persistence::traits::AccessKeyPersistence for EmbeddedApolloPersistence {
     async fn create(&self, access_key: StoredAccessKey) -> anyhow::Result<StoredAccessKey> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::AccessKeyCreate(access_key.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .access_key
+                .get_by_secret(&access_key.secret)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("access key not found after raft apply"));
+        }
         self.access_key.create(access_key).await
     }
     async fn get_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredAccessKey>> {
@@ -355,9 +610,26 @@ impl crate::persistence::traits::AccessKeyPersistence for EmbeddedApolloPersiste
         self.access_key.get_by_secret(secret).await
     }
     async fn update(&self, access_key: StoredAccessKey) -> anyhow::Result<StoredAccessKey> {
+        if let Some(writer) = &self.raft_writer {
+            writer
+                .write(ApolloRaftRequest::AccessKeyUpdate(access_key.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            return self
+                .access_key
+                .get_by_secret(&access_key.secret)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("access key not found after raft apply"));
+        }
         self.access_key.update(access_key).await
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
+        if let Some(writer) = &self.raft_writer {
+            return writer
+                .write(ApolloRaftRequest::AccessKeyDelete { id })
+                .await
+                .map_err(|e| anyhow::anyhow!(e));
+        }
         self.access_key.delete(id).await
     }
 }
@@ -365,7 +637,21 @@ impl crate::persistence::traits::AccessKeyPersistence for EmbeddedApolloPersiste
 #[async_trait]
 impl crate::persistence::traits::ReleaseMessagePersistence for EmbeddedApolloPersistence {
     async fn create(&self, message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
-        self.release_message.create(message).await
+        if let Some(writer) = &self.raft_writer {
+            // Replicate so every node sees the same notificationId (the row id).
+            writer
+                .write(ApolloRaftRequest::ReleaseMessageCreate(message.clone()))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            // Read back the applied row (the id was assigned by the Raft apply
+            // phase from the log_index, so it is now deterministic).
+            self.release_message
+                .find_latest_by_message(&message.message)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("release message missing after raft apply"))
+        } else {
+            self.release_message.create(message).await
+        }
     }
     async fn find_latest_by_message(
         &self,

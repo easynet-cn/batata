@@ -45,28 +45,58 @@ impl NamespaceEmbedded {
     fn prefix_by_app(app_id: &str) -> String {
         format!("ns:{}:", app_id)
     }
+
+    /// Writes a fully-formed `StoredNamespace` (including its `id`) to RocksDB.
+    ///
+    /// Deterministic write path shared by the local `create` (`id` from
+    /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
+    /// `log_index`). Operates on a `&DB` so it can be called from the Raft
+    /// state machine.
+    pub fn write_raw(db: &DB, namespace: &StoredNamespace) -> anyhow::Result<StoredNamespace> {
+        let cf = db
+            .cf_handle(CF_APOLLO_NAMESPACE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_NAMESPACE))?;
+        let bytes = bincode::serialize(namespace)?;
+        // Store by id
+        let key_id = Self::key_by_id(namespace.id);
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store by composite key for lookup by app/cluster/name
+        let key_comp = Self::key(&namespace.app_id, &namespace.cluster_name, &namespace.namespace_name);
+        db.put_cf(cf, key_comp.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        Ok(namespace.clone())
+    }
+
+    /// Deletes a namespace by `id`, removing both the id key and the composite
+    /// key. Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_NAMESPACE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_NAMESPACE))?;
+        // First get to find composite key
+        let key_id = Self::key_by_id(id);
+        if let Some(data) = db.get_cf(cf, key_id.as_bytes())? {
+            let ns: StoredNamespace = bincode::deserialize(&data)?;
+            let key_comp = Self::key(&ns.app_id, &ns.cluster_name, &ns.namespace_name);
+            // Delete both keys
+            db.delete_cf(cf, key_id.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            db.delete_cf(cf, key_comp.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl NamespacePersistence for NamespaceEmbedded {
     async fn create(&self, namespace: StoredNamespace) -> anyhow::Result<StoredNamespace> {
-        let cf = self.cf()?;
         let mut namespace = namespace;
         namespace.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&namespace)?;
-        // Store by id
-        let key_id = Self::key_by_id(namespace.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store by composite key for lookup by app/cluster/name
-        let key_comp = Self::key(&namespace.app_id, &namespace.cluster_name, &namespace.namespace_name);
-        self.db
-            .put_cf(cf, key_comp.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        Ok(namespace)
+        Self::write_raw(&self.db, &namespace)
     }
 
     async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
@@ -163,20 +193,6 @@ impl NamespacePersistence for NamespaceEmbedded {
     }
 
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        let cf = self.cf()?;
-        // First get to find composite key
-        let key_id = Self::key_by_id(id);
-        if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let ns: StoredNamespace = bincode::deserialize(&data)?;
-            let key_comp = Self::key(&ns.app_id, &ns.cluster_name, &ns.namespace_name);
-            // Delete both keys
-            self.db
-                .delete_cf(cf, key_id.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            self.db
-                .delete_cf(cf, key_comp.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-        }
-        Ok(())
+        Self::delete_raw(&self.db, id)
     }
 }

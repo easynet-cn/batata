@@ -45,29 +45,72 @@ impl GrayReleaseEmbedded {
     fn prefix_by_app(app_id: &str) -> String {
         format!("gray:{}:", app_id)
     }
+
+    /// Writes a fully-formed `StoredGrayReleaseRule` (including its `id`) to
+    /// RocksDB, writing both the id key and the namespace composite key.
+    ///
+    /// Deterministic write path shared by the local `create`/`update_rules`
+    /// (`id` from `IdGenerator`) and the Raft apply phase (`id` derived from
+    /// the Raft `log_index`). Operates on a `&DB` so it can be called from the
+    /// Raft state machine.
+    pub fn write_raw(db: &DB, rule: &StoredGrayReleaseRule) -> anyhow::Result<StoredGrayReleaseRule> {
+        let cf = db
+            .cf_handle(CF_APOLLO_GRAY_RULE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_GRAY_RULE))?;
+        let bytes = bincode::serialize(rule)?;
+
+        // Store by id
+        let key_id = Self::key_by_id(rule.id);
+        db.put_cf(cf, key_id.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        // Store by namespace composite key
+        let key_comp = Self::key(&rule.app_id, &rule.cluster_name, &rule.namespace_name);
+        db.put_cf(cf, key_comp.as_bytes(), &bytes)
+            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+
+        Ok(rule.clone())
+    }
+
+    /// Reads a gray release rule by `id` (used to reconstruct updates before
+    /// replication). Operates on a `&DB` so it can be called from the Raft path.
+    pub fn get_by_id(db: &DB, id: i64) -> anyhow::Result<StoredGrayReleaseRule> {
+        let cf = db
+            .cf_handle(CF_APOLLO_GRAY_RULE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_GRAY_RULE))?;
+        let key_id = Self::key_by_id(id);
+        let data = db
+            .get_cf(cf, key_id.as_bytes())?
+            .ok_or_else(|| anyhow::anyhow!("Gray release rule '{}' not found", id))?;
+        let rule: StoredGrayReleaseRule = bincode::deserialize(&data)?;
+        Ok(rule)
+    }
+
+    /// Deletes a gray release rule by `id` (removes both id and composite keys).
+    /// Deterministic counterpart to `write_raw`.
+    pub fn delete_raw(db: &DB, id: i64) -> anyhow::Result<()> {
+        let cf = db
+            .cf_handle(CF_APOLLO_GRAY_RULE)
+            .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_GRAY_RULE))?;
+        let key_id = Self::key_by_id(id);
+        if let Some(data) = db.get_cf(cf, key_id.as_bytes())? {
+            let rule: StoredGrayReleaseRule = bincode::deserialize(&data)?;
+            let key_comp = Self::key(&rule.app_id, &rule.cluster_name, &rule.namespace_name);
+            db.delete_cf(cf, key_id.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+            db.delete_cf(cf, key_comp.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl GrayReleasePersistence for GrayReleaseEmbedded {
     async fn create(&self, rule: StoredGrayReleaseRule) -> anyhow::Result<StoredGrayReleaseRule> {
-        let cf = self.cf()?;
         let mut rule = rule;
         rule.id = self.id_gen.next_id();
-        let bytes = bincode::serialize(&rule)?;
-
-        // Store by id
-        let key_id = Self::key_by_id(rule.id);
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        // Store by namespace composite key
-        let key_comp = Self::key(&rule.app_id, &rule.cluster_name, &rule.namespace_name);
-        self.db
-            .put_cf(cf, key_comp.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        Ok(rule)
+        Self::write_raw(&self.db, &rule)
     }
 
     async fn get_by_namespace(
@@ -112,37 +155,11 @@ impl GrayReleasePersistence for GrayReleaseEmbedded {
         rule.release_id = release_id;
         rule.data_change_last_time = Some(chrono::Utc::now().timestamp_millis());
 
-        let bytes = bincode::serialize(&rule)?;
-
-        // Update both keys
-        self.db
-            .put_cf(cf, key_id.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        let key_comp = Self::key(&rule.app_id, &rule.cluster_name, &rule.namespace_name);
-        self.db
-            .put_cf(cf, key_comp.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-
-        Ok(rule)
+        Self::write_raw(&self.db, &rule)
     }
 
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
-        let cf = self.cf()?;
-        // First get to find composite key
-        let key_id = Self::key_by_id(id);
-        if let Some(data) = self.db.get_cf(cf, key_id.as_bytes())? {
-            let rule: StoredGrayReleaseRule = bincode::deserialize(&data)?;
-            let key_comp = Self::key(&rule.app_id, &rule.cluster_name, &rule.namespace_name);
-            // Delete both keys
-            self.db
-                .delete_cf(cf, key_id.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            self.db
-                .delete_cf(cf, key_comp.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-        }
-        Ok(())
+        Self::delete_raw(&self.db, id)
     }
 
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredGrayReleaseRule>> {
