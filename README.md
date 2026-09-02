@@ -726,6 +726,45 @@ podman-compose --profile cluster up
 podman-compose --profile split up
 ```
 
+### Kubernetes
+
+Manifests for a single-replica Deployment are provided under `deploy/k8s/`:
+
+- `configmap.yaml` — runtime configuration
+- `deployment.yaml` — batata container (mounts the ConfigMap at `/app/conf`)
+- `service.yaml` — ClusterIP Service exposing the console/main/gRPC ports
+
+By default the ConfigMap ships **only two files** that batata needs at runtime:
+
+- `application.yml` — main server configuration
+- `cluster.conf` — cluster peer addresses (one `host:port` per line)
+
+These are mounted at `/app/conf`, overriding the baked-in `conf/` directory, so
+the pod's `/app/conf` contains exactly those two files. The `*.sql` files under
+`conf/` are reference DDL and are **not** used at runtime (batata creates its
+schema automatically via SeaORM migrations).
+
+The committed `configmap.yaml` is generated from the real files. Regenerate it
+after editing `conf/application.yml` or `conf/cluster.conf`:
+
+```bash
+kubectl create configmap batata-config \
+  --from-file=application.yml=conf/application.yml \
+  --from-file=cluster.conf=conf/cluster.conf \
+  --dry-run=client -o yaml > deploy/k8s/configmap.yaml
+```
+
+Apply to the cluster:
+
+```bash
+kubectl apply -f deploy/k8s/configmap.yaml \
+              -f deploy/k8s/deployment.yaml \
+              -f deploy/k8s/service.yaml
+```
+
+Override the container image in `deployment.yaml` (default `easynet/batata:latest`)
+with the image built from your release binary.
+
 ## Database Setup
 
 Batata supports MySQL, PostgreSQL, and embedded RocksDB (no external database).
@@ -824,6 +863,69 @@ cargo clippy --workspace
 # Generate documentation
 cargo doc --workspace --open
 ```
+
+### Multi-Platform Build & Release
+
+batata publishes prebuilt binaries through GitHub Actions. Pushing a tag of the
+form `vX.Y.Z` triggers `.github/workflows/release.yml`, which cross-builds
+`batata-server` for every platform × feature combination below and uploads a
+tarball per combination to the GitHub Release.
+
+**Supported targets**
+
+| Target | Rust target | Notes |
+| --- | --- | --- |
+| Linux x86_64 (glibc) | `x86_64-unknown-linux-gnu` | built natively on `ubuntu-24.04` |
+| Linux ARM64 (glibc) | `aarch64-unknown-linux-gnu` | built natively on `ubuntu-24.04-arm` |
+| Linux x86_64 (musl) | `x86_64-unknown-linux-musl` | static binary via `cargo-zigbuild` |
+| Linux ARM64 (musl) | `aarch64-unknown-linux-musl` | static binary via `cargo-zigbuild` |
+| macOS ARM64 | `aarch64-apple-darwin` | built natively on `macos-14` |
+| macOS x86_64 | `x86_64-apple-darwin` | built natively on `macos-13` |
+
+ARM (aarch64) systems — including Apple Silicon, AWS Graviton, and domestic
+ARM servers (FeiTeng/Kunpeng) — are fully supported. The only native
+dependency is RocksDB (C++); it builds cleanly on all of the above targets.
+
+**Feature switches**
+
+Each target is built against every feature set declared in
+`crates/batata-server/Cargo.toml`:
+
+| Feature set | Build flag | Includes |
+| --- | --- | --- |
+| `default` | *(none)* | `consul` + `apollo` |
+| `consul` | `--features consul` | Consul compatibility only |
+| `apollo` | `--features apollo` | Apollo compatibility only |
+| `full` | `--features full` | `consul` + `apollo` |
+| `no-default` | `--no-default-features` | core server only |
+
+This is driven by the `matrix.features` list in `release.yml`; the PR-only
+workflow `.github/workflows/ci.yml` runs `cargo check` across all five sets on
+`ubuntu-24.04` to catch breakage early.
+
+**Artifact layout**
+
+Each release asset is named `batata-server-<version>-<target>-<features>.tar.gz`
+and unpacks to:
+
+```
+batata-server-<version>-<target>-<features>/
+├── bin/batata-server
+├── conf/            # configuration files (read-only mount in containers)
+├── docker-compose.yml
+└── deploy/k8s/     # configmap.yaml, deployment.yaml, service.yaml
+```
+
+Extract and run:
+
+```bash
+tar -xzf batata-server-v1.2.3-linux-arm64-gnu-full.tar.gz
+cd batata-server-v1.2.3-linux-arm64-gnu-full
+./bin/batata-server   # reads ./conf/application.yml
+```
+
+The version printed by `--version` is the crate version (currently `0.1.0`);
+the tag is only reflected in the artifact/Release filename.
 
 ### Project Statistics
 

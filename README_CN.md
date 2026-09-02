@@ -698,6 +698,44 @@ podman-compose --profile cluster up
 podman-compose --profile split up
 ```
 
+### Kubernetes 部署
+
+`deploy/k8s/` 目录下提供了单副本 Deployment 的清单：
+
+- `configmap.yaml` — 运行时配置
+- `deployment.yaml` — batata 容器（将 ConfigMap 挂载到 `/app/conf`）
+- `service.yaml` — ClusterIP 类型的 Service，暴露控制台/主服务/gRPC 端口
+
+默认情况下，ConfigMap **只包含运行时所需的两个文件**：
+
+- `application.yml` — 主服务器配置
+- `cluster.conf` — 集群成员地址（每行一个 `host:port`）
+
+这两个文件挂载到 `/app/conf`，会覆盖镜像内自带的 `conf/` 目录，因此 pod 内的
+`/app/conf` 仅包含这两个文件。`conf/` 下的 `*.sql` 是参考 DDL，**不会**在运行时
+被使用（batata 通过 SeaORM 迁移在启动时自动建表）。
+
+仓库中提交的 `configmap.yaml` 由真实文件生成。修改 `conf/application.yml` 或
+`conf/cluster.conf` 后，请重新生成：
+
+```bash
+kubectl create configmap batata-config \
+  --from-file=application.yml=conf/application.yml \
+  --from-file=cluster.conf=conf/cluster.conf \
+  --dry-run=client -o yaml > deploy/k8s/configmap.yaml
+```
+
+部署到集群：
+
+```bash
+kubectl apply -f deploy/k8s/configmap.yaml \
+              -f deploy/k8s/deployment.yaml \
+              -f deploy/k8s/service.yaml
+```
+
+请将 `deployment.yaml` 中的容器镜像（默认 `easynet/batata:latest`）替换为你基于
+发布二进制构建的镜像。
+
 ## 数据库迁移
 
 Batata 通过 `batata-migration` crate 提供自动数据库迁移功能。
@@ -758,6 +796,67 @@ cargo clippy --workspace
 # 生成文档
 cargo doc --workspace --open
 ```
+
+### 多平台构建与发布
+
+batata 通过 GitHub Actions 发布预编译二进制。推送形如 `vX.Y.Z` 的 tag 会触发
+`.github/workflows/release.yml`，对下表中每一个「平台 × feature」组合交叉编译
+`batata-server`，并把每个组合的 tarball 上传到 GitHub Release。
+
+**支持的目标平台**
+
+| 目标 | Rust target | 说明 |
+| --- | --- | --- |
+| Linux x86_64 (glibc) | `x86_64-unknown-linux-gnu` | 在 `ubuntu-24.04` 原生编译 |
+| Linux ARM64 (glibc) | `aarch64-unknown-linux-gnu` | 在 `ubuntu-24.04-arm` 原生编译 |
+| Linux x86_64 (musl) | `x86_64-unknown-linux-musl` | 经 `cargo-zigbuild` 产出静态二进制 |
+| Linux ARM64 (musl) | `aarch64-unknown-linux-musl` | 经 `cargo-zigbuild` 产出静态二进制 |
+| macOS ARM64 | `aarch64-apple-darwin` | 在 `macos-14` 原生编译 |
+| macOS x86_64 | `x86_64-apple-darwin` | 在 `macos-13` 原生编译 |
+
+ARM（aarch64）系统——包括 Apple Silicon、AWS Graviton 以及国产 ARM 服务器
+（飞腾/鲲鹏）——均完整支持。唯一的原生依赖是 RocksDB（C++），在上述所有目标上
+均可正常编译。
+
+**Feature 开关**
+
+每个目标都会按 `crates/batata-server/Cargo.toml` 中声明的每组 feature 构建：
+
+| feature 组合 | 构建参数 | 包含 |
+| --- | --- | --- |
+| `default` | *(无)* | `consul` + `apollo` |
+| `consul` | `--features consul` | 仅 Consul 兼容 |
+| `apollo` | `--features apollo` | 仅 Apollo 兼容 |
+| `full` | `--features full` | `consul` + `apollo` |
+| `no-default` | `--no-default-features` | 仅核心服务器 |
+
+该矩阵由 `release.yml` 的 `matrix.features` 驱动；PR 专用的
+`.github/workflows/ci.yml` 会在 `ubuntu-24.04` 上对全部五组做 `cargo check`，
+尽早发现问题。
+
+**产物布局**
+
+每个 Release 附件命名为 `batata-server-<version>-<target>-<features>.tar.gz`，
+解压后为：
+
+```
+batata-server-<version>-<target>-<features>/
+├── bin/batata-server
+├── conf/            # 配置文件（容器内以只读方式挂载）
+├── docker-compose.yml
+└── deploy/k8s/     # configmap.yaml、deployment.yaml、service.yaml
+```
+
+解压即运行：
+
+```bash
+tar -xzf batata-server-v1.2.3-linux-arm64-gnu-full.tar.gz
+cd batata-server-v1.2.3-linux-arm64-gnu-full
+./bin/batata-server   # 读取 ./conf/application.yml
+```
+
+`--version` 打印的版本号为 crate 版本（当前 `0.1.0`）；tag 仅体现在产物 /
+Release 文件名中。
 
 ### 生成数据库实体
 

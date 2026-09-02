@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: cargo check (ubuntu-x64) — feature ${{ matrix.features }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - default
+          - consul
+          - apollo
+          - full
+          - no-default
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install C++ build tools (rocksdb)
+        run: sudo apt-get update && sudo apt-get install -y clang cmake make
+
+      - name: Cache cargo & rocksdb
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          cache-all-crates: true
+
+      - name: cargo check (batata-server)
+        run: |
+          if [ "${{ matrix.features }}" = "no-default" ]; then
+            cargo check -p batata-server --no-default-features
+          else
+            cargo check -p batata-server --features "${{ matrix.features }}"
+          fi

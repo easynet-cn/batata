@@ -1,0 +1,130 @@
+name: Release
+
+# Build multi-platform release binaries for every pushed tag of the form `vX.Y.Z`,
+# across a target × feature matrix, and upload the packed tarballs as artifacts.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.target }} / ${{ matrix.features }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # linux x64 / arm64 — glibc, built natively on the matching runner
+          - { target: x86_64-unknown-linux-gnu,    runner: ubuntu-24.04,      artifact: linux-x64-gnu,    zigbuild: false }
+          - { target: aarch64-unknown-linux-gnu,   runner: ubuntu-24.04-arm,  artifact: linux-arm64-gnu,   zigbuild: false }
+          # linux x64 / arm64 — musl static, built with cargo-zigbuild
+          - { target: x86_64-unknown-linux-musl,   runner: ubuntu-24.04,      artifact: linux-x64-musl,    zigbuild: true }
+          - { target: aarch64-unknown-linux-musl,  runner: ubuntu-24.04,      artifact: linux-arm64-musl,  zigbuild: true }
+          # macOS arm64 / x64 — built natively
+          - { target: aarch64-apple-darwin,        runner: macos-14,          artifact: darwin-arm64,      zigbuild: false }
+          - { target: x86_64-apple-darwin,         runner: macos-13,          artifact: darwin-x64,        zigbuild: false }
+        # feature dimension — all combinations
+        features:
+          - default
+          - consul
+          - apollo
+          - full
+          - no-default
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # C++ toolchain for rocksdb (not needed for zigbuild, which bundles zig).
+      - name: Install C++ build tools (glibc / macOS)
+        if: ${{ matrix.zigbuild == false }}
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y clang cmake make
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            brew install llvm
+          fi
+        shell: bash
+
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.zigbuild == true }}
+        run: cargo install cargo-zigbuild --locked
+        shell: bash
+
+      - name: Cache cargo & rocksdb
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          cache-all-crates: true
+          # rocksdb is a heavy C++ dependency; share its build output across runs.
+          env-vars: "ROCKSDB_LIB_DIR"
+
+      - name: Build
+        run: |
+          FEATURES="${{ matrix.features }}"
+          if [ "$FEATURES" = "no-default" ]; then
+            BUILD_FLAGS="--no-default-features"
+          else
+            BUILD_FLAGS="--features $FEATURES"
+          fi
+
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target "${{ matrix.target }}" $BUILD_FLAGS
+          else
+            cargo build   --release --target "${{ matrix.target }}" $BUILD_FLAGS
+          fi
+        shell: bash
+
+      - name: Package tarball
+        run: |
+          VERSION="${{ github.ref_name }}"
+          FEATURES="${{ matrix.features }}"
+          ARTIFACT="${{ matrix.artifact }}"
+          BIN="target/${{ matrix.target }}/release/batata-server"
+          OUT="batata-server-${VERSION}-${ARTIFACT}-${FEATURES}"
+          mkdir -p "$OUT/bin" "$OUT/conf" "$OUT/deploy/k8s"
+          cp "$BIN" "$OUT/bin/"
+          cp -r conf/. "$OUT/conf/"
+          cp docker-compose.yml "$OUT/" 2>/dev/null || true
+          cp -r deploy/k8s/. "$OUT/deploy/k8s/" 2>/dev/null || true
+          tar -czf "${OUT}.tar.gz" "$OUT"
+          echo "PACKED=${OUT}.tar.gz" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: batata-server-${{ matrix.artifact }}-${{ matrix.features }}
+          path: ${{ env.PACKED }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz
+          generate_release_notes: true

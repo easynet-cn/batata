@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batata
+  labels:
+    app: batata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batata
+  template:
+    metadata:
+      labels:
+        app: batata
+    spec:
+      containers:
+        - name: batata
+          # Override with your own image built from the release binary, e.g.:
+          #   image: registry.example.com/batata:v1.2.3
+          image: easynet/batata:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BATATA_SERVER_IP
+              value: "0.0.0.0"
+            - name: BATATA_LOG_LEVEL
+              value: "info"
+          ports:
+            - name: http-main
+              containerPort: 8848
+            - name: http-console
+              containerPort: 8081
+            - name: http-apollo
+              containerPort: 8080
+            - name: grpc-sdk
+              containerPort: 9848
+            - name: grpc-cluster
+              containerPort: 9849
+            - name: consul
+              containerPort: 8500
+            - name: mcp
+              containerPort: 9080
+          volumeMounts:
+            - name: config
+              mountPath: /app/conf
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /v3/console/health/liveness
+              port: http-console
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /nacos/v3/admin/core/state/liveness
+              port: http-main
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+      volumes:
+        - name: config
+          configMap:
+            name: batata-config
+        - name: data
+          emptyDir: {}
+          # For persistent storage use a PVC instead of emptyDir:
+          # persistentVolumeClaim:
+          #   claimName: batata-data
