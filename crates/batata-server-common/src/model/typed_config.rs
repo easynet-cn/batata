@@ -216,6 +216,10 @@ fn default_consul_read_timeout_secs() -> i64 {
 fn default_apollo_port() -> i64 {
     8080
 }
+fn default_apollo_version() -> String {
+    // Current latest Apollo release: https://github.com/apolloconfig/apollo/releases
+    "2.5.1".to_string()
+}
 fn default_webhook_default_timeout_secs() -> i64 {
     30
 }
@@ -1896,6 +1900,9 @@ pub struct PluginApolloConfig {
     #[serde(default)]
     /// Apollo HTTP server settings.
     pub http: PluginApolloHttpConfig,
+    #[serde(default = "default_apollo_version")]
+    /// The supported Apollo version this adapter is compatible with.
+    pub version: String,
 }
 
 impl Default for PluginApolloConfig {
@@ -1904,6 +1911,7 @@ impl Default for PluginApolloConfig {
             enabled: true,
             port: default_apollo_port(),
             http: PluginApolloHttpConfig::default(),
+            version: default_apollo_version(),
         }
     }
 }

@@ -58,6 +58,8 @@ pub struct AppBuilder {
     plugin_manager: Option<batata_plugin::spi::PluginManager>,
     #[cfg(feature = "consul")]
     consul_plugin_ref: Option<Arc<batata_plugin_consul::ConsulPlugin>>,
+    #[cfg(feature = "apollo")]
+    apollo_plugin_ref: Option<Arc<batata_plugin_apollo::ApolloPlugin>>,
     plugin_cf_names: Vec<String>,
 
     // Phase 3: Persistence
@@ -105,6 +107,8 @@ impl AppBuilder {
             plugin_manager: None,
             #[cfg(feature = "consul")]
             consul_plugin_ref: None,
+            #[cfg(feature = "apollo")]
+            apollo_plugin_ref: None,
             plugin_cf_names: Vec::new(),
             persistence_ctx: None,
             config_subscriber_manager: None,
@@ -282,6 +286,8 @@ impl AppBuilder {
             } else {
                 info!("Apollo plugin disabled by configuration");
             }
+
+            self.apollo_plugin_ref = Some(apollo_plugin);
         }
 
         // Collect plugin CFs before creating RocksDB
@@ -348,17 +354,18 @@ impl AppBuilder {
                 .clone()
                 .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>);
 
-        // Plugin state providers
+        // Plugin state providers (consul + apollo adapters expose their
+        // runtime state through the `/v3/admin/core/state` endpoint).
+        let mut plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> =
+            Vec::new();
         #[cfg(feature = "consul")]
-        let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = {
-            let consul_plugin_clone = self.consul_plugin_ref.clone();
-            match consul_plugin_clone {
-                Some(plugin) => vec![plugin as Arc<dyn batata_plugin::PluginStateProvider>],
-                None => vec![],
-            }
-        };
-        #[cfg(not(feature = "consul"))]
-        let plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>> = Vec::new();
+        if let Some(plugin) = self.consul_plugin_ref.clone() {
+            plugin_state_providers.push(plugin as Arc<dyn batata_plugin::PluginStateProvider>);
+        }
+        #[cfg(feature = "apollo")]
+        if let Some(plugin) = self.apollo_plugin_ref.clone() {
+            plugin_state_providers.push(plugin as Arc<dyn batata_plugin::PluginStateProvider>);
+        }
 
         // Console datasource
         #[cfg(feature = "consul")]

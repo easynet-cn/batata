@@ -599,7 +599,7 @@ batata.otel.export_timeout_secs: 10
 # --- Webhook Plugin ---
 #batata.plugin.webhook.default_timeout_secs: 30      # default HTTP client timeout for webhooks
 
-batata.plugin.consul.enabled: true
+batata.plugin.consul.enabled: false
 batata.plugin.consul.port: 8500
 batata.plugin.consul.version: 1.22.5
 batata.plugin.consul.datacenter: dc1
@@ -621,10 +621,12 @@ batata.plugin.consul.check_reap_interval: 30
 # Apollo Compatibility Plugin
 # =============================================================================
 
-# Enable Apollo compatibility plugin (enabled by default since v0.1)
-batata.plugin.apollo.enabled: true
+# Enable Apollo compatibility plugin (disabled by default; set to true to enable)
+batata.plugin.apollo.enabled: false
 # Apollo HTTP server port (default: 8080, same as Apollo's default port)
 batata.plugin.apollo.port: 8080
+# Supported Apollo version, exposed via /v3/admin/core/state as `apollo_version`
+batata.plugin.apollo.version: 2.5.1
 # Apollo HTTP workers (0 = auto-detect based on CPU cores)
 #batata.plugin.apollo.http.workers: 0
 

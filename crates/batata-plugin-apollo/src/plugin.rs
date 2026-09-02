@@ -220,6 +220,10 @@ impl PluginStateProvider for ApolloPlugin {
             "apollo_http_workers".to_string(),
             Some(format!("{}", self.config.http_workers)),
         );
+        state.insert(
+            "apollo_version".to_string(),
+            Some(self.config.version.clone()),
+        );
         state
     }
 }
@@ -234,7 +238,7 @@ mod tests {
         let plugin = ApolloPlugin::from_plugin_config(config);
         assert_eq!(ProtocolAdapterPlugin::name(&plugin), "apollo-compatibility");
         assert_eq!(plugin.protocol(), "apollo");
-        assert!(plugin.is_enabled());
+        assert!(!plugin.is_enabled());
         assert_eq!(plugin.default_port(), 8080);
     }
 
@@ -257,11 +261,16 @@ mod tests {
             enabled: true,
             port: 8080,
             http_workers: 4,
+            version: "2.5.1".to_string(),
         };
         let plugin = ApolloPlugin::from_plugin_config(config);
         let state = plugin.plugin_state();
         assert_eq!(state.get("apollo_enabled"), Some(&Some("true".to_string())));
         assert_eq!(state.get("apollo_port"), Some(&Some("8080".to_string())));
+        assert_eq!(
+            state.get("apollo_version"),
+            Some(&Some("2.5.1".to_string()))
+        );
         assert_eq!(state.get("apollo_http_workers"), Some(&Some("4".to_string())));
     }
 }

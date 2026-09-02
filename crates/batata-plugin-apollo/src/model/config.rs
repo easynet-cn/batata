@@ -12,10 +12,14 @@ pub struct ApolloPluginConfig {
     #[serde(default = "default_http_workers")]
     /// The `http_workers` field.
     pub http_workers: usize,
+    #[serde(default = "default_apollo_version")]
+    /// The supported Apollo version this plugin is compatible with
+    /// (mirrors upstream `apollo-portal`'s reported `apolloVersion`).
+    pub version: String,
 }
 
 fn default_enabled() -> bool {
-    true
+    false
 }
 
 fn default_port() -> u16 {
@@ -26,12 +30,18 @@ fn default_http_workers() -> usize {
     4
 }
 
+fn default_apollo_version() -> String {
+    // Current latest Apollo release: https://github.com/apolloconfig/apollo/releases
+    "2.5.1".to_string()
+}
+
 impl Default for ApolloPluginConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
             port: default_port(),
             http_workers: default_http_workers(),
+            version: default_apollo_version(),
         }
     }
 }
@@ -41,7 +51,7 @@ impl ApolloPluginConfig {
     pub fn from_config(config: &config::Config) -> Self {
         let enabled = config
             .get_bool("batata.plugin.apollo.enabled")
-            .unwrap_or(true);
+            .unwrap_or(false);
         let port = config.get_int("batata.plugin.apollo.port").unwrap_or(8080) as u16;
         let http_workers = {
             let v = config
@@ -57,10 +67,15 @@ impl ApolloPluginConfig {
             }
         };
 
+        let version = config
+            .get_string("batata.plugin.apollo.version")
+            .unwrap_or_else(|_| default_apollo_version());
+
         Self {
             enabled,
             port,
             http_workers,
+            version,
         }
     }
 }
