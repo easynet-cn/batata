@@ -37,6 +37,7 @@ uuid = { workspace = true }
 hmac = { workspace = true }
 rand = { workspace = true }
 sha1 = { workspace = true }
+subtle = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }

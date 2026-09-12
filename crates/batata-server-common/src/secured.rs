@@ -181,7 +181,7 @@ macro_rules! secured {
                         .headers()
                         .get(&__identity_key)
                         .and_then(|v| v.to_str().ok())
-                        .map(|v| v == __identity_value)
+                        .map(|v| bool::from($crate::subtle::ConstantTimeEq::ct_eq(v.as_bytes(), __identity_value.as_bytes())))
                         .unwrap_or(false)
                 } else {
                     false

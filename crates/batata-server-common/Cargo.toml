@@ -75,5 +75,8 @@ tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 # RocksDB (for RocksDbConfig helper methods)
 rocksdb = { workspace = true }
 
+# Security
+subtle = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

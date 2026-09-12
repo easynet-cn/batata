@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use subtle::ConstantTimeEq;
 
 use crate::persistence::traits::{
     AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
@@ -852,7 +853,10 @@ impl ConsumerTokenPersistence for EmbeddedApolloPersistence {
     async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
         let store = self.store(CF_APOLLO_CONSUMER_TOKEN);
         let all: Vec<apollo_consumer_token::Model> = store.scan_all()?;
-        Ok(all.into_iter().find(|m| m.token == token))
+        let token_bytes = token.as_bytes();
+        Ok(all
+            .into_iter()
+            .find(|m| bool::from(m.token.as_bytes().ct_eq(token_bytes))))
     }
 }
 

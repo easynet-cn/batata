@@ -768,7 +768,7 @@ impl ConsulConnectCAService {
 
     /// Generate a leaf certificate signed by the CA for a given service
     fn generate_leaf_cert(&self, service: &str) -> (String, String) {
-        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
+        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 
         // Generate leaf key pair
         let leaf_key_pair = KeyPair::generate().expect("Failed to generate leaf key pair");
@@ -782,7 +782,7 @@ impl ConsulConnectCAService {
             .distinguished_name
             .push(DnType::OrganizationName, "Batata Consul Service");
 
-        // Reconstruct CA cert from stored key for signing
+        // Reconstruct CA params and issuer from stored key for signing
         let ca_key = KeyPair::from_pem(&self.ca_key_pem).expect("Failed to parse CA key");
         let mut ca_params = CertificateParams::default();
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -792,13 +792,11 @@ impl ConsulConnectCAService {
         ca_params
             .distinguished_name
             .push(DnType::OrganizationName, "Batata Consul");
-        let ca_cert = ca_params
-            .self_signed(&ca_key)
-            .expect("Failed to reconstruct CA cert");
+        let issuer = Issuer::from_params(&ca_params, &ca_key);
 
         // Sign leaf cert with CA
         let leaf_cert = leaf_params
-            .signed_by(&leaf_key_pair, &ca_cert, &ca_key)
+            .signed_by(&leaf_key_pair, &issuer)
             .expect("Failed to sign leaf certificate");
 
         (leaf_cert.pem(), leaf_key_pair.serialize_pem())

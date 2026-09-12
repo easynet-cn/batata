@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Represents the `ApolloPluginConfig` entity.
@@ -168,6 +169,9 @@ impl AuthConfig {
         if !self.admin_access_control_enabled || self.admin_access_tokens.is_empty() {
             return true;
         }
-        self.admin_access_tokens.iter().any(|t| t == token)
+        let token_bytes = token.as_bytes();
+        self.admin_access_tokens
+            .iter()
+            .any(|t| bool::from(t.as_bytes().ct_eq(token_bytes)))
     }
 }

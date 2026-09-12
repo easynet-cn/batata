@@ -663,7 +663,7 @@ pub async fn serve_ui(req: HttpRequest, ui: web::Data<UiState>) -> HttpResponse 
         None => base.join("index.html"),
     };
 
-    match actix_files::NamedFile::open_async(&file).await {
+    match actix_files::NamedFile::open(&file) {
         Ok(nf) => nf.into_response(&req),
         Err(_) => HttpResponse::NotFound().body("Not Found"),
     }

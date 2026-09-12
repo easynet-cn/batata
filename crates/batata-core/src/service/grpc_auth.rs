@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::model::Connection;
 
@@ -440,7 +441,7 @@ impl GrpcAuthService {
 
         headers
             .get(&self.server_identity_key)
-            .map(|v| v == &self.server_identity_value)
+            .map(|v| bool::from(subtle::ConstantTimeEq::ct_eq(v.as_bytes(), self.server_identity_value.as_bytes())))
             .unwrap_or(false)
     }
 

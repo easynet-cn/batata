@@ -3,7 +3,7 @@
 //! Implements HMAC-SHA256 based request signing compatible with
 //! Nacos AccessKey/SecretKey authentication.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;

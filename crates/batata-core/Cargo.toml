@@ -64,3 +64,6 @@ sysinfo = { workspace = true }
 
 # Metrics
 metrics = { workspace = true }
+
+# Security
+subtle = { workspace = true }

@@ -24,8 +24,9 @@ use std::sync::Arc;
 
 use actix_web::HttpRequest;
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
+use subtle::ConstantTimeEq;
 
 use crate::api::dto::ErrorResponse;
 use crate::persistence::traits::ApolloPersistenceService;
@@ -115,9 +116,10 @@ pub async fn authenticate(
         .unwrap_or_else(|| path.clone());
 
     // Try EVERY enabled secret (upstream loops availableSecrets).
+    let sig_bytes = signature.as_bytes();
     for secret in &enabled_secrets {
         if let Ok(expected) = compute_signature(secret, ts, &path_with_query) {
-            if expected == signature {
+            if bool::from(expected.as_bytes().ct_eq(sig_bytes)) {
                 return Ok(());
             }
         }

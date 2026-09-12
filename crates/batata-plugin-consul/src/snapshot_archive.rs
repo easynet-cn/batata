@@ -22,6 +22,10 @@ use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+fn hex_digest(hash: impl AsRef<[u8]>) -> String {
+    hash.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// File names used inside the tar archive (must match Consul byte-for-byte).
 pub const META_FILE: &str = "meta.json";
 /// The `STATE_FILE` constant.
@@ -99,8 +103,8 @@ pub fn write_archive<W: Write>(
     };
     // Consul uses the exact format: "<hex>  <filename>\n" (two spaces)
     let sha256sums = format!(
-        "{:x}  {}\n{:x}  {}\n",
-        meta_hash, META_FILE, state_hash, STATE_FILE
+        "{}  {}\n{}  {}\n",
+        hex_digest(&meta_hash), META_FILE, hex_digest(&state_hash), STATE_FILE
     );
 
     let mut builder = tar::Builder::new(out);
@@ -357,8 +361,8 @@ mod tests {
                 h.finalize()
             };
             let sums = format!(
-                "{:x}  {}\n{:x}  {}\n",
-                meta_h, META_FILE, state_h, STATE_FILE
+                "{}  {}\n{}  {}\n",
+                hex_digest(&meta_h), META_FILE, hex_digest(&state_h), STATE_FILE
             );
             append_file(&mut builder, META_FILE, &meta_bytes).unwrap();
             // Append DIFFERENT state bytes but keep the original hash entry

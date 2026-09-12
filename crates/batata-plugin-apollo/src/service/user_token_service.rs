@@ -9,6 +9,7 @@
 //! user. batata keeps the same contract.
 
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::persistence::traits::UserTokenPersistence;
 use crate::persistence::traits::ApolloPersistenceService;
@@ -74,7 +75,7 @@ impl UserTokenService {
             None => return Ok(None),
         };
         let expected = sha256_hex(token);
-        if model.token_hash != expected {
+        if !bool::from(model.token_hash.as_bytes().ct_eq(expected.as_bytes())) {
             return Ok(None);
         }
         if model.is_deleted {

@@ -382,7 +382,7 @@ impl K8sServiceSync {
             created_at: metadata
                 .creation_timestamp
                 .as_ref()
-                .map(|t| t.0.to_rfc3339()),
+                .map(|t| t.0.to_string()),
         })
     }
 

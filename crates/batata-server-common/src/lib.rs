@@ -45,3 +45,6 @@ pub use batata_auth::model::ONLY_IDENTITY;
 // Re-export AppState and server status types
 pub use model::AppState;
 pub use model::server_status::{ServerStatus, ServerStatusManager};
+
+// Re-export subtle for constant-time comparisons in the secured! macro
+pub use subtle;
