@@ -2324,8 +2324,8 @@ fn validate_template_variables(
 
     // Additional identity-name validation for service and node templates.
     // Only lowercase alphanumeric characters, '-' and '_' are allowed.
-    if template_name == "builtin/service" || template_name == "builtin/node" {
-        if !name
+    if (template_name == "builtin/service" || template_name == "builtin/node")
+        && !name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
         {
@@ -2339,7 +2339,6 @@ fn validate_template_variables(
                 kind, name
             ));
         }
-    }
 
     Ok(())
 }
@@ -3023,12 +3022,11 @@ pub async fn oidc_callback(
     };
 
     // Verify the `client_nonce` (if provided in the request).
-    if let Some(ref request_nonce) = body.client_nonce {
-        if oidc_claims.client_nonce.as_ref() != Some(request_nonce) {
+    if let Some(ref request_nonce) = body.client_nonce
+        && oidc_claims.client_nonce.as_ref() != Some(request_nonce) {
             return HttpResponse::BadRequest()
                 .consul_error("Client nonce mismatch");
         }
-    }
 
     // Apply binding rules to determine policies and roles.
     let (policies, roles) = apply_oidc_binding_rules(

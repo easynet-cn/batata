@@ -320,9 +320,7 @@ async fn instance_audit_and_queries() {
 
     // ADMSVC-004: not-in the delivered release → empty; not-in another → 1 row.
     let other = if release_key.ends_with('x') { format!("{}y", release_key) } else { format!("{}x", release_key) };
-    let url = format!(
-        "/instances/by-namespace-and-releases-not-in?appId=app1&clusterName=default&namespaceName=audit-ns&releaseIds=-1"
-    );
+    let url = "/instances/by-namespace-and-releases-not-in?appId=app1&clusterName=default&namespaceName=audit-ns&releaseIds=-1".to_string();
     let req = test::TestRequest::get().uri(&url).to_request();
     let resp = test::call_service(&app, req).await;
     let rows: serde_json::Value = test::read_body_json(resp).await;

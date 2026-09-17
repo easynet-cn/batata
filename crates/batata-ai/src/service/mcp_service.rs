@@ -612,52 +612,6 @@ fn default_mcp_protocol() -> String {
     "mcp".to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mcp_server_version_info_serialization() {
-        let info = McpServerVersionInfo {
-            id: "test-id".to_string(),
-            name: "test-server".to_string(),
-            protocol: "mcp".to_string(),
-            description: "Test".to_string(),
-            capabilities: McpCapabilities::default(),
-            latest_published_version: "1.0.0".to_string(),
-            version_details: vec![VersionDetail {
-                version: "1.0.0".to_string(),
-                release_date: "2024-01-01T00:00:00Z".to_string(),
-                is_latest: true,
-            }],
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let parsed: McpServerVersionInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, "test-id");
-        assert_eq!(parsed.version_details.len(), 1);
-    }
-
-    #[test]
-    fn test_mcp_server_storage_info_serialization() {
-        let info = McpServerStorageInfo {
-            id: "test-id".to_string(),
-            name: "test-server".to_string(),
-            protocol: "mcp".to_string(),
-            enabled: true,
-            remote_server_config: None,
-            tools_description_ref: "test-id-1.0.0-mcp-tools.json".to_string(),
-            version_detail: None,
-            server_data: None,
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let parsed: McpServerStorageInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, "test-id");
-        assert!(parsed.enabled);
-    }
-}
-
 #[async_trait::async_trait]
 impl super::traits::McpServerService for McpServerOperationService {
     async fn create_mcp_server(
@@ -742,5 +696,51 @@ impl super::traits::McpServerService for McpServerOperationService {
             by_namespace: std::collections::HashMap::new(),
             by_type: std::collections::HashMap::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_server_version_info_serialization() {
+        let info = McpServerVersionInfo {
+            id: "test-id".to_string(),
+            name: "test-server".to_string(),
+            protocol: "mcp".to_string(),
+            description: "Test".to_string(),
+            capabilities: McpCapabilities::default(),
+            latest_published_version: "1.0.0".to_string(),
+            version_details: vec![VersionDetail {
+                version: "1.0.0".to_string(),
+                release_date: "2024-01-01T00:00:00Z".to_string(),
+                is_latest: true,
+            }],
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: McpServerVersionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "test-id");
+        assert_eq!(parsed.version_details.len(), 1);
+    }
+
+    #[test]
+    fn test_mcp_server_storage_info_serialization() {
+        let info = McpServerStorageInfo {
+            id: "test-id".to_string(),
+            name: "test-server".to_string(),
+            protocol: "mcp".to_string(),
+            enabled: true,
+            remote_server_config: None,
+            tools_description_ref: "test-id-1.0.0-mcp-tools.json".to_string(),
+            version_detail: None,
+            server_data: None,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: McpServerStorageInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "test-id");
+        assert!(parsed.enabled);
     }
 }

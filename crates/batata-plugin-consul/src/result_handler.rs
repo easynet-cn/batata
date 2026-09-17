@@ -115,8 +115,7 @@ impl ConsulResultHandler {
         let entries = PluginNamingStore::scan(&*self.naming_store, "");
         for (key, data) in &entries {
             if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
-            {
-                if reg.service_id() == service_id {
+                && reg.service_id() == service_id {
                     // Cluster mode: leader-only Raft write. Followers
                     // observe the cascade via `CatalogDeregister` apply
                     // which runs the naming-store hook installed at
@@ -176,7 +175,6 @@ impl ConsulResultHandler {
                     self.index_provider.increment(ConsulTable::Catalog);
                     return true;
                 }
-            }
         }
 
         warn!(

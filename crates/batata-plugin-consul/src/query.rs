@@ -110,11 +110,10 @@ impl QueryStore {
             Self::Persistent { db } => {
                 if let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES) {
                     let existed = db.get_cf(cf, id.as_bytes()).ok().flatten().is_some();
-                    if existed {
-                        if let Err(e) = db.delete_cf(cf, id.as_bytes()) {
+                    if existed
+                        && let Err(e) = db.delete_cf(cf, id.as_bytes()) {
                             error!("Failed to delete query '{}': {}", id, e);
                         }
-                    }
                     existed
                 } else {
                     false
@@ -180,11 +179,10 @@ impl ConsulQueryService {
         // Sync QUERY_INDEX from stored data
         let mut max_index = 0u64;
         for query in store.list() {
-            if let Some(idx) = query.modify_index {
-                if idx > max_index {
+            if let Some(idx) = query.modify_index
+                && idx > max_index {
                     max_index = idx;
                 }
-            }
         }
         if max_index > 0 {
             let current = QUERY_INDEX.load(Ordering::SeqCst);
@@ -312,8 +310,8 @@ impl ConsulQueryService {
     /// Delete a prepared query
     pub async fn delete_query(&self, id: &str) -> bool {
         let removed = self.store.remove(id);
-        if removed {
-            if let Some(ref raft) = self.raft_node {
+        if removed
+            && let Some(ref raft) = self.raft_node {
                 match raft
                     .write(ConsulRaftRequest::QueryDelete { id: id.to_string() })
                     .await
@@ -327,7 +325,6 @@ impl ConsulQueryService {
                     _ => {}
                 }
             }
-        }
         removed
     }
 
@@ -577,7 +574,7 @@ pub async fn execute_query(
                 // In single-DC mode, try loading from alternate namespaces
                 // named after the datacenter (best-effort compatibility)
                 for alt_dc in dcs {
-                    let entries = naming_store.get_service_entries(alt_dc, &service_name);
+                    let entries = naming_store.get_service_entries(alt_dc, service_name);
                     for entry_bytes in &entries {
                         if let Ok(reg) =
                             serde_json::from_slice::<AgentServiceRegistration>(entry_bytes)
@@ -810,8 +807,8 @@ mod tests {
         }
 
         // Verify each created query has the correct service name
-        for i in 0..3 {
-            let q = all.iter().find(|q| q.id == created_ids[i]).unwrap();
+        for (i, id) in created_ids.iter().enumerate() {
+            let q = all.iter().find(|q| q.id == *id).unwrap();
             assert_eq!(q.service.service, format!("list-svc-{}", i));
             assert!(q.name.starts_with("list-query-"));
         }
@@ -931,8 +928,8 @@ mod tests {
         assert_eq!(ids.len(), deduped.len());
 
         // Verify each query can be retrieved with correct name
-        for i in 0..5 {
-            let q = service.get_query(&ids[i]).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            let q = service.get_query(id).unwrap();
             assert_eq!(q.name, format!("q-{}", i));
             assert_eq!(q.service.service, "s");
         }

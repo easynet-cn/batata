@@ -977,7 +977,7 @@ impl PayloadHandler for ConfigRemoveHandler {
         let persistence = self.app_state.persistence();
 
         // Execute ConfigChangePluginV2 Before hook for Remove
-        let operator = if src_user.is_empty() { "anonymous" } else { src_user };
+        let operator = "anonymous";
         // These may be modified by Before plugins (parameter replacement, like Nacos)
         let mut data_id = data_id.to_string();
         let mut group = group.to_string();

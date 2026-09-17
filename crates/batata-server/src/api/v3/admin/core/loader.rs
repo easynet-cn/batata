@@ -208,11 +208,7 @@ fn build_cluster_metrics(
     let max = details.iter().map(|m| m.sdk_con_count).max().unwrap_or(0);
     let min = details.iter().map(|m| m.sdk_con_count).min().unwrap_or(0);
     let total: usize = details.iter().map(|m| m.sdk_con_count).sum();
-    let avg = if metrics_count > 0 {
-        total / metrics_count
-    } else {
-        0
-    };
+    let avg = total.checked_div(metrics_count).unwrap_or(0);
     let threshold = format!("{:.1}", avg as f64 * 1.1);
     let completed = metrics_count == member_count;
 

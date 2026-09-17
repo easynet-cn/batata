@@ -290,7 +290,7 @@ impl ConsulCoordinateService {
             .coordinates
             .get(&self_key)
             .map(|r| r.value().coord.clone())
-            .unwrap_or_else(Coordinate::default);
+            .unwrap_or_default();
 
         // Run Vivaldi update
         let own_v = current.to_vivaldi();
@@ -314,7 +314,7 @@ impl ConsulCoordinateService {
         self.coordinates
             .get(&format!("{}:", self_node))
             .map(|r| r.value().coord.clone())
-            .unwrap_or_else(Coordinate::default)
+            .unwrap_or_default()
     }
 
     /// Get the shared coordinates DashMap for the plugin handler.

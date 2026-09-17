@@ -273,7 +273,7 @@ mod tests {
             workers: 4,
             keep_alive_secs: 60,
             max_payload_size: 10 * 1024 * 1024,
-            max_json_size: 1 * 1024 * 1024,
+            max_json_size: 1024 * 1024,
             compression_enabled: true,
             access_log_enabled: true,
         };

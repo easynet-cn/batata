@@ -63,7 +63,7 @@ async fn p5_batch2_end_to_end_in_process() {
         App::new().app_data(web::Data::new(p.clone()))
             .configure(batata_plugin_apollo::route::configure_routes),
     ).await;
-    let _ = std::mem::replace(&mut (), ());
+    std::mem::take(&mut ());
 
     // PITEM-003 bulk PUT: k1 changed, k3 added, k2 removed
     let resp = req!(app, put, &format!("/openapi/v1/envs/DEV/apps/{}/clusters/default/namespaces/nsz/items", app_id),
@@ -123,7 +123,7 @@ async fn p5_batch2_end_to_end_in_process() {
     }
 
     // ADM-017 find-by-item
-    let resp = req!(app, get, &format!("/namespaces/find-by-item?itemKey=k1&size=5"));
+    let resp = req!(app, get, "/namespaces/find-by-item?itemKey=k1&size=5");
     assert_eq!(resp.status(), 200);
     let bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap_or_default();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);

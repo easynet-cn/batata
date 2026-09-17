@@ -128,12 +128,12 @@ impl AuditLogStore for InMemoryAuditLogStore {
         let mut filtered: Vec<_> = logs
             .iter()
             .filter(|e| {
-                data_id.map_or(true, |d| e.data_id == d)
-                    && group.map_or(true, |g| e.group == g)
-                    && tenant.map_or(true, |t| e.tenant == t)
-                    && operator.map_or(true, |o| e.operator == o)
-                    && start_time.map_or(true, |st| e.timestamp >= st)
-                    && end_time.map_or(true, |et| e.timestamp <= et)
+                data_id.is_none_or(|d| e.data_id == d)
+                    && group.is_none_or(|g| e.group == g)
+                    && tenant.is_none_or(|t| e.tenant == t)
+                    && operator.is_none_or(|o| e.operator == o)
+                    && start_time.is_none_or(|st| e.timestamp >= st)
+                    && end_time.is_none_or(|et| e.timestamp <= et)
             })
             .cloned()
             .collect();
@@ -219,7 +219,7 @@ impl ConfigChangePluginV2 for AuditPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spi::ConfigChangeResult;
+    
 
     fn make_request(pointcut: ConfigPointcut, execute_type: ExecuteType) -> ConfigChangeRequest {
         let mut req = ConfigChangeRequest::new(

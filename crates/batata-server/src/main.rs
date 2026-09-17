@@ -10,7 +10,7 @@
 //!
 //! 1.  **Configuration & logging** - Load config, init logging, metrics, auth caches
 //! 2.  **Deployment mode & plugins** - Determine mode, register protocol adapters
-//! 2.5 **Plugin CF collection** - Collect RocksDB column families from plugins
+//!     - **Plugin CF collection**: Collect RocksDB column families from plugins
 //! 3.  **Persistence layer** - Initialize database, Raft, cluster manager
 //! 4.  **Shared services & state** - Create naming, health check, encryption, etc.
 //! 5.  **Shutdown & AI services** - Setup graceful shutdown, AI services

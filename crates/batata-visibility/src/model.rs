@@ -9,6 +9,7 @@ pub use crate::constants::{ACTION_READ, ACTION_WRITE, SCOPE_PRIVATE, SCOPE_PUBLI
 ///
 /// Mirrors `BaseVisibilityPredicate` in Nacos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum BaseVisibilityPredicate {
     /// No filtering — return all resources
     All,
@@ -17,14 +18,10 @@ pub enum BaseVisibilityPredicate {
     /// Only resources owned by the current identity
     Owner,
     /// Public resources OR resources owned by the current identity
+    #[default]
     PublicAndOwner,
 }
 
-impl Default for BaseVisibilityPredicate {
-    fn default() -> Self {
-        Self::PublicAndOwner
-    }
-}
 
 /// Storage-neutral authorized resources set.
 ///

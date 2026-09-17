@@ -156,10 +156,10 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
         // avoid blocking the apply path when the hook slot is being
         // installed; a missed notification is preferable to a stall, and
         // cold-start recovery refreshes the view anyway.
-        if consul_resp.success {
-            if let Some(dispatch) = hook_dispatch {
-                if let Ok(guard) = self.apply_hook.try_read() {
-                    if let Some(hook) = guard.as_ref() {
+        if consul_resp.success
+            && let Some(dispatch) = hook_dispatch
+                && let Ok(guard) = self.apply_hook.try_read()
+                    && let Some(hook) = guard.as_ref() {
                         match &dispatch {
                             HookDispatch::CatalogRegister {
                                 key,
@@ -171,9 +171,6 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
                             HookDispatch::AclChange => hook.on_acl_change(),
                         }
                     }
-                }
-            }
-        }
 
         // Convert ConsulRaftResponse -> RaftResponse
         if consul_resp.success {

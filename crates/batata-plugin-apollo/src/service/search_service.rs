@@ -27,16 +27,14 @@ impl SearchService {
                 if item.is_deleted {
                     continue;
                 }
-                if let Some(k) = key {
-                    if !k.is_empty() && !item.key.contains(k) {
+                if let Some(k) = key
+                    && !k.is_empty() && !item.key.contains(k) {
                         continue;
                     }
-                }
-                if let Some(v) = value {
-                    if !v.is_empty() && !item.value.contains(v) {
+                if let Some(v) = value
+                    && !v.is_empty() && !item.value.contains(v) {
                         continue;
                     }
-                }
                 results.push(SearchDTO {
                     app_id: app_id.to_string(),
                     cluster_name: cluster_name.to_string(),
@@ -62,16 +60,14 @@ impl SearchService {
                 if item.is_deleted {
                     continue;
                 }
-                if let Some(k) = key {
-                    if !k.is_empty() && !item.key.contains(k) {
+                if let Some(k) = key
+                    && !k.is_empty() && !item.key.contains(k) {
                         continue;
                     }
-                }
-                if let Some(v) = value {
-                    if !v.is_empty() && !item.value.contains(v) {
+                if let Some(v) = value
+                    && !v.is_empty() && !item.value.contains(v) {
                         continue;
                     }
-                }
                 results.push(SearchDTO {
                     app_id: ns.app_id.clone(),
                     cluster_name: ns.cluster_name.clone(),

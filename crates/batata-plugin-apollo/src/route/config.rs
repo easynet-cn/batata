@@ -58,11 +58,10 @@ async fn find_release_for_cluster_chain(
     if cluster_name != CLUSTER_NAME_DEFAULT {
         chain.push(cluster_name);
     }
-    if let Some(dc) = data_center {
-        if !dc.is_empty() && dc != cluster_name {
+    if let Some(dc) = data_center
+        && !dc.is_empty() && dc != cluster_name {
             chain.push(dc);
         }
-    }
     chain.push(CLUSTER_NAME_DEFAULT);
 
     for cluster in chain {
@@ -401,11 +400,10 @@ fn assemble_watch_keys(
     if cluster != CLUSTER_NAME_DEFAULT {
         keys.push(watch_key(app_id, cluster, namespace_name));
     }
-    if let Some(dc) = data_center {
-        if !dc.is_empty() && dc != cluster {
+    if let Some(dc) = data_center
+        && !dc.is_empty() && dc != cluster {
             keys.push(watch_key(app_id, dc, namespace_name));
         }
-    }
     keys.push(watch_key(app_id, CLUSTER_NAME_DEFAULT, namespace_name));
     keys
 }
@@ -528,7 +526,7 @@ async fn compute_changed(
         for key in keys {
             if let Some(msg) = latest_map.get(key) {
                 details.insert(key.clone(), msg.id.to_string());
-                latest_id = latest_id.max(msg.id as i64);
+                latest_id = latest_id.max(msg.id);
             }
         }
         if latest_id > *client_id {
@@ -702,19 +700,17 @@ pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
 }
 
 fn get_client_ip(req: &HttpRequest) -> String {
-    if let Some(ip) = req.headers().get("X-Forwarded-For") {
-        if let Ok(ip_str) = ip.to_str() {
+    if let Some(ip) = req.headers().get("X-Forwarded-For")
+        && let Ok(ip_str) = ip.to_str() {
             let ips: Vec<&str> = ip_str.split(',').collect();
             if let Some(first_ip) = ips.first() {
                 return first_ip.trim().to_string();
             }
         }
-    }
-    if let Some(ip) = req.headers().get("X-Real-IP") {
-        if let Ok(ip_str) = ip.to_str() {
+    if let Some(ip) = req.headers().get("X-Real-IP")
+        && let Ok(ip_str) = ip.to_str() {
             return ip_str.trim().to_string();
         }
-    }
     req.connection_info().peer_addr().unwrap_or("127.0.0.1").to_string()
 }
 

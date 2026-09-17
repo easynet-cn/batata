@@ -99,11 +99,9 @@ impl NamespaceBranchService {
                 .persistence
                 .get_by_app_cluster(app_id, &cluster.name, namespace_name)
                 .await?
-            {
-                if !ns.is_deleted {
+                && !ns.is_deleted {
                     return Ok(Some((cluster, ns)));
                 }
-            }
         }
         Ok(None)
     }

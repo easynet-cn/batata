@@ -649,6 +649,21 @@ impl ConsulClient {
     }
 }
 
+/// Simple pseudo-random u64 based on time (no external dependency needed)
+fn rand_u64() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    // xorshift64
+    let mut x = seed;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    x
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,19 +715,4 @@ mod tests {
         assert!(params.iter().any(|(k, v)| *k == "index" && v == "42"));
         assert!(params.iter().any(|(k, _)| *k == "filter"));
     }
-}
-
-/// Simple pseudo-random u64 based on time (no external dependency needed)
-fn rand_u64() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    // xorshift64
-    let mut x = seed;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    x
 }

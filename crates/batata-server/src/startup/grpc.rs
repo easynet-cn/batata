@@ -717,11 +717,10 @@ pub fn start_grpc_servers(
     // owned by this node. Without this, reconciliation waits up to one
     // verify cycle (~5s). The verify loop still runs its own periodic
     // refresh as a safety net.
-    if !is_standalone {
-        if let Some(ref smm) = server_member_manager {
+    if !is_standalone
+        && let Some(ref smm) = server_member_manager {
             distro_protocol.subscribe_member_changes(smm.event_publisher().clone());
         }
-    }
 
     // Build the ClientOperationServiceProxy that routes instance writes by
     // the `instance.ephemeral` flag:

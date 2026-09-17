@@ -219,7 +219,7 @@ impl AuthPlugin for DefaultAuthPlugin {
 
         let token = self
             .generate_token(username)
-            .map_err(|e| LoginError::Internal(e))?;
+            .map_err(LoginError::Internal)?;
         let is_admin = self.is_global_admin(username).await;
 
         Ok(LoginResult {
@@ -331,7 +331,7 @@ impl AuthPlugin for LdapAuthPlugin {
             let token = self
                 .default_plugin
                 .generate_token(username)
-                .map_err(|e| LoginError::Internal(e))?;
+                .map_err(LoginError::Internal)?;
             let is_admin = self.default_plugin.is_global_admin(username).await;
 
             Ok(LoginResult {

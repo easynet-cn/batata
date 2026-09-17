@@ -808,8 +808,8 @@ impl ConsulCatalogService {
                                 format!(
                                     "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
                                     (h >> 32) as u32,
-                                    (h >> 16) as u16 & 0xffff,
-                                    h as u16 & 0xffff,
+                                    (h >> 16) as u16,
+                                    h as u16,
                                     0x4000u16 | ((h >> 48) as u16 & 0x0fff),
                                     h & 0xffffffffffff
                                 )

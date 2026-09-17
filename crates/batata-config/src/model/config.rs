@@ -236,7 +236,7 @@ impl From<entity::config_info_gray::Model> for ConfigInfoGrayWrapper {
         Self {
             config_info: ConfigInfo {
                 config_info_base: ConfigInfoBase {
-                    id: value.id as i64,
+                    id: value.id,
                     data_id: value.data_id,
                     group: value.group_id,
                     content: value.content,
@@ -561,7 +561,7 @@ pub struct ConfigGrayInfo {
 impl From<entity::config_info_gray::Model> for ConfigGrayInfo {
     fn from(value: entity::config_info_gray::Model) -> Self {
         Self {
-            id: value.id as i64,
+            id: value.id,
             data_id: value.data_id,
             group: value.group_id,
             content: value.content,

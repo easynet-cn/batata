@@ -306,8 +306,8 @@ async fn delete(
     if global_admin {
         return HttpResponse::BadRequest().json(Result::<String> {
             code: 400,
-            message: format!("cannot delete admin: {}", &params.username),
-            data: format!("cannot delete admin: {}", &params.username),
+            message: format!("cannot delete admin: {}", params.username),
+            data: format!("cannot delete admin: {}", params.username),
         });
     }
 

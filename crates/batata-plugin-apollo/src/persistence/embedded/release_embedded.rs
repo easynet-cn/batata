@@ -263,8 +263,8 @@ impl ReleasePersistence for ReleaseEmbedded {
     async fn get_by_release_id(&self, release_id: i64) -> anyhow::Result<Option<StoredRelease>> {
         let cf = self.cf()?;
         let prefix = "release:";
-        let mut iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
-        while let Some(item) = iter.next() {
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let release: StoredRelease = bincode::deserialize(&value)?;
             if release.release_id == Some(release_id) && !release.is_deleted && !release.is_abandoned {

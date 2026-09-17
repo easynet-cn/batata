@@ -230,7 +230,7 @@ async fn update(
             error::ILLEGAL_NAMESPACE.message.to_string(),
             format!(
                 "namespaceName [{}] contains illegal char",
-                &form.namespace_name
+                form.namespace_name
             ),
         );
     }

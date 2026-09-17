@@ -360,7 +360,7 @@ async fn get_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>
         Ok(Some(rule)) => HttpResponse::Ok().json(rule),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
-            message: format!("Gray release rule not found"),
+            message: "Gray release rule not found".to_string(),
         }),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,

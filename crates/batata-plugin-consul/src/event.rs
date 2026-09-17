@@ -235,29 +235,25 @@ impl ConsulEventService {
             .into_iter()
             .filter(|e| {
                 // Filter by name (exact match)
-                if let Some(n) = name {
-                    if e.name != n {
+                if let Some(n) = name
+                    && e.name != n {
                         return false;
                     }
-                }
                 // Filter by node: match if the event's NodeFilter matches the query
-                if let Some(n) = node {
-                    if !e.node_filter.is_empty() && e.node_filter != n {
+                if let Some(n) = node
+                    && !e.node_filter.is_empty() && e.node_filter != n {
                         return false;
                     }
-                }
                 // Filter by service
-                if let Some(s) = service {
-                    if !e.service_filter.is_empty() && e.service_filter != s {
+                if let Some(s) = service
+                    && !e.service_filter.is_empty() && e.service_filter != s {
                         return false;
                     }
-                }
                 // Filter by tag
-                if let Some(t) = tag {
-                    if !e.tag_filter.is_empty() && e.tag_filter != t {
+                if let Some(t) = tag
+                    && !e.tag_filter.is_empty() && e.tag_filter != t {
                         return false;
                     }
-                }
                 true
             })
             .cloned()

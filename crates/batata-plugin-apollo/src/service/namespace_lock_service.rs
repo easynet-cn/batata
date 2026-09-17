@@ -48,11 +48,10 @@ impl NamespaceLockService {
     pub async fn unlock(&self, app_id: &str, cluster_name: &str, namespace_name: &str, locked_by: &str) -> Result<(), anyhow::Error> {
         let lock = self.persistence.get(app_id, cluster_name, namespace_name).await?;
 
-        if let Some(lock_model) = lock {
-            if lock_model.locked_by != locked_by {
+        if let Some(lock_model) = lock
+            && lock_model.locked_by != locked_by {
                 return Err(anyhow::anyhow!("Namespace is locked by {}", lock_model.locked_by));
             }
-        }
 
         self.persistence.unlock(app_id, cluster_name, namespace_name).await?;
         Ok(())

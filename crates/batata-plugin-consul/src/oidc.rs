@@ -350,6 +350,11 @@ impl OidcStateStore {
         self.states.len()
     }
 
+    /// Returns `true` when no states are stored.
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+
     /// Checks whether a state exists (tests only).
     #[cfg(test)]
     pub fn contains(&self, state_id: &str) -> bool {
@@ -412,13 +417,13 @@ struct Jwks {
 /// Uses a global static cache to avoid querying the OIDC provider on every request.
 /// Cache validity is 5 minutes.
 static DISCOVERY_CACHE: LazyLock<DashMap<String, (OidcDiscoveryDoc, Instant)>> =
-    LazyLock::new(|| DashMap::new());
+    LazyLock::new(DashMap::new);
 
 /// Cache for the JWKS, keyed by `jwks_uri`.
 ///
 /// Cache validity is 10 minutes.
 static JWKS_CACHE: LazyLock<DashMap<String, (Jwks, Instant)>> =
-    LazyLock::new(|| DashMap::new());
+    LazyLock::new(DashMap::new);
 
 /// Discovery document cache duration (5 minutes).
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
@@ -1045,7 +1050,7 @@ fn apply_claim_mappings(
 /// Uses a static cache (similar to `TOKEN_CACHE`) to avoid recreating the authenticator on every request.
 /// Calls `invalidate_authenticator` to clear the cache when an auth method's config is updated.
 static OIDC_AUTHENTICATORS: LazyLock<DashMap<String, Arc<OidcAuthenticator>>> =
-    LazyLock::new(|| DashMap::new());
+    LazyLock::new(DashMap::new);
 
 /// Gets or creates the OIDC authenticator for the given auth method.
 ///
@@ -1485,6 +1490,6 @@ mod tests {
         let result = apply_claim_mappings(&raw_claims, &config);
 
         // A non-existent claim should not appear in the result.
-        assert!(result.get("missing_var").is_none());
+        assert!(!result.contains_key("missing_var"));
     }
 }

@@ -57,8 +57,10 @@ pub struct Namespace {
 /// Namespace-scoped ACL defaults.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NamespaceACLConfig {
+    /// Default ACL policies applied to the namespace.
     #[serde(rename = "PolicyDefaults", alias = "policy_defaults", default)]
     pub policy_defaults: Vec<ACLLink>,
+    /// Default ACL roles applied to the namespace.
     #[serde(rename = "RoleDefaults", alias = "role_defaults", default)]
     pub role_defaults: Vec<ACLLink>,
 }

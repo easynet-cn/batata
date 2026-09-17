@@ -281,7 +281,7 @@ impl ReleaseService {
         let mut abandoned_any = false;
         let mut last_abandoned: Option<StoredRelease> = None;
         for r in &actives {
-            if r.id == target.id || r.id < target.id {
+            if r.id <= target.id {
                 break;
             }
             self.abandon_release(r, operator).await?;

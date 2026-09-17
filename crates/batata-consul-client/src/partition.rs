@@ -12,14 +12,17 @@ use crate::model::{QueryMeta, QueryOptions, WriteMeta, WriteOptions};
 /// Admin partition definition, wire-compatible with Consul's `api.Partition`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Partition {
+    /// Partition name (unique identifier).
     #[serde(rename = "Name")]
     pub name: String,
+    /// Human-readable description of the partition.
     #[serde(
         rename = "Description",
         default,
         skip_serializing_if = "String::is_empty"
     )]
     pub description: String,
+    /// Timestamp when the partition was marked deleted, if any.
     #[serde(
         rename = "DeletedAt",
         alias = "deleted_at",
@@ -27,8 +30,10 @@ pub struct Partition {
         skip_serializing_if = "Option::is_none"
     )]
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Raft creation index.
     #[serde(rename = "CreateIndex", default)]
     pub create_index: u64,
+    /// Raft last-modified index.
     #[serde(rename = "ModifyIndex", default)]
     pub modify_index: u64,
 }

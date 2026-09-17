@@ -128,8 +128,8 @@ impl ConsulSnapshotService {
     }
 
     /// Restore state from a snapshot.
-    /// Accepts both the Consul-compatible archive format (tar with meta.json
-    /// + state.bin + SHA256SUMS) and the legacy raw-JSON format for
+    /// Accepts both the Consul-compatible archive format (tar with `meta.json`,
+    /// `state.bin`, and `SHA256SUMS`) and the legacy raw-JSON format for
     /// backward compatibility.
     pub async fn restore_snapshot(&self, data: &[u8]) -> Result<(), String> {
         // Try archive format first
@@ -189,14 +189,13 @@ impl ConsulSnapshotService {
                     // Restore data from snapshot
                     if let Some(entries) = cf_data.as_object() {
                         for (key, value) in entries {
-                            if let Some(value_b64) = value.as_str() {
-                                if let Ok(decoded) = base64::Engine::decode(
+                            if let Some(value_b64) = value.as_str()
+                                && let Ok(decoded) = base64::Engine::decode(
                                     &base64::engine::general_purpose::STANDARD,
                                     value_b64,
                                 ) {
                                     let _ = db.put_cf(cf, key.as_bytes(), &decoded);
                                 }
-                            }
                         }
                     }
 

@@ -439,7 +439,6 @@ impl ConsulHealthService {
 /// GET /v1/health/service/:service
 /// Returns the health information for a service
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub async fn get_service_health(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
@@ -477,8 +476,8 @@ pub async fn get_service_health(
     crate::api_metrics::incr_endpoint("health_service", "success");
 
     // Cross-peer health query: same-DC peering not yet replicated, return empty
-    if let Some(ref peer) = query.peer_name {
-        if !peer.is_empty() {
+    if let Some(ref peer) = query.peer_name
+        && !peer.is_empty() {
             tracing::debug!(
                 "health/service peer-name='{}' — cross-peer queries return empty",
                 peer
@@ -489,7 +488,6 @@ pub async fn get_service_health(
                 .insert_header(("X-Consul-Effective-Datacenter", dc))
                 .json(Vec::<ServiceHealth>::new());
         }
-    }
 
     // Get service entries from ConsulNamingStore (Consul-native data)
     let entries = naming_store.get_service_entries(&namespace, &service_name);

@@ -34,9 +34,9 @@ impl ServiceInitializer for EncryptionInitializer {
         registry.register(Arc::new(batata_plugin::NoopEncryptionPlugin::new()));
         
         // Register AES-GCM plugin if encryption key is configured
-        if ctx.config.encryption_enabled() {
-            if let Some(ref key) = ctx.config.encryption_key() {
-                if !key.is_empty() {
+        if ctx.config.encryption_enabled()
+            && let Some(ref key) = ctx.config.encryption_key()
+                && !key.is_empty() {
                     match batata_common::crypto::AesGcmEncryptionPlugin::new(key) {
                         Ok(plugin) => {
                             registry.register(Arc::new(plugin));
@@ -47,8 +47,6 @@ impl ServiceInitializer for EncryptionInitializer {
                         }
                     }
                 }
-            }
-        }
         
         // Get the configured plugin
         let plugin_name = ctx.config.encryption_plugin_type();

@@ -96,8 +96,8 @@ where
 
         Box::pin(async move {
             let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
-            if let Some(cfg) = auth_config {
-                if !cfg.is_valid_admin_token("") {
+            if let Some(cfg) = auth_config
+                && !cfg.is_valid_admin_token("") {
                     // Access control enabled: a token is required.
                     let header = req
                         .headers()
@@ -113,7 +113,6 @@ where
                         }
                     }
                 }
-            }
 
             service.call(req).await
         })

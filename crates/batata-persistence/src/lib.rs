@@ -6,6 +6,13 @@
 //! - Domain model types for persistence operations
 
 #![warn(missing_docs)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::unnecessary_sort_by)]
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::empty_line_after_doc_comments)]
 
 /// Bincode (de)serialization helpers re-exported from `batata_common`.
 pub mod bincode {

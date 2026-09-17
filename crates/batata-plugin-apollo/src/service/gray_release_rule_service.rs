@@ -38,7 +38,7 @@ impl GrayReleaseRuleService {
             branch_name: dto.branch_name.clone(),
             rules: dto.rules.clone().unwrap_or_else(|| "[]".to_string()),
             release_id: dto.release_id,
-            branch_status: Some(dto.branch_status.map(|v| v as i32).unwrap_or(1)),
+            branch_status: Some(dto.branch_status.unwrap_or(1)),
             is_deleted: false,
             deleted_at: 0,
             data_change_created_by: created_by,
@@ -111,16 +111,14 @@ impl GrayReleaseRuleService {
             let rules_json: Value = serde_json::from_str(&rule.rules).unwrap_or_default();
             if let Some(rules_array) = rules_json.as_array() {
                 for rule_item in rules_array {
-                    if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str()) {
-                        if self.is_ip_in_range(&client_ip_addr, ip_range) {
+                    if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str())
+                        && self.is_ip_in_range(&client_ip_addr, ip_range) {
                             return Ok(Some(rule.release_id));
                         }
-                    }
-                    if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str()) {
-                        if self.is_ip_in_range(&client_ip_addr, ip_segment) {
+                    if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str())
+                        && self.is_ip_in_range(&client_ip_addr, ip_segment) {
                             return Ok(Some(rule.release_id));
                         }
-                    }
                 }
             }
         }
@@ -159,11 +157,10 @@ impl GrayReleaseRuleService {
 
         for rule in active_rules {
             let rules_json: Value = serde_json::from_str(&rule.rules).unwrap_or_default();
-            if let Some(rules_array) = rules_json.as_array() {
-                if self.match_rules_array(&client_ip_addr, rules_array, app_id, labels, headers, client_label) {
+            if let Some(rules_array) = rules_json.as_array()
+                && self.match_rules_array(&client_ip_addr, rules_array, app_id, labels, headers, client_label) {
                     return Ok(Some(rule.release_id));
                 }
-            }
         }
 
         Ok(None)
@@ -227,14 +224,14 @@ impl GrayReleaseRuleService {
         }
 
         let label_list = item.get("clientLabelList").and_then(|v| v.as_array());
-        let label_matches = match label_list {
+        
+        match label_list {
             Some(list) => list
                 .iter()
                 .filter_map(|v| v.as_str())
                 .any(|entry| entry == "*" || client_label == Some(entry)),
             None => false,
-        };
-        label_matches
+        }
     }
 
     fn matches_legacy_item(
@@ -249,16 +246,14 @@ impl GrayReleaseRuleService {
         };
         match rule_type {
             "IP" | "ip" => {
-                if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str()) {
-                    if self.is_ip_in_range(ip, ip_range) {
+                if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str())
+                    && self.is_ip_in_range(ip, ip_range) {
                         return true;
                     }
-                }
-                if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str()) {
-                    if self.is_ip_in_range(ip, ip_segment) {
+                if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str())
+                    && self.is_ip_in_range(ip, ip_segment) {
                         return true;
                     }
-                }
                 false
             }
             "LABEL" | "label" => {
@@ -293,26 +288,24 @@ impl GrayReleaseRuleService {
         if let IpAddr::V4(ip_v4) = ip {
             if ip_range.contains('/') {
                 let parts: Vec<&str> = ip_range.split('/').collect();
-                if parts.len() == 2 {
-                    if let (Ok(network), Ok(prefix)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<u8>()) {
+                if parts.len() == 2
+                    && let (Ok(network), Ok(prefix)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<u8>()) {
                         let mask = u32::MAX << (32 - prefix);
                         let ip_u32 = u32::from(*ip_v4);
                         let network_u32 = u32::from(network);
                         return (ip_u32 & mask) == (network_u32 & mask);
                     }
-                }
             } else if ip_range == ip.to_string() {
                 return true;
             } else if ip_range.contains('-') {
                 let parts: Vec<&str> = ip_range.split('-').collect();
-                if parts.len() == 2 {
-                    if let (Ok(start), Ok(end)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<std::net::Ipv4Addr>()) {
+                if parts.len() == 2
+                    && let (Ok(start), Ok(end)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<std::net::Ipv4Addr>()) {
                         let ip_u32 = u32::from(*ip_v4);
                         let start_u32 = u32::from(start);
                         let end_u32 = u32::from(end);
                         return ip_u32 >= start_u32 && ip_u32 <= end_u32;
                     }
-                }
             }
         }
         false
@@ -329,7 +322,7 @@ impl From<StoredGrayReleaseRule> for GrayReleaseRuleDTO {
             branch_name: stored.branch_name,
             rules: Some(stored.rules),
             release_id: stored.release_id,
-            branch_status: stored.branch_status.map(|bs| bs as i32),
+            branch_status: stored.branch_status,
             priority: None,
             data_change_created_by: Some(stored.data_change_created_by),
             data_change_last_modified_by: stored.data_change_last_modified_by,

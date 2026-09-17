@@ -447,11 +447,7 @@ impl DistributedLockService for MemoryLockService {
 
         let completed = self.stats.completed_holds.load(Ordering::Relaxed);
         let total_hold = self.stats.total_hold_time_ms.load(Ordering::Relaxed);
-        let avg_hold = if completed > 0 {
-            total_hold / completed
-        } else {
-            0
-        };
+        let avg_hold = total_hold.checked_div(completed).unwrap_or(0);
 
         LockStats {
             total_locks: self.stats.total_locks.load(Ordering::Relaxed),

@@ -231,11 +231,10 @@ impl ItemService {
         for commit in commits {
             // Upstream narrows the commits to those created at or after the
             // latest release (`commitService.find(..., releaseTime, null)`).
-            if let Some(since) = since {
-                if commit.data_change_created_time < since {
+            if let Some(since) = since
+                && commit.data_change_created_time < since {
                     continue;
                 }
-            }
 
             // A commit persisted in an older (or empty) format contributes no
             // deleted items rather than failing the whole request.

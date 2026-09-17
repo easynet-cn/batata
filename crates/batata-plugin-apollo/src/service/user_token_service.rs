@@ -81,11 +81,10 @@ impl UserTokenService {
         if model.is_deleted {
             return Ok(None);
         }
-        if let Some(revoked) = model.revoked_at {
-            if !revoked.and_utc().timestamp().eq(&0) {
+        if let Some(revoked) = model.revoked_at
+            && !revoked.and_utc().timestamp().eq(&0) {
                 return Ok(None);
             }
-        }
         if model.expires.and_utc().timestamp() < chrono::Utc::now().timestamp() {
             return Ok(None);
         }

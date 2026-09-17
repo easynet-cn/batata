@@ -12,7 +12,7 @@ use sea_orm_migration::MigratorTrait;
 use batata_plugin_apollo::persistence::shared::{StoredCluster, StoredNamespace};
 use batata_plugin_apollo::persistence::sql::SqlApolloPersistence;
 use batata_plugin_apollo::persistence::traits::{
-    ApolloPersistenceService, ClusterPersistence, NamespacePersistence,
+    ClusterPersistence, NamespacePersistence,
 };
 
 fn pg_url() -> String {
@@ -43,7 +43,7 @@ async fn probe_pg_last_insert_id_and_namespace_create() {
         ],
     );
     let qr = conn.query_one_raw(res).await.unwrap().expect("row returned");
-    use sea_orm::QueryResult;
+    
     let raw_id: i32 = qr.try_get::<i32>("", "id").unwrap();
     println!("RAW RETURNING id = {raw_id}");
 

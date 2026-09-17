@@ -105,12 +105,12 @@ impl ConfigEncryptionService {
 
         rand::rng().fill_bytes(&mut nonce_bytes);
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::try_from(&nonce_bytes[..]).expect("invalid nonce length");
 
         // Encrypt the data
         let ciphertext = self
             .cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
         // Combine nonce + ciphertext
@@ -138,12 +138,12 @@ impl ConfigEncryptionService {
 
         // Extract nonce and ciphertext
         let (nonce_bytes, ciphertext_bytes) = combined.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes).expect("invalid nonce length");
 
         // Decrypt
         let plaintext = self
             .cipher
-            .decrypt(nonce, ciphertext_bytes)
+            .decrypt(&nonce, ciphertext_bytes)
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
         String::from_utf8(plaintext)
@@ -166,10 +166,10 @@ impl ConfigEncryptionService {
 
         rand::rng().fill_bytes(&mut nonce_bytes);
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::try_from(&nonce_bytes[..]).expect("invalid nonce length");
 
         let ciphertext = data_cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
         // Combine nonce + ciphertext for content
@@ -221,10 +221,10 @@ impl ConfigEncryptionService {
         }
 
         let (nonce_bytes, ciphertext_bytes) = combined.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes).expect("invalid nonce length");
 
         let plaintext = data_cipher
-            .decrypt(nonce, ciphertext_bytes)
+            .decrypt(&nonce, ciphertext_bytes)
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
         String::from_utf8(plaintext)

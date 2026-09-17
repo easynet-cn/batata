@@ -82,11 +82,10 @@ impl InstancePersistence for InstanceEmbedded {
             }
             let instance: StoredInstance = bincode::deserialize(&value)?;
             // Filter by cluster if provided
-            if let Some(cluster) = cluster_name {
-                if instance.cluster_name != cluster {
+            if let Some(cluster) = cluster_name
+                && instance.cluster_name != cluster {
                     continue;
                 }
-            }
             results.push(instance);
         }
         Ok(results)

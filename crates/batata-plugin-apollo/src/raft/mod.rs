@@ -103,45 +103,89 @@ const APOLLO_COLUMN_FAMILIES: &[&str] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApolloRaftRequest {
     // ---- App (no auto-increment id; keyed by app_id) ----
+    /// Create an application.
     AppCreate(StoredApp),
+    /// Update an application.
     AppUpdate(StoredApp),
-    AppDelete { app_id: String },
+    /// Delete an application identified by `app_id`.
+    AppDelete {
+        /// Application id to delete.
+        app_id: String,
+    },
 
     // ---- Namespace ----
+    /// Create a namespace.
     NamespaceCreate(StoredNamespace),
+    /// Update a namespace.
     NamespaceUpdate(StoredNamespace),
-    NamespaceDelete { id: i64 },
+    /// Delete a namespace by `id`.
+    NamespaceDelete {
+        /// Namespace id to delete.
+        id: i64,
+    },
 
     // ---- Cluster ----
+    /// Create a cluster.
     ClusterCreate(StoredCluster),
+    /// Update a cluster.
     ClusterUpdate(StoredCluster),
-    ClusterDelete { id: i64 },
+    /// Delete a cluster by `id`.
+    ClusterDelete {
+        /// Cluster id to delete.
+        id: i64,
+    },
 
     // ---- Item ----
+    /// Create a configuration item.
     ItemCreate(StoredItem),
+    /// Update a configuration item.
     ItemUpdate(StoredItem),
-    ItemDelete { id: i64 },
+    /// Delete a configuration item by `id`.
+    ItemDelete {
+        /// Item id to delete.
+        id: i64,
+    },
 
     // ---- Release ----
+    /// Create a release.
     ReleaseCreate(StoredRelease),
+    /// Update a release.
     ReleaseUpdate(StoredRelease),
-    ReleaseDelete { id: i64 },
+    /// Delete a release by `id`.
+    ReleaseDelete {
+        /// Release id to delete.
+        id: i64,
+    },
 
     // ---- Commit (no delete in the CommitPersistence trait) ----
+    /// Create a commit.
     CommitCreate(StoredCommit),
 
     // ---- AccessKey ----
+    /// Create an access key.
     AccessKeyCreate(StoredAccessKey),
+    /// Update an access key.
     AccessKeyUpdate(StoredAccessKey),
-    AccessKeyDelete { id: i64 },
+    /// Delete an access key by `id`.
+    AccessKeyDelete {
+        /// Access key id to delete.
+        id: i64,
+    },
 
     // ---- ReleaseMessage (id is the client-visible notificationId) ----
+    /// Create a release message.
     ReleaseMessageCreate(StoredReleaseMessage),
 
     // ---- GrayReleaseRule ----
+    /// Create a gray release rule.
     GrayReleaseCreate(StoredGrayReleaseRule),
+    /// Update a gray release rule.
     GrayReleaseUpdate(StoredGrayReleaseRule),
-    GrayReleaseDelete { id: i64 },
+    /// Delete a gray release rule by `id`.
+    GrayReleaseDelete {
+        /// Gray release rule id to delete.
+        id: i64,
+    },
 }
 
 /// Writer facade used by the Apollo persistence layer to submit writes through
@@ -273,7 +317,7 @@ impl RaftPluginHandler for ApolloRaftPluginHandler {
         let mut snapshot: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new();
         for cf_name in APOLLO_COLUMN_FAMILIES {
             let cf = db
-                .cf_handle(*cf_name)
+                .cf_handle(cf_name)
                 .ok_or_else(|| format!("CF {} not found during snapshot", cf_name))?;
             let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
             for item in iter.flatten() {

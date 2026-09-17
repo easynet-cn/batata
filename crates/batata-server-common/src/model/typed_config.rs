@@ -555,19 +555,13 @@ pub struct BatataTypedConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `DeploymentConfig`.
+#[derive(Default)]
 pub struct DeploymentConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
     /// The deployment type (e.g. `merged`, `server`, `console`).
     pub type_: Option<String>,
 }
 
-impl Default for DeploymentConfig {
-    fn default() -> Self {
-        Self {
-            type_: None,
-        }
-    }
-}
 
 // ============================================================================
 // Server
@@ -575,6 +569,7 @@ impl Default for DeploymentConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `ServerConfig`.
+#[derive(Default)]
 pub struct ServerConfig {
     #[serde(default)]
     /// Main server port settings.
@@ -599,19 +594,6 @@ pub struct ServerConfig {
     pub grpc: ServerGrpcConfig,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            main: ServerMainConfig::default(),
-            context_path: None,
-            address: None,
-            ip: None,
-            http: ServerHttpConfig::default(),
-            shutdown: ServerShutdownConfig::default(),
-            grpc: ServerGrpcConfig::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `ServerMainConfig`.
@@ -1123,19 +1105,13 @@ impl Default for CoreAuthCachingConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthSystemConfig`.
+#[derive(Default)]
 pub struct CoreAuthSystemConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
     /// The authentication system type (e.g. `nacos`, `ldap`).
     pub type_: Option<String>,
 }
 
-impl Default for CoreAuthSystemConfig {
-    fn default() -> Self {
-        Self {
-            type_: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `CoreAuthServerConfig`.
@@ -1270,19 +1246,13 @@ impl Default for CoreAuthLdapConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthLdapFilterConfig`.
+#[derive(Default)]
 pub struct CoreAuthLdapFilterConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// The LDAP filter prefix used for user searches.
     pub prefix: Option<String>,
 }
 
-impl Default for CoreAuthLdapFilterConfig {
-    fn default() -> Self {
-        Self {
-            prefix: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthLdapCaseConfig`.
@@ -1362,35 +1332,23 @@ impl Default for CoreAuthOauthConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthOauthUserConfig`.
+#[derive(Default)]
 pub struct CoreAuthOauthUserConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Whether users are created automatically on first login.
     pub creation: Option<String>,
 }
 
-impl Default for CoreAuthOauthUserConfig {
-    fn default() -> Self {
-        Self {
-            creation: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthOauthRoleConfig`.
+#[derive(Default)]
 pub struct CoreAuthOauthRoleConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Whether roles are synchronized from the provider.
     pub sync: Option<String>,
 }
 
-impl Default for CoreAuthOauthRoleConfig {
-    fn default() -> Self {
-        Self {
-            sync: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `CoreAuthOauthRedirectConfig`.
@@ -2191,19 +2149,13 @@ pub struct ConfigEncryptionConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `ConfigEncryptionPluginConfig`.
+#[derive(Default)]
 pub struct ConfigEncryptionPluginConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
     /// The encryption plugin implementation type.
     pub type_: Option<String>,
 }
 
-impl Default for ConfigEncryptionPluginConfig {
-    fn default() -> Self {
-        Self {
-            type_: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `ConfigEncryptionReloadConfig`.
@@ -2442,6 +2394,7 @@ impl Default for OtelConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `LogsConfig`.
+#[derive(Default)]
 pub struct LogsConfig {
     #[serde(default)]
     /// Directory where log files are written.
@@ -2457,16 +2410,6 @@ pub struct LogsConfig {
     pub level: Option<String>,
 }
 
-impl Default for LogsConfig {
-    fn default() -> Self {
-        Self {
-            path: None,
-            console: LogsConsoleConfig::default(),
-            file: LogsFileConfig::default(),
-            level: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `LogsConsoleConfig`.
@@ -2550,19 +2493,13 @@ impl Default for MeshXdsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `MeshXdsServerConfig`.
+#[derive(Default)]
 pub struct MeshXdsServerConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// The identifier advertised by this xDS server.
     pub id: Option<String>,
 }
 
-impl Default for MeshXdsServerConfig {
-    fn default() -> Self {
-        Self {
-            id: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `MeshXdsSyncConfig`.
@@ -3147,6 +3084,7 @@ pub struct PersistenceConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `PersistenceEmbeddedConfig`.
+#[derive(Default)]
 pub struct PersistenceEmbeddedConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Directory where embedded storage files are kept.
@@ -3156,14 +3094,6 @@ pub struct PersistenceEmbeddedConfig {
     pub db_name: Option<String>,
 }
 
-impl Default for PersistenceEmbeddedConfig {
-    fn default() -> Self {
-        Self {
-            data_dir: None,
-            db_name: None,
-        }
-    }
-}
 
 // ============================================================================
 // RocksDB
@@ -3215,6 +3145,7 @@ pub struct RocksdbConfig {
     /// Size of the history memtable write buffer in MiB.
     pub history_write_buffer_mb: i64,
     #[serde(default)]
+    /// Whether the history bloom filter is enabled.
     pub history_bloom_filter: bool,
 }
 

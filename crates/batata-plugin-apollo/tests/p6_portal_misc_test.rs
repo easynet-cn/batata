@@ -231,5 +231,5 @@ async fn port009_env_cluster_info() {
     let envs = body["envClusterInfo"].as_array().expect("envClusterInfo is an array");
     assert_eq!(envs.len(), 4, "DEV/FAT/UAT/PRO");
     assert_eq!(envs[0]["env"], "DEV");
-    assert!(envs[0]["clusters"].as_array().unwrap().len() >= 1, "app has a root cluster");
+    assert!(!envs[0]["clusters"].as_array().unwrap().is_empty(), "app has a root cluster");
 }

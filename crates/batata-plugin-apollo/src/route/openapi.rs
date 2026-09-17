@@ -970,7 +970,7 @@ async fn merge_branch(
             id: None,
             key: item.key,
             value: item.value,
-            r#type: Some(item.r#type as i32),
+            r#type: Some(item.r#type),
             comment: if item.comment.is_empty() { None } else { Some(item.comment) },
             line_num: None,
             data_change_created_by: item.data_change_created_by,
@@ -1240,8 +1240,8 @@ async fn compare_releases(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
-    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
+    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
+    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
     let service = ReleaseService::new(data.get_ref().clone());
     match service.compare(base, to_compare).await {
         Ok(result) => HttpResponse::Ok().json(result),
@@ -1259,7 +1259,7 @@ async fn rollback_release_by_id(
 ) -> impl Responder {
     let (_env, release_id) = path.into_inner();
     let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
-    let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64()).map(|v| v as i64);
+    let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64());
     let service = ReleaseService::new(data.get_ref().clone());
     match service.rollback_by_id(release_id, to_release_id, operator).await {
         Ok(release) => {
@@ -1360,7 +1360,7 @@ async fn create_gray_release(
         data_change_last_time: None,
     };
 
-    match <dyn ReleasePersistence>::create(&*data.get_ref(), stored).await {
+    match <dyn ReleasePersistence>::create(data.get_ref(), stored).await {
         Ok(created) => {
             // Upstream: gray publish notifies under the PARENT cluster key so
             // clients watching the master namespace refresh.
@@ -2487,15 +2487,14 @@ async fn openapi_revert_items(
         }
     }
     for (k, v) in &released {
-        if !current.iter().any(|i| &i.key == k) {
-            if item_service.create(&app_id, &cluster, &ns_name, crate::api::dto::ItemDTO {
+        if !current.iter().any(|i| &i.key == k)
+            && item_service.create(&app_id, &cluster, &ns_name, crate::api::dto::ItemDTO {
                 id: None, key: k.clone(), value: v.clone(), r#type: None, comment: None, line_num: None,
                 data_change_created_by: Some(operator.to_string()),
                 data_change_last_modified_by: None, data_change_last_time: None, data_change_created_time: None,
             }).await.is_ok() {
                 reverted += 1;
             }
-        }
     }
     let _ = latest; // release row untouched; history recorded implicitly via items
     let _ = ns_name;

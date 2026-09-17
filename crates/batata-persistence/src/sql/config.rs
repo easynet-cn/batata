@@ -282,11 +282,10 @@ impl ConfigPersistence for ExternalDbPersistService {
         // CAS: add MD5 filter to the SELECT so we only get the row if MD5 matches.
         // If cas_md5 is provided but the row doesn't match, `existing` will be None
         // and we know the CAS failed (either config doesn't exist or MD5 mismatch).
-        if let Some(expected_md5) = cas_md5 {
-            if !expected_md5.is_empty() {
+        if let Some(expected_md5) = cas_md5
+            && !expected_md5.is_empty() {
                 query = query.filter(config_info::Column::Md5.eq(expected_md5));
             }
-        }
 
         // When CAS is active, use SELECT FOR UPDATE to lock the row
         // exclusively. This prevents the TOCTOU race: a second concurrent

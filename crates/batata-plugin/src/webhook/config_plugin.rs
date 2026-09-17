@@ -66,15 +66,14 @@ impl ConfigChangePluginV2 for WebhookConfigChangePlugin {
     }
 
     async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult {
-        if let Some(event) = self.build_event(ctx) {
-            if let Err(e) = self.webhook_plugin.trigger(event).await {
+        if let Some(event) = self.build_event(ctx)
+            && let Err(e) = self.webhook_plugin.trigger(event).await {
                 tracing::warn!(
                     target: "webhook_config_plugin",
                     "Failed to trigger webhook for config change: {}",
                     e
                 );
             }
-        }
         ConfigChangeResult::allow()
     }
 }

@@ -857,7 +857,7 @@ impl PayloadHandler for AgentSearchRpcHandler {
 
                     let total = page.total_count;
                     let pages_available = if page_size > 0 {
-                        (total + page_size as u64 - 1) / page_size as u64
+                        total.div_ceil(page_size as u64)
                     } else {
                         1
                     };
@@ -919,7 +919,7 @@ impl PayloadHandler for AgentSearchRpcHandler {
 
         let total = result.total;
         let pages_available = if page_size > 0 {
-            (total + page_size as u64 - 1) / page_size as u64
+            total.div_ceil(page_size as u64)
         } else {
             1
         };
@@ -1009,8 +1009,8 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
         } else {
             // Try to resolve via service
             let mut version = String::new();
-            if let Some(ref svc) = self.a2a_service {
-                if let Ok(versions) = svc.list_versions(namespace_id, &reference.agent_name).await {
+            if let Some(ref svc) = self.a2a_service
+                && let Ok(versions) = svc.list_versions(namespace_id, &reference.agent_name).await {
                     // If label is "latest" or empty, find the latest version
                     let label = if reference.label.is_empty() {
                         "latest"
@@ -1032,16 +1032,14 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
                         }
                     }
                 }
-            }
             // Fall back to in-memory registry
-            if version.is_empty() {
-                if let Some(agent) = self
+            if version.is_empty()
+                && let Some(agent) = self
                     .agent_registry
                     .get(namespace_id, &reference.agent_name)
                 {
                     version = agent.card.version.clone();
                 }
-            }
             version
         };
 
@@ -1237,14 +1235,10 @@ impl PayloadHandler for AgentEndpointRegisterRpcHandler {
 
     fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
         let request = AgentEndpointRegisterRpcRequest::from(payload);
-        if let Some(ref batch) = request.registration_batch {
-            Some((
+        request.registration_batch.as_ref().map(|batch| (
                 GrpcResource::ai(&batch.namespace_id, &batch.agent_name),
                 PermissionAction::Write,
             ))
-        } else {
-            None
-        }
     }
 }
 
@@ -1287,9 +1281,9 @@ impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
         );
 
         // List all versions and delete endpoints for each
-        if let Some(ref svc) = self.a2a_service {
-            if let Ok(versions) = svc.list_versions(namespace_id, &request.agent_name).await {
-                if let Some(ref ep_svc) = self.endpoint_service {
+        if let Some(ref svc) = self.a2a_service
+            && let Ok(versions) = svc.list_versions(namespace_id, &request.agent_name).await
+                && let Some(ref ep_svc) = self.endpoint_service {
                     for vd in &versions {
                         let endpoints = ep_svc.get_agent_endpoints(
                             namespace_id,
@@ -1307,8 +1301,6 @@ impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
                         }
                     }
                 }
-            }
-        }
 
         // Also deregister from in-memory registry
         let _ = self

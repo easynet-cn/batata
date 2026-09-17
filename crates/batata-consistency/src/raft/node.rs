@@ -615,11 +615,10 @@ impl RaftNode {
             }
 
             let metrics = self.metrics();
-            if let Some(new_leader) = metrics.current_leader {
-                if new_leader != old_leader {
+            if let Some(new_leader) = metrics.current_leader
+                && new_leader != old_leader {
                     return Ok(());
                 }
-            }
 
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -719,11 +718,10 @@ impl RaftNode {
             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&val) else {
                 continue;
             };
-            if !namespace_filter.is_empty() {
-                if v["namespace"].as_str() != Some(namespace_filter) {
+            if !namespace_filter.is_empty()
+                && v["namespace"].as_str() != Some(namespace_filter) {
                     continue;
                 }
-            }
             results.push(v);
         }
         Ok(results)

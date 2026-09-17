@@ -98,21 +98,17 @@ impl AclStore {
     fn rocks_put_raw(&self, key: &str, value: &[u8]) {
         if let Some(db) = self.rocks_db()
             && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-        {
-            if let Err(e) = db.put_cf(cf, key.as_bytes(), value) {
+            && let Err(e) = db.put_cf(cf, key.as_bytes(), value) {
                 error!("Failed to persist ACL '{}': {}", key, e);
             }
-        }
     }
 
     fn rocks_delete(&self, key: &str) {
         if let Some(db) = self.rocks_db()
             && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-        {
-            if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
+            && let Err(e) = db.delete_cf(cf, key.as_bytes()) {
                 error!("Failed to delete ACL '{}': {}", key, e);
             }
-        }
     }
 
     /// List all values with a given key prefix, deserializing each as T.

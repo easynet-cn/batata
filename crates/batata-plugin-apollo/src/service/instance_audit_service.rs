@@ -110,11 +110,10 @@ impl InstanceAuditService {
 
         // 2) skip redundant writes when the same release was already audited.
         let rk_key = format!("{}+{}+{}", instance_id, config_app_id, config_namespace_name);
-        if let Some(hit) = self.release_key_cache.lock().unwrap().get(&rk_key) {
-            if hit.fresh(RELEASE_KEY_CACHE_TTL) && hit.value == release_key {
+        if let Some(hit) = self.release_key_cache.lock().unwrap().get(&rk_key)
+            && hit.fresh(RELEASE_KEY_CACHE_TTL) && hit.value == release_key {
                 return Ok(());
             }
-        }
 
         self.persistence
             .create_or_update_instance_config(InstanceConfigDTO {
@@ -146,11 +145,10 @@ impl InstanceAuditService {
         ip: &str,
     ) -> anyhow::Result<i64> {
         let cache_key = format!("{}|{}|{}|{}", app_id, cluster_name, ip, data_center);
-        if let Some(hit) = self.instance_cache.lock().unwrap().get(&cache_key) {
-            if hit.fresh(INSTANCE_CACHE_TTL) {
+        if let Some(hit) = self.instance_cache.lock().unwrap().get(&cache_key)
+            && hit.fresh(INSTANCE_CACHE_TTL) {
                 return Ok(hit.value);
             }
-        }
 
         let existing = InstancePersistence::get_by_app(&self.persistence, app_id, Some(cluster_name))
             .await?

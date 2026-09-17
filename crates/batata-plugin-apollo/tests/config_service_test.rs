@@ -328,7 +328,7 @@ async fn test_commit_openapi() {
         .json()
         .await
         .expect("Parse commits failed");
-    assert!(list_commits_resp.as_array().unwrap().len() >= 1, "Should have at least one commit");
+    assert!(!list_commits_resp.as_array().unwrap().is_empty(), "Should have at least one commit");
 
     let get_commit_resp: Value = client
         .get(format!("{}/openapi/v1/commits/{}", BASE_URL, commit_id))

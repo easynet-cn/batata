@@ -845,7 +845,7 @@ mod tests {
         let calls = rep.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "rcl-1");
-        assert_eq!(calls[0].1, false);
+        assert!(!calls[0].1);
     }
 
     #[test]

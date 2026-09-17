@@ -11,17 +11,13 @@ use crate::{error, model::common::AppState, model::response::Result};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 /// `ListLocksQuery` struct.
+#[derive(Default)]
 pub struct ListLocksQuery {
     #[serde(default, alias = "namespaceId")]
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
 }
 
-impl Default for ListLocksQuery {
-    fn default() -> Self {
-        Self { namespace_id: None }
-    }
-}
 
 /// GET /v3/admin/core/lock/list
 ///

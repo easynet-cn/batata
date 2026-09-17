@@ -850,11 +850,10 @@ impl DistroProtocol {
                 for handler in cleanup_entries {
                     let keys = handler.get_all_keys().await;
                     for key in keys {
-                        if !mapper.is_responsible(&key, &local_address) {
-                            if handler.remove_data(&key).await.is_ok() {
+                        if !mapper.is_responsible(&key, &local_address)
+                            && handler.remove_data(&key).await.is_ok() {
                                 cleanup_removed += 1;
                             }
-                        }
                     }
                 }
                 if cleanup_removed > 0 {

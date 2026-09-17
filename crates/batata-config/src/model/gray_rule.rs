@@ -132,6 +132,7 @@ impl BetaGrayRule {
     /// Default priority for beta rules (checked first).
     pub const PRIORITY: i32 = i32::MAX;
 
+    /// Creates a new gray rule from an expression and a priority.
     pub fn new(expr: &str, priority: i32) -> Self {
         let ips: HashSet<String> = expr
             .split(',')
@@ -180,6 +181,7 @@ impl TagGrayRule {
     /// Default priority for tag rules.
     pub const PRIORITY: i32 = i32::MAX - 1;
 
+    /// Creates a new gray rule from an expression and a priority.
     pub fn new(expr: &str, priority: i32) -> Self {
         let tag = expr.trim().to_string();
         let valid = !tag.is_empty();
@@ -224,6 +226,7 @@ impl PercentageGrayRule {
     /// Default priority for percentage rules.
     pub const PRIORITY: i32 = i32::MAX - 2;
 
+    /// Creates a new gray rule from an expression and a priority.
     pub fn new(expr: &str, priority: i32) -> Self {
         let percentage = expr.trim().parse::<u8>().unwrap_or(0);
         let valid = percentage > 0 && percentage <= 100;
@@ -284,6 +287,7 @@ impl IpRangeGrayRule {
     /// Default priority for IP range rules.
     pub const PRIORITY: i32 = i32::MAX - 3;
 
+    /// Creates a new gray rule from an expression and a priority.
     pub fn new(expr: &str, priority: i32) -> Self {
         let mut ranges = Vec::new();
         let mut valid = true;

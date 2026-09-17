@@ -109,17 +109,17 @@ impl NamingDisconnectListener {
             if let Some((namespace, group_name, service_name)) = parse_service_key(service_key) {
                 let subscribers =
                     self.naming
-                        .get_subscribers(&namespace, &group_name, &service_name);
+                        .get_subscribers(namespace, group_name, service_name);
                 if subscribers.is_empty() {
                     continue;
                 }
                 let service_info =
                     self.naming
-                        .get_service(&namespace, &group_name, &service_name, "", false);
+                        .get_service(namespace, group_name, service_name, "", false);
                 let notification = NotifySubscriberRequest::for_service(
-                    &namespace,
-                    &group_name,
-                    &service_name,
+                    namespace,
+                    group_name,
+                    service_name,
                     service_info,
                 );
                 let payload = notification.build_server_push_payload();

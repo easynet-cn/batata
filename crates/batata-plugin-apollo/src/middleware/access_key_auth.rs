@@ -118,11 +118,10 @@ pub async fn authenticate(
     // Try EVERY enabled secret (upstream loops availableSecrets).
     let sig_bytes = signature.as_bytes();
     for secret in &enabled_secrets {
-        if let Ok(expected) = compute_signature(secret, ts, &path_with_query) {
-            if bool::from(expected.as_bytes().ct_eq(sig_bytes)) {
+        if let Ok(expected) = compute_signature(secret, ts, &path_with_query)
+            && bool::from(expected.as_bytes().ct_eq(sig_bytes)) {
                 return Ok(());
             }
-        }
     }
     Err(unauthorized("Unauthorized"))
 }

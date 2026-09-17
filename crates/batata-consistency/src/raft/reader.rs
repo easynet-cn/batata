@@ -887,7 +887,7 @@ mod tests {
             ..Default::default()
         };
         let cf = db.cf_handle("batata_config").unwrap();
-        db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
+        db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
             .unwrap();
 
         let reader = RocksDbReader::new(db);
@@ -932,7 +932,7 @@ mod tests {
             ..Default::default()
         };
         let cf = db.cf_handle("batata_namespace").unwrap();
-        db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
+        db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
             .unwrap();
 
         let reader = RocksDbReader::new(db);
@@ -961,7 +961,7 @@ mod tests {
                 enabled: true,
                 ..Default::default()
             };
-            db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
+            db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
                 .unwrap();
         }
 
@@ -998,7 +998,7 @@ mod tests {
         db.put_cf(
             role_cf,
             key1.as_bytes(),
-            &bincode::serialize(&role1).unwrap(),
+            bincode::serialize(&role1).unwrap(),
         )
         .unwrap();
 
@@ -1011,7 +1011,7 @@ mod tests {
         db.put_cf(
             role_cf,
             key2.as_bytes(),
-            &bincode::serialize(&role2).unwrap(),
+            bincode::serialize(&role2).unwrap(),
         )
         .unwrap();
 
@@ -1027,7 +1027,7 @@ mod tests {
         db.put_cf(
             perm_cf,
             pkey.as_bytes(),
-            &bincode::serialize(&perm).unwrap(),
+            bincode::serialize(&perm).unwrap(),
         )
         .unwrap();
 
@@ -1069,7 +1069,7 @@ mod tests {
                 content: "test".to_string(),
                 ..Default::default()
             };
-            db.put_cf(cf, key.as_bytes(), &bincode::serialize(&stored).unwrap())
+            db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
                 .unwrap();
         }
 

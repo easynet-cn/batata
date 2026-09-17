@@ -407,13 +407,12 @@ fn simple_url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
+        if bytes[i] == b'%' && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
                 out.push((h << 4) | l);
                 i += 3;
                 continue;
             }
-        }
         if bytes[i] == b'+' {
             out.push(b' ');
         } else {
@@ -472,20 +471,18 @@ pub fn should_translate_wan(
         return false;
     }
     // Explicit WAN header set by clients/routers
-    if let Some(h) = req.headers().get("X-Consul-WAN") {
-        if h.to_str()
+    if let Some(h) = req.headers().get("X-Consul-WAN")
+        && h.to_str()
             .map(|s| s.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
         {
             return true;
         }
-    }
     // Different DC requested (forwarded query)
-    if let Some(dc) = requested_dc {
-        if !dc.is_empty() && dc != local_dc {
+    if let Some(dc) = requested_dc
+        && !dc.is_empty() && dc != local_dc {
             return true;
         }
-    }
     false
 }
 

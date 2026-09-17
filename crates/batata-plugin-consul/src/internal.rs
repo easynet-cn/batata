@@ -299,12 +299,11 @@ pub async fn ui_nodes(
             // Find services registered from this node's IP address
             let mut services = Vec::new();
             for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-                if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-                    if reg.effective_address() == *node_ip {
+                if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
+                    && reg.effective_address() == *node_ip {
                         let svc = crate::model::AgentService::from(&reg);
                         services.push(svc);
                     }
-                }
             }
 
             // Get health checks for services on this node

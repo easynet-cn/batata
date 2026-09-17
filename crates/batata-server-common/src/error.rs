@@ -28,8 +28,11 @@ pub use batata_common::error::{BatataError, ErrorCode};
 
 use crate::model::response as common;
 
-// Local wrapper for application errors to implement actix-web error handling
-// (Cannot impl foreign trait for foreign type due to orphan rules)
+/// Local wrapper around [`anyhow::Error`] to implement `actix-web` error
+/// handling.
+///
+/// A direct `impl` on the foreign `anyhow::Error` type is not possible because
+/// of Rust's orphan rules, so application errors are wrapped in this type.
 #[derive(Debug)]
 pub struct AppError {
     inner: anyhow::Error,

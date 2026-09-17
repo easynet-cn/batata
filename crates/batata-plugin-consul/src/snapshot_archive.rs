@@ -104,7 +104,7 @@ pub fn write_archive<W: Write>(
     // Consul uses the exact format: "<hex>  <filename>\n" (two spaces)
     let sha256sums = format!(
         "{}  {}\n{}  {}\n",
-        hex_digest(&meta_hash), META_FILE, hex_digest(&state_hash), STATE_FILE
+        hex_digest(meta_hash), META_FILE, hex_digest(state_hash), STATE_FILE
     );
 
     let mut builder = tar::Builder::new(out);
@@ -250,7 +250,7 @@ pub fn read_archive<R: Read>(input: R) -> std::io::Result<ParsedArchive> {
 }
 
 fn hex_decode(s: &str) -> std::io::Result<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "odd-length hex",
@@ -362,7 +362,7 @@ mod tests {
             };
             let sums = format!(
                 "{}  {}\n{}  {}\n",
-                hex_digest(&meta_h), META_FILE, hex_digest(&state_h), STATE_FILE
+                hex_digest(meta_h), META_FILE, hex_digest(state_h), STATE_FILE
             );
             append_file(&mut builder, META_FILE, &meta_bytes).unwrap();
             // Append DIFFERENT state bytes but keep the original hash entry

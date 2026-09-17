@@ -697,8 +697,8 @@ impl RocksStateMachine {
                     &metadata,
                     &cluster_name,
                 );
-                if resp.success {
-                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                if resp.success
+                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
                         hook.on_register(
                             &namespace_id,
                             &group_name,
@@ -713,7 +713,6 @@ impl RocksStateMachine {
                             &cluster_name,
                         );
                     }
-                }
                 resp
             }
 
@@ -729,11 +728,10 @@ impl RocksStateMachine {
                     &service_name,
                     &instance_id,
                 );
-                if resp.success {
-                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                if resp.success
+                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
                         hook.on_deregister(&namespace_id, &group_name, &service_name, &instance_id);
                     }
-                }
                 resp
             }
 
@@ -764,8 +762,8 @@ impl RocksStateMachine {
                     enabled,
                     metadata,
                 );
-                if resp.success {
-                    if let Some(hook) = self.naming_hook.read().await.as_ref() {
+                if resp.success
+                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
                         hook.on_update(
                             &namespace_id,
                             &group_name,
@@ -779,7 +777,6 @@ impl RocksStateMachine {
                             metadata_c.as_deref(),
                         );
                     }
-                }
                 resp
             }
 

@@ -19,16 +19,23 @@ pub use batata_common::AuthPermission;
 pub use batata_common::IdentityContext;
 pub use batata_common::RequestToken;
 
-// Security context for API access control
+/// Security context carrying the information required for API access control.
 #[derive(Debug, Clone)]
 pub struct Secured<'a> {
-    pub req: &'a HttpRequest,          // HTTP request reference
-    pub data: &'a web::Data<AppState>, // Application state
-    pub action: crate::ActionTypes,    // Requested action type
-    pub resource: &'a str,             // Target resource name
-    pub sign_type: crate::SignType,    // Service module type
-    pub tags: Vec<String>,             // Security tags for permission checking
-    pub api_type: crate::ApiType,      // API access type
+    /// HTTP request reference.
+    pub req: &'a HttpRequest,
+    /// Application state.
+    pub data: &'a web::Data<AppState>,
+    /// Requested action type.
+    pub action: crate::ActionTypes,
+    /// Target resource name.
+    pub resource: &'a str,
+    /// Service module type.
+    pub sign_type: crate::SignType,
+    /// Security tags used for permission checking.
+    pub tags: Vec<String>,
+    /// API access type.
+    pub api_type: crate::ApiType,
 }
 
 impl<'a> From<&Secured<'a>> for Resource {
@@ -70,6 +77,8 @@ impl<'a> Secured<'a> {
     }
 }
 
+/// Builder for [`Secured`], allowing incremental configuration of the
+/// security context before construction.
 #[derive(Debug, Clone)]
 pub struct SecuredBuilder<'a> {
     req: &'a HttpRequest,
@@ -384,6 +393,7 @@ impl ConfigHttpResourceParser {
     }
 }
 
+/// Parser that extracts the authorization [`Resource`] from a Naming HTTP request.
 pub struct NamingHttpResourceParser {}
 
 impl NamingHttpResourceParser {

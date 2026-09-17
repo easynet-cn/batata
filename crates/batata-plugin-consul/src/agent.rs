@@ -421,8 +421,8 @@ pub async fn register_service(
             );
         } else if let Some(ref raft) = agent.raft_node {
             // Persist check config for restart recovery
-            if let Some(config) = agent.registry.get_check_config(&check_id) {
-                if let Ok(config_json) = serde_json::to_string(&config) {
+            if let Some(config) = agent.registry.get_check_config(&check_id)
+                && let Ok(config_json) = serde_json::to_string(&config) {
                     let _ = raft
                         .write(ConsulRaftRequest::HealthCheckRegister {
                             check_id: check_id.clone(),
@@ -430,7 +430,6 @@ pub async fn register_service(
                         })
                         .await;
                 }
-            }
         }
     }
 
@@ -450,12 +449,11 @@ pub async fn register_service(
 
     // Handle Connect.SidecarService — extract and register as a separate proxy service
     // (matching Consul's agent_endpoint.go SidecarService handling)
-    if let Some(ref connect) = registration.connect {
-        if let Some(sidecar_def) = connect
+    if let Some(ref connect) = registration.connect
+        && let Some(sidecar_def) = connect
             .get("SidecarService")
             .or(connect.get("sidecar_service"))
-        {
-            if let Ok(mut sidecar) =
+            && let Ok(mut sidecar) =
                 serde_json::from_value::<AgentServiceRegistration>(sidecar_def.clone())
             {
                 // Auto-populate sidecar defaults
@@ -498,8 +496,6 @@ pub async fn register_service(
                     );
                 }
             }
-        }
-    }
 
     tracing::info!(
         "Service registered: name={}, id={}",
@@ -1007,14 +1003,12 @@ fn count_known_datacenters(cluster_manager: &dyn ClusterManager, self_dc: &str) 
     dcs.insert(self_dc.to_string());
     for member in cluster_manager.all_members_extended() {
         for key in DC_METADATA_KEYS {
-            if let Some(value) = member.extend_info.get(key) {
-                if let Some(name) = value.as_str() {
-                    if !name.is_empty() {
+            if let Some(value) = member.extend_info.get(key)
+                && let Some(name) = value.as_str()
+                    && !name.is_empty() {
                         dcs.insert(name.to_string());
                         break;
                     }
-                }
-            }
         }
     }
     dcs.len()
@@ -1541,9 +1535,7 @@ pub async fn agent_maintenance(
 /// GET /v1/agent/metrics
 /// Returns metrics for the agent (Prometheus format compatible)
 #[allow(clippy::vec_init_then_push)]
-/// GET /v1/agent/metrics
 /// Returns comprehensive metrics including service counts and cluster health.
-#[allow(clippy::vec_init_then_push)]
 pub async fn get_agent_metrics(
     req: HttpRequest,
     acl_service: web::Data<AclService>,

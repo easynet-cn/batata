@@ -202,8 +202,8 @@ impl PayloadHandler for InstanceRequestHandler {
             // Trigger distro sync to other cluster nodes (ephemeral only).
             // Persistent instances never broadcast via Distro — their
             // authoritative source is Raft.
-            if is_ephemeral {
-                if let Some(ref distro) = self.distro_protocol {
+            if is_ephemeral
+                && let Some(ref distro) = self.distro_protocol {
                     let service_key =
                         crate::service::build_service_key(namespace, group_name, service_name);
                     let distro = distro.clone();
@@ -213,7 +213,6 @@ impl PayloadHandler for InstanceRequestHandler {
                             .await;
                     });
                 }
-            }
         }
 
         let mut response = InstanceResponse::new();
@@ -526,8 +525,8 @@ impl PayloadHandler for BatchInstanceRequestHandler {
 
             // Trigger distro sync to other cluster nodes only when the
             // whole batch is ephemeral (persistent must go through Raft).
-            if batch_all_ephemeral {
-                if let Some(ref distro) = self.distro_protocol {
+            if batch_all_ephemeral
+                && let Some(ref distro) = self.distro_protocol {
                     let service_key =
                         crate::service::build_service_key(namespace, group_name, service_name);
                     let distro = distro.clone();
@@ -537,7 +536,6 @@ impl PayloadHandler for BatchInstanceRequestHandler {
                             .await;
                     });
                 }
-            }
         }
 
         let mut response = BatchInstanceResponse::new();

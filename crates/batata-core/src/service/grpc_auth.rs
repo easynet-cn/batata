@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use subtle::ConstantTimeEq;
 
 use crate::model::Connection;
 
@@ -782,7 +781,7 @@ mod tests {
 
         // Test load_permissions_for_roles
         let perms = service
-            .load_permissions_for_roles(&vec!["ROLE_USER".to_string()])
+            .load_permissions_for_roles(&["ROLE_USER".to_string()])
             .await;
         assert!(perms.is_empty()); // mock returns empty
 

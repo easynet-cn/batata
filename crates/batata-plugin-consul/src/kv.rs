@@ -1318,7 +1318,7 @@ impl ConsulKVService {
                     && let Some(ref session_id) = stored.pair.session
                     && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
                 {
-                    let idx_key = format!("kidx:{}:{}", session_id, &key);
+                    let idx_key = format!("kidx:{}:{}", session_id, key);
                     batch.delete_cf(cf_sessions, idx_key.as_bytes());
                 }
 
@@ -1734,8 +1734,8 @@ pub async fn get_kv(
     if matches!(
         opts.consistency,
         crate::consul_meta::ConsistencyMode::Consistent
-    ) {
-        if let Err(e) = kv_service.ensure_linearizable_read().await {
+    )
+        && let Err(e) = kv_service.ensure_linearizable_read().await {
             tracing::debug!(
                 "consistent KV read: not leader, serving from local state machine: {:?}",
                 e
@@ -1744,7 +1744,6 @@ pub async fn get_kv(
             // This provides near-linearizable consistency since the
             // local state is kept up-to-date by Raft replication.
         }
-    }
 
     let raw = query.raw.unwrap_or(false);
     let keys_only = query.keys.unwrap_or(false);

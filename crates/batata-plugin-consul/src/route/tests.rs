@@ -2193,7 +2193,7 @@ async fn test_http_agent_checks_filter_by_status() {
     let body: serde_json::Value = test::read_body_json(resp).await;
     let obj = body.as_object().unwrap();
     // Should only have the passing check
-    assert!(obj.len() >= 1);
+    assert!(!obj.is_empty());
     assert!(obj.contains_key("flt-chk-pass"));
 }
 
@@ -2230,7 +2230,7 @@ async fn test_http_agent_checks_filter_by_name() {
 
     let body: serde_json::Value = test::read_body_json(resp).await;
     let obj = body.as_object().unwrap();
-    assert!(obj.len() >= 1);
+    assert!(!obj.is_empty());
     assert!(obj.contains_key("flt-cn-1"));
     assert!(!obj.contains_key("flt-cn-2"));
 }
@@ -3066,7 +3066,7 @@ async fn test_http_keyring_list() {
         .as_array()
         .expect("should have Responses array");
     assert!(
-        responses.len() >= 1,
+        !responses.is_empty(),
         "should have at least one keyring response"
     );
 
@@ -3127,7 +3127,7 @@ async fn test_http_keyring_install() {
     let responses = body["Responses"]
         .as_array()
         .expect("should have Responses array");
-    assert!(responses.len() >= 1);
+    assert!(!responses.is_empty());
 
     // Verify the new key appears in Keys.
     let keys = &responses[0]["Keys"];

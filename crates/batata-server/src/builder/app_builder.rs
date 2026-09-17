@@ -680,8 +680,8 @@ impl AppBuilder {
         let server_status = self.server_status.as_ref().unwrap();
 
         // Upgrade health check to cluster mode if not standalone
-        if !app_state.configuration.is_standalone() && self.health_check_manager.is_some() {
-            let hc_manager = self.health_check_manager.as_ref().unwrap();
+        if !app_state.configuration.is_standalone() {
+            if let Some(hc_manager) = self.health_check_manager.as_ref() {
             let distro = grpc_servers.distro_protocol();
             hc_manager.upgrade_to_cluster(
                 Arc::new(HealthCheckConfig {
@@ -704,6 +704,7 @@ impl AppBuilder {
                 "Health check upgraded to cluster mode (local_address={})",
                 distro.local_address()
             );
+            }
         }
 
         // Start health checkers

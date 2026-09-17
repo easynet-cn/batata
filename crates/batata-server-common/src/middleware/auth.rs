@@ -10,7 +10,7 @@
 // - Unprotected endpoints (no secured! macro) have no auth overhead
 
 use actix_service::forward_ready;
-use actix_utils::future::{Ready, ok};
+use core::future::Ready;
 use actix_web::{
     Error, HttpMessage,
     body::EitherBody,
@@ -41,7 +41,7 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(AuthenticationMiddleware { service })
+        core::future::ready(Ok(AuthenticationMiddleware { service }))
     }
 }
 

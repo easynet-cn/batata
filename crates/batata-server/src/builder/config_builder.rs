@@ -14,6 +14,7 @@ pub struct ConfigBuilder;
 
 impl ConfigBuilder {
     /// Create a new configuration from environment and config files
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> Result<Arc<Configuration>, Box<dyn std::error::Error + Send + Sync>> {
         let config = Configuration::new()?;
         Ok(Arc::new(config))
@@ -112,7 +113,7 @@ impl ValidationErrors {
 
 impl std::fmt::Display for ValidationErrors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Validation errors ({}):\n", self.errors.len())?;
+        writeln!(f, "Validation errors ({}):", self.errors.len())?;
         for error in &self.errors {
             writeln!(f, "  - {}", error)?;
         }

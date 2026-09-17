@@ -947,7 +947,7 @@ impl CapacityPersistence for DistributedPersistService {
         }
 
         // Compute usage by counting configs in this namespace
-        info.usage = self.reader.count_configs(tenant_id)? as i32;
+        info.usage = self.reader.count_configs(tenant_id)?;
 
         // Write back
         let json = serde_json::to_vec(&info)?;

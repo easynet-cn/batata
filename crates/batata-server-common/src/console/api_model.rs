@@ -127,7 +127,7 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryBasicIn
     fn from(value: batata_persistence::ConfigHistoryStorageData) -> Self {
         Self {
             config_basic_info: ConfigBasicInfo {
-                id: value.id as i64,
+                id: value.id,
                 namespace_id: value.tenant,
                 group_name: value.group,
                 data_id: value.data_id,
@@ -167,7 +167,7 @@ impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryDetailI
         Self {
             config_history_basic_info: ConfigHistoryBasicInfo {
                 config_basic_info: ConfigBasicInfo {
-                    id: value.id as i64,
+                    id: value.id,
                     namespace_id: value.tenant,
                     group_name: value.group,
                     data_id: value.data_id,

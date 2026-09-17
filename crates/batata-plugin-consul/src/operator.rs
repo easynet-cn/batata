@@ -298,14 +298,13 @@ fn parse_local_only(value: &Option<String>) -> bool {
 
 /// Validates the `relay_factor` range (0-5); returns an error message if out of range.
 fn validate_relay_factor(relay_factor: Option<u8>) -> Result<(), String> {
-    if let Some(rf) = relay_factor {
-        if rf > 5 {
+    if let Some(rf) = relay_factor
+        && rf > 5 {
             return Err(format!(
                 "relay-factor must be between 0 and 5, got {}",
                 rf
             ));
         }
-    }
     Ok(())
 }
 

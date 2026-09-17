@@ -547,51 +547,6 @@ fn build_agent_stub(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_agent_card_version_info_serialization() {
-        let info = AgentCardVersionInfo {
-            id: "test-id".to_string(),
-            name: "test-agent".to_string(),
-            latest_published_version: "1.0.0".to_string(),
-            registration_type: "manual".to_string(),
-            version_details: vec![VersionDetail {
-                version: "1.0.0".to_string(),
-                release_date: "2024-01-01T00:00:00Z".to_string(),
-                is_latest: true,
-            }],
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let parsed: AgentCardVersionInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, "test-id");
-        assert_eq!(parsed.version_details.len(), 1);
-    }
-
-    #[test]
-    fn test_agent_card_detail_info_serialization() {
-        let info = AgentCardDetailInfo {
-            id: "test-id".to_string(),
-            name: "test-agent".to_string(),
-            version: "1.0.0".to_string(),
-            registration_type: "manual".to_string(),
-            description: "Test agent".to_string(),
-            url: "http://localhost:8080".to_string(),
-            capabilities: AgentCapabilities::default(),
-            skills: vec![],
-            provider: String::new(),
-            agent_card: None,
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let parsed: AgentCardDetailInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, "test-id");
-    }
-}
-
 #[async_trait::async_trait]
 impl super::traits::A2aAgentService for A2aServerOperationService {
     async fn register_agent(
@@ -694,5 +649,50 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
             by_namespace: std::collections::HashMap::new(),
             by_skill: std::collections::HashMap::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_card_version_info_serialization() {
+        let info = AgentCardVersionInfo {
+            id: "test-id".to_string(),
+            name: "test-agent".to_string(),
+            latest_published_version: "1.0.0".to_string(),
+            registration_type: "manual".to_string(),
+            version_details: vec![VersionDetail {
+                version: "1.0.0".to_string(),
+                release_date: "2024-01-01T00:00:00Z".to_string(),
+                is_latest: true,
+            }],
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: AgentCardVersionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "test-id");
+        assert_eq!(parsed.version_details.len(), 1);
+    }
+
+    #[test]
+    fn test_agent_card_detail_info_serialization() {
+        let info = AgentCardDetailInfo {
+            id: "test-id".to_string(),
+            name: "test-agent".to_string(),
+            version: "1.0.0".to_string(),
+            registration_type: "manual".to_string(),
+            description: "Test agent".to_string(),
+            url: "http://localhost:8080".to_string(),
+            capabilities: AgentCapabilities::default(),
+            skills: vec![],
+            provider: String::new(),
+            agent_card: None,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: AgentCardDetailInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "test-id");
     }
 }

@@ -1205,7 +1205,7 @@ impl MaintainerClient {
         namespace_id: &str,
         policy: SameConfigPolicy,
     ) -> anyhow::Result<ImportResult> {
-        let query_string = serde_urlencoded::to_string(&[
+        let query_string = serde_urlencoded::to_string([
             ("namespace_id", namespace_id),
             ("policy", &format!("{}", policy)),
         ])?;

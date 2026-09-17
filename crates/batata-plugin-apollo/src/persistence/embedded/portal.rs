@@ -725,7 +725,7 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
             m.config_app_id == app_id
                 && m.cluster_name == cluster_name
                 && m.namespace_name == namespace_name
-                && config_app_id.map_or(true, |c| m.config_app_id == c)
+                && config_app_id.is_none_or(|c| m.config_app_id == c)
         });
         all.sort_by(|a, b| b.data_change_last_time.cmp(&a.data_change_last_time));
         let total = all.len() as u64;

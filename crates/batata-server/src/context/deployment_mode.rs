@@ -30,6 +30,7 @@ pub enum DeploymentMode {
 
 impl DeploymentMode {
     /// Create from configuration string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "server" => DeploymentMode::Server,

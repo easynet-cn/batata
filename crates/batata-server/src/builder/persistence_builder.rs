@@ -54,9 +54,8 @@ mod tests {
     
     #[test]
     fn test_persistence_builder_default() {
-        let builder = PersistenceBuilder::default();
         // Just verify it can be created
-        drop(builder);
+        let _builder = PersistenceBuilder;
     }
     
     #[test]

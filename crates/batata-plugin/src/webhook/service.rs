@@ -517,11 +517,7 @@ impl WebhookPlugin for DefaultWebhookPlugin {
 
         let successful = self.successful_deliveries.load(Ordering::Relaxed);
         let total_time = self.total_delivery_time.load(Ordering::Relaxed);
-        let avg_time = if successful > 0 {
-            total_time / successful
-        } else {
-            0
-        };
+        let avg_time = total_time.checked_div(successful).unwrap_or(0);
 
         WebhookStats {
             total_webhooks: total,
