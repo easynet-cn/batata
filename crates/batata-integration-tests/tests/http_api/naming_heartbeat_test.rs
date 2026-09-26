@@ -30,7 +30,7 @@ async fn test_instance_marked_unhealthy_after_heartbeat_timeout() {
 
     // Register an instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -96,7 +96,7 @@ async fn test_expired_instance_deleted_when_expire_enabled() {
 
     // Register an instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -167,7 +167,7 @@ async fn test_heartbeat_refreshes_instance_status() {
 
     // Register an instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -185,7 +185,7 @@ async fn test_heartbeat_refreshes_instance_status() {
 
     // Send a heartbeat
     let heartbeat_response: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v2/ns/instance/beat",
             &json!({
                 "serviceName": service_name,
@@ -232,7 +232,7 @@ async fn test_deregistered_instance_stops_being_tracked() {
 
     // Register an instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -300,7 +300,7 @@ async fn test_multiple_instances_different_heartbeat_timings() {
 
     for (ip, port) in &instances {
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v2/ns/instance",
                 &json!({
                     "serviceName": service_name,
@@ -320,7 +320,7 @@ async fn test_multiple_instances_different_heartbeat_timings() {
     // Send heartbeat for first instance only
     let (ip, port) = &instances[0];
     let _: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v2/ns/instance/beat",
             &json!({
                 "serviceName": service_name,
@@ -364,7 +364,7 @@ async fn test_ephemeral_instances_checked_for_heartbeat() {
 
     // Register ephemeral instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -405,7 +405,7 @@ async fn test_non_ephemeral_instances_not_checked_for_heartbeat() {
 
     // Register non-ephemeral (persistent) instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,

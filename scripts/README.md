@@ -39,8 +39,7 @@ cargo run -p batata-server -- -m standalone &
 ### 2. Standalone + ExternalDb (MySQL/PostgreSQL)
 
 ```bash
-# Initialize database
-mysql -u user -p batata < conf/mysql-schema.sql
+# Create an empty database — Batata creates the schema via SeaORM migrations
 
 # Ensure batata.sql.init.platform: mysql in conf/application.yml
 # Start server
@@ -55,8 +54,7 @@ cargo run -p batata-server -- -m standalone --db-url "mysql://user:pass@localhos
 All nodes share the same external database for config storage. Naming service uses distro protocol for ephemeral instance sync.
 
 ```bash
-# Initialize database
-mysql -u user -p batata < conf/mysql-schema.sql
+# Create an empty database — Batata creates the schema via SeaORM migrations
 
 # Create conf/cluster.conf
 echo "127.0.0.1:8848

@@ -232,7 +232,9 @@ pub struct TomlChangeParser;
 impl TomlChangeParser {
     fn flatten_toml(content: &str) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        if let Ok(value) = content.parse::<toml::Value>() {
+        // `Value: FromStr` only parses a single TOML value; config documents contain
+        // tables, so parse the whole document with `toml::from_str` instead.
+        if let Ok(value) = toml::from_str::<toml::Value>(content) {
             Self::flatten_value(&value, String::new(), &mut map);
         }
         map

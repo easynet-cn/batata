@@ -27,7 +27,7 @@ async fn test_tcp_health_check_registration() {
 
     // Register instance with TCP health check
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -37,11 +37,7 @@ async fn test_tcp_health_check_registration() {
                 "weight": 1.0,
                 "healthy": true,
                 "enabled": true,
-                "metadata": {
-                    "healthCheckType": "TCP",
-                    "healthCheckInterval": "5000",
-                    "healthCheckTimeout": "3000"
-                }
+                "metadata": "{\"healthCheckType\":\"TCP\",\"healthCheckInterval\":\"5000\",\"healthCheckTimeout\":\"3000\"}"
             }),
         )
         .await
@@ -68,7 +64,7 @@ async fn test_http_health_check_registration() {
 
     // Register instance with HTTP health check
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -78,13 +74,7 @@ async fn test_http_health_check_registration() {
                 "weight": 1.0,
                 "healthy": true,
                 "enabled": true,
-                "metadata": {
-                    "healthCheckType": "HTTP",
-                    "healthCheckPath": "/health",
-                    "healthCheckInterval": "5000",
-                    "healthCheckTimeout": "3000",
-                    "healthCheckExpectedCodes": "200"
-                }
+                "metadata": "{\"healthCheckType\":\"HTTP\",\"healthCheckPath\":\"/health\",\"healthCheckInterval\":\"5000\",\"healthCheckTimeout\":\"3000\",\"healthCheckExpectedCodes\":\"200\"}"
             }),
         )
         .await
@@ -112,7 +102,7 @@ async fn test_update_health_check_config() {
 
     // Register instance with initial health check
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -120,9 +110,7 @@ async fn test_update_health_check_config() {
                 "port": 8080,
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
-                "metadata": {
-                    "healthCheckInterval": "5000"
-                }
+                "metadata": "{\"healthCheckInterval\":\"5000\"}"
             }),
         )
         .await
@@ -130,16 +118,13 @@ async fn test_update_health_check_config() {
 
     // Update health check config
     let _: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
                 "ip": ip,
                 "port": 8080,
-                "metadata": {
-                    "healthCheckInterval": "10000",
-                    "healthCheckTimeout": "5000"
-                }
+                "metadata": "{\"healthCheckInterval\":\"10000\",\"healthCheckTimeout\":\"5000\"}"
             }),
         )
         .await
@@ -166,7 +151,7 @@ async fn test_get_instance_health_status() {
 
     // Register healthy instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -202,7 +187,7 @@ async fn test_get_healthy_instances_only() {
 
     // Register healthy instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -219,7 +204,7 @@ async fn test_get_healthy_instances_only() {
 
     // Register unhealthy instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -258,7 +243,7 @@ async fn test_custom_health_check_interval() {
 
     // Register instance with custom interval
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -266,9 +251,7 @@ async fn test_custom_health_check_interval() {
                 "port": 8080,
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
-                "metadata": {
-                    "healthCheckInterval": "10000"
-                }
+                "metadata": "{\"healthCheckInterval\":\"10000\"}"
             }),
         )
         .await
@@ -295,7 +278,7 @@ async fn test_custom_health_check_timeout() {
 
     // Register instance with custom timeout
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -303,9 +286,7 @@ async fn test_custom_health_check_timeout() {
                 "port": 8080,
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
-                "metadata": {
-                    "healthCheckTimeout": "10000"
-                }
+                "metadata": "{\"healthCheckTimeout\":\"10000\"}"
             }),
         )
         .await
@@ -332,7 +313,7 @@ async fn test_health_threshold_config() {
 
     // Register instance with health threshold
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -340,9 +321,7 @@ async fn test_health_threshold_config() {
                 "port": 8080,
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
-                "metadata": {
-                    "healthCheckThreshold": "3"
-                }
+                "metadata": "{\"healthCheckThreshold\":\"3\"}"
             }),
         )
         .await
@@ -369,7 +348,7 @@ async fn test_disable_health_check() {
 
     // Register instance with health check disabled
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -378,9 +357,7 @@ async fn test_disable_health_check() {
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
                 "ephemeral": false,
-                "metadata": {
-                    "healthCheckEnabled": "false"
-                }
+                "metadata": "{\"healthCheckEnabled\":\"false\"}"
             }),
         )
         .await
@@ -407,7 +384,7 @@ async fn test_http_health_check_custom_path() {
 
     // Register instance with custom health check path
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -415,11 +392,7 @@ async fn test_http_health_check_custom_path() {
                 "port": 8080,
                 "clusterName": DEFAULT_GROUP,
                 "weight": 1.0,
-                "metadata": {
-                    "healthCheckType": "HTTP",
-                    "healthCheckPath": "/api/health/custom",
-                    "healthCheckExpectedCodes": "200,204"
-                }
+                "metadata": "{\"healthCheckType\":\"HTTP\",\"healthCheckPath\":\"/api/health/custom\",\"healthCheckExpectedCodes\":\"200,204\"}"
             }),
         )
         .await
@@ -448,7 +421,7 @@ async fn test_batch_health_check_updates() {
     for i in 0..3 {
         let ip = format!("192.168.1.{}", 170 + i);
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v2/ns/instance",
                 &json!({
                     "serviceName": service_name,
@@ -456,9 +429,7 @@ async fn test_batch_health_check_updates() {
                     "port": 8080,
                     "clusterName": DEFAULT_GROUP,
                     "weight": 1.0,
-                    "metadata": {
-                        "healthCheckInterval": "5000"
-                    }
+                    "metadata": "{\"healthCheckInterval\":\"5000\"}"
                 }),
             )
             .await

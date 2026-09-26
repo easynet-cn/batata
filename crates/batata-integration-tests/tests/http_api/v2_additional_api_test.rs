@@ -13,6 +13,7 @@ use batata_integration_tests::{
     CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
     unique_data_id, unique_service_name,
 };
+use serde_json::json;
 
 async fn authenticated_client() -> TestClient {
     let mut client = TestClient::new(MAIN_BASE_URL);
@@ -464,9 +465,9 @@ async fn test_v2_update_cluster_node_list() {
     let client = authenticated_client().await;
 
     let response: serde_json::Value = client
-        .put_form(
+        .put_json(
             "/nacos/v2/core/cluster/node/list",
-            &[("nodes", "127.0.0.1:8848")],
+            &json!(["127.0.0.1:8848"]),
         )
         .await
         .expect("Failed to update node list");

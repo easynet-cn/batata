@@ -77,7 +77,14 @@ pub fn console_server(
                     .add(("X-Content-Type-Options", "nosniff"))
                     .add(("X-Frame-Options", "DENY"))
                     .add(("X-XSS-Protection", "1; mode=block"))
-                    .add(("Cache-Control", "no-store")),
+                    .add(("Cache-Control", "no-store"))
+                    .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+                    .add((
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+                    ))
+                    .add(("X-Download-Options", "noopen"))
+                    .add(("X-Permitted-Cross-Domain-Policies", "none")),
             )
             // HTTP response compression (gzip, brotli, zstd)
             .wrap(Condition::new(compression_enabled, Compress::default()))
@@ -199,7 +206,14 @@ pub fn plugin_http_server(
                     .add(("X-Content-Type-Options", "nosniff"))
                     .add(("X-Frame-Options", "DENY"))
                     .add(("X-XSS-Protection", "1; mode=block"))
-                    .add(("Cache-Control", "no-store")),
+                    .add(("Cache-Control", "no-store"))
+                    .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+                    .add((
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+                    ))
+                    .add(("X-Download-Options", "noopen"))
+                    .add(("X-Permitted-Cross-Domain-Policies", "none")),
             )
             // HTTP response compression (gzip, brotli, zstd)
             .wrap(Condition::new(compression_enabled, Compress::default()))
@@ -477,7 +491,14 @@ pub fn main_server(
                     .add(("X-Content-Type-Options", "nosniff"))
                     .add(("X-Frame-Options", "DENY"))
                     .add(("X-XSS-Protection", "1; mode=block"))
-                    .add(("Cache-Control", "no-store")),
+                    .add(("Cache-Control", "no-store"))
+                    .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+                    .add((
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+                    ))
+                    .add(("X-Download-Options", "noopen"))
+                    .add(("X-Permitted-Cross-Domain-Policies", "none")),
             )
             // HTTP response compression (gzip, brotli, zstd)
             .wrap(Condition::new(compression_enabled, Compress::default()))

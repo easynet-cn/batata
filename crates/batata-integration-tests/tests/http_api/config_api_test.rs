@@ -51,7 +51,7 @@ async fn test_publish_and_get_config() {
         .expect("Failed to get config");
 
     assert_eq!(response["code"], 0, "Get should succeed");
-    assert_eq!(response["data"]["content"], content, "Content should match");
+    assert_eq!(response["data"], content, "Content should match");
 }
 
 /// Test configuration not found
@@ -192,7 +192,7 @@ async fn test_config_with_namespace() {
         .expect("Failed to get config");
 
     assert_eq!(response["code"], 0, "Get should succeed");
-    assert_eq!(response["data"]["content"], content, "Content should match");
+    assert_eq!(response["data"], content, "Content should match");
 }
 
 /// Test configuration update (overwrite)
@@ -242,7 +242,7 @@ async fn test_config_update() {
         .expect("Failed to get config");
 
     assert_eq!(
-        response["data"]["content"], content_v2,
+        response["data"], content_v2,
         "Should have v2 content"
     );
 }
@@ -495,12 +495,12 @@ async fn test_config_md5() {
 
     assert_eq!(response["code"], 0, "Get should succeed");
     assert_eq!(
-        response["data"]["content"], content,
+        response["data"], content,
         "Content should match published value"
     );
 
     // Check MD5 field in the response data
-    let md5_value = &response["data"]["md5"];
+    let md5_value = &response["data"];
     assert!(
         md5_value.is_string(),
         "Response should contain an md5 field in data, got: {:?}",
@@ -627,7 +627,7 @@ async fn test_namespace_isolation() {
 
     assert_eq!(response_a["code"], 0);
     assert_eq!(
-        response_a["data"]["content"], content_a,
+        response_a["data"], content_a,
         "Namespace A should have content A"
     );
 
@@ -646,7 +646,7 @@ async fn test_namespace_isolation() {
 
     assert_eq!(response_b["code"], 0);
     assert_eq!(
-        response_b["data"]["content"], content_b,
+        response_b["data"], content_b,
         "Namespace B should have content B"
     );
 

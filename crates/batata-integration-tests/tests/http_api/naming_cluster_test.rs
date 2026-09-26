@@ -291,11 +291,7 @@ async fn test_cluster_with_metadata() {
                 "port": 8080,
                 "clusterName": "metadata-cluster",
                 "weight": 1.0,
-                "metadata": {
-                    "cluster.type": "production",
-                    "cluster.region": "us-west",
-                    "cluster.version": "1.0"
-                }
+                "metadata": "{\"cluster.type\":\"production\",\"cluster.region\":\"us-west\",\"cluster.version\":\"1.0\"}"
             }),
         )
         .await

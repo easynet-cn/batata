@@ -109,7 +109,7 @@ jobs:
           mkdir -p "$OUT/bin" "$OUT/conf" "$OUT/deploy/k8s"
           cp "$BIN" "$OUT/bin/"
           cp -r conf/. "$OUT/conf/"
-          cp docker-compose.yml "$OUT/" 2>/dev/null || true
+          cp deploy/compose/docker-compose.yml "$OUT/" 2>/dev/null || true
           cp -r deploy/k8s/. "$OUT/deploy/k8s/" 2>/dev/null || true
           tar -czf "${OUT}.tar.gz" "$OUT"
           echo "PACKED=${OUT}.tar.gz" >> "$GITHUB_ENV"

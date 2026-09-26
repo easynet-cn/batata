@@ -1,15 +1,17 @@
 # Batata Integration Test Databases (Podman Compose)
 #
-# Usage:
-#   Start test databases:    podman-compose -f podman-compose.test.yml up -d
-#   Stop test databases:     podman-compose -f podman-compose.test.yml down
-#   Stop and clean volumes:  podman-compose -f podman-compose.test.yml down -v
+# Usage (run from the repository root):
+#   Start test databases:    podman-compose -f deploy/compose/podman-compose.test.yml up -d
+#   Stop test databases:     podman-compose -f deploy/compose/podman-compose.test.yml down
+#   Stop and clean volumes:  podman-compose -f deploy/compose/podman-compose.test.yml down -v
 #
 # Run tests:
 #   cargo test --workspace -- --ignored
 #
 # Or with specific database:
 #   TEST_DATABASE_URL="mysql://batata:batata@127.0.0.1:3307/batata_test" cargo test
+#
+# Databases start empty; Batata creates the schema via SeaORM migrations.
 
 services:
   # MySQL test database
@@ -25,7 +27,6 @@ services:
       - "3307:3306"
     volumes:
       - mysql-test-data:/var/lib/mysql
-      - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -51,7 +52,6 @@ services:
       - "5433:5432"
     volumes:
       - postgres-test-data:/var/lib/postgresql/data
-      - ./conf/pg-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U batata -d batata_test"]
       interval: 10s
@@ -64,7 +64,7 @@ services:
   # Batata server for integration tests (optional - can also run via cargo)
   batata-test:
     build:
-      context: .
+      context: ../..
       dockerfile: Containerfile
     container_name: batata-server-test
     depends_on:
@@ -72,6 +72,8 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=mysql://batata:batata@mysql-test:3306/batata_test
+      - BATATA_SQL_INIT_PLATFORM=mysql
+      - BATATA_DB_MIGRATION_ENABLED=true
       - BATATA_SERVER_MAIN_PORT=8848
       - BATATA_CONSOLE_PORT=8081
     ports:

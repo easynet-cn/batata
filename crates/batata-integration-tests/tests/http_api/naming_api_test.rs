@@ -387,7 +387,8 @@ async fn test_batch_update_metadata() {
         .expect("Failed to register");
 
     // Batch update metadata
-    let instances = r#"[{"ip":"192.168.1.130","port":8080}]"#;
+    // The API expects `ip:port,ip:port,...`
+    let instances = "192.168.1.130:8080";
     let response: serde_json::Value = client
         .put_form(
             "/nacos/v2/ns/instance/metadata/batch",

@@ -43,11 +43,11 @@ async fn test_v3_admin_create_mcp_server() {
     let server_name = format!("test-mcp-{}", unique_test_id());
 
     let response: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "name": server_name,
-                "endpoint": "http://localhost:9090/mcp",
+                "mcpName": server_name,
+                "endpointSpecification": "http://localhost:9090/mcp",
                 "description": "Test MCP server"
             }),
         )
@@ -73,11 +73,11 @@ async fn test_v3_admin_get_mcp_server() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "name": server_name,
-                "endpoint": "http://localhost:9090/mcp"
+                "mcpName": server_name,
+                "endpointSpecification": "http://localhost:9090/mcp"
             }),
         )
         .await
@@ -108,11 +108,11 @@ async fn test_v3_admin_delete_mcp_server() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "name": server_name,
-                "endpoint": "http://localhost:9090/mcp"
+                "mcpName": server_name,
+                "endpointSpecification": "http://localhost:9090/mcp"
             }),
         )
         .await
@@ -152,17 +152,20 @@ async fn test_v3_admin_list_a2a_agents() {
 async fn test_v3_admin_register_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("test-agent-{}", unique_test_id());
+    let agent_card = json!({
+        "name": agent_name,
+        "endpoint": "http://localhost:9100/a2a",
+        "description": "Test A2A agent"
+    })
+    .to_string();
 
     let response: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/a2a",
-            &json!({
-                "card": {
-                    "name": agent_name,
-                    "endpoint": "http://localhost:9100/a2a",
-                    "description": "Test A2A agent"
-                }
-            }),
+            &[
+            ("agentName", agent_name.as_str()),
+            ("agentCard", agent_card.as_str()),
+            ],
         )
         .await
         .expect("Failed to register A2A agent");
@@ -183,17 +186,21 @@ async fn test_v3_admin_register_a2a_agent() {
 async fn test_v3_admin_get_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("get-agent-{}", unique_test_id());
+    let agent_card = json!({
+        "name": agent_name,
+        "endpoint": "http://localhost:9100/a2a",
+        "description": "Test A2A agent"
+    })
+    .to_string();
 
     // Register
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/a2a",
-            &json!({
-                "card": {
-                    "name": agent_name,
-                    "endpoint": "http://localhost:9100/a2a"
-                }
-            }),
+            &[
+            ("agentName", agent_name.as_str()),
+            ("agentCard", agent_card.as_str()),
+            ],
         )
         .await
         .expect("Failed to register agent");
@@ -220,17 +227,21 @@ async fn test_v3_admin_get_a2a_agent() {
 async fn test_v3_admin_delete_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("del-agent-{}", unique_test_id());
+    let agent_card = json!({
+        "name": agent_name,
+        "endpoint": "http://localhost:9100/a2a",
+        "description": "Test A2A agent"
+    })
+    .to_string();
 
     // Register
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ai/a2a",
-            &json!({
-                "card": {
-                    "name": agent_name,
-                    "endpoint": "http://localhost:9100/a2a"
-                }
-            }),
+            &[
+            ("agentName", agent_name.as_str()),
+            ("agentCard", agent_card.as_str()),
+            ],
         )
         .await
         .expect("Failed to register agent");

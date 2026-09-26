@@ -26,7 +26,7 @@ async fn test_v3_admin_create_service() {
     let service_name = unique_service_name("v3admin_create");
 
     let response: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/service",
             &json!({
                 "serviceName": service_name,
@@ -48,7 +48,7 @@ async fn test_v3_admin_get_service() {
 
     // Create first
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/service",
             &json!({ "serviceName": service_name }),
         )
@@ -77,7 +77,7 @@ async fn test_v3_admin_update_service() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/service",
             &json!({
                 "serviceName": service_name,
@@ -89,7 +89,7 @@ async fn test_v3_admin_update_service() {
 
     // Update
     let response: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v3/admin/ns/service",
             &json!({
                 "serviceName": service_name,
@@ -112,7 +112,7 @@ async fn test_v3_admin_delete_service() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/service",
             &json!({ "serviceName": service_name }),
         )
@@ -158,7 +158,7 @@ async fn test_v3_admin_create_duplicate_service() {
 
     // Create first
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/service",
             &json!({ "serviceName": service_name }),
         )
@@ -190,7 +190,7 @@ async fn test_v3_admin_register_instance() {
     let service_name = unique_service_name("v3admin_inst_reg");
 
     let response: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -217,7 +217,7 @@ async fn test_v3_admin_deregister_instance() {
 
     // Register first
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -253,7 +253,7 @@ async fn test_v3_admin_update_instance() {
 
     // Register
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -267,7 +267,7 @@ async fn test_v3_admin_update_instance() {
 
     // Update
     let response: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -293,7 +293,7 @@ async fn test_v3_admin_list_instances() {
     // Register instances
     for i in 1..=2 {
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v3/admin/ns/instance",
                 &json!({
                     "serviceName": service_name,
@@ -326,7 +326,7 @@ async fn test_v3_admin_get_instance() {
 
     // Register
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -362,7 +362,7 @@ async fn test_v3_admin_update_instance_metadata() {
 
     // Register
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,
@@ -375,7 +375,7 @@ async fn test_v3_admin_update_instance_metadata() {
 
     // Update metadata
     let response: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v3/admin/ns/instance/metadata",
             &json!({
                 "serviceName": service_name,
@@ -446,7 +446,7 @@ async fn test_v3_admin_update_health() {
 
     // Register non-ephemeral instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/ns/instance",
             &json!({
                 "serviceName": service_name,

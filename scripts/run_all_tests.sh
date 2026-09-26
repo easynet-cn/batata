@@ -78,13 +78,13 @@ cleanup() {
     if [ "$DOCKER_COMPOSE_STARTED" = true ]; then
         log_info "Stopping test databases..."
         cd "$PROJECT_ROOT"
-        podman-compose -f podman-compose.test.yml down -v 2>/dev/null || true
+        podman compose -f deploy/compose/podman-compose.test.yml down -v 2>/dev/null || true
     fi
 
     if [ "$SDK_DOCKER_STARTED" = true ]; then
         log_info "Stopping SDK test stack..."
         cd "${PROJECT_ROOT}/sdk-tests"
-        podman-compose down -v 2>/dev/null || true
+        podman compose -f deploy/compose/podman-compose.yml down -v 2>/dev/null || true
         cd "$PROJECT_ROOT"
     fi
 
@@ -469,7 +469,7 @@ run_standalone_externaldb() {
 
     # Start MySQL via podman-compose
     log_info "Starting MySQL test database..."
-    podman-compose -f podman-compose.test.yml up -d mysql-test
+    podman compose -f deploy/compose/podman-compose.test.yml up -d mysql-test
     DOCKER_COMPOSE_STARTED=true
 
     # Wait for MySQL healthy
@@ -524,7 +524,7 @@ run_cluster_externaldb() {
     # Ensure it's still healthy
     if ! podman inspect --format='{{.State.Health.Status}}' "batata-mysql-test" 2>/dev/null | grep -q "healthy"; then
         log_info "Restarting MySQL test database..."
-        podman-compose -f podman-compose.test.yml up -d mysql-test
+        podman compose -f deploy/compose/podman-compose.test.yml up -d mysql-test
         DOCKER_COMPOSE_STARTED=true
         if ! wait_for_podman_healthy "batata-mysql-test" 120; then
             log_fail "MySQL did not become healthy"
@@ -607,7 +607,7 @@ EOF
 
     # Stop Docker databases
     log_info "Stopping test databases..."
-    podman-compose -f podman-compose.test.yml down -v 2>/dev/null || true
+    podman compose -f deploy/compose/podman-compose.test.yml down -v 2>/dev/null || true
     DOCKER_COMPOSE_STARTED=false
 
     if [ $test_rc -ne 0 ]; then
@@ -630,12 +630,11 @@ run_sdk() {
 
     # Check prerequisites
     require_cmd podman || return 1
-    require_cmd podman-compose || return 1
 
     # Start full stack via sdk-tests/podman-compose.yml
     log_info "Starting SDK test stack (MySQL + Batata + test containers)..."
     cd "${PROJECT_ROOT}/sdk-tests"
-    podman-compose up -d --build mysql batata
+    podman compose up -d --build mysql batata
     SDK_DOCKER_STARTED=true
     cd "$PROJECT_ROOT"
 
@@ -643,7 +642,7 @@ run_sdk() {
     if ! wait_for_podman_healthy "batata-test-server" 180; then
         log_fail "Batata server in SDK podman stack did not become healthy"
         cd "${PROJECT_ROOT}/sdk-tests"
-        podman-compose logs batata 2>/dev/null | tail -50
+        podman compose logs batata 2>/dev/null | tail -50
         cd "$PROJECT_ROOT"
         return 1
     fi
@@ -658,7 +657,7 @@ run_sdk() {
     log_info "Running Nacos Java SDK tests..."
     local nacos_rc=0
     cd "${PROJECT_ROOT}/sdk-tests"
-    podman-compose run --rm nacos-tests || nacos_rc=$?
+    podman compose run --rm nacos-tests || nacos_rc=$?
     cd "$PROJECT_ROOT"
 
     if [ $nacos_rc -eq 0 ]; then
@@ -671,7 +670,7 @@ run_sdk() {
     log_info "Running Consul Go SDK tests..."
     local consul_rc=0
     cd "${PROJECT_ROOT}/sdk-tests"
-    podman-compose run --rm consul-tests || consul_rc=$?
+    podman compose run --rm consul-tests || consul_rc=$?
     cd "$PROJECT_ROOT"
 
     if [ $consul_rc -eq 0 ]; then
@@ -683,7 +682,7 @@ run_sdk() {
     # Tear down SDK stack
     log_info "Stopping SDK test stack..."
     cd "${PROJECT_ROOT}/sdk-tests"
-    podman-compose down -v 2>/dev/null || true
+    podman compose -f deploy/compose/podman-compose.yml down -v 2>/dev/null || true
     cd "$PROJECT_ROOT"
     SDK_DOCKER_STARTED=false
 
@@ -766,7 +765,7 @@ fi
 # --- Full: Standalone ExternalDb ---
 if [ "$RUN_FULL" = true ] && [ "$OVERALL_EXIT_CODE" -eq 0 ]; then
     # Check Docker availability
-    if command -v podman &>/dev/null && command -v podman-compose &>/dev/null; then
+    if command -v podman &>/dev/null; then
         stage_rc=0
         run_standalone_externaldb || stage_rc=$?
         if [ $stage_rc -eq 0 ]; then
@@ -783,7 +782,7 @@ fi
 
 # --- Full: Cluster ExternalDb ---
 if [ "$RUN_FULL" = true ] && [ "$OVERALL_EXIT_CODE" -eq 0 ]; then
-    if command -v podman &>/dev/null && command -v podman-compose &>/dev/null; then
+    if command -v podman &>/dev/null; then
         stage_rc=0
         run_cluster_externaldb || stage_rc=$?
         if [ $stage_rc -eq 0 ]; then

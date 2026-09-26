@@ -20,6 +20,33 @@ fn default_true() -> bool {
     true
 }
 
+// --- Common Option<String> defaults ---
+// These mirror the fallbacks used by the typed-config accessors, so that a
+// missing configuration key yields the same value the accessor would return.
+fn default_deployment_type() -> Option<String> {
+    Some("merged".to_string())
+}
+
+fn default_auth_system_type() -> Option<String> {
+    Some("default".to_string())
+}
+
+fn default_visibility_type() -> Option<String> {
+    Some("nacos".to_string())
+}
+
+fn default_otel_service_name() -> Option<String> {
+    Some("batata".to_string())
+}
+
+fn default_logs_level() -> Option<String> {
+    Some("info".to_string())
+}
+
+fn default_rocksdb_compression() -> Option<String> {
+    Some("lz4".to_string())
+}
+
 // --- i64 defaults ---
 fn default_server_port() -> i64 {
     8849
@@ -555,11 +582,22 @@ pub struct BatataTypedConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `DeploymentConfig`.
-#[derive(Default)]
 pub struct DeploymentConfig {
-    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    #[serde(
+        default = "default_deployment_type",
+        deserialize_with = "deserialize_null_to_none",
+        rename = "type"
+    )]
     /// The deployment type (e.g. `merged`, `server`, `console`).
     pub type_: Option<String>,
+}
+
+impl Default for DeploymentConfig {
+    fn default() -> Self {
+        Self {
+            type_: default_deployment_type(),
+        }
+    }
 }
 
 
@@ -1105,11 +1143,22 @@ impl Default for CoreAuthCachingConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthSystemConfig`.
-#[derive(Default)]
 pub struct CoreAuthSystemConfig {
-    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    #[serde(
+        default = "default_auth_system_type",
+        deserialize_with = "deserialize_null_to_none",
+        rename = "type"
+    )]
     /// The authentication system type (e.g. `nacos`, `ldap`).
     pub type_: Option<String>,
+}
+
+impl Default for CoreAuthSystemConfig {
+    fn default() -> Self {
+        Self {
+            type_: default_auth_system_type(),
+        }
+    }
 }
 
 
@@ -1890,7 +1939,11 @@ pub struct PluginVisibilityConfig {
     #[serde(default = "default_true")]
     /// Whether the visibility plugin is enabled.
     pub enabled: bool,
-    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    #[serde(
+        default = "default_visibility_type",
+        deserialize_with = "deserialize_null_to_none",
+        rename = "type"
+    )]
     /// The visibility implementation type.
     pub type_: Option<String>,
 }
@@ -1899,7 +1952,7 @@ impl Default for PluginVisibilityConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            type_: None,
+            type_: default_visibility_type(),
         }
     }
 }
@@ -2365,7 +2418,10 @@ pub struct OtelConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// The OTLP collector endpoint.
     pub endpoint: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    #[serde(
+        default = "default_otel_service_name",
+        deserialize_with = "deserialize_null_to_none"
+    )]
     /// The service name reported to the collector.
     pub service_name: Option<String>,
     #[serde(default = "default_otel_sampling_ratio")]
@@ -2381,7 +2437,7 @@ impl Default for OtelConfig {
         Self {
             enabled: false,
             endpoint: None,
-            service_name: None,
+            service_name: default_otel_service_name(),
             sampling_ratio: default_otel_sampling_ratio(),
             export_timeout_secs: default_otel_export_timeout_secs(),
         }
@@ -2394,7 +2450,6 @@ impl Default for OtelConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `LogsConfig`.
-#[derive(Default)]
 pub struct LogsConfig {
     #[serde(default)]
     /// Directory where log files are written.
@@ -2405,9 +2460,23 @@ pub struct LogsConfig {
     #[serde(default)]
     /// File logging settings.
     pub file: LogsFileConfig,
-    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    #[serde(
+        default = "default_logs_level",
+        deserialize_with = "deserialize_null_to_none"
+    )]
     /// The global log level filter.
     pub level: Option<String>,
+}
+
+impl Default for LogsConfig {
+    fn default() -> Self {
+        Self {
+            path: None,
+            console: LogsConsoleConfig::default(),
+            file: LogsFileConfig::default(),
+            level: default_logs_level(),
+        }
+    }
 }
 
 
@@ -3123,7 +3192,10 @@ pub struct RocksdbConfig {
     #[serde(default, deserialize_with = "deserialize_null_to_none")]
     /// Compression algorithm for the bottommost level.
     pub bottommost_compression: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_null_to_none")]
+    #[serde(
+        default = "default_rocksdb_compression",
+        deserialize_with = "deserialize_null_to_none"
+    )]
     /// Compression algorithm for other levels.
     pub compression: Option<String>,
     #[serde(default)]
@@ -3159,7 +3231,7 @@ impl Default for RocksdbConfig {
             bloom_filter_bits: default_rocksdb_bloom_filter_bits(),
             level_compaction_dynamic: true,
             bottommost_compression: None,
-            compression: None,
+            compression: default_rocksdb_compression(),
             enable_statistics: false,
             whole_key_filtering: true,
             data_block_hash_ratio: default_rocksdb_data_block_hash_ratio(),

@@ -2,6 +2,8 @@
 # ==============================================================================
 # Stop all Podman containers for Batata
 #
+# Uses `podman compose` (see podman-up.sh for details).
+#
 # Usage:
 #   ./scripts/podman-down.sh           # Stop and remove containers
 #   ./scripts/podman-down.sh -v        # Also remove volumes (clean data)
@@ -10,6 +12,9 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+COMPOSE_FILE="deploy/compose/podman-compose.yml"
+TEST_COMPOSE_FILE="deploy/compose/podman-compose.test.yml"
 
 VOLUME_FLAG=""
 MODE="${1:-default}"
@@ -23,16 +28,16 @@ fi
 
 if [ "$MODE" = "all" ]; then
     # Stop all compose files
-    podman-compose down $VOLUME_FLAG 2>/dev/null || true
-    podman-compose -f podman-compose.test.yml down $VOLUME_FLAG 2>/dev/null || true
-    (cd sdk-tests && podman-compose down $VOLUME_FLAG 2>/dev/null) || true
+    podman compose -f "$COMPOSE_FILE" down $VOLUME_FLAG 2>/dev/null || true
+    podman compose -f "$TEST_COMPOSE_FILE" down $VOLUME_FLAG 2>/dev/null || true
+    (cd sdk-tests && podman compose down $VOLUME_FLAG 2>/dev/null) || true
     echo "All containers stopped."
 elif [ "$MODE" = "test" ]; then
-    podman-compose -f podman-compose.test.yml down $VOLUME_FLAG
+    podman compose -f "$TEST_COMPOSE_FILE" down $VOLUME_FLAG
 elif [ "$MODE" = "sdk" ]; then
-    (cd sdk-tests && podman-compose down $VOLUME_FLAG)
+    (cd sdk-tests && podman compose down $VOLUME_FLAG)
 else
-    podman-compose down $VOLUME_FLAG
+    podman compose -f "$COMPOSE_FILE" down $VOLUME_FLAG
 fi
 
 echo "Done."

@@ -2,6 +2,12 @@
 # ==============================================================================
 # Podman one-click launcher for Batata
 #
+# Uses `podman compose`, Podman's built-in compose subcommand, which delegates to
+# an external compose provider. The default provider is docker-compose (the
+# original Compose Spec implementation); override it with PODMAN_COMPOSE_PROVIDER,
+# e.g. a standalone /usr/local/bin/docker-compose that does not depend on Docker
+# Desktop.
+#
 # Usage:
 #   ./scripts/podman-up.sh                    # Embedded RocksDB (default)
 #   ./scripts/podman-up.sh mysql              # MySQL backend
@@ -22,7 +28,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROJECT_ROOT="$(pwd)"
-COMPOSE_FILE="podman-compose.yml"
+COMPOSE_FILE="deploy/compose/podman-compose.yml"
+TEST_COMPOSE_FILE="deploy/compose/podman-compose.test.yml"
 BUILD_FLAG=""
 DETACH_FLAG="-d"
 
@@ -46,23 +53,23 @@ done
 case "$MODE" in
     embedded|default)
         echo "==> Starting Batata (embedded RocksDB, merged mode)..."
-        podman-compose ${BUILD_FLAG} up ${DETACH_FLAG} batata
+        podman compose -f "$COMPOSE_FILE" ${BUILD_FLAG} up ${DETACH_FLAG} batata
         ;;
     mysql)
         echo "==> Starting Batata with MySQL..."
-        podman-compose --profile mysql ${EXTRA_PROFILES[*]+"${EXTRA_PROFILES[@]}"} ${BUILD_FLAG} up ${DETACH_FLAG}
+        podman compose -f "$COMPOSE_FILE" --profile mysql ${EXTRA_PROFILES[*]+"${EXTRA_PROFILES[@]}"} ${BUILD_FLAG} up ${DETACH_FLAG}
         ;;
     postgres|pg)
         echo "==> Starting Batata with PostgreSQL..."
-        podman-compose --profile postgres ${EXTRA_PROFILES[*]+"${EXTRA_PROFILES[@]}"} ${BUILD_FLAG} up ${DETACH_FLAG}
+        podman compose -f "$COMPOSE_FILE" --profile postgres ${EXTRA_PROFILES[*]+"${EXTRA_PROFILES[@]}"} ${BUILD_FLAG} up ${DETACH_FLAG}
         ;;
     consul)
         echo "==> Starting Batata with Consul compatibility..."
-        podman-compose --profile consul ${BUILD_FLAG} up ${DETACH_FLAG}
+        podman compose -f "$COMPOSE_FILE" --profile consul ${BUILD_FLAG} up ${DETACH_FLAG}
         ;;
     cluster)
         echo "==> Starting 3-node Batata cluster..."
-        podman-compose --profile cluster ${BUILD_FLAG} up ${DETACH_FLAG}
+        podman compose -f "$COMPOSE_FILE" --profile cluster ${BUILD_FLAG} up ${DETACH_FLAG}
         echo ""
         echo "Cluster nodes:"
         echo "  Node 1: http://localhost:8848  (gRPC: 9848/9849, Consul: 8500)"
@@ -71,7 +78,7 @@ case "$MODE" in
         ;;
     split)
         echo "==> Starting Batata (server + console separated)..."
-        podman-compose --profile split ${BUILD_FLAG} up ${DETACH_FLAG}
+        podman compose -f "$COMPOSE_FILE" --profile split ${BUILD_FLAG} up ${DETACH_FLAG}
         echo ""
         echo "Endpoints:"
         echo "  Server:  http://localhost:8848  (gRPC: 9848/9849)"
@@ -79,8 +86,7 @@ case "$MODE" in
         ;;
     test)
         echo "==> Starting integration test databases..."
-        COMPOSE_FILE="podman-compose.test.yml"
-        podman-compose -f "$COMPOSE_FILE" ${BUILD_FLAG} up ${DETACH_FLAG} mysql-test postgres-test
+        podman compose -f "$TEST_COMPOSE_FILE" ${BUILD_FLAG} up ${DETACH_FLAG} mysql-test postgres-test
         echo ""
         echo "Test databases:"
         echo "  MySQL:      mysql://batata:batata@127.0.0.1:3307/batata_test"
@@ -89,10 +95,10 @@ case "$MODE" in
     sdk)
         echo "==> Starting SDK test stack..."
         cd sdk-tests
-        podman-compose ${BUILD_FLAG} up ${DETACH_FLAG} mysql batata
+        podman compose ${BUILD_FLAG} up ${DETACH_FLAG} mysql batata
         echo ""
         echo "Run SDK tests with:"
-        echo "  cd sdk-tests && podman-compose --profile tests up"
+        echo "  cd sdk-tests && podman compose --profile tests up"
         cd "$PROJECT_ROOT"
         ;;
     *)
@@ -106,7 +112,7 @@ if [ -n "$DETACH_FLAG" ] && [ "$MODE" != "test" ] && [ "$MODE" != "sdk" ]; then
     echo ""
     echo "Waiting for health check..."
     sleep 3
-    echo "Status: podman-compose ps"
-    echo "Logs:   podman-compose logs -f"
+    echo "Status: podman compose -f $COMPOSE_FILE ps"
+    echo "Logs:   podman compose -f $COMPOSE_FILE logs -f"
     echo "Stop:   ./scripts/podman-down.sh"
 fi

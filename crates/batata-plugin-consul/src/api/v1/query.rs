@@ -1,3 +1,9 @@
+
+// actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
+// struct that cannot carry a doc comment, which trips `missing_docs`. The
+// generated struct is an internal implementation detail, so the lint is allowed
+// for this module.
+#![allow(missing_docs)]
 #![allow(clippy::too_many_arguments)]
 //! Consul Prepared Query API handlers with scope-relative route macros.
 //!

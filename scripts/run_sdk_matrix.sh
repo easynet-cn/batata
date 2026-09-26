@@ -130,13 +130,13 @@ recreate_db() { # platform
   local platform="$1"
   case "$platform" in
     mysql)
-      docker exec mysql mysql -uroot -pdevterry \
+      podman exec mysql mysql -uroot -pdevterry \
         -e "DROP DATABASE IF EXISTS batata_sdk_test; CREATE DATABASE batata_sdk_test CHARACTER SET utf8mb4;" \
         || { fail "MySQL 重建库失败"; return 1; }
       ok "MySQL 库 batata_sdk_test 已重建" ;;
     postgres)
-      docker exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS batata_sdk_test;" >/dev/null 2>&1
-      docker exec postgres psql -U postgres -c "CREATE DATABASE batata_sdk_test OWNER postgres;" >/dev/null 2>&1 \
+      podman exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS batata_sdk_test;" >/dev/null 2>&1
+      podman exec postgres psql -U postgres -c "CREATE DATABASE batata_sdk_test OWNER postgres;" >/dev/null 2>&1 \
         || { fail "Postgres 重建库失败"; return 1; }
       ok "Postgres 库 batata_sdk_test 已重建" ;;
   esac

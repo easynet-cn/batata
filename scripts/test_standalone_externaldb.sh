@@ -8,7 +8,7 @@
 #
 # Prerequisites:
 #   - Server running in standalone mode with external database
-#   - Database initialized with schema (conf/mysql-schema.sql or conf/postgresql-schema.sql)
+#   - Empty database; Batata creates the schema via SeaORM migrations
 #   - Or pass MAIN_PORT / CONSOLE_PORT env vars
 # ==============================================================================
 

@@ -61,13 +61,20 @@ pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 pub const TEST_GROUP: &str = "TEST_GROUP";
 
 /// Generate a unique test ID to avoid conflicts between tests
+/// Monotonic sequence combined with the timestamp.
+///
+/// A plain timestamp is not sufficient: clock resolution on some platforms is
+/// coarse enough that two calls in quick succession can return the same value.
+static UNIQUE_ID_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn unique_test_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("test_{}", timestamp)
+    let seq = UNIQUE_ID_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("test_{}_{}", timestamp, seq)
 }
 
 /// Generate a unique data ID for config tests

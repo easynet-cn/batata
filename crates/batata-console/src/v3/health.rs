@@ -2,6 +2,12 @@
 //!
 //! Provides liveness/readiness probing and component health reporting.
 
+// actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
+// struct that cannot carry a doc comment, which trips `missing_docs`. The
+// generated struct is an internal implementation detail, so the lint is allowed
+// for this module.
+#![allow(missing_docs)]
+
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Serialize;
 

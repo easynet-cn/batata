@@ -2,6 +2,12 @@
 //!
 //! These delegate to the original handlers in `crate::session`.
 
+// actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
+// struct that cannot carry a doc comment, which trips `missing_docs`. The
+// generated struct is an internal implementation detail, so the lint is allowed
+// for this module.
+#![allow(missing_docs)]
+
 use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
 
 use crate::acl::AclService;

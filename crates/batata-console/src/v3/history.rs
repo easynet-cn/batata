@@ -2,6 +2,12 @@
 //!
 //! Provides endpoints for querying configuration change history.
 
+// actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
+// struct that cannot carry a doc comment, which trips `missing_docs`. The
+// generated struct is an internal implementation detail, so the lint is allowed
+// for this module.
+#![allow(missing_docs)]
+
 use actix_web::{HttpRequest, Responder, Scope, get, post, web};
 use serde::{Deserialize, Serialize};
 

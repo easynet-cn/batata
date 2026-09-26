@@ -1,0 +1,15 @@
+# Keep the container build context small and reproducible.
+.git/
+.github/
+target/
+**/target/
+sdk-tests/
+docs/
+deploy/
+scripts/
+console-ui/
+logs/
+*.md
+!conf/
+.dockerignore
+Containerfile

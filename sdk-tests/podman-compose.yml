@@ -14,9 +14,6 @@ services:
       MYSQL_DATABASE: batata
     ports:
       - "3306:3306"
-    volumes:
-      - ../conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ../conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -38,6 +35,7 @@ services:
       - "8081:8081"
     environment:
       - DB_URL=mysql://root:root@mysql:3306/batata
+      - BATATA_DB_MIGRATION_ENABLED=true
       - NACOS_AUTH_ENABLED=true
       - NACOS_AUTH_TOKEN_SECRET_KEY=YmF0YXRhLXRlc3Qtc2VjcmV0LWtleS1mb3Itand0LXRva2Vu
     depends_on:

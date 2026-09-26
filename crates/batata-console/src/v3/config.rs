@@ -3,6 +3,12 @@
 //! Provides endpoints for browsing, querying, and exporting configurations
 //! across namespaces, groups, and data IDs.
 
+// actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
+// struct that cannot carry a doc comment, which trips `missing_docs`. The
+// generated struct is an internal implementation detail, so the lint is allowed
+// for this module.
+#![allow(missing_docs)]
+
 use std::str::FromStr;
 
 use actix_multipart::Multipart;
