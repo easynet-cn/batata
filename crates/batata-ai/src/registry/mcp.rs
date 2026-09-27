@@ -348,80 +348,6 @@ impl McpServerRegistry {
         batata_api::model::Page::new(total, page as u64, query.page_size as u64, page_items)
     }
 
-    /// Import servers from JSON config (claude_desktop_config.json format)
-    pub fn import(&self, request: McpServerImportRequest) -> BatchRegistrationResponse {
-        let mut success_count = 0u32;
-        let mut errors = Vec::new();
-
-        for (name, config) in request.mcp_servers {
-            // Build registration from config
-            let registration = McpServerRegistration {
-                name: name.clone(),
-                display_name: name.clone(),
-                description: String::new(),
-                namespace: request.namespace.clone(),
-                version: "1.0.0".to_string(),
-                endpoint: config.url.clone().unwrap_or_else(|| {
-                    format!(
-                        "stdio://{}",
-                        config.command.as_ref().unwrap_or(&"unknown".to_string())
-                    )
-                }),
-                server_type: if config.command.is_some() {
-                    McpServerType::Stdio
-                } else {
-                    McpServerType::Http
-                },
-                transport: McpTransport {
-                    transport_type: if config.command.is_some() {
-                        "stdio".to_string()
-                    } else {
-                        "http".to_string()
-                    },
-                    command: config.command,
-                    args: config.args,
-                    env: config.env,
-                    url: config.url,
-                    ..Default::default()
-                },
-                capabilities: McpCapabilities::default(),
-                tools: vec![],
-                resources: vec![],
-                prompts: vec![],
-                metadata: HashMap::new(),
-                tags: vec!["imported".to_string()],
-                auto_fetch_tools: true,
-                health_check: None,
-            };
-
-            // Check if exists and handle overwrite
-            if self.get(&request.namespace, &name).is_some() {
-                if request.overwrite {
-                    match self.update(&request.namespace, &name, registration) {
-                        Ok(_) => success_count += 1,
-                        Err(e) => errors.push(RegistrationError { name, error: e }),
-                    }
-                } else {
-                    errors.push(RegistrationError {
-                        name,
-                        error: "Server already exists".to_string(),
-                    });
-                }
-            } else {
-                match self.register(registration) {
-                    Ok(_) => success_count += 1,
-                    Err(e) => errors.push(RegistrationError { name, error: e }),
-                }
-            }
-        }
-
-        BatchRegistrationResponse {
-            success_count,
-            failed_count: errors.len() as u32,
-            errors,
-        }
-    }
-
     /// Update server health status
     pub fn update_health(&self, id: &str, status: HealthStatus) {
         if let Some(mut server) = self.servers.get_mut(id) {
@@ -757,13 +683,6 @@ impl batata_common::McpServerService for McpServerRegistry {
         .await
     }
 
-    async fn import_mcp_servers(
-        &self,
-        request: McpServerImportRequest,
-    ) -> anyhow::Result<BatchRegistrationResponse> {
-        Ok(self.import(request))
-    }
-
     async fn mcp_stats(&self) -> anyhow::Result<McpRegistryStats> {
         Ok(self.stats())
     }
@@ -856,18 +775,6 @@ pub async fn list_servers(
     HttpResponse::Ok().json(ApiResult::success(result))
 }
 
-/// Import MCP servers from JSON config
-#[post("/v3/ai/mcp/servers/import")]
-pub async fn import_servers(
-    registry: web::Data<Arc<McpServerRegistry>>,
-    body: web::Json<McpServerImportRequest>,
-) -> HttpResponse {
-    debug!("Importing MCP servers");
-
-    let result = registry.import(body.into_inner());
-    HttpResponse::Ok().json(ApiResult::success(result))
-}
-
 /// Get MCP registry statistics
 #[get("/v3/ai/mcp/stats")]
 pub async fn get_stats(registry: web::Data<Arc<McpServerRegistry>>) -> HttpResponse {
@@ -882,7 +789,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(deregister_server)
         .service(get_server)
         .service(list_servers)
-        .service(import_servers)
         .service(get_stats);
 }
 
@@ -1103,42 +1009,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_import_servers() {
-        let registry = McpServerRegistry::new();
-
-        let mut servers = HashMap::new();
-        servers.insert(
-            "filesystem".to_string(),
-            McpServerConfig {
-                command: Some("npx".to_string()),
-                args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
-                env: HashMap::new(),
-                url: None,
-            },
-        );
-        servers.insert(
-            "github".to_string(),
-            McpServerConfig {
-                command: Some("npx".to_string()),
-                args: vec!["-y".to_string(), "@mcp/server-github".to_string()],
-                env: {
-                    let mut env = HashMap::new();
-                    env.insert("GITHUB_TOKEN".to_string(), "token".to_string());
-                    env
-                },
-                url: None,
-            },
-        );
-
-        let request = McpServerImportRequest {
-            mcp_servers: servers,
-            namespace: "default".to_string(),
-            overwrite: false,
-        };
-
-        let result = registry.import(request);
-        assert_eq!(result.success_count, 2);
-        assert_eq!(result.failed_count, 0);
-    }
 }

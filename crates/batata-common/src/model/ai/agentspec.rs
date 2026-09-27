@@ -364,9 +364,6 @@ pub struct AgentSpecPublishForm {
     pub agent_spec_name: String,
     /// The `version` field.
     pub version: String,
-    #[serde(default = "default_true", alias = "updateLatestLabel")]
-    /// The `update_latest_label` field.
-    pub update_latest_label: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -477,7 +474,4 @@ fn default_page_no() -> u64 {
 }
 fn default_page_size() -> u64 {
     10
-}
-fn default_true() -> bool {
-    true
 }

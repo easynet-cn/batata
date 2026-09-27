@@ -1,6 +1,11 @@
 //! Console Pipeline management API endpoints.
 //!
 //! Mirrors admin pipeline endpoints under `/v3/console/ai/pipelines`.
+//!
+//! Only the canonical endpoints are implemented: `GET /list` and
+//! `GET /detail?pipelineId=`. Upstream's `GET /{pipelineId}` and `GET` (base
+//! path) are marked `@Deprecated(since = "3.2.1", forRemoval = true)` and are
+//! not carried by Batata.
 
 use std::sync::Arc;
 
@@ -13,36 +18,8 @@ use batata_server_common::model::response as common_response;
 use batata_server_common::secured::Secured;
 use batata_server_common::{ActionTypes, ApiType, SignType, secured};
 
-/// GET /v3/console/ai/pipelines/{pipelineId}
-#[get("/{pipeline_id}")]
-async fn get_pipeline(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    pipeline_service: web::Data<Arc<dyn PipelineService>>,
-    path: web::Path<String>,
-) -> impl Responder {
-    secured!(
-        Secured::builder(&req, &data, "console/ai/pipelines")
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Console)
-            .api_type(ApiType::ConsoleApi)
-            .build()
-    );
-
-    let pipeline_id = path.into_inner();
-
-    match pipeline_service.get_pipeline(&pipeline_id).await {
-        Ok(Some(execution)) => HttpResponse::Ok().json(common_response::Result::success(execution)),
-        Ok(None) => common_response::Result::<()>::http_not_found(
-            &batata_common::error::RESOURCE_NOT_FOUND,
-            format!("Pipeline execution '{}' not found", pipeline_id),
-        ),
-        Err(e) => common_response::Result::<()>::http_internal_error(e),
-    }
-}
-
-/// GET /v3/console/ai/pipelines
-#[get("")]
+/// GET /v3/console/ai/pipelines/list
+#[get("/list")]
 async fn list_pipelines(
     req: HttpRequest,
     data: web::Data<AppState>,
@@ -81,9 +58,43 @@ async fn list_pipelines(
     }
 }
 
+/// GET /v3/console/ai/pipelines/detail?pipelineId=
+#[get("/detail")]
+async fn get_pipeline_detail(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    pipeline_service: web::Data<Arc<dyn PipelineService>>,
+    query: web::Query<PipelineDetailForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/pipelines")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = query.into_inner();
+    if form.pipeline_id.is_empty() {
+        return common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "Required parameter 'pipelineId' is missing",
+        );
+    }
+
+    match pipeline_service.get_pipeline(&form.pipeline_id).await {
+        Ok(Some(execution)) => HttpResponse::Ok().json(common_response::Result::success(execution)),
+        Ok(None) => common_response::Result::<()>::http_not_found(
+            &batata_common::error::RESOURCE_NOT_FOUND,
+            format!("Pipeline execution '{}' not found", form.pipeline_id),
+        ),
+        Err(e) => common_response::Result::<()>::http_internal_error(e),
+    }
+}
+
 /// Register the pipeline management routes under `/ai/pipelines`.
 pub fn routes() -> Scope {
     web::scope("/ai/pipelines")
         .service(list_pipelines)
-        .service(get_pipeline)
+        .service(get_pipeline_detail)
 }

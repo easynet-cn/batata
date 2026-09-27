@@ -92,25 +92,26 @@ mod tests {
     #[test]
     fn test_mcp_server_config_parsing() {
         let json = r#"{
-            "mcpServers": {
-                "filesystem": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-                },
-                "github": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {
-                        "GITHUB_PERSONAL_ACCESS_TOKEN": "token"
-                    }
-                }
+            "filesystem": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
             },
-            "namespace": "default"
+            "github": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": {
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "token"
+                }
+            }
         }"#;
 
-        let import: McpServerImportRequest = serde_json::from_str(json).unwrap();
+        // The deprecated `McpServerImportRequest` wrapper is gone; the
+        // claude_desktop_config.json payload is parsed directly into a map.
+        let servers: std::collections::HashMap<String, McpServerConfig> =
+            serde_json::from_str(json).unwrap();
 
-        assert!(import.mcp_servers.contains_key("filesystem"));
-        assert!(import.mcp_servers.contains_key("github"));
+        assert!(servers.contains_key("filesystem"));
+        assert!(servers.contains_key("github"));
+        assert_eq!(servers["filesystem"].command.as_deref(), Some("npx"));
     }
 }

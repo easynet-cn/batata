@@ -651,18 +651,6 @@ impl super::traits::McpServerService for McpServerOperationService {
         .await
     }
 
-    async fn import_mcp_servers(
-        &self,
-        _request: batata_common::model::ai::mcp::McpServerImportRequest,
-    ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
-        // Bulk import is not implemented for the AI-resource-backed service yet.
-        Ok(batata_common::model::ai::a2a::BatchRegistrationResponse {
-            success_count: 0,
-            failed_count: 0,
-            errors: vec![],
-        })
-    }
-
     async fn mcp_stats(&self) -> anyhow::Result<batata_common::model::ai::mcp::McpRegistryStats> {
         // The AI-resource-backed service does not track registry-wide counters.
         Ok(batata_common::model::ai::mcp::McpRegistryStats {

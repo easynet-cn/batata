@@ -10,11 +10,10 @@ use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 
 use batata_common::McpServerService;
 use batata_common::model::Page;
-use batata_common::model::ai::a2a::BatchRegistrationResponse;
 use batata_common::model::ai::mcp::{
-    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpImportExecuteRequest,
-    McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpRegistryStats, McpServer,
-    McpServerBasicInfo, McpServerConfig, McpServerImportRequest, McpServerRegistration, McpTool,
+    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpImportValidateRequest,
+    McpImportValidateResponse, McpListQuery, McpRegistryStats, McpServer, McpServerBasicInfo,
+    McpServerConfig, McpServerRegistration, McpTool,
 };
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
@@ -294,80 +293,6 @@ async fn import_validate(
     }
 }
 
-/// Execute MCP import
-/// POST /v3/console/ai/mcp/import/execute
-#[post("/import/execute")]
-async fn import_execute(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    svc: web::Data<Arc<dyn McpServerService>>,
-    body: web::Json<McpImportExecuteRequest>,
-) -> impl Responder {
-    secured!(
-        Secured::builder(&req, &data, "console/ai/mcp")
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Console)
-            .api_type(ApiType::ConsoleApi)
-            .build()
-    );
-
-    let exec = body.into_inner();
-    match serde_json::from_str::<HashMap<String, McpServerConfig>>(&exec.content) {
-        Ok(servers) => {
-            let import_request = McpServerImportRequest {
-                mcp_servers: servers,
-                namespace: exec.namespace,
-                overwrite: exec.overwrite,
-            };
-            match svc.import_mcp_servers(import_request).await {
-                Ok(result) => {
-                    common_response::Result::<BatchRegistrationResponse>::http_success(result)
-                }
-                Err(e) => common_response::Result::<String>::http_response(
-                    500,
-                    error::SERVER_ERROR.code,
-                    e.to_string(),
-                    String::new(),
-                ),
-            }
-        }
-        Err(e) => common_response::Result::<String>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            format!("Invalid JSON: {}", e),
-            String::new(),
-        ),
-    }
-}
-
-/// Import MCP servers from JSON config (Batata extension)
-/// POST /v3/console/ai/mcp/import
-#[post("/import")]
-async fn import_servers(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    svc: web::Data<Arc<dyn McpServerService>>,
-    body: web::Json<McpServerImportRequest>,
-) -> impl Responder {
-    secured!(
-        Secured::builder(&req, &data, "console/ai/mcp")
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Console)
-            .api_type(ApiType::ConsoleApi)
-            .build()
-    );
-
-    match svc.import_mcp_servers(body.into_inner()).await {
-        Ok(result) => common_response::Result::<BatchRegistrationResponse>::http_success(result),
-        Err(e) => common_response::Result::<String>::http_response(
-            500,
-            error::SERVER_ERROR.code,
-            e.to_string(),
-            String::new(),
-        ),
-    }
-}
-
 /// Get MCP registry statistics
 /// GET /v3/console/ai/mcp/stats
 #[get("/stats")]
@@ -401,8 +326,6 @@ pub fn routes() -> Scope {
         .service(get_stats)
         .service(import_tools_from_mcp)
         .service(import_validate)
-        .service(import_execute)
-        .service(import_servers)
         .service(list_servers)
         .service(register_server)
         .service(update_server)

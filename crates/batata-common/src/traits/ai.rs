@@ -115,7 +115,6 @@ pub trait SkillService: Send + Sync {
         namespace_id: &str,
         name: &str,
         version: &str,
-        update_latest_label: bool,
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
@@ -270,7 +269,6 @@ pub trait AgentSpecService: Send + Sync {
         namespace_id: &str,
         name: &str,
         version: &str,
-        update_latest_label: bool,
         user: Option<&str>,
     ) -> anyhow::Result<()>;
 
@@ -386,12 +384,6 @@ pub trait McpServerService: Send + Sync {
         auth_token: Option<&str>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Vec<crate::model::ai::mcp::McpTool>>;
-
-    /// Import MCP servers from a config (e.g., claude_desktop_config.json)
-    async fn import_mcp_servers(
-        &self,
-        request: crate::model::ai::mcp::McpServerImportRequest,
-    ) -> anyhow::Result<crate::model::ai::a2a::BatchRegistrationResponse>;
 
     /// Get registry statistics
     async fn mcp_stats(&self) -> anyhow::Result<McpRegistryStats>;

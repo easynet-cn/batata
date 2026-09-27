@@ -224,6 +224,43 @@ Goal: introduce the upstream layering before adding endpoints.
 4. **Each phase ends with tests**, not just compilation.
 5. **Update this document as tasks progress** — it is the single source of truth
    for AI compatibility status.
+6. **Deprecation rule** (decided 2026-09-27). Batata is unreleased and carries
+   no historical compatibility obligation. Before implementing any AI/MCP
+   endpoint or field, check how upstream marks it:
+   - `@Deprecated(..., forRemoval = true)` → **do not implement**.
+   - `@Deprecated(since = "X")` → do not accept or store the field; implement
+     the replacement named in its javadoc.
+   - `@Since("X")` records when an API was introduced; prefer the newest
+     contract when two exist.
+
+   Upstream gates deprecated endpoints at runtime via `CompatibilityHelper`
+   (`nacos.core.api.compatibility.enabled`). Batata needs no such switch because
+   it never ships the deprecated paths.
+
+   **Anything Batata already implements that matches the above must be deleted,
+   not left in place.** Applied so far:
+
+   - Pipeline `GET /{pipelineId}` and `GET` (base path), on both the admin and
+     console sides: removed (`forRemoval = true`, since 3.2.1) and replaced by
+     `GET /list` and `GET /detail?pipelineId=`.
+   - `updateLatestLabel` on the Skill / AgentSpec publish forms: removed
+     (`@Deprecated(since = "3.3.0")`; upstream states the latest label is
+     managed by the server). Batata now always sets the `latest` label on
+     publish. Legacy clients that still send the field are tolerated — it is
+     ignored on parse.
+   - MCP bulk import: `McpServerImportRequest` is `@Deprecated`
+     ("use the unified AI resource import request models instead, planned for
+     removal in Nacos 3.4.0"). Removed the model, the `import_mcp_servers`
+     trait method and its implementations, and the
+     `POST /v3/ai/mcp/servers/import` and console `POST .../mcp/import`,
+     `POST .../mcp/import/execute` endpoints. Batata's implementation was a
+     placeholder, which also violates the "no stubs" rule.
+
+   Follow-up: the unified AI resource import (`AiResourceImportAdminController`)
+   is a separate feature and remains unimplemented.
+
+   Scope: this rule applies to the AI/MCP module. Config and naming v1/v2 APIs
+   are **not** marked deprecated upstream and remain in scope.
 
 ---
 

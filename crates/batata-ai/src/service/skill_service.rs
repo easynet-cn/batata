@@ -818,7 +818,6 @@ impl SkillOperationService {
         namespace_id: &str,
         name: &str,
         version: &str,
-        update_latest_label: bool,
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         let resource = self
@@ -856,9 +855,9 @@ impl SkillOperationService {
         let mut vi = Self::parse_version_info(&resource);
         vi.reviewing_version = None;
         vi.online_cnt += 1;
-        if update_latest_label {
-            vi.labels.insert("latest".to_string(), version.to_string());
-        }
+        // The latest label is managed by the server, not requested by the
+        // client (upstream deprecated the client-side flag in 3.3.0).
+        vi.labels.insert("latest".to_string(), version.to_string());
         self.update_version_info_cas(namespace_id, name, resource.meta_version, &vi)
             .await?;
 
@@ -1471,11 +1470,9 @@ impl super::traits::SkillService for SkillOperationService {
         namespace_id: &str,
         name: &str,
         version: &str,
-        update_latest_label: bool,
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.publish(namespace_id, name, version, update_latest_label, _user)
-            .await
+        self.publish(namespace_id, name, version, _user).await
     }
 
     async fn update_labels(

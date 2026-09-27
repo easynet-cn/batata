@@ -531,22 +531,6 @@ pub struct McpImportExecuteRequest {
     pub overwrite: bool,
 }
 
-/// MCP Server JSON import request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerImportRequest {
-    /// MCP servers to import (claude_desktop_config.json format)
-    pub mcp_servers: HashMap<String, McpServerConfig>,
-
-    /// Namespace to import into
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
-
-    /// Whether to overwrite existing servers
-    #[serde(default)]
-    pub overwrite: bool,
-}
-
 /// MCP Server config (claude_desktop_config.json format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -640,6 +624,156 @@ pub struct McpServerStorageInfo {
     pub server_data: Option<McpServerRegistration>,
 }
 
+/// Encrypted payload carrier. Aligned with Nacos `EncryptObject`.
+///
+/// When a specification's `specification_type` indicates encryption, the server
+/// persists this object as-is and skips parsing the plaintext fields.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptObject {
+    /// Ciphertext or encoded payload.
+    #[serde(default)]
+    pub data: String,
+
+    /// Additional encryption metadata, e.g. alg, iv, keyId, version.
+    #[serde(default)]
+    pub encrypt_info: HashMap<String, String>,
+}
+
+/// MCP tool specification. Aligned with Nacos `McpToolSpecification`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolSpecification {
+    /// Storage type: `"normal"` for plaintext, `"encrypted"` (or a
+    /// vendor-specific value such as `"encrypt-kms"`) for ciphertext.
+    #[serde(default)]
+    pub specification_type: Option<String>,
+
+    /// Encrypted payload when `specification_type` indicates encryption.
+    #[serde(default)]
+    pub encrypt_data: Option<EncryptObject>,
+
+    /// Declared tools.
+    #[serde(default)]
+    pub tools: Vec<McpTool>,
+}
+
+/// MCP resource specification. Aligned with Nacos `McpResourceSpecification`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResourceSpecification {
+    /// Storage type, see [`McpToolSpecification::specification_type`].
+    #[serde(default)]
+    pub specification_type: Option<String>,
+
+    /// Encrypted payload when `specification_type` indicates encryption.
+    #[serde(default)]
+    pub encrypt_data: Option<EncryptObject>,
+
+    /// Declared resources.
+    #[serde(default)]
+    pub resources: Vec<serde_json::Value>,
+}
+
+/// MCP server version summary. Aligned with Nacos `McpServerVersionSummary`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerVersionSummary {
+    /// Version string.
+    #[serde(default)]
+    pub version: String,
+
+    /// Version lifecycle status.
+    #[serde(default)]
+    pub status: String,
+
+    /// Serialized publish pipeline metadata.
+    #[serde(default)]
+    pub publish_pipeline_info: Option<String>,
+
+    /// Author of the version.
+    #[serde(default)]
+    pub author: Option<String>,
+
+    /// Description of the version.
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Whether this is the latest published version.
+    #[serde(default)]
+    pub latest: Option<bool>,
+
+    /// Creation time in epoch millis.
+    #[serde(default)]
+    pub create_time: Option<i64>,
+
+    /// Last update time in epoch millis.
+    #[serde(default)]
+    pub update_time: Option<i64>,
+}
+
+/// MCP server version detail. Aligned with Nacos `McpServerVersionDetail`,
+/// which extends `McpServerVersionSummary`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerVersionDetail {
+    /// Inherited version summary fields.
+    #[serde(flatten)]
+    pub summary: McpServerVersionSummary,
+
+    /// Namespace ID.
+    #[serde(default)]
+    pub namespace_id: String,
+
+    /// MCP server name.
+    #[serde(default)]
+    pub mcp_name: String,
+
+    /// Server specification.
+    #[serde(default)]
+    pub server_specification: Option<McpServerBasicInfo>,
+
+    /// Tool specification.
+    #[serde(default)]
+    pub tool_specification: Option<McpToolSpecification>,
+
+    /// Resource specification.
+    #[serde(default)]
+    pub resource_specification: Option<McpResourceSpecification>,
+
+    /// Resource-level status (`enable` / `disable`).
+    #[serde(default)]
+    pub resource_status: Option<String>,
+
+    /// Owner username.
+    #[serde(default)]
+    pub owner: Option<String>,
+
+    /// Visibility scope (`PUBLIC` / `PRIVATE`).
+    #[serde(default)]
+    pub scope: Option<String>,
+
+    /// Version labels.
+    #[serde(default)]
+    pub labels: Option<HashMap<String, String>>,
+
+    /// Version currently being edited.
+    #[serde(default)]
+    pub editing_version: Option<String>,
+
+    /// Version currently under review.
+    #[serde(default)]
+    pub reviewing_version: Option<String>,
+
+    /// Number of online versions.
+    #[serde(default)]
+    pub online_count: Option<i32>,
+
+    /// Whether the caller may modify this version.
+    #[serde(default)]
+    pub writable: bool,
+}
+
 /// Remote server configuration for NamingService integration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -709,4 +843,115 @@ pub struct McpRegistryStats {
     pub by_namespace: HashMap<String, u32>,
     /// The `by_type` field.
     pub by_type: HashMap<String, u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire format must match Nacos, which uses camelCase JSON keys.
+    #[test]
+    fn version_summary_uses_nacos_field_names() {
+        let summary = McpServerVersionSummary {
+            version: "1.0.0".to_string(),
+            status: "online".to_string(),
+            publish_pipeline_info: Some("{}".to_string()),
+            author: Some("alice".to_string()),
+            description: Some("desc".to_string()),
+            latest: Some(true),
+            create_time: Some(1_700_000_000_000),
+            update_time: Some(1_700_000_000_001),
+        };
+
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(value["version"], "1.0.0");
+        assert_eq!(value["status"], "online");
+        assert_eq!(value["publishPipelineInfo"], "{}");
+        assert_eq!(value["author"], "alice");
+        assert_eq!(value["latest"], true);
+        assert_eq!(value["createTime"], 1_700_000_000_000i64);
+        assert_eq!(value["updateTime"], 1_700_000_000_001i64);
+        // No snake_case key must leak onto the wire.
+        assert!(value.get("publish_pipeline_info").is_none());
+        assert!(value.get("create_time").is_none());
+    }
+
+    /// `McpServerVersionDetail` extends the summary in Nacos, which we model by
+    /// flattening the summary into the detail object.
+    #[test]
+    fn version_detail_flattens_summary_and_uses_nacos_field_names() {
+        let mut labels = HashMap::new();
+        labels.insert("env".to_string(), "prod".to_string());
+
+        let detail = McpServerVersionDetail {
+            summary: McpServerVersionSummary {
+                version: "2.0.0".to_string(),
+                status: "draft".to_string(),
+                ..Default::default()
+            },
+            namespace_id: "public".to_string(),
+            mcp_name: "my-server".to_string(),
+            labels: Some(labels),
+            editing_version: Some("2.0.0".to_string()),
+            online_count: Some(1),
+            writable: true,
+            ..Default::default()
+        };
+
+        let value = serde_json::to_value(&detail).unwrap();
+        // Summary fields are inlined, not nested.
+        assert_eq!(value["version"], "2.0.0");
+        assert_eq!(value["status"], "draft");
+        assert!(value.get("summary").is_none());
+        // Detail fields use camelCase.
+        assert_eq!(value["namespaceId"], "public");
+        assert_eq!(value["mcpName"], "my-server");
+        assert_eq!(value["editingVersion"], "2.0.0");
+        assert_eq!(value["onlineCount"], 1);
+        assert_eq!(value["writable"], true);
+        assert_eq!(value["labels"]["env"], "prod");
+    }
+
+    #[test]
+    fn encrypt_object_and_specifications_round_trip() {
+        let mut encrypt_info = HashMap::new();
+        encrypt_info.insert("alg".to_string(), "AES".to_string());
+        encrypt_info.insert("keyId".to_string(), "k-1".to_string());
+
+        let tool_spec = McpToolSpecification {
+            specification_type: Some("encrypted".to_string()),
+            encrypt_data: Some(EncryptObject {
+                data: "cipher-text".to_string(),
+                encrypt_info,
+            }),
+            tools: vec![McpTool {
+                name: "tool-a".to_string(),
+                description: "does a thing".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+        };
+
+        let json = serde_json::to_string(&tool_spec).unwrap();
+        assert!(json.contains("\"specificationType\":\"encrypted\""));
+        assert!(json.contains("\"encryptData\""));
+        assert!(json.contains("\"encryptInfo\""));
+        assert!(json.contains("\"keyId\":\"k-1\""));
+
+        let parsed: McpToolSpecification = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.specification_type.as_deref(), Some("encrypted"));
+        assert_eq!(parsed.encrypt_data.as_ref().unwrap().data, "cipher-text");
+        assert_eq!(parsed.tools.len(), 1);
+        assert_eq!(parsed.tools[0].name, "tool-a");
+
+        let resource_spec = McpResourceSpecification {
+            specification_type: Some("normal".to_string()),
+            encrypt_data: None,
+            resources: vec![serde_json::json!({"uri": "file:///tmp/a"})],
+        };
+        let json = serde_json::to_string(&resource_spec).unwrap();
+        assert!(json.contains("\"specificationType\":\"normal\""));
+        assert!(json.contains("\"encryptData\":null"));
+        let parsed: McpResourceSpecification = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.resources.len(), 1);
+    }
 }

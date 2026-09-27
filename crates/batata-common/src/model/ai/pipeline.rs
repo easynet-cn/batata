@@ -117,3 +117,13 @@ fn default_page_no() -> u64 {
 fn default_page_size() -> u64 {
     10
 }
+
+/// Get pipeline execution detail query params.
+/// Aligned with Nacos `PipelineDetailForm`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineDetailForm {
+    /// Required: pipeline execution ID.
+    #[serde(alias = "pipelineId")]
+    pub pipeline_id: String,
+}

@@ -395,9 +395,6 @@ pub struct SkillPublishForm {
     pub skill_name: String,
     /// The `version` field.
     pub version: String,
-    #[serde(default = "default_true", alias = "updateLatestLabel")]
-    /// The `update_latest_label` field.
-    pub update_latest_label: bool,
 }
 
 /// Labels update form (PUT body)
@@ -497,10 +494,6 @@ fn default_page_no() -> u64 {
 
 fn default_page_size() -> u64 {
     10
-}
-
-fn default_true() -> bool {
-    true
 }
 
 // ============================================================================
@@ -793,15 +786,16 @@ mod tests {
         assert_eq!(form.page_size, 10);
     }
 
+    /// Upstream deprecated `updateLatestLabel` in 3.3.0 and ignores it. Clients
+    /// that still send it must not break parsing.
     #[test]
-    fn test_skill_publish_form_update_latest_default() {
-        let json = r#"{"namespaceId":"public","skillName":"s1","version":"0.0.1"}"#;
+    fn test_skill_publish_form_ignores_legacy_update_latest_label() {
+        let json = r#"{"namespaceId":"public","skillName":"s1","version":"0.0.1","updateLatestLabel":false}"#;
         let form: SkillPublishForm = serde_json::from_str(json).unwrap();
 
-        assert!(
-            form.update_latest_label,
-            "updateLatestLabel should default to true"
-        );
+        assert_eq!(form.namespace_id, "public");
+        assert_eq!(form.skill_name, "s1");
+        assert_eq!(form.version, "0.0.1");
     }
 
     // ========================================================================

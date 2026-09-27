@@ -609,7 +609,6 @@ async fn publish_agentspec(
             ns,
             &form.agent_spec_name,
             &form.version,
-            form.update_latest_label,
             Some(get_username(&req).as_str()),
         )
         .await

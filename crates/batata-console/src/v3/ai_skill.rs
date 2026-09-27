@@ -560,7 +560,6 @@ async fn publish_skill(
             ns,
             &form.skill_name,
             &form.version,
-            form.update_latest_label,
             Some(get_username(&req).as_str()),
         )
         .await
