@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 
 use batata_persistence::PersistenceService;
 
-use crate::model::McpServerVersionInfo;
+use crate::model::{McpResourceExt, ResourceVersionInfo};
 use crate::repository::resource_type;
 
 /// Cached index entry for an MCP server
@@ -162,9 +162,19 @@ impl McpServerIndex {
             };
 
             for resource in resources {
-                let version_info = match resource.version_info.as_deref() {
-                    Some(json) => match serde_json::from_str::<McpServerVersionInfo>(json) {
-                        Ok(vi) => vi,
+                // The MCP server id lives in `ai_resource.ext`.
+                let mcp_id = resource
+                    .ext
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<McpResourceExt>(json).ok())
+                    .map(|e| e.mcp_id)
+                    .unwrap_or_default();
+
+                // The shared version index holds the server-managed `latest`
+                // label; there is no separate latest field.
+                let resource_version = match resource.version_info.as_deref() {
+                    Some(json) => match serde_json::from_str::<ResourceVersionInfo>(json) {
+                        Ok(rv) => rv,
                         Err(e) => {
                             warn!(
                                 resource = %resource.name,
@@ -178,13 +188,16 @@ impl McpServerIndex {
                 };
 
                 self.upsert(McpServerIndexData {
-                    id: version_info.id.clone(),
-                    name: version_info.name.clone(),
+                    id: mcp_id.clone(),
+                    name: resource.name.clone(),
                     namespace: resource.namespace_id.clone(),
-                    protocol: version_info.protocol,
-                    description: version_info.description,
-                    latest_published_version: version_info.latest_published_version,
-                    version_count: version_info.version_details.len(),
+                    protocol: "mcp".to_string(),
+                    description: String::new(),
+                    latest_published_version: resource_version
+                        .latest_version()
+                        .cloned()
+                        .unwrap_or_default(),
+                    version_count: resource_version.online_cnt as usize,
                     create_time: 0,
                     modify_time: 0,
                 });

@@ -82,6 +82,21 @@ model/       mod.rs
 All four AI domains now use the `ai_resource*` path; the config-backed storage
 is gone.
 
+**Resource row layout** (aligned with upstream `AiResource` + MCP specifics):
+
+| Column | Payload |
+|---|---|
+| `version_info` | shared `ResourceVersionInfo` — `editingVersion`, `reviewingVersion`, `onlineCnt`, `labels`. The latest published version is the server-managed `latest` label, not a dedicated field. |
+| `ext` | `McpResourceExt` for MCP — `schemaVersion`, `mcpId` (upstream keeps the MCP id here, not in `version_info`). |
+
+`McpServerVersionInfo` is **not** the storage format; upstream only uses it as a
+response/compat model. Batata previously stored it, which made `labels`,
+`editingVersion`, `reviewingVersion` and `onlineCount` unrepresentable — this has
+been corrected. Latest selection follows upstream
+`chooseLatest(onlineVersions, preferredLatest, currentLatest)`: the version being
+published wins, else the existing label while still online, else the highest
+remaining online version.
+
 > Caution (bitten twice, keep it): rewriting a service file wholesale silently
 > drops things that `cargo check -p batata-ai` does **not** catch.
 > - A2A: lost `impl A2aAgentService for A2aServerOperationService` + unit tests

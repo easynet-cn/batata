@@ -46,28 +46,74 @@ impl McpServerOperationService {
     // Helpers
     // =========================================================================
 
-    /// Build a placeholder version index for a resource with no stored index.
-    fn empty_version_info(name: &str, id: &str) -> McpServerVersionInfo {
-        McpServerVersionInfo {
-            id: id.to_string(),
-            name: name.to_string(),
-            protocol: default_mcp_protocol(),
-            description: String::new(),
-            capabilities: McpCapabilities::default(),
-            latest_published_version: String::new(),
-            version_details: vec![],
+    /// Parse the shared version index stored in `ai_resource.version_info`.
+    fn parse_resource_version(resource: &AiResourceInfo) -> ResourceVersionInfo {
+        match resource.version_info {
+            Some(ref json) => serde_json::from_str::<ResourceVersionInfo>(json).unwrap_or_default(),
+            None => ResourceVersionInfo::default(),
         }
     }
 
-    /// Parse the version index stored in `ai_resource.version_info`.
-    fn parse_version_info(resource: &AiResourceInfo) -> McpServerVersionInfo {
-        match resource.version_info {
-            Some(ref json) => match serde_json::from_str::<McpServerVersionInfo>(json) {
-                Ok(vi) => vi,
-                Err(_) => Self::empty_version_info(&resource.name, ""),
+    /// Serialize the MCP-specific fields kept in `ai_resource.ext`.
+    fn ext_json(mcp_id: &str) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(&McpResourceExt {
+            schema_version: Some(1),
+            mcp_id: mcp_id.to_string(),
+        })?)
+    }
+
+    /// Read the MCP-specific fields from `ai_resource.ext`.
+    fn parse_ext(resource: &AiResourceInfo) -> Option<McpResourceExt> {
+        resource
+            .ext
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<McpResourceExt>(json).ok())
+    }
+
+    /// Recompute `online_cnt` and the `latest` label from the stored version
+    /// rows, then persist them with an optimistic lock.
+    ///
+    /// Mirrors upstream `chooseLatest(onlineVersions, preferredLatest,
+    /// currentLatest)`: the version being published wins, otherwise the
+    /// existing label is kept while it is still online, otherwise the highest
+    /// remaining online version is used.
+    async fn refresh_version_meta(
+        &self,
+        namespace: &str,
+        name: &str,
+        resource: &AiResourceInfo,
+        preferred: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let rows = self
+            .persistence
+            .ai_resource_version_list(namespace, name, resource_type::MCP)
+            .await?;
+
+        let mut online: Vec<String> = rows
+            .iter()
+            .filter(|r| r.status == version_status::ONLINE)
+            .map(|r| r.version.clone())
+            .collect();
+        online.sort();
+
+        let mut rv = Self::parse_resource_version(resource);
+        rv.online_cnt = online.len() as i64;
+
+        let current = rv.latest_version().cloned();
+        let next = match preferred {
+            Some(v) if online.iter().any(|o| o == v) => Some(v.to_string()),
+            _ => match current {
+                Some(ref v) if online.contains(v) => Some(v.clone()),
+                _ => online.last().cloned(),
             },
-            None => Self::empty_version_info(&resource.name, ""),
+        };
+
+        match next {
+            Some(v) => rv.set_latest(&v),
+            None => rv.clear_latest(),
         }
+
+        self.save_version_info(namespace, name, resource, &rv).await
     }
 
     /// Advance the meta_version and write the version index back.
@@ -76,7 +122,7 @@ impl McpServerOperationService {
         namespace: &str,
         name: &str,
         resource: &AiResourceInfo,
-        version_info: &McpServerVersionInfo,
+        version_info: &ResourceVersionInfo,
     ) -> anyhow::Result<()> {
         self.persistence
             .ai_resource_update_version_info_cas(
@@ -130,7 +176,10 @@ impl McpServerOperationService {
                 .persistence
                 .ai_resource_find(namespace, name, resource_type::MCP)
                 .await?
-                .map(|r| (Self::parse_version_info(&r).id, name.to_string())));
+                .map(|r| {
+                    let mcp_id = Self::parse_ext(&r).map(|e| e.mcp_id).unwrap_or_default();
+                    (mcp_id, name.to_string())
+                }));
         }
         Ok(None)
     }
@@ -162,19 +211,11 @@ impl McpServerOperationService {
         let now_str = now.to_rfc3339();
         let now_db = now.naive_utc().to_string();
 
-        let version_info = McpServerVersionInfo {
-            id: id.clone(),
-            name: name.clone(),
-            protocol: default_mcp_protocol(),
-            description: registration.description.clone(),
-            capabilities: registration.capabilities.clone(),
-            latest_published_version: version.clone(),
-            version_details: vec![VersionDetail {
-                version: version.clone(),
-                release_date: now_str.clone(),
-                is_latest: true,
-            }],
-        };
+        // The shared version index carries the online count and the
+        // server-managed `latest` label.
+        let mut resource_version = ResourceVersionInfo::default();
+        resource_version.online_cnt = 1;
+        resource_version.set_latest(version);
 
         let storage_info = Self::build_storage_info(
             &id,
@@ -192,9 +233,9 @@ impl McpServerOperationService {
             status: Some(meta_status::ENABLE.to_string()),
             namespace_id: namespace.to_string(),
             biz_tags: None,
-            ext: None,
+            ext: Some(Self::ext_json(&id)?),
             from: MCP_DEFAULT_FROM.to_string(),
-            version_info: Some(serde_json::to_string(&version_info)?),
+            version_info: Some(serde_json::to_string(&resource_version)?),
             meta_version: 1,
             scope: scope::PRIVATE.to_string(),
             owner: String::new(),
@@ -269,10 +310,14 @@ impl McpServerOperationService {
             None => return Ok(None),
         };
 
-        let version_info = Self::parse_version_info(&resource);
+        let resource_version = Self::parse_resource_version(&resource);
+        let latest = resource_version
+            .latest_version()
+            .cloned()
+            .unwrap_or_default();
         let target_version = version
             .filter(|v| !v.is_empty())
-            .unwrap_or(&version_info.latest_published_version)
+            .unwrap_or(&latest)
             .to_string();
 
         let stored = match self
@@ -326,13 +371,13 @@ impl McpServerOperationService {
                 id: storage_info.id.clone(),
                 name: storage_info.name.clone(),
                 display_name: storage_info.name.clone(),
-                description: version_info.description,
+                description: String::new(),
                 namespace: namespace.to_string(),
                 version: target_version,
                 endpoint: String::new(),
                 server_type: McpServerType::Http,
                 transport: McpTransport::default(),
-                capabilities: version_info.capabilities,
+                capabilities: McpCapabilities::default(),
                 tools: vec![],
                 resources: vec![],
                 prompts: vec![],
@@ -370,43 +415,14 @@ impl McpServerOperationService {
             })?;
 
         let now = Utc::now();
-        let now_str = now.to_rfc3339();
-
-        let mut version_info = Self::parse_version_info(&resource);
-        if version_info.id.is_empty() {
-            version_info.id = resource.name.clone();
-        }
-
-        // Update or add version detail
-        let existing_version_idx = version_info
-            .version_details
-            .iter()
-            .position(|v| v.version == *version);
-
-        if let Some(idx) = existing_version_idx {
-            version_info.version_details[idx].release_date = now_str;
-            version_info.version_details[idx].is_latest = true;
-        } else {
-            for v in &mut version_info.version_details {
-                v.is_latest = false;
-            }
-            version_info.version_details.push(VersionDetail {
-                version: version.clone(),
-                release_date: now_str,
-                is_latest: true,
-            });
-        }
-
-        version_info.latest_published_version = version.clone();
-        version_info.description = registration.description.clone();
-        version_info.capabilities = registration.capabilities.clone();
-
-        self.save_version_info(namespace, name, &resource, &version_info)
-            .await?;
+        let mcp_id = Self::parse_ext(&resource)
+            .map(|e| e.mcp_id)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| resource.name.clone());
 
         // Build and publish updated spec
         let storage_info = Self::build_storage_info(
-            &version_info.id,
+            &mcp_id,
             name,
             version,
             registration,
@@ -452,16 +468,25 @@ impl McpServerOperationService {
                 .await?;
         }
 
+        // Recompute the online count and the latest label from what is stored.
+        self.refresh_version_meta(namespace, name, &resource, Some(version))
+            .await?;
+        let version_count = self
+            .persistence
+            .ai_resource_version_list(namespace, name, resource_type::MCP)
+            .await?
+            .len();
+
         // Update index cache
         let index_data = self.index.get_by_name(namespace, name);
         self.index.upsert(McpServerIndexData {
-            id: version_info.id.clone(),
+            id: mcp_id.clone(),
             name: name.clone(),
             namespace: namespace.to_string(),
             protocol: "mcp".to_string(),
             description: registration.description.clone(),
             latest_published_version: version.clone(),
-            version_count: version_info.version_details.len(),
+            version_count,
             create_time: index_data
                 .as_ref()
                 .map(|d| d.create_time)
@@ -503,22 +528,20 @@ impl McpServerOperationService {
                 .ai_resource_find(namespace, &resolved_name, resource_type::MCP)
                 .await?
             {
-                let mut version_info = Self::parse_version_info(&resource);
-                version_info
-                    .version_details
-                    .retain(|v| v.version != version);
+                let remaining = self
+                    .persistence
+                    .ai_resource_version_list(namespace, &resolved_name, resource_type::MCP)
+                    .await?;
 
-                if version_info.version_details.is_empty() {
+                if remaining.is_empty() {
                     self.persistence
                         .ai_resource_delete(namespace, &resolved_name, resource_type::MCP)
                         .await?;
                     self.index.remove_by_id(&resolved_id);
                 } else {
-                    if let Some(last) = version_info.version_details.last_mut() {
-                        last.is_latest = true;
-                        version_info.latest_published_version = last.version.clone();
-                    }
-                    self.save_version_info(namespace, &resolved_name, &resource, &version_info)
+                    // Recompute online count and the latest label from what is
+                    // actually stored; no version is preferred here.
+                    self.refresh_version_meta(namespace, &resolved_name, &resource, None)
                         .await?;
                 }
             }

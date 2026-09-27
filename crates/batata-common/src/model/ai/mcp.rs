@@ -531,6 +531,20 @@ pub struct McpImportExecuteRequest {
     pub overwrite: bool,
 }
 
+/// MCP-specific fields kept in `ai_resource.ext`.
+/// Aligned with Nacos `com.alibaba.nacos.ai.model.mcp.McpResourceExt`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResourceExt {
+    /// Storage schema version of this extension payload.
+    #[serde(default)]
+    pub schema_version: Option<i32>,
+
+    /// Stable MCP server id assigned at registration.
+    #[serde(default)]
+    pub mcp_id: String,
+}
+
 /// MCP Server config (claude_desktop_config.json format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
