@@ -119,6 +119,122 @@ pub struct AiResourceVersionInfo {
     pub gmt_modified: Option<String>,
 }
 
+/// AI resource search document (storage-agnostic representation of an
+/// `ai_resource_search_document` row)
+///
+/// Mirrors upstream Nacos: one document per resource version, uniquely keyed by
+/// (`namespace_id`, `resource_type`, `resource_name`, `resource_version`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AiResourceSearchDocumentInfo {
+    /// Primary key.
+    pub id: i64,
+    /// Owning namespace ID.
+    pub namespace_id: String,
+    /// Resource type (e.g. `skill`, `mcp`).
+    pub resource_type: String,
+    /// Resource name.
+    pub resource_name: String,
+    /// Resource version.
+    pub resource_version: String,
+    /// Name shown in search results.
+    pub display_name: String,
+    /// Optional description.
+    pub description: Option<String>,
+    /// Serialized tags JSON.
+    pub tags: Option<String>,
+    /// Serialized capabilities JSON.
+    pub capabilities: Option<String>,
+    /// Serialized representative queries JSON.
+    pub representative_queries: Option<String>,
+    /// Serialized metadata JSON.
+    pub metadata: Option<String>,
+    /// Digest of the indexed source content, used to skip unchanged rebuilds.
+    pub source_digest: String,
+    /// Document status (`enabled` or `pending`).
+    pub status: String,
+    /// How the document was generated (`auto` upstream).
+    pub generate_mode: String,
+    /// Creation timestamp (string form).
+    pub gmt_create: Option<String>,
+    /// Last modification timestamp (string form).
+    pub gmt_modified: Option<String>,
+}
+
+/// AI resource search chunk (storage-agnostic representation of an
+/// `ai_resource_search_chunk` row)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AiResourceSearchChunkInfo {
+    /// Primary key.
+    pub id: i64,
+    /// Owning search document ID.
+    pub document_id: i64,
+    /// Owning namespace ID.
+    pub namespace_id: String,
+    /// Resource type (e.g. `skill`, `mcp`).
+    pub resource_type: String,
+    /// Resource name.
+    pub resource_name: String,
+    /// Resource version.
+    pub resource_version: String,
+    /// Chunk type (e.g. `description`, `capability`, `skill_content`).
+    pub chunk_type: String,
+    /// Raw chunk text.
+    pub chunk_text: String,
+    /// Normalized chunk text used for matching.
+    pub canonical_text: String,
+    /// Optional language code.
+    pub language: Option<String>,
+    /// Hash of the chunk content, used to skip unchanged rebuilds.
+    pub chunk_hash: String,
+    /// Serialized metadata JSON.
+    pub metadata: Option<String>,
+    /// Chunk status.
+    pub status: String,
+    /// Creation timestamp (string form).
+    pub gmt_create: Option<String>,
+    /// Last modification timestamp (string form).
+    pub gmt_modified: Option<String>,
+}
+
+/// AI resource async task (storage-agnostic representation of an
+/// `ai_resource_task` row)
+///
+/// Upstream uses this as a lease-based queue: a worker takes a lease, runs one
+/// stage, then either advances the stage or reschedules with a backoff.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AiResourceTaskInfo {
+    /// Unique task key (primary key, not auto-increment).
+    pub task_key: String,
+    /// Owning namespace ID.
+    pub namespace_id: String,
+    /// Task type (upstream: `search_index`).
+    pub task_type: String,
+    /// Current stage (upstream: `base_index`, `llm_enhancement`).
+    pub task_stage: String,
+    /// Task status.
+    pub status: String,
+    /// Serialized task input JSON.
+    pub task_payload: String,
+    /// Serialized task result JSON.
+    pub task_result: Option<String>,
+    /// Number of retries spent on the current stage.
+    pub retry_count: i32,
+    /// Optimistic-lock revision of the task row.
+    pub revision: i64,
+    /// Lease token held by the worker currently processing the task.
+    pub lease_token: i64,
+    /// Earliest execution time, Unix epoch milliseconds.
+    pub next_execute_at: i64,
+    /// Lease expiry time, Unix epoch milliseconds.
+    pub lease_expire_at: Option<i64>,
+    /// Most recent error message.
+    pub last_error: Option<String>,
+    /// Creation timestamp (string form).
+    pub gmt_create: Option<String>,
+    /// Last modification timestamp (string form).
+    pub gmt_modified: Option<String>,
+}
+
 /// Pipeline execution (storage-agnostic representation of pipeline_execution row)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

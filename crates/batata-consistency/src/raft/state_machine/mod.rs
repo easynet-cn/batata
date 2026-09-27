@@ -77,6 +77,12 @@ pub const CF_AI_RESOURCE: &str = "batata_ai_resource";
 pub const CF_AI_RESOURCE_VERSION: &str = "batata_ai_resource_version";
 /// RocksDB column family holding pipeline execution entries.
 pub const CF_PIPELINE_EXECUTION: &str = "batata_pipeline_execution";
+/// RocksDB column family holding AI resource search documents.
+pub const CF_AI_RESOURCE_SEARCH_DOCUMENT: &str = "batata_ai_resource_search_document";
+/// RocksDB column family holding AI resource search chunks.
+pub const CF_AI_RESOURCE_SEARCH_CHUNK: &str = "batata_ai_resource_search_chunk";
+/// RocksDB column family holding AI resource async tasks.
+pub const CF_AI_RESOURCE_TASK: &str = "batata_ai_resource_task";
 const CF_META: &str = "batata_meta";
 
 // Apollo plugin column families
@@ -333,6 +339,9 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE_VERSION, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_PIPELINE_EXECUTION, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_AI_RESOURCE_SEARCH_DOCUMENT, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_AI_RESOURCE_SEARCH_CHUNK, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_AI_RESOURCE_TASK, cf_opts.clone()),
             // Apollo plugin column families
             ColumnFamilyDescriptor::new(CF_APOLLO_APP, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_CLUSTER, cf_opts.clone()),
@@ -1389,6 +1398,9 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_AI_RESOURCE,
             CF_AI_RESOURCE_VERSION,
             CF_PIPELINE_EXECUTION,
+            CF_AI_RESOURCE_SEARCH_DOCUMENT,
+            CF_AI_RESOURCE_SEARCH_CHUNK,
+            CF_AI_RESOURCE_TASK,
             // Apollo plugin column families
             CF_APOLLO_APP,
             CF_APOLLO_CLUSTER,

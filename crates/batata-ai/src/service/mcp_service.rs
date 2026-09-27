@@ -1,5 +1,17 @@
-// MCP Server Operation Service - Config-backed CRUD for MCP servers
-// Replaces in-memory McpServerRegistry with persistent storage
+// MCP Server Operation Service — AI-resource-backed CRUD for MCP servers
+//
+// Storage mirrors upstream Nacos: governance metadata lives in `ai_resource`
+// (type = `mcp`) and each published version is stored as JSON in
+// `ai_resource_version.storage`.
+//
+// This service previously kept MCP servers as three config entries
+// (`mcp-server-versions`, `mcp-server`, `mcp-tools`), which is what Nacos did
+// before 3.2.0. The separate tools entry was write-only — tools are always read
+// back through `server_data` — so tools now live inside the version storage.
+//
+// The in-memory `McpServerIndex` is kept as a cache: it backs the synchronous
+// list APIs and id/name resolution, and is rebuilt from `ai_resource` by
+// `McpServerIndex::refresh`.
 
 use std::sync::Arc;
 
@@ -7,13 +19,18 @@ use chrono::Utc;
 use tracing::info;
 use uuid::Uuid;
 
+use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo};
 use batata_persistence::PersistenceService;
 
 use super::constants::*;
 use super::mcp_index::{McpServerIndex, McpServerIndexData};
 use crate::model::*;
+use crate::repository::{meta_status, resource_type, scope, version_status};
 
-/// Config-backed MCP server operation service
+/// Origin recorded for locally registered MCP servers.
+const MCP_DEFAULT_FROM: &str = "local";
+
+/// AI-resource-backed MCP server operation service
 pub struct McpServerOperationService {
     persistence: Arc<dyn PersistenceService>,
     index: Arc<McpServerIndex>,
@@ -24,6 +41,103 @@ impl McpServerOperationService {
     pub fn new(persistence: Arc<dyn PersistenceService>, index: Arc<McpServerIndex>) -> Self {
         Self { persistence, index }
     }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /// Build a placeholder version index for a resource with no stored index.
+    fn empty_version_info(name: &str, id: &str) -> McpServerVersionInfo {
+        McpServerVersionInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            protocol: default_mcp_protocol(),
+            description: String::new(),
+            capabilities: McpCapabilities::default(),
+            latest_published_version: String::new(),
+            version_details: vec![],
+        }
+    }
+
+    /// Parse the version index stored in `ai_resource.version_info`.
+    fn parse_version_info(resource: &AiResourceInfo) -> McpServerVersionInfo {
+        match resource.version_info {
+            Some(ref json) => match serde_json::from_str::<McpServerVersionInfo>(json) {
+                Ok(vi) => vi,
+                Err(_) => Self::empty_version_info(&resource.name, ""),
+            },
+            None => Self::empty_version_info(&resource.name, ""),
+        }
+    }
+
+    /// Advance the meta_version and write the version index back.
+    async fn save_version_info(
+        &self,
+        namespace: &str,
+        name: &str,
+        resource: &AiResourceInfo,
+        version_info: &McpServerVersionInfo,
+    ) -> anyhow::Result<()> {
+        self.persistence
+            .ai_resource_update_version_info_cas(
+                namespace,
+                name,
+                resource_type::MCP,
+                resource.meta_version,
+                &serde_json::to_string(version_info)?,
+                resource.meta_version + 1,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Build the per-version payload stored in `ai_resource_version.storage`.
+    fn build_storage_info(
+        id: &str,
+        name: &str,
+        version: &str,
+        registration: &McpServerRegistration,
+        release_date: String,
+    ) -> McpServerStorageInfo {
+        McpServerStorageInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            protocol: default_mcp_protocol(),
+            enabled: true,
+            remote_server_config: None,
+            tools_description_ref: mcp_tool_data_id(id, version),
+            version_detail: Some(VersionDetail {
+                version: version.to_string(),
+                release_date,
+                is_latest: true,
+            }),
+            server_data: Some(registration.clone()),
+        }
+    }
+
+    /// Resolve (id, name) from the caller-supplied id or name.
+    async fn resolve_server(
+        &self,
+        namespace: &str,
+        id: Option<&str>,
+        name: Option<&str>,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        if let Some(id) = id {
+            return Ok(self.index.get_by_id(id).map(|d| (id.to_string(), d.name)));
+        }
+        if let Some(name) = name {
+            return Ok(self
+                .persistence
+                .ai_resource_find(namespace, name, resource_type::MCP)
+                .await?
+                .map(|r| (Self::parse_version_info(&r).id, name.to_string())));
+        }
+        Ok(None)
+    }
+
+    // =========================================================================
+    // Public operations
+    // =========================================================================
 
     /// Create a new MCP server, returning its generated ID
     pub async fn create_mcp_server(
@@ -46,8 +160,8 @@ impl McpServerOperationService {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let now_str = now.to_rfc3339();
+        let now_db = now.naive_utc().to_string();
 
-        // Build version info (index entry)
         let version_info = McpServerVersionInfo {
             id: id.clone(),
             name: name.clone(),
@@ -62,59 +176,51 @@ impl McpServerOperationService {
             }],
         };
 
-        // Build per-version spec
-        let storage_info = McpServerStorageInfo {
-            id: id.clone(),
+        let storage_info = Self::build_storage_info(
+            &id,
+            name,
+            version,
+            registration,
+            now_str,
+        );
+
+        let info = AiResourceInfo {
+            id: 0,
             name: name.clone(),
-            protocol: default_mcp_protocol(),
-            enabled: true,
-            remote_server_config: None,
-            tools_description_ref: mcp_tool_data_id(&id, version),
-            version_detail: Some(VersionDetail {
-                version: version.clone(),
-                release_date: now_str,
-                is_latest: true,
-            }),
-            server_data: Some(registration.clone()),
+            resource_type: resource_type::MCP.to_string(),
+            description: Some(registration.description.clone()),
+            status: Some(meta_status::ENABLE.to_string()),
+            namespace_id: namespace.to_string(),
+            biz_tags: None,
+            ext: None,
+            from: MCP_DEFAULT_FROM.to_string(),
+            version_info: Some(serde_json::to_string(&version_info)?),
+            meta_version: 1,
+            scope: scope::PRIVATE.to_string(),
+            owner: String::new(),
+            download_count: 0,
+            gmt_create: Some(now_db.clone()),
+            gmt_modified: Some(now_db.clone()),
         };
+        self.persistence.ai_resource_insert(&info).await?;
 
-        // Publish version info config
-        let version_content = serde_json::to_string(&version_info)?;
-        self.publish_config(
-            namespace,
-            MCP_SERVER_VERSIONS_GROUP,
-            &mcp_version_data_id(&id),
-            &version_content,
-            &mcp_tags(name),
-            &format!("MCP server version info: {}", name),
-        )
-        .await?;
-
-        // Publish spec config
-        let spec_content = serde_json::to_string(&storage_info)?;
-        self.publish_config(
-            namespace,
-            MCP_SERVER_GROUP,
-            &mcp_spec_data_id(&id, version),
-            &spec_content,
-            &mcp_tags(name),
-            &format!("MCP server spec: {}:{}", name, version),
-        )
-        .await?;
-
-        // Publish tools config if tools are present
-        if !registration.tools.is_empty() {
-            let tools_content = serde_json::to_string(&registration.tools)?;
-            self.publish_config(
-                namespace,
-                MCP_SERVER_TOOL_GROUP,
-                &mcp_tool_data_id(&id, version),
-                &tools_content,
-                &mcp_tags(name),
-                &format!("MCP server tools: {}:{}", name, version),
-            )
+        self.persistence
+            .ai_resource_version_insert(&AiResourceVersionInfo {
+                id: 0,
+                resource_type: resource_type::MCP.to_string(),
+                author: None,
+                name: name.clone(),
+                description: Some(registration.description.clone()),
+                status: version_status::ONLINE.to_string(),
+                version: version.clone(),
+                namespace_id: namespace.to_string(),
+                storage: Some(serde_json::to_string(&storage_info)?),
+                publish_pipeline_info: None,
+                download_count: 0,
+                gmt_create: Some(now_db.clone()),
+                gmt_modified: Some(now_db),
+            })
             .await?;
-        }
 
         // Update index cache
         self.index.upsert(McpServerIndexData {
@@ -134,7 +240,7 @@ impl McpServerOperationService {
             server_id = %id,
             namespace = %namespace,
             version = %version,
-            "MCP server created (config-backed)"
+            "MCP server created (ai_resource-backed)"
         );
 
         Ok(id)
@@ -148,50 +254,46 @@ impl McpServerOperationService {
         name: Option<&str>,
         version: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>> {
-        // Resolve the server ID
-        let resolved_id = if let Some(id) = id {
-            id.to_string()
-        } else if let Some(name) = name {
-            match self.index.get_by_name(namespace, name) {
-                Some(data) => data.id,
+        let (_resolved_id, resolved_name) =
+            match self.resolve_server(namespace, id, name).await? {
+                Some(v) => v,
                 None => return Ok(None),
-            }
-        } else {
-            return Ok(None);
-        };
+            };
 
-        // Fetch version info to resolve version
-        let version_data_id = mcp_version_data_id(&resolved_id);
-        let version_config = self
-            .query_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
-            .await?;
-
-        let version_config = match version_config {
-            Some(c) => c,
+        let resource = match self
+            .persistence
+            .ai_resource_find(namespace, &resolved_name, resource_type::MCP)
+            .await?
+        {
+            Some(r) => r,
             None => return Ok(None),
         };
 
-        let version_info: McpServerVersionInfo = serde_json::from_str(&version_config)?;
-
-        // Resolve which version to fetch
+        let version_info = Self::parse_version_info(&resource);
         let target_version = version
             .filter(|v| !v.is_empty())
-            .unwrap_or(&version_info.latest_published_version);
+            .unwrap_or(&version_info.latest_published_version)
+            .to_string();
 
-        // Fetch the spec for the target version
-        let spec_data_id = mcp_spec_data_id(&resolved_id, target_version);
-        let spec_config = self
-            .query_config(namespace, MCP_SERVER_GROUP, &spec_data_id)
-            .await?;
-
-        let spec_config = match spec_config {
-            Some(c) => c,
+        let stored = match self
+            .persistence
+            .ai_resource_version_find(
+                namespace,
+                &resolved_name,
+                resource_type::MCP,
+                &target_version,
+            )
+            .await?
+        {
+            Some(v) => v,
             None => return Ok(None),
         };
 
-        let storage_info: McpServerStorageInfo = serde_json::from_str(&spec_config)?;
+        let storage_info: McpServerStorageInfo = match stored.storage {
+            Some(ref json) => serde_json::from_str(json)?,
+            None => return Ok(None),
+        };
 
-        // Build McpServer from storage data
         let now = Utc::now().timestamp_millis();
         let server = if let Some(ref reg) = storage_info.server_data {
             McpServer {
@@ -204,7 +306,7 @@ impl McpServerOperationService {
                 },
                 description: reg.description.clone(),
                 namespace: namespace.to_string(),
-                version: target_version.to_string(),
+                version: target_version,
                 endpoint: reg.endpoint.clone(),
                 server_type: reg.server_type,
                 transport: reg.transport.clone(),
@@ -226,7 +328,7 @@ impl McpServerOperationService {
                 display_name: storage_info.name.clone(),
                 description: version_info.description,
                 namespace: namespace.to_string(),
-                version: target_version.to_string(),
+                version: target_version,
                 endpoint: String::new(),
                 server_type: McpServerType::Http,
                 transport: McpTransport::default(),
@@ -255,36 +357,25 @@ impl McpServerOperationService {
         let name = &registration.name;
         let version = &registration.version;
 
-        // Resolve ID from name
-        let index_data = self.index.get_by_name(namespace, name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "MCP server '{}' not found in namespace '{}'",
-                name,
-                namespace
-            )
-        })?;
+        let resource = self
+            .persistence
+            .ai_resource_find(namespace, name, resource_type::MCP)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP server '{}' not found in namespace '{}'",
+                    name,
+                    namespace
+                )
+            })?;
 
-        let id = &index_data.id;
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
 
-        // Fetch and update version info
-        let version_data_id = mcp_version_data_id(id);
-        let existing_version = self
-            .query_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
-            .await?;
-
-        let mut version_info: McpServerVersionInfo = match existing_version {
-            Some(content) => serde_json::from_str(&content)?,
-            None => McpServerVersionInfo {
-                id: id.clone(),
-                name: name.clone(),
-                protocol: default_mcp_protocol(),
-                description: String::new(),
-                capabilities: McpCapabilities::default(),
-                latest_published_version: String::new(),
-                version_details: vec![],
-            },
-        };
+        let mut version_info = Self::parse_version_info(&resource);
+        if version_info.id.is_empty() {
+            version_info.id = resource.name.clone();
+        }
 
         // Update or add version detail
         let existing_version_idx = version_info
@@ -293,16 +384,15 @@ impl McpServerOperationService {
             .position(|v| v.version == *version);
 
         if let Some(idx) = existing_version_idx {
-            version_info.version_details[idx].release_date = now.clone();
+            version_info.version_details[idx].release_date = now_str;
             version_info.version_details[idx].is_latest = true;
         } else {
-            // Mark all existing as not latest
             for v in &mut version_info.version_details {
                 v.is_latest = false;
             }
             version_info.version_details.push(VersionDetail {
                 version: version.clone(),
-                release_date: now.clone(),
+                release_date: now_str,
                 is_latest: true,
             });
         }
@@ -311,77 +401,79 @@ impl McpServerOperationService {
         version_info.description = registration.description.clone();
         version_info.capabilities = registration.capabilities.clone();
 
-        // Publish updated version info
-        let version_content = serde_json::to_string(&version_info)?;
-        self.publish_config(
-            namespace,
-            MCP_SERVER_VERSIONS_GROUP,
-            &version_data_id,
-            &version_content,
-            &mcp_tags(name),
-            &format!("MCP server version info updated: {}", name),
-        )
-        .await?;
+        self.save_version_info(namespace, name, &resource, &version_info)
+            .await?;
 
         // Build and publish updated spec
-        let storage_info = McpServerStorageInfo {
-            id: id.clone(),
-            name: name.clone(),
-            protocol: default_mcp_protocol(),
-            enabled: true,
-            remote_server_config: None,
-            tools_description_ref: mcp_tool_data_id(id, version),
-            version_detail: Some(VersionDetail {
-                version: version.clone(),
-                release_date: now,
-                is_latest: true,
-            }),
-            server_data: Some(registration.clone()),
-        };
+        let storage_info = Self::build_storage_info(
+            &version_info.id,
+            name,
+            version,
+            registration,
+            Utc::now().to_rfc3339(),
+        );
+        let storage_json = serde_json::to_string(&storage_info)?;
 
-        let spec_content = serde_json::to_string(&storage_info)?;
-        self.publish_config(
-            namespace,
-            MCP_SERVER_GROUP,
-            &mcp_spec_data_id(id, version),
-            &spec_content,
-            &mcp_tags(name),
-            &format!("MCP server spec updated: {}:{}", name, version),
-        )
-        .await?;
+        let exists = self
+            .persistence
+            .ai_resource_version_find(namespace, name, resource_type::MCP, version)
+            .await?
+            .is_some();
 
-        // Publish tools if present
-        if !registration.tools.is_empty() {
-            let tools_content = serde_json::to_string(&registration.tools)?;
-            self.publish_config(
-                namespace,
-                MCP_SERVER_TOOL_GROUP,
-                &mcp_tool_data_id(id, version),
-                &tools_content,
-                &mcp_tags(name),
-                &format!("MCP server tools updated: {}:{}", name, version),
-            )
-            .await?;
+        if exists {
+            self.persistence
+                .ai_resource_version_update_storage(
+                    namespace,
+                    name,
+                    resource_type::MCP,
+                    version,
+                    &storage_json,
+                    Some(registration.description.as_str()),
+                )
+                .await?;
+        } else {
+            let now_db = now.naive_utc().to_string();
+            self.persistence
+                .ai_resource_version_insert(&AiResourceVersionInfo {
+                    id: 0,
+                    resource_type: resource_type::MCP.to_string(),
+                    author: None,
+                    name: name.clone(),
+                    description: Some(registration.description.clone()),
+                    status: version_status::ONLINE.to_string(),
+                    version: version.clone(),
+                    namespace_id: namespace.to_string(),
+                    storage: Some(storage_json),
+                    publish_pipeline_info: None,
+                    download_count: 0,
+                    gmt_create: Some(now_db.clone()),
+                    gmt_modified: Some(now_db),
+                })
+                .await?;
         }
 
         // Update index cache
+        let index_data = self.index.get_by_name(namespace, name);
         self.index.upsert(McpServerIndexData {
-            id: id.clone(),
+            id: version_info.id.clone(),
             name: name.clone(),
             namespace: namespace.to_string(),
             protocol: "mcp".to_string(),
             description: registration.description.clone(),
             latest_published_version: version.clone(),
             version_count: version_info.version_details.len(),
-            create_time: index_data.create_time,
-            modify_time: Utc::now().timestamp_millis(),
+            create_time: index_data
+                .as_ref()
+                .map(|d| d.create_time)
+                .unwrap_or_else(|| now.timestamp_millis()),
+            modify_time: now.timestamp_millis(),
         });
 
         info!(
             server_name = %name,
             namespace = %namespace,
             version = %version,
-            "MCP server updated (config-backed)"
+            "MCP server updated (ai_resource-backed)"
         );
 
         Ok(())
@@ -395,111 +487,55 @@ impl McpServerOperationService {
         id: Option<&str>,
         version: Option<&str>,
     ) -> anyhow::Result<()> {
-        // Resolve the server
-        let (resolved_id, resolved_name) = if let Some(name) = name {
-            let data = self
-                .index
-                .get_by_name(namespace, name)
-                .ok_or_else(|| anyhow::anyhow!("MCP server '{}' not found", name))?;
-            (data.id, name.to_string())
-        } else if let Some(id) = id {
-            let data = self
-                .index
-                .get_by_id(id)
-                .ok_or_else(|| anyhow::anyhow!("MCP server ID '{}' not found", id))?;
-            (id.to_string(), data.name)
-        } else {
-            anyhow::bail!("Either mcpName or mcpId must be provided");
-        };
+        let (resolved_id, resolved_name) =
+            match self.resolve_server(namespace, id, name).await? {
+                Some(v) => v,
+                None => anyhow::bail!("Either mcpName or mcpId must be provided"),
+            };
 
         if let Some(version) = version.filter(|v| !v.is_empty()) {
-            // Delete specific version
-            self.delete_config(
-                namespace,
-                MCP_SERVER_GROUP,
-                &mcp_spec_data_id(&resolved_id, version),
-            )
-            .await?;
-            self.delete_config(
-                namespace,
-                MCP_SERVER_TOOL_GROUP,
-                &mcp_tool_data_id(&resolved_id, version),
-            )
-            .await
-            .ok(); // Tools may not exist
+            self.persistence
+                .ai_resource_version_delete(namespace, &resolved_name, resource_type::MCP, version)
+                .await?;
 
-            // Update version info to remove this version
-            let version_data_id = mcp_version_data_id(&resolved_id);
-            if let Some(content) = self
-                .query_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
+            if let Some(resource) = self
+                .persistence
+                .ai_resource_find(namespace, &resolved_name, resource_type::MCP)
                 .await?
             {
-                let mut version_info: McpServerVersionInfo = serde_json::from_str(&content)?;
+                let mut version_info = Self::parse_version_info(&resource);
                 version_info
                     .version_details
                     .retain(|v| v.version != version);
 
                 if version_info.version_details.is_empty() {
-                    // No more versions, delete the whole server
-                    self.delete_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
+                    self.persistence
+                        .ai_resource_delete(namespace, &resolved_name, resource_type::MCP)
                         .await?;
                     self.index.remove_by_id(&resolved_id);
                 } else {
-                    // Update latest
                     if let Some(last) = version_info.version_details.last_mut() {
                         last.is_latest = true;
                         version_info.latest_published_version = last.version.clone();
                     }
-                    let content = serde_json::to_string(&version_info)?;
-                    self.publish_config(
-                        namespace,
-                        MCP_SERVER_VERSIONS_GROUP,
-                        &version_data_id,
-                        &content,
-                        &mcp_tags(&resolved_name),
-                        &format!("MCP server version removed: {}:{}", resolved_name, version),
-                    )
-                    .await?;
+                    self.save_version_info(namespace, &resolved_name, &resource, &version_info)
+                        .await?;
                 }
             }
         } else {
-            // Delete all versions - first get version info
-            let version_data_id = mcp_version_data_id(&resolved_id);
-            if let Some(content) = self
-                .query_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
-                .await?
-            {
-                let version_info: McpServerVersionInfo = serde_json::from_str(&content)?;
-                for vd in &version_info.version_details {
-                    self.delete_config(
-                        namespace,
-                        MCP_SERVER_GROUP,
-                        &mcp_spec_data_id(&resolved_id, &vd.version),
-                    )
-                    .await
-                    .ok();
-                    self.delete_config(
-                        namespace,
-                        MCP_SERVER_TOOL_GROUP,
-                        &mcp_tool_data_id(&resolved_id, &vd.version),
-                    )
-                    .await
-                    .ok();
-                }
-            }
-
-            // Delete version info
-            self.delete_config(namespace, MCP_SERVER_VERSIONS_GROUP, &version_data_id)
+            self.persistence
+                .ai_resource_version_delete_all(namespace, &resolved_name, resource_type::MCP)
                 .await?;
-
-            // Remove from cache
+            self.persistence
+                .ai_resource_delete(namespace, &resolved_name, resource_type::MCP)
+                .await?;
             self.index.remove_by_id(&resolved_id);
         }
 
         info!(
             server_name = %resolved_name,
             namespace = %namespace,
-            "MCP server deleted (config-backed)"
+            "MCP server deleted (ai_resource-backed)"
         );
 
         Ok(())
@@ -545,69 +581,9 @@ impl McpServerOperationService {
     pub fn list_all_servers(&self) -> Vec<McpServerIndexData> {
         self.index.search_by_name("", None, "blur", 0, usize::MAX).0
     }
-
-    // =========================================================================
-    // Internal helpers
-    // =========================================================================
-
-    async fn publish_config(
-        &self,
-        namespace: &str,
-        group: &str,
-        data_id: &str,
-        content: &str,
-        tags: &str,
-        desc: &str,
-    ) -> anyhow::Result<()> {
-        self.persistence
-            .config_create_or_update(
-                data_id,
-                group,
-                namespace,
-                content,
-                AI_APP_NAME,
-                AI_SRC_USER,
-                "127.0.0.1",
-                tags,
-                desc,
-                "", // use
-                "", // effect
-                AI_CONFIG_TYPE,
-                "", // schema
-                "", // encrypted_data_key
-                None,
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn query_config(
-        &self,
-        namespace: &str,
-        group: &str,
-        data_id: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let result = self
-            .persistence
-            .config_find_one(data_id, group, namespace)
-            .await?;
-
-        Ok(result.map(|c| c.content))
-    }
-
-    async fn delete_config(
-        &self,
-        namespace: &str,
-        group: &str,
-        data_id: &str,
-    ) -> anyhow::Result<()> {
-        self.persistence
-            .config_delete(data_id, group, namespace, "", "127.0.0.1", AI_SRC_USER)
-            .await?;
-        Ok(())
-    }
 }
 
+/// Protocol identifier recorded on MCP resources and version payloads.
 fn default_mcp_protocol() -> String {
     "mcp".to_string()
 }
@@ -679,7 +655,7 @@ impl super::traits::McpServerService for McpServerOperationService {
         &self,
         _request: batata_common::model::ai::mcp::McpServerImportRequest,
     ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
-        // Config-backed service does not support bulk import yet
+        // Bulk import is not implemented for the AI-resource-backed service yet.
         Ok(batata_common::model::ai::a2a::BatchRegistrationResponse {
             success_count: 0,
             failed_count: 0,
@@ -688,7 +664,7 @@ impl super::traits::McpServerService for McpServerOperationService {
     }
 
     async fn mcp_stats(&self) -> anyhow::Result<batata_common::model::ai::mcp::McpRegistryStats> {
-        // Config-backed service returns basic stats
+        // The AI-resource-backed service does not track registry-wide counters.
         Ok(batata_common::model::ai::mcp::McpRegistryStats {
             total_servers: 0,
             healthy_servers: 0,

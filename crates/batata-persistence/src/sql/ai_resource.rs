@@ -2,9 +2,12 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
+use sea_orm::{prelude::Expr, sea_query::{Asterisk, OnConflict}, *};
 
-use crate::entity::{ai_resource, ai_resource_version, pipeline_execution};
+use crate::entity::{
+    ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
+    ai_resource_version, pipeline_execution,
+};
 use crate::model::*;
 use crate::traits::*;
 
@@ -64,6 +67,69 @@ fn pipeline_execution_model_to_info(m: pipeline_execution::Model) -> PipelineExe
         pipeline: m.pipeline,
         create_time: m.create_time,
         update_time: m.update_time,
+    }
+}
+
+fn search_document_model_to_info(
+    m: ai_resource_search_document::Model,
+) -> AiResourceSearchDocumentInfo {
+    AiResourceSearchDocumentInfo {
+        id: m.id,
+        namespace_id: m.namespace_id,
+        resource_type: m.resource_type,
+        resource_name: m.resource_name,
+        resource_version: m.resource_version,
+        display_name: m.display_name,
+        description: m.c_desc,
+        tags: m.tags,
+        capabilities: m.capabilities,
+        representative_queries: m.representative_queries,
+        metadata: m.metadata,
+        source_digest: m.source_digest,
+        status: m.status,
+        generate_mode: m.generate_mode,
+        gmt_create: m.gmt_create.map(|dt| dt.to_string()),
+        gmt_modified: m.gmt_modified.map(|dt| dt.to_string()),
+    }
+}
+
+fn search_chunk_model_to_info(m: ai_resource_search_chunk::Model) -> AiResourceSearchChunkInfo {
+    AiResourceSearchChunkInfo {
+        id: m.id,
+        document_id: m.document_id,
+        namespace_id: m.namespace_id,
+        resource_type: m.resource_type,
+        resource_name: m.resource_name,
+        resource_version: m.resource_version,
+        chunk_type: m.chunk_type,
+        chunk_text: m.chunk_text,
+        canonical_text: m.canonical_text,
+        language: m.language,
+        chunk_hash: m.chunk_hash,
+        metadata: m.metadata,
+        status: m.status,
+        gmt_create: m.gmt_create.map(|dt| dt.to_string()),
+        gmt_modified: m.gmt_modified.map(|dt| dt.to_string()),
+    }
+}
+
+fn task_model_to_info(m: ai_resource_task::Model) -> AiResourceTaskInfo {
+    AiResourceTaskInfo {
+        task_key: m.task_key,
+        namespace_id: m.namespace_id,
+        task_type: m.task_type,
+        task_stage: m.task_stage,
+        status: m.status,
+        task_payload: m.task_payload,
+        task_result: m.task_result,
+        retry_count: m.retry_count,
+        revision: m.revision,
+        lease_token: m.lease_token,
+        next_execute_at: m.next_execute_at,
+        lease_expire_at: m.lease_expire_at,
+        last_error: m.last_error,
+        gmt_create: m.gmt_create.map(|dt| dt.to_string()),
+        gmt_modified: m.gmt_modified.map(|dt| dt.to_string()),
     }
 }
 
@@ -681,5 +747,298 @@ impl AiResourcePersistence for ExternalDbPersistService {
             .collect();
 
         Ok(Page::new(total_count, page_no, page_size, items))
+    }
+
+    // ========================================================================
+    // ai_resource_search_document operations
+    // ========================================================================
+
+    async fn search_document_find(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<Option<AiResourceSearchDocumentInfo>> {
+        let result = ai_resource_search_document::Entity::find()
+            .filter(ai_resource_search_document::Column::NamespaceId.eq(namespace_id))
+            .filter(ai_resource_search_document::Column::ResourceType.eq(resource_type))
+            .filter(ai_resource_search_document::Column::ResourceName.eq(resource_name))
+            .filter(ai_resource_search_document::Column::ResourceVersion.eq(resource_version))
+            .one(&self.db)
+            .await?
+            .map(search_document_model_to_info);
+
+        Ok(result)
+    }
+
+    async fn search_document_upsert(
+        &self,
+        document: &AiResourceSearchDocumentInfo,
+    ) -> anyhow::Result<i64> {
+        let now = Utc::now().naive_utc();
+        let model = ai_resource_search_document::ActiveModel {
+            id: NotSet,
+            gmt_create: Set(Some(now)),
+            gmt_modified: Set(Some(now)),
+            namespace_id: Set(document.namespace_id.clone()),
+            resource_type: Set(document.resource_type.clone()),
+            resource_name: Set(document.resource_name.clone()),
+            resource_version: Set(document.resource_version.clone()),
+            display_name: Set(document.display_name.clone()),
+            c_desc: Set(document.description.clone()),
+            tags: Set(document.tags.clone()),
+            capabilities: Set(document.capabilities.clone()),
+            representative_queries: Set(document.representative_queries.clone()),
+            metadata: Set(document.metadata.clone()),
+            source_digest: Set(document.source_digest.clone()),
+            status: Set(document.status.clone()),
+            generate_mode: Set(document.generate_mode.clone()),
+        };
+
+        // `last_insert_id` is unreliable on the update branch of an upsert, so
+        // re-read by the unique key to return a stable ID.
+        ai_resource_search_document::Entity::insert(model)
+            .on_conflict(
+                // PostgreSQL requires an explicit conflict target; MySQL
+                // ignores it and relies on the unique key.
+                OnConflict::columns([
+                    ai_resource_search_document::Column::NamespaceId,
+                    ai_resource_search_document::Column::ResourceType,
+                    ai_resource_search_document::Column::ResourceName,
+                    ai_resource_search_document::Column::ResourceVersion,
+                ])
+                .update_columns([
+                        ai_resource_search_document::Column::GmtModified,
+                        ai_resource_search_document::Column::DisplayName,
+                        ai_resource_search_document::Column::CDesc,
+                        ai_resource_search_document::Column::Tags,
+                        ai_resource_search_document::Column::Capabilities,
+                        ai_resource_search_document::Column::RepresentativeQueries,
+                        ai_resource_search_document::Column::Metadata,
+                        ai_resource_search_document::Column::SourceDigest,
+                        ai_resource_search_document::Column::Status,
+                        ai_resource_search_document::Column::GenerateMode,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
+
+        let stored = self
+            .search_document_find(
+                &document.namespace_id,
+                &document.resource_type,
+                &document.resource_name,
+                &document.resource_version,
+            )
+            .await?;
+
+        Ok(stored.map(|d| d.id).unwrap_or_default())
+    }
+
+    async fn search_document_delete(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<u64> {
+        let result = ai_resource_search_document::Entity::delete_many()
+            .filter(ai_resource_search_document::Column::NamespaceId.eq(namespace_id))
+            .filter(ai_resource_search_document::Column::ResourceType.eq(resource_type))
+            .filter(ai_resource_search_document::Column::ResourceName.eq(resource_name))
+            .filter(ai_resource_search_document::Column::ResourceVersion.eq(resource_version))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected)
+    }
+
+    // ========================================================================
+    // ai_resource_search_chunk operations
+    // ========================================================================
+
+    async fn search_chunk_replace(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+        chunks: &[AiResourceSearchChunkInfo],
+    ) -> anyhow::Result<u64> {
+        self.search_chunk_delete(namespace_id, resource_type, resource_name, resource_version)
+            .await?;
+
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        let document_id = self
+            .search_document_find(namespace_id, resource_type, resource_name, resource_version)
+            .await?
+            .map(|d| d.id)
+            .unwrap_or_default();
+
+        let now = Utc::now().naive_utc();
+        let models = chunks.iter().map(|c| ai_resource_search_chunk::ActiveModel {
+            id: NotSet,
+            gmt_create: Set(Some(now)),
+            gmt_modified: Set(Some(now)),
+            document_id: Set(document_id),
+            namespace_id: Set(c.namespace_id.clone()),
+            resource_type: Set(c.resource_type.clone()),
+            resource_name: Set(c.resource_name.clone()),
+            resource_version: Set(c.resource_version.clone()),
+            chunk_type: Set(c.chunk_type.clone()),
+            chunk_text: Set(c.chunk_text.clone()),
+            canonical_text: Set(c.canonical_text.clone()),
+            language: Set(c.language.clone()),
+            chunk_hash: Set(c.chunk_hash.clone()),
+            metadata: Set(c.metadata.clone()),
+            status: Set(c.status.clone()),
+        });
+
+        ai_resource_search_chunk::Entity::insert_many(models)
+            .exec(&self.db)
+            .await?;
+
+        Ok(chunks.len() as u64)
+    }
+
+    async fn search_chunk_list(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<Vec<AiResourceSearchChunkInfo>> {
+        let items = ai_resource_search_chunk::Entity::find()
+            .filter(ai_resource_search_chunk::Column::NamespaceId.eq(namespace_id))
+            .filter(ai_resource_search_chunk::Column::ResourceType.eq(resource_type))
+            .filter(ai_resource_search_chunk::Column::ResourceName.eq(resource_name))
+            .filter(ai_resource_search_chunk::Column::ResourceVersion.eq(resource_version))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(search_chunk_model_to_info)
+            .collect();
+
+        Ok(items)
+    }
+
+    async fn search_chunk_delete(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<u64> {
+        let result = ai_resource_search_chunk::Entity::delete_many()
+            .filter(ai_resource_search_chunk::Column::NamespaceId.eq(namespace_id))
+            .filter(ai_resource_search_chunk::Column::ResourceType.eq(resource_type))
+            .filter(ai_resource_search_chunk::Column::ResourceName.eq(resource_name))
+            .filter(ai_resource_search_chunk::Column::ResourceVersion.eq(resource_version))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected)
+    }
+
+    // ========================================================================
+    // ai_resource_task operations
+    // ========================================================================
+
+    async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
+        let now = Utc::now().naive_utc();
+        let model = ai_resource_task::ActiveModel {
+            task_key: Set(task.task_key.clone()),
+            namespace_id: Set(task.namespace_id.clone()),
+            task_type: Set(task.task_type.clone()),
+            task_stage: Set(task.task_stage.clone()),
+            status: Set(task.status.clone()),
+            task_payload: Set(task.task_payload.clone()),
+            task_result: Set(task.task_result.clone()),
+            retry_count: Set(task.retry_count),
+            revision: Set(task.revision),
+            lease_token: Set(task.lease_token),
+            next_execute_at: Set(task.next_execute_at),
+            lease_expire_at: Set(task.lease_expire_at),
+            last_error: Set(task.last_error.clone()),
+            gmt_create: Set(Some(now)),
+            gmt_modified: Set(Some(now)),
+        };
+
+        // `gmt_create` is deliberately excluded so an upsert keeps the original
+        // creation time.
+        ai_resource_task::Entity::insert(model)
+            .on_conflict(
+                // PostgreSQL requires an explicit conflict target; MySQL
+                // ignores it and relies on the primary key.
+                OnConflict::column(ai_resource_task::Column::TaskKey)
+                    .update_columns([
+                        ai_resource_task::Column::NamespaceId,
+                        ai_resource_task::Column::TaskType,
+                        ai_resource_task::Column::TaskStage,
+                        ai_resource_task::Column::Status,
+                        ai_resource_task::Column::TaskPayload,
+                        ai_resource_task::Column::TaskResult,
+                        ai_resource_task::Column::RetryCount,
+                        ai_resource_task::Column::Revision,
+                        ai_resource_task::Column::LeaseToken,
+                        ai_resource_task::Column::NextExecuteAt,
+                        ai_resource_task::Column::LeaseExpireAt,
+                        ai_resource_task::Column::LastError,
+                        ai_resource_task::Column::GmtModified,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn task_find(&self, task_key: &str) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        let result = ai_resource_task::Entity::find_by_id(task_key.to_string())
+            .one(&self.db)
+            .await?
+            .map(task_model_to_info);
+
+        Ok(result)
+    }
+
+    async fn task_find_due(
+        &self,
+        task_type: &str,
+        now_millis: i64,
+        limit: u64,
+    ) -> anyhow::Result<Vec<AiResourceTaskInfo>> {
+        let items = ai_resource_task::Entity::find()
+            .filter(ai_resource_task::Column::TaskType.eq(task_type))
+            .filter(ai_resource_task::Column::NextExecuteAt.lte(now_millis))
+            .filter(
+                Condition::any()
+                    .add(ai_resource_task::Column::LeaseExpireAt.is_null())
+                    .add(ai_resource_task::Column::LeaseExpireAt.lte(now_millis)),
+            )
+            .order_by_asc(ai_resource_task::Column::NextExecuteAt)
+            .limit(limit)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(task_model_to_info)
+            .collect();
+
+        Ok(items)
+    }
+
+    async fn task_delete(&self, task_key: &str) -> anyhow::Result<u64> {
+        let result = ai_resource_task::Entity::delete_many()
+            .filter(ai_resource_task::Column::TaskKey.eq(task_key))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected)
     }
 }

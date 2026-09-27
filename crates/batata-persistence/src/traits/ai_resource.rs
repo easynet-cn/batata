@@ -5,7 +5,15 @@
 
 use async_trait::async_trait;
 
-use crate::model::{AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo, Page, PipelineExecutionInfo};
+use crate::model::{
+    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo,
+    AiResourceSearchDocumentInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
+    PipelineExecutionInfo,
+};
+
+/// Error returned by backends that do not implement the AI search index yet.
+const SEARCH_INDEX_UNSUPPORTED: &str =
+    "AI resource search index is not supported by this storage backend";
 
 /// Persistence operations for AI resources (skills, agentspecs, etc.)
 #[async_trait]
@@ -211,4 +219,122 @@ pub trait AiResourcePersistence: Send + Sync {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<PipelineExecutionInfo>>;
+
+    // ========================================================================
+    // ai_resource_search_document operations
+    // ========================================================================
+
+    /// Find the search document for one resource version.
+    async fn search_document_find(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<Option<AiResourceSearchDocumentInfo>> {
+        let _ = (namespace_id, resource_type, resource_name, resource_version);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Insert or update the search document for one resource version.
+    ///
+    /// Returns the document ID.
+    async fn search_document_upsert(
+        &self,
+        document: &AiResourceSearchDocumentInfo,
+    ) -> anyhow::Result<i64> {
+        let _ = document;
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Delete the search document for one resource version.
+    async fn search_document_delete(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<u64> {
+        let _ = (namespace_id, resource_type, resource_name, resource_version);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    // ========================================================================
+    // ai_resource_search_chunk operations
+    // ========================================================================
+
+    /// Replace every chunk of one resource version with `chunks`.
+    ///
+    /// Returns the number of chunks written.
+    async fn search_chunk_replace(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+        chunks: &[AiResourceSearchChunkInfo],
+    ) -> anyhow::Result<u64> {
+        let _ = (namespace_id, resource_type, resource_name, resource_version, chunks);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// List every chunk of one resource version.
+    async fn search_chunk_list(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<Vec<AiResourceSearchChunkInfo>> {
+        let _ = (namespace_id, resource_type, resource_name, resource_version);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Delete every chunk of one resource version.
+    async fn search_chunk_delete(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        resource_version: &str,
+    ) -> anyhow::Result<u64> {
+        let _ = (namespace_id, resource_type, resource_name, resource_version);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    // ========================================================================
+    // ai_resource_task operations
+    // ========================================================================
+
+    /// Insert or update a task by its key.
+    async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
+        let _ = task;
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Find a task by key.
+    async fn task_find(&self, task_key: &str) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        let _ = task_key;
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Find tasks of `task_type` that are due for execution and not currently
+    /// leased, ordered by `next_execute_at` ascending.
+    ///
+    /// `now_millis` is the current time in Unix epoch milliseconds.
+    async fn task_find_due(
+        &self,
+        task_type: &str,
+        now_millis: i64,
+        limit: u64,
+    ) -> anyhow::Result<Vec<AiResourceTaskInfo>> {
+        let _ = (task_type, now_millis, limit);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Delete a task by key.
+    async fn task_delete(&self, task_key: &str) -> anyhow::Result<u64> {
+        let _ = task_key;
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
 }

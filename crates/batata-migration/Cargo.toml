@@ -10,3 +10,6 @@ description = "Database migration for Batata using SeaORM"
 [dependencies]
 sea-orm-migration = { workspace = true }
 async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

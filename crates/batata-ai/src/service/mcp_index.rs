@@ -6,8 +6,8 @@ use tracing::{debug, warn};
 
 use batata_persistence::PersistenceService;
 
-use super::constants::*;
 use crate::model::McpServerVersionInfo;
+use crate::repository::resource_type;
 
 /// Cached index entry for an MCP server
 #[derive(Debug, Clone)]
@@ -127,63 +127,74 @@ impl McpServerIndex {
     }
 
     /// Refresh the entire cache from persistence
+    ///
+    /// MCP servers are stored as `ai_resource` rows of type `mcp`, with the
+    /// version index serialized into `version_info`.
     pub async fn refresh(&self, persistence: &dyn PersistenceService) {
-        // Search all entries in the mcp-server-versions group
-        match persistence
-            .config_search_page(
-                1,
-                10000, // Large page to get all entries
-                "",    // All namespaces
-                "",    // All data IDs
-                MCP_SERVER_VERSIONS_GROUP,
-                AI_APP_NAME,
-                vec![],
-                vec![AI_CONFIG_TYPE.to_string()],
-                "",
-            )
-            .await
-        {
-            Ok(page) => {
-                // Clear existing cache
-                self.by_id.clear();
-                self.by_name.clear();
-
-                for item in page.page_items {
-                    // Parse the stored content as McpServerVersionInfo
-                    match serde_json::from_str::<McpServerVersionInfo>(&item.content) {
-                        Ok(version_info) => {
-                            let data = McpServerIndexData {
-                                id: version_info.id.clone(),
-                                name: version_info.name.clone(),
-                                namespace: item.tenant.clone(),
-                                protocol: version_info.protocol,
-                                description: version_info.description,
-                                latest_published_version: version_info.latest_published_version,
-                                version_count: version_info.version_details.len(),
-                                create_time: item.created_time,
-                                modify_time: item.modified_time,
-                            };
-                            self.upsert(data);
-                        }
-                        Err(e) => {
-                            warn!(
-                                data_id = %item.data_id,
-                                error = %e,
-                                "Failed to parse MCP version info from config"
-                            );
-                        }
-                    }
-                }
-
-                debug!(
-                    count = self.by_id.len(),
-                    "MCP server index refreshed from persistence"
-                );
-            }
+        // Namespaces to scan. The default (empty) namespace is included
+        // explicitly because `namespace_find_all` does not return it.
+        let mut namespaces = vec![String::new()];
+        match persistence.namespace_find_all().await {
+            Ok(list) => namespaces.extend(list.into_iter().map(|n| n.namespace_id)),
             Err(e) => {
-                warn!(error = %e, "Failed to refresh MCP server index from persistence");
+                warn!(error = %e, "Failed to list namespaces for MCP index refresh");
             }
         }
+
+        // Clear existing cache
+        self.by_id.clear();
+        self.by_name.clear();
+
+        for namespace in namespaces {
+            let resources = match persistence
+                .ai_resource_find_all(&namespace, resource_type::MCP)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        namespace = %namespace,
+                        "Failed to list MCP resources for index refresh"
+                    );
+                    continue;
+                }
+            };
+
+            for resource in resources {
+                let version_info = match resource.version_info.as_deref() {
+                    Some(json) => match serde_json::from_str::<McpServerVersionInfo>(json) {
+                        Ok(vi) => vi,
+                        Err(e) => {
+                            warn!(
+                                resource = %resource.name,
+                                error = %e,
+                                "Failed to parse MCP version info"
+                            );
+                            continue;
+                        }
+                    },
+                    None => continue,
+                };
+
+                self.upsert(McpServerIndexData {
+                    id: version_info.id.clone(),
+                    name: version_info.name.clone(),
+                    namespace: resource.namespace_id.clone(),
+                    protocol: version_info.protocol,
+                    description: version_info.description,
+                    latest_published_version: version_info.latest_published_version,
+                    version_count: version_info.version_details.len(),
+                    create_time: 0,
+                    modify_time: 0,
+                });
+            }
+        }
+
+        debug!(
+            count = self.by_id.len(),
+            "MCP server index refreshed from persistence"
+        );
     }
 
     /// Get count of cached entries

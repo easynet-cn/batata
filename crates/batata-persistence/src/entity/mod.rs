@@ -3,6 +3,9 @@
 pub mod prelude;
 
 pub mod ai_resource;
+pub mod ai_resource_search_chunk;
+pub mod ai_resource_search_document;
+pub mod ai_resource_task;
 pub mod ai_resource_version;
 pub mod config_info;
 pub mod config_info_gray;

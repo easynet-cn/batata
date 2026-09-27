@@ -28,6 +28,7 @@ mod m20260412_000010_create_permissions;
 mod m20260412_000011_create_pipeline_execution;
 mod m20260412_000012_create_ai_resource;
 mod m20260412_000013_create_ai_resource_version;
+mod m20260412_000014_create_ai_search_and_task;
 
 /// The migration runner for the batata service.
 ///
@@ -38,7 +39,7 @@ mod m20260412_000013_create_ai_resource_version;
 pub struct Migrator;
 
 /// Total number of migrations — update when adding new migrations
-pub const MIGRATION_COUNT: usize = 13;
+pub const MIGRATION_COUNT: usize = 14;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
@@ -57,6 +58,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260412_000011_create_pipeline_execution::Migration),
             Box::new(m20260412_000012_create_ai_resource::Migration),
             Box::new(m20260412_000013_create_ai_resource_version::Migration),
+            Box::new(m20260412_000014_create_ai_search_and_task::Migration),
         ]
     }
 }

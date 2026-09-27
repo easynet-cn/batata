@@ -21,6 +21,8 @@ pub mod api;
 pub mod handler;
 pub mod model;
 pub mod registry;
+/// AI resource repository facade and shared value vocabularies.
+pub mod repository;
 /// Config-backed persistent services for MCP and A2A.
 pub mod service;
 
