@@ -445,6 +445,66 @@ pub struct McpDetailQuery {
     pub version: Option<String>,
 }
 
+/// Query params for listing the versions of one MCP server
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpVersionsQuery {
+    /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// MCP server name
+    #[serde(alias = "mcpName")]
+    pub mcp_name: Option<String>,
+    /// Page number (1-based, defaults to 1)
+    #[serde(alias = "pageNo")]
+    pub page_no: Option<u64>,
+    /// Page size (defaults to 20)
+    #[serde(alias = "pageSize")]
+    pub page_size: Option<u64>,
+}
+
+/// Query params for creating a draft version
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpDraftCreateQuery {
+    /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// Overwrite the draft if one already exists
+    pub overwrite: Option<bool>,
+}
+
+/// Request body for replacing the version labels
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpLabelsRequest {
+    /// Label name -> version
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+/// Query params for enabling or disabling a server
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpStatusQuery {
+    /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// MCP server name
+    #[serde(alias = "mcpName")]
+    pub mcp_name: Option<String>,
+    /// `enable` or `disable`
+    pub status: Option<String>,
+}
+
+/// Query params for changing the visibility scope
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpScopeQuery {
+    /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// MCP server name
+    #[serde(alias = "mcpName")]
+    pub mcp_name: Option<String>,
+    /// `PUBLIC` or `PRIVATE`
+    pub scope: Option<String>,
+}
+
 /// Nacos-compatible MCP list query params
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

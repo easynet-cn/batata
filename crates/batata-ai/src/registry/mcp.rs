@@ -598,6 +598,12 @@ pub use batata_common::model::ai::mcp::McpRegistryStats;
 // Trait implementation for McpServerRegistry
 // =============================================================================
 
+/// Error returned by the in-memory registry for operations that require the
+/// versioned, `ai_resource`-backed MCP service.
+const VERSIONING_UNSUPPORTED: &str =
+    "versioning is not supported by the in-memory MCP registry; \
+     it requires the ai_resource-backed MCP service";
+
 #[async_trait::async_trait]
 impl batata_common::McpServerService for McpServerRegistry {
     async fn create_mcp_server(
@@ -668,6 +674,134 @@ impl batata_common::McpServerService for McpServerRegistry {
             page_size: Some(page_size),
         };
         self.list_with_search(&query)
+    }
+
+    async fn list_mcp_server_versions(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _page_no: u64,
+        _page_size: u64,
+    ) -> anyhow::Result<
+        batata_common::model::Page<batata_common::model::ai::mcp::McpServerVersionSummary>,
+    > {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn get_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<Option<batata_common::model::ai::mcp::McpServerVersionDetail>> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn create_mcp_server_draft(
+        &self,
+        _namespace: &str,
+        _registration: &McpServerRegistration,
+        _overwrite: bool,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_mcp_server_draft(
+        &self,
+        _namespace: &str,
+        _registration: &McpServerRegistration,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn delete_mcp_server_draft(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn submit_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn publish_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn force_publish_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn redraft_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn online_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn offline_mcp_server_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_mcp_server_labels(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_mcp_server_status(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _enabled: bool,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_mcp_server_scope(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _new_scope: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
 
     async fn import_tools_from_mcp(
@@ -1008,5 +1142,4 @@ mod tests {
         let result = registry.register_endpoint("default", "nonexistent", "http://x");
         assert!(result.is_err());
     }
-
 }

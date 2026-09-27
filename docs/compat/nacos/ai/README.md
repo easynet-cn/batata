@@ -196,10 +196,58 @@ Goal: introduce the upstream layering before adding endpoints.
 
 ### Phase 2 — MCP parity (largest gap)
 
-- [ ] Draft lifecycle: `draft` POST/PUT/DELETE, `submit`, `publish`
+- [x] Draft lifecycle: `draft` POST/PUT/DELETE — implemented as
+      `create/update/delete_mcp_server_draft` on `McpServerOperationService`,
+      backed by `ai_resource_version.status = draft` and tracked through
+      `ResourceVersionInfo.editingVersion`. Covered by the MCP live-database
+      test (create / overwrite / update / delete, plus `editingVersion`
+      clearing).
+- [x] `submit`, `publish`, `force-publish`, `redraft`, `online`, `offline` —
+      implemented as `submit/publish/force_publish/redraft/online/offline_
+      mcp_server_version`. Transitions mirror upstream statuses
+      (`draft → reviewing → online | offline`) and reconcile
+      `editingVersion` / `reviewingVersion` / `onlineCnt` / `latest` on each
+      change. Covered by the `mcp_version_lifecycle` live-database test on
+      MySQL and PostgreSQL.
+      > Note: two consecutive meta updates must not reuse a stale
+      > `meta_version` snapshot — `refresh_version_meta` re-reads the resource
+      > so the optimistic lock cannot fail silently (this was a real bug found
+      > by the test).
 - [ ] `force-publish`, `redraft`
-- [ ] Versioning: `versions`, `version`, `version/meta`
-- [ ] `labels`, `biz-tags`, `scope`, `status`
+- [x] Versioning: `versions`, `version` — service methods
+      `list_mcp_server_versions` / `get_mcp_server_version`
+- [x] `labels`, `scope`, `status` — service methods
+      `update_mcp_server_labels` (custom labels replace; the server-managed
+      `latest` label is preserved; every label must point at an online
+      version), `update_mcp_server_status` (enable/disable) and
+      `update_mcp_server_scope` (`PUBLIC` / `PRIVATE`, validated)
+- [ ] `version/meta`, `biz-tags`
+- [x] **HTTP layer** — all fourteen Admin endpoints are wired on the console
+      MCP scope, using the upstream paths:
+
+      | Method | Path |
+      |---|---|
+      | GET | `/versions`, `/version` |
+      | POST | `/draft`, `/submit`, `/publish`, `/force-publish`, `/redraft`, `/online`, `/offline` |
+      | PUT | `/draft`, `/labels`, `/status`, `/scope` |
+      | DELETE | `/draft` |
+
+      The lifecycle and admin methods were added to the `McpServerService`
+      trait so the console's `Arc<dyn McpServerService>` can reach them; the
+      in-memory `McpServerRegistry` fallback returns an explicit
+      "versioning is not supported" error instead of faking one version.
+
+      Covered by `crates/batata-server/tests/mcp_console_routes.rs`
+      (5 route tests, run on live MySQL and PostgreSQL): version listing and
+      detail, draft creation, and 400 rejection of a missing `mcpName` /
+      unknown `status`. The test builds a real `AppState` (stub cluster
+      manager, `Configuration` with console auth disabled) on top of the real
+      database and the real MCP service.
+
+      > Note: only these five flows are covered. `submit`, `publish`,
+      > `force-publish`, `redraft`, `online`, `offline`, `labels` and `scope`
+      > have route tests only for the parameter-validation path; their success
+      > paths are covered at the service layer instead.
 - [ ] `online` / `offline`
 - [ ] Admin/Client controller split (management vs runtime discovery)
 - [ ] Validation service equivalent to `McpServerValidationService`

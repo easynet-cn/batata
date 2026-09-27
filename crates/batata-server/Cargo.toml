@@ -124,6 +124,7 @@ openraft = { workspace = true }
 rocksdb = { workspace = true }
 
 [dev-dependencies]
+actix-http = { workspace = true }
 batata-client = { workspace = true }
 criterion = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }

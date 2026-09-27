@@ -9,7 +9,10 @@ use crate::model::ai::a2a::{
 };
 use crate::model::ai::agentspec::{AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecSummary};
 use crate::model::ai::mcp::McpRegistryStats;
-use crate::model::ai::mcp::{McpServer, McpServerBasicInfo, McpServerRegistration};
+use crate::model::ai::mcp::{
+    McpServer, McpServerBasicInfo, McpServerRegistration, McpServerVersionDetail,
+    McpServerVersionSummary,
+};
 use crate::model::ai::pipeline::PipelineExecution;
 use crate::model::ai::skill::{Skill, SkillBasicInfo, SkillMeta, SkillSummary};
 
@@ -375,6 +378,119 @@ pub trait McpServerService: Send + Sync {
         page_no: u32,
         page_size: u32,
     ) -> Page<McpServerBasicInfo>;
+
+    /// The `list_mcp_server_versions` method.
+    async fn list_mcp_server_versions(
+        &self,
+        namespace: &str,
+        name: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<McpServerVersionSummary>>;
+
+    /// The `get_mcp_server_version` method.
+    async fn get_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<Option<McpServerVersionDetail>>;
+
+    /// Create a new draft version.
+    async fn create_mcp_server_draft(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+        overwrite: bool,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Update an existing draft version.
+    async fn update_mcp_server_draft(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Delete a draft version.
+    async fn delete_mcp_server_draft(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Submit a draft version for review (`draft` -> `reviewing`).
+    async fn submit_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Publish a reviewed version (`reviewing`/`reviewed` -> `online`).
+    async fn publish_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Publish a version bypassing the review gate.
+    async fn force_publish_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Move a version back to draft so it can be edited again.
+    async fn redraft_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Bring an offline version back online.
+    async fn online_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Take an online version offline.
+    async fn offline_mcp_server_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionDetail>;
+
+    /// Replace the custom version labels, preserving the server-managed
+    /// `latest` label.
+    async fn update_mcp_server_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+
+    /// Enable or disable the server (resource-level status).
+    async fn update_mcp_server_status(
+        &self,
+        namespace: &str,
+        name: &str,
+        enabled: bool,
+    ) -> anyhow::Result<()>;
+
+    /// Change the visibility scope (`PUBLIC` / `PRIVATE`).
+    async fn update_mcp_server_scope(
+        &self,
+        namespace: &str,
+        name: &str,
+        new_scope: &str,
+    ) -> anyhow::Result<()>;
 
     /// Import tools from a running MCP server via SSE transport
     async fn import_tools_from_mcp(

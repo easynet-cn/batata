@@ -2,7 +2,11 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sea_orm::{prelude::Expr, sea_query::{Asterisk, OnConflict}, *};
+use sea_orm::{
+    prelude::Expr,
+    sea_query::{Asterisk, OnConflict},
+    *,
+};
 
 use crate::entity::{
     ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
@@ -809,18 +813,18 @@ impl AiResourcePersistence for ExternalDbPersistService {
                     ai_resource_search_document::Column::ResourceVersion,
                 ])
                 .update_columns([
-                        ai_resource_search_document::Column::GmtModified,
-                        ai_resource_search_document::Column::DisplayName,
-                        ai_resource_search_document::Column::CDesc,
-                        ai_resource_search_document::Column::Tags,
-                        ai_resource_search_document::Column::Capabilities,
-                        ai_resource_search_document::Column::RepresentativeQueries,
-                        ai_resource_search_document::Column::Metadata,
-                        ai_resource_search_document::Column::SourceDigest,
-                        ai_resource_search_document::Column::Status,
-                        ai_resource_search_document::Column::GenerateMode,
-                    ])
-                    .to_owned(),
+                    ai_resource_search_document::Column::GmtModified,
+                    ai_resource_search_document::Column::DisplayName,
+                    ai_resource_search_document::Column::CDesc,
+                    ai_resource_search_document::Column::Tags,
+                    ai_resource_search_document::Column::Capabilities,
+                    ai_resource_search_document::Column::RepresentativeQueries,
+                    ai_resource_search_document::Column::Metadata,
+                    ai_resource_search_document::Column::SourceDigest,
+                    ai_resource_search_document::Column::Status,
+                    ai_resource_search_document::Column::GenerateMode,
+                ])
+                .to_owned(),
             )
             .exec(&self.db)
             .await?;
@@ -881,23 +885,25 @@ impl AiResourcePersistence for ExternalDbPersistService {
             .unwrap_or_default();
 
         let now = Utc::now().naive_utc();
-        let models = chunks.iter().map(|c| ai_resource_search_chunk::ActiveModel {
-            id: NotSet,
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            document_id: Set(document_id),
-            namespace_id: Set(c.namespace_id.clone()),
-            resource_type: Set(c.resource_type.clone()),
-            resource_name: Set(c.resource_name.clone()),
-            resource_version: Set(c.resource_version.clone()),
-            chunk_type: Set(c.chunk_type.clone()),
-            chunk_text: Set(c.chunk_text.clone()),
-            canonical_text: Set(c.canonical_text.clone()),
-            language: Set(c.language.clone()),
-            chunk_hash: Set(c.chunk_hash.clone()),
-            metadata: Set(c.metadata.clone()),
-            status: Set(c.status.clone()),
-        });
+        let models = chunks
+            .iter()
+            .map(|c| ai_resource_search_chunk::ActiveModel {
+                id: NotSet,
+                gmt_create: Set(Some(now)),
+                gmt_modified: Set(Some(now)),
+                document_id: Set(document_id),
+                namespace_id: Set(c.namespace_id.clone()),
+                resource_type: Set(c.resource_type.clone()),
+                resource_name: Set(c.resource_name.clone()),
+                resource_version: Set(c.resource_version.clone()),
+                chunk_type: Set(c.chunk_type.clone()),
+                chunk_text: Set(c.chunk_text.clone()),
+                canonical_text: Set(c.canonical_text.clone()),
+                language: Set(c.language.clone()),
+                chunk_hash: Set(c.chunk_hash.clone()),
+                metadata: Set(c.metadata.clone()),
+                status: Set(c.status.clone()),
+            });
 
         ai_resource_search_chunk::Entity::insert_many(models)
             .exec(&self.db)

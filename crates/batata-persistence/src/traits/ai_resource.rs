@@ -6,9 +6,8 @@
 use async_trait::async_trait;
 
 use crate::model::{
-    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo,
-    AiResourceSearchDocumentInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
-    PipelineExecutionInfo,
+    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo,
+    AiResourceTaskInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo,
 };
 
 /// Error returned by backends that do not implement the AI search index yet.
@@ -274,7 +273,13 @@ pub trait AiResourcePersistence: Send + Sync {
         resource_version: &str,
         chunks: &[AiResourceSearchChunkInfo],
     ) -> anyhow::Result<u64> {
-        let _ = (namespace_id, resource_type, resource_name, resource_version, chunks);
+        let _ = (
+            namespace_id,
+            resource_type,
+            resource_name,
+            resource_version,
+            chunks,
+        );
         anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
     }
 
