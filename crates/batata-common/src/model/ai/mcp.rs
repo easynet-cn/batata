@@ -492,6 +492,22 @@ pub struct McpStatusQuery {
     pub status: Option<String>,
 }
 
+/// Query params for keyword search over the MCP search index
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpSearchQuery {
+    /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// Free-text query
+    pub query: Option<String>,
+    /// Page number (1-based, defaults to 1)
+    #[serde(alias = "pageNo")]
+    pub page_no: Option<u64>,
+    /// Page size (defaults to 20, capped at 100 like upstream)
+    #[serde(alias = "pageSize")]
+    pub page_size: Option<u64>,
+}
+
 /// Query params for changing the visibility scope
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpScopeQuery {

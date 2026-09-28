@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use batata_persistence::PersistenceService;
@@ -26,6 +26,7 @@ use super::constants::*;
 use super::mcp_index::{McpServerIndex, McpServerIndexData};
 use crate::model::*;
 use crate::repository::{meta_status, resource_type, scope, version_status};
+use batata_common::model::ai::search::AiResourceSearchHit;
 
 /// Origin recorded for locally registered MCP servers.
 const MCP_DEFAULT_FROM: &str = "local";
@@ -1176,8 +1177,11 @@ impl McpServerOperationService {
                 row.status
             );
         }
-        self.transition_version(namespace, name, version, version_status::ONLINE)
-            .await
+        let detail = self
+            .transition_version(namespace, name, version, version_status::ONLINE)
+            .await?;
+        self.schedule_search_index(namespace, name).await;
+        Ok(detail)
     }
 
     /// Publish a version bypassing the review state check.
@@ -1188,8 +1192,26 @@ impl McpServerOperationService {
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
         self.find_version_row(namespace, name, version).await?;
-        self.transition_version(namespace, name, version, version_status::ONLINE)
-            .await
+        let detail = self
+            .transition_version(namespace, name, version, version_status::ONLINE)
+            .await?;
+        self.schedule_search_index(namespace, name).await;
+        Ok(detail)
+    }
+
+    /// Queue a `base_index` task for a resource.
+    ///
+    /// Indexing is asynchronous upstream, so a scheduling failure must not fail
+    /// the publish: the task is durable and the index converges later.
+    async fn schedule_search_index(&self, namespace: &str, name: &str) {
+        let search = crate::search::service::AiResourceSearchService::new(self.persistence.clone());
+        if let Err(e) = search.schedule(namespace, resource_type::MCP, name).await {
+            warn!(
+                server_name = %name,
+                error = %e,
+                "Failed to schedule MCP search index rebuild"
+            );
+        }
     }
 
     /// Move a version back to draft so it can be edited again.
@@ -1576,6 +1598,24 @@ impl super::traits::McpServerService for McpServerOperationService {
         new_scope: &str,
     ) -> anyhow::Result<()> {
         self.update_mcp_server_scope(namespace, name, new_scope).await
+    }
+
+    async fn search_mcp_servers(
+        &self,
+        namespace: &str,
+        query: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_api::model::Page<AiResourceSearchHit>> {
+        crate::search::query::search(
+            self.persistence.as_ref(),
+            namespace,
+            query,
+            &[resource_type::MCP],
+            page_no,
+            page_size,
+        )
+        .await
     }
 
     async fn import_tools_from_mcp(

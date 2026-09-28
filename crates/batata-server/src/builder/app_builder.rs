@@ -720,6 +720,9 @@ impl AppBuilder {
         // Start MCP index refresh
         start_mcp_index_refresh(ai_services, app_state);
 
+        // Start the AI resource search index consumer
+        start_ai_search_index_consumer(app_state);
+
         info!("Phase 8 complete - background tasks started");
         Ok(self)
     }
@@ -1195,6 +1198,37 @@ fn start_mcp_index_refresh(ai_services: &AIServices, app_state: &Arc<AppState>) 
 
         info!("MCP index periodic refresh task started (every 30s)");
     }
+}
+
+/// Start the AI resource search-index consumer.
+///
+/// Polls durable `search_index` tasks and converges the relational index.
+/// Skipped when there is no local persistence (remote console deployments).
+fn start_ai_search_index_consumer(app_state: &Arc<AppState>) {
+    let Some(ref persist) = app_state.persistence else {
+        return;
+    };
+
+    let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(persist.clone());
+    let interval_secs = batata_ai::search::consumer::DEFAULT_INTERVAL_SECONDS;
+
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(Duration::from_secs(interval_secs));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            timer.tick().await;
+            // A failed poll must not kill the loop; the next tick retries.
+            if let Err(e) = consumer.consume_once().await {
+                warn!(error = %e, "AI resource search index poll failed");
+            }
+        }
+    });
+
+    info!(
+        "AI resource search index consumer started (every {}s)",
+        interval_secs
+    );
 }
 
 /// Start xDS service if enabled.

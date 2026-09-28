@@ -60,3 +60,4 @@ base64 = { workspace = true }
 # Hashing
 md-5 = { workspace = true }
 const-hex = { workspace = true }
+sha2 = { workspace = true }

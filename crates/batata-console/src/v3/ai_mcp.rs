@@ -13,7 +13,7 @@ use batata_common::model::Page;
 use batata_common::model::ai::mcp::{
     ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery,
     McpImportValidateRequest, McpImportValidateResponse, McpLabelsRequest, McpListQuery,
-    McpRegistryStats, McpScopeQuery, McpServer, McpServerBasicInfo, McpServerConfig,
+    McpRegistryStats, McpScopeQuery, McpSearchQuery, McpServer, McpServerBasicInfo, McpServerConfig,
     McpServerRegistration, McpServerVersionDetail, McpServerVersionSummary, McpStatusQuery, McpTool,
     McpVersionsQuery,
 };
@@ -478,6 +478,58 @@ fn version_target(q: &McpDetailQuery) -> Option<(&str, &str, &str)> {
     }
 }
 
+/// Keyword search over the MCP search index.
+///
+/// GET /v3/console/ai/mcp/search?namespaceId=xxx&query=xxx
+///
+/// Upstream exposes an equivalent client search at
+/// `/v3/client/ai/resources/search`; this console variant is scoped to MCP and
+/// uses numbered pages rather than cursors.
+#[get("/search")]
+async fn search_servers(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    svc: web::Data<Arc<dyn McpServerService>>,
+    params: web::Query<McpSearchQuery>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/mcp")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let q = params.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let query = match q.query.as_deref().map(str::trim) {
+        Some(t) if !t.is_empty() => t,
+        _ => return bad_request("query is required"),
+    };
+    if query.len() > batata_common::model::ai::search::MAX_QUERY_LENGTH {
+        return bad_request(&format!(
+            "query exceeds {} characters",
+            batata_common::model::ai::search::MAX_QUERY_LENGTH
+        ));
+    }
+
+    let page_no = q.page_no.unwrap_or(1).max(1);
+    let page_size = q
+        .page_size
+        .unwrap_or(batata_common::model::ai::search::DEFAULT_PAGE_SIZE)
+        .clamp(1, batata_common::model::ai::search::MAX_PAGE_SIZE);
+
+    match svc
+        .search_mcp_servers(namespace, query, page_no, page_size)
+        .await
+    {
+        Ok(page) => common_response::Result::<
+            batata_common::model::Page<batata_common::model::ai::search::AiResourceSearchHit>,
+        >::http_success(page),
+        Err(e) => server_error(e.to_string()),
+    }
+}
+
 /// Create a draft version of an MCP server
 /// POST /v3/console/ai/mcp/draft
 #[post("/draft")]
@@ -916,6 +968,7 @@ pub fn routes() -> Scope {
         .service(get_server)
         .service(list_versions)
         .service(get_version)
+        .service(search_servers)
         .service(create_draft)
         .service(update_draft)
         .service(delete_draft)

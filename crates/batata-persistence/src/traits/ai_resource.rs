@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::model::{
     AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo,
-    AiResourceTaskInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo,
+    AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo,
 };
 
 /// Error returned by backends that do not implement the AI search index yet.
@@ -304,6 +304,28 @@ pub trait AiResourcePersistence: Send + Sync {
         resource_version: &str,
     ) -> anyhow::Result<u64> {
         let _ = (namespace_id, resource_type, resource_name, resource_version);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    // ========================================================================
+    // ai_resource_search_chunk querying
+    // ========================================================================
+
+    /// Keyword search over enabled chunks of one namespace.
+    ///
+    /// Mirrors upstream `AiResourceSearchRepository.searchChunks`: matches
+    /// `text` as a case-insensitive substring of `canonical_text` or
+    /// `chunk_text`, scoring canonical matches higher. `resource_types`
+    /// restricts the search when non-empty. Results are ordered by descending
+    /// score and capped at `limit`.
+    async fn search_chunk_search(
+        &self,
+        namespace_id: &str,
+        text: &str,
+        resource_types: &[&str],
+        limit: u64,
+    ) -> anyhow::Result<Vec<AiResourceSearchHitInfo>> {
+        let _ = (namespace_id, text, resource_types, limit);
         anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
     }
 

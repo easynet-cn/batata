@@ -112,6 +112,13 @@ pub mod search {
     pub const STAGE_BASE_INDEX: &str = "base_index";
     /// Stage that performs LLM enrichment over the built index.
     pub const STAGE_LLM_ENHANCEMENT: &str = "llm_enhancement";
+
+    /// Task is waiting to be picked up.
+    pub const TASK_STATUS_PENDING: &str = "pending";
+    /// Task is currently leased by a worker.
+    pub const TASK_STATUS_PROCESSING: &str = "processing";
+    /// Task finished all of its stages.
+    pub const TASK_STATUS_COMPLETED: &str = "completed";
 }
 
 /// Repository for AI resources.

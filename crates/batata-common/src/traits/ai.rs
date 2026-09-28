@@ -14,6 +14,7 @@ use crate::model::ai::mcp::{
     McpServerVersionSummary,
 };
 use crate::model::ai::pipeline::PipelineExecution;
+use crate::model::ai::search::AiResourceSearchHit;
 use crate::model::ai::skill::{Skill, SkillBasicInfo, SkillMeta, SkillSummary};
 
 /// Trait for skill lifecycle operations (CRUD, draft, publish, etc.)
@@ -498,6 +499,18 @@ pub trait McpServerService: Send + Sync {
         name: &str,
         new_scope: &str,
     ) -> anyhow::Result<()>;
+
+    /// Keyword search over the MCP search index.
+    ///
+    /// Returns ranked, paginated hits. Requires the index to have been built
+    /// (publishing schedules a `search_index` task that converges it).
+    async fn search_mcp_servers(
+        &self,
+        namespace: &str,
+        query: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<AiResourceSearchHit>>;
 
     /// Import tools from a running MCP server via SSE transport
     async fn import_tools_from_mcp(

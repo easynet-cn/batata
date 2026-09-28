@@ -258,6 +258,65 @@ async fn versions_endpoint_requires_mcp_name() {
     clean(&store).await;
 }
 
+/// GET /ai/mcp/search returns ranked hits once the index has been built.
+#[actix_web::test]
+#[ignore]
+async fn search_endpoint_returns_ranked_hits() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+
+    // Build the index the same way the background consumer would.
+    let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(
+        store.clone() as std::sync::Arc<dyn batata_persistence::PersistenceService>,
+    );
+    svc.publish_mcp_server_version(NS, NAME, "1.0.0")
+        .await
+        .expect("publish schedules the task");
+    consumer.consume_once().await.expect("consume");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let req = test::TestRequest::get()
+        .uri("/ai/mcp/search?query=echo")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "search should succeed");
+
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains(NAME), "the server must be found: {body}");
+    assert!(body.contains("score"), "hits must carry a score: {body}");
+
+    // A term that matches nothing returns an empty page, not an error.
+    let req = test::TestRequest::get()
+        .uri("/ai/mcp/search?query=zzzznomatchzzzz")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    clean(&store).await;
+}
+
+/// A missing query is rejected with 400.
+#[actix_web::test]
+#[ignore]
+async fn search_endpoint_requires_query() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let req = test::TestRequest::get().uri("/ai/mcp/search").to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a missing query must be rejected"
+    );
+
+    clean(&store).await;
+}
+
 /// An unknown scope is rejected with 400 by the handler, before the service
 /// sees it.
 #[actix_web::test]

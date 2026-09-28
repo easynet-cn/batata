@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::model::*;
+use batata_common::model::ai::search::AiResourceSearchHit;
 use batata_server_common::model::response::Result as ApiResult;
 
 /// MCP server change event for subscriptions
@@ -803,6 +804,16 @@ impl batata_common::McpServerService for McpServerRegistry {
         _name: &str,
         _new_scope: &str,
     ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn search_mcp_servers(
+        &self,
+        _namespace: &str,
+        _query: &str,
+        _page_no: u64,
+        _page_size: u64,
+    ) -> anyhow::Result<batata_common::model::Page<AiResourceSearchHit>> {
         anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
 

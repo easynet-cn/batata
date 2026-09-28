@@ -9,6 +9,7 @@ pub mod agentspec;
 pub mod mcp;
 pub mod pipeline;
 pub mod prompt;
+pub mod search;
 pub mod skill;
 #[cfg(feature = "skill-zip")]
 pub mod skill_zip;

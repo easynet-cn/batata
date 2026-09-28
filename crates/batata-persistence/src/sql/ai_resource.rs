@@ -1047,4 +1047,110 @@ impl AiResourcePersistence for ExternalDbPersistService {
 
         Ok(result.rows_affected)
     }
+
+    async fn search_chunk_search(
+        &self,
+        namespace_id: &str,
+        text: &str,
+        resource_types: &[&str],
+        limit: u64,
+    ) -> anyhow::Result<Vec<AiResourceSearchHitInfo>> {
+        if text.trim().is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let backend = self.db.get_database_backend();
+        let like = format!("%{}%", text.trim().to_lowercase());
+
+        // Placeholder style differs: PostgreSQL numbers them, MySQL uses `?`.
+        let mut sql = String::new();
+        let mut values: Vec<sea_orm::Value> = Vec::new();
+        let mut next_index = 1usize;
+        let mut placeholder = |sql: &mut String| {
+            match backend {
+                DatabaseBackend::Postgres => {
+                    sql.push_str(&format!("${next_index}"));
+                }
+                _ => sql.push('?'),
+            }
+            next_index += 1;
+        };
+
+        // A bare CASE yields DECIMAL on MySQL, which does not decode into f64;
+        // the cast makes the column type explicit on both dialects.
+        let double_type = match backend {
+            DatabaseBackend::Postgres => "DOUBLE PRECISION",
+            _ => "DOUBLE",
+        };
+
+        sql.push_str(
+            "SELECT document_id, id AS chunk_id, resource_type, resource_name, \
+             resource_version, chunk_type, CAST(CASE WHEN LOWER(canonical_text) LIKE ",
+        );
+        placeholder(&mut sql);
+        sql.push_str(" THEN 1.0 WHEN LOWER(chunk_text) LIKE ");
+        placeholder(&mut sql);
+        sql.push_str(" THEN 0.8 ELSE 0.4 END AS ");
+        sql.push_str(double_type);
+        sql.push_str(") AS score FROM ai_resource_search_chunk WHERE namespace_id = ");
+        placeholder(&mut sql);
+        sql.push_str(" AND status = ");
+        placeholder(&mut sql);
+        sql.push_str(" AND (LOWER(canonical_text) LIKE ");
+        placeholder(&mut sql);
+        sql.push_str(" OR LOWER(chunk_text) LIKE ");
+        placeholder(&mut sql);
+        sql.push(')');
+
+        values.push(like.clone().into());
+        values.push(like.clone().into());
+        values.push(namespace_id.to_string().into());
+        values.push(search_status_enabled().into());
+        values.push(like.clone().into());
+        values.push(like.clone().into());
+
+        if !resource_types.is_empty() {
+            sql.push_str(" AND resource_type IN (");
+            for (i, resource_type) in resource_types.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                placeholder(&mut sql);
+                values.push((*resource_type).to_string().into());
+            }
+            sql.push(')');
+        }
+
+        sql.push_str(" ORDER BY score DESC LIMIT ");
+        placeholder(&mut sql);
+        values.push(limit.into());
+
+        let rows = self
+            .db
+            .query_all_raw(Statement::from_sql_and_values(backend, &sql, values))
+            .await?;
+
+        let mut hits = Vec::with_capacity(rows.len());
+        for row in rows {
+            hits.push(AiResourceSearchHitInfo {
+                document_id: row.try_get("", "document_id")?,
+                chunk_id: row.try_get("", "chunk_id")?,
+                resource_type: row.try_get("", "resource_type")?,
+                resource_name: row.try_get("", "resource_name")?,
+                resource_version: row.try_get("", "resource_version")?,
+                chunk_type: row.try_get("", "chunk_type")?,
+                score: row.try_get("", "score")?,
+            });
+        }
+
+        Ok(hits)
+    }
+}
+
+/// Status of chunks eligible for search.
+///
+/// Kept as a named function so the raw SQL and the entity-based code cannot
+/// drift apart.
+fn search_status_enabled() -> &'static str {
+    "enabled"
 }

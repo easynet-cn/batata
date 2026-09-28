@@ -251,9 +251,95 @@ they carry no end-user identity.
 
       > Not traced: read endpoints (upstream only traces writes), the A2A
       > batch-register endpoint, and gRPC / internal client paths.
-- [ ] `search/` layer — async and task-driven: enqueue a `search_index` task,
-      poll/lease consumer, stages `base_index` → `llm_enhancement`.
-      Not query-time logic over `ai_resource`.
+- [~] `search/` layer — **projection and scheduling done, consumer pending**.
+
+      Implemented (mirrors `AiResourceIndexMaintenanceService` and
+      `AiResourceIndexServiceImpl.rebuildAiResource`):
+      - `search/mod.rs`: deterministic projection — one document plus chunks
+        (`description`, `capability`, `tag`, `metadata_io`, `metadata_risk`,
+        `not_for`, and `mcp_content` for source texts).
+        `canonical_text` is the lowercased `type + displayName + chunkType +
+        text` join; `chunk_hash` covers the resource key, chunk type and
+        canonical text; `source_digest` covers every field that would change
+        the projection, so an unchanged rebuild is skipped.
+      - `search/task.rs`: task key is SHA-256 of
+        `search_index \n namespace \n type \n name`, so re-scheduling updates
+        the existing row instead of queueing a duplicate. Statuses
+        `pending` / `processing` / `completed`.
+      - `search/service.rs`: `schedule()` and `rebuild_mcp_version()`, the
+        latter returning `false` when the stored digest already matches.
+      - Publishing (and force-publishing) an MCP version now schedules a
+        `base_index` task. Scheduling failures are logged, not propagated —
+        indexing is asynchronous upstream.
+
+      Covered by `crates/batata-ai/tests/mcp_search_index.rs` (both engines)
+      plus 15 unit tests.
+
+      > Deviations: digests use SHA-256 rather than upstream MD5 (they are only
+      > compared against themselves, and 64 hex chars still fit `varchar(64)`).
+      >
+      - `search/consumer.rs`: `consume_once()` polls due tasks (batch 100),
+        skips completed and still-leased ones, claims with a 60s lease, runs
+        `base_index`, then completes / removes / retries. Retry backoff is
+        `min(300, 5 << min(retry_count, 6))` seconds, matching upstream.
+        Removal (not retry) is used when the resource is gone.
+        `rebuild_latest_mcp` also prunes documents left by superseded
+        versions, so only the latest version stays indexed.
+
+      Covered by `crates/batata-ai/tests/mcp_search_index.rs` — 3 tests on
+      both engines covering schedule→rebuild→skip, publish→consume→complete
+      →skip, and removal for a missing resource — plus 17 unit tests.
+
+      > Known limitation: claiming is **not** atomic. The persistence layer
+      > exposes an upsert for tasks but no compare-and-set, so two nodes could
+      > claim the same task. The projection is idempotent (keyed by
+      > `source_digest`), so the worst case is duplicate work, not a wrong
+      > index. A proper `task_claim` with a revision predicate would fix it.
+      >
+      Wired into server startup: `start_ai_search_index_consumer` in
+      `builder/app_builder.rs` spawns a poll loop every
+      `DEFAULT_INTERVAL_SECONDS` (5s, matching the upstream default), with
+      `MissedTickBehavior::Skip` and errors logged rather than fatal. It is
+      skipped when there is no local persistence.
+
+      - `search/query.rs`: keyword search. Mirrors upstream recall → rank →
+        paginate, minus the vector channel (with no pgvector, keyword hits are
+        the ranking, which is what upstream `recallWithMaxScore` degenerates
+        to). `search_chunk_search` uses the upstream CASE scoring: 1.0 for a
+        `canonical_text` match, 0.8 for `chunk_text`, 0.4 otherwise, ordered by
+        score desc. Hits collapse per resource keeping the best score, ties
+        break by name so paging is stable.
+
+        Two dialect details worth remembering: PostgreSQL numbers placeholders
+        (`$1`) while MySQL uses `?`, so the SQL builds them per backend; and a
+        bare `CASE` yields `DECIMAL` on MySQL, which does not decode into `f64`,
+        hence the explicit cast to `DOUBLE` / `DOUBLE PRECISION`.
+
+      Covered by `crates/batata-ai/tests/mcp_search_index.rs` — 4 tests on both
+      engines (schedule→rebuild→skip, publish→consume→complete→skip, removal
+      for a missing resource, keyword search with ranking and pagination) —
+      plus 21 unit tests.
+
+      - **HTTP endpoint**: `GET /v3/console/ai/mcp/search?namespaceId=&query=&pageNo=&pageSize=`.
+        Validates that `query` is present and within upstream's 1024-char
+        limit, and clamps `pageSize` to upstream's max of 100. Upstream's
+        equivalent is `GET /v3/client/ai/resources/search` (`@Since 3.3.0`,
+        cursor-based); this console variant is MCP-scoped and page-numbered.
+
+        The hit type (`AiResourceSearchHit`) lives in `batata-common` because
+        `batata-console` cannot depend on `batata-ai` — same constraint that
+        put `ai_trace` there. It is exposed through the existing
+        `McpServerService` trait, so `McpServerRegistry` returns its usual
+        explicit "not supported" error.
+
+      Covered by `crates/batata-ai/tests/mcp_search_index.rs` (4 tests) and
+      `crates/batata-server/tests/mcp_console_routes.rs` (15 tests), both on
+      both engines, plus 21 unit tests.
+
+      > Still missing: the `llm_enhancement` stage and vector/embedding
+      > storage. Note the consumer loop runs on **every** node; with a
+      > non-atomic claim this is safe (idempotent projection) but means
+      > duplicate work across nodes.
 - [x] Replaced the config-backed storage for **MCP / Skill / AgentSpec / A2A**
       with the `ai_resource*` path. No compatibility mode: Batata is unreleased
       and has no stored data to migrate.

@@ -196,6 +196,28 @@ pub struct AiResourceSearchChunkInfo {
     pub gmt_modified: Option<String>,
 }
 
+/// One keyword search hit (a matching `ai_resource_search_chunk` row).
+///
+/// `score` follows upstream: 1.0 when the canonical text matches, 0.8 when only
+/// the raw chunk text matches, and 0.4 otherwise.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AiResourceSearchHitInfo {
+    /// Owning search document ID.
+    pub document_id: i64,
+    /// Matching chunk ID.
+    pub chunk_id: i64,
+    /// Resource type.
+    pub resource_type: String,
+    /// Resource name.
+    pub resource_name: String,
+    /// Resource version.
+    pub resource_version: String,
+    /// Chunk type.
+    pub chunk_type: String,
+    /// Match score.
+    pub score: f64,
+}
+
 /// AI resource async task (storage-agnostic representation of an
 /// `ai_resource_task` row)
 ///
