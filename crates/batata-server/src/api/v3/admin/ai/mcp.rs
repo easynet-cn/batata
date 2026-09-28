@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
+use actix_web::{
+    HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web,
+};
 use serde::Deserialize;
 
 use crate::{
@@ -115,13 +117,21 @@ async fn list_mcp(
         let search_type = q.search.as_deref().unwrap_or("blur");
         let page_no = q.page_no.unwrap_or(1);
         let page_size = q.page_size.unwrap_or(20);
-        let result = svc.list_mcp_servers(
-            namespace,
-            q.mcp_name.as_deref(),
-            search_type,
-            page_no,
-            page_size,
-        );
+        let user = req
+            .extensions()
+            .get::<batata_common::IdentityContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default();
+        let result = svc
+            .list_mcp_servers(
+                namespace,
+                q.mcp_name.as_deref(),
+                search_type,
+                page_no,
+                page_size,
+                Some(&user),
+            )
+            .await;
         HttpResponse::Ok().json(Result::success(result))
     } else {
         let result = registry.list_with_search(&q);
@@ -149,12 +159,18 @@ async fn get_mcp(
     let q = query.into_inner();
     if let Some(svc) = mcp_service {
         let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        let user = req
+            .extensions()
+            .get::<batata_common::IdentityContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default();
         match svc
             .get_mcp_server_detail(
                 namespace,
                 q.mcp_id.as_deref(),
                 q.mcp_name.as_deref(),
                 q.version.as_deref(),
+                Some(&user),
             )
             .await
         {

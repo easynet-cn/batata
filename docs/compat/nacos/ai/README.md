@@ -184,14 +184,83 @@ Goal: introduce the upstream layering before adding endpoints.
       storage backend" error, as a safety net for any backend added later that
       forgets to implement the index.
 - [ ] `runtime/` layer (runtime endpoint resolution, heartbeat)
-- [ ] `visibility/` layer via `ai_resource.scope` / `owner`
-- [ ] `trace/` layer — **JSON-line trace events, not a table** (`architecture.md` §6)
+- [x] `visibility/` layer via `ai_resource.scope` / `owner` — **MCP done**.
+      `list_mcp_servers` and `get_mcp_server_detail` now take a `user`
+      identity and consult `batata_visibility`; a resource the caller may not
+      read is excluded from the list (and from `total_count`) or rejected on
+      detail reads. `McpServerIndexData` carries `scope` / `owner`, populated
+      on `refresh()`, on create (private) and on `PUT /scope`.
+
+      Two real bugs were found and fixed while implementing this:
+      1. `McpServerIndex::search_by_name` returned early from the name filter,
+         which **skipped the visibility predicate entirely** whenever a name
+         was supplied.
+      2. `update_mcp_server_scope` updated the database but not the cached
+         index, so a scope change had no effect until the next full refresh.
+
+      Covered by `crates/batata-ai/tests/mcp_visibility.rs` (3 tests on both
+      engines). That file is a **separate test binary** on purpose:
+      `VisibilityPluginManager` is a process-global singleton and
+      `with_visibility` only registers when none exists, so a shared binary
+      would leave auth disabled and nothing would be filtered.
+
+      gRPC (`ai_handler.rs`) passes `None` — no end-user identity is available
+      there, so visibility is not enforced on that internal path.
+- [x] **A2A** visibility — `list_agents` and `get_agent_card` now take a `user`
+      identity. A2A's list already queried persistence through
+      `AiResourceListFilter`, so the scope/owner predicate is applied **by the
+      query** and shrinks `total_count` correctly — unlike MCP it has no
+      in-memory index to keep in sync. Covered by
+      `crates/batata-ai/tests/a2a_visibility.rs` (2 tests on both engines).
+
+All four AI domains (MCP, A2A, Skill, AgentSpec) now enforce `ai_resource`
+visibility. gRPC (`ai_handler.rs`) and the internal agent client pass `None`,
+so visibility is **not** enforced on those internal paths — deliberate, since
+they carry no end-user identity.
+- [x] `trace/` layer — **JSON-line trace events, not a table** (`architecture.md`
+      §6). `batata_common::ai_trace` mirrors upstream `AiResourceTraceService`
+      (`@since 3.2.1`): 27 `OP_*` constants, `SUCCESS`/`FAILURE`/`SKIPPED`, and
+      a JSON line per event logged at INFO under
+      `com.alibaba.nacos.ai.resource.trace` so existing ELK/Loki pipelines keep
+      working. Blank fields become `-`; blank `version` / `ext` are omitted.
+
+      Wired into all twelve MCP write endpoints (draft create/update/delete,
+      submit, publish, force-publish, redraft, online, offline, labels, status
+      → `ENABLE`/`DISABLE`, scope). Emission happens in the **console
+      handlers**, not inside `batata-ai`, because the operator and client IP
+      are only known at the HTTP layer — and `batata-console` does not depend
+      on `batata-ai`, hence the module lives in `batata-common`.
+
+      Resource type per domain, taken from upstream (not invented):
+      `skill`, `mcp`, `agentspec`, `prompt`, and **`a2a`** — note upstream
+      `LegacyA2aOperationService` emits `"a2a"` on trace records even though the
+      stored resource type is `agent`. Both constants exist; tracing uses
+      `RESOURCE_TYPE_A2A`.
+
+      Wiring status:
+
+      | Domain | Resource type | Traced |
+      |---|---|---|
+      | MCP | `mcp` | 12/12 write endpoints |
+      | Skill | `skill` | 12/12 |
+      | AgentSpec | `agentspec` | 12/12 |
+      | A2A | `a2a` | register, update, delete |
+
+      Every write endpoint emits one record on success and one on failure
+      (error message in `ext`).
+
+      > Not traced: read endpoints (upstream only traces writes), the A2A
+      > batch-register endpoint, and gRPC / internal client paths.
 - [ ] `search/` layer — async and task-driven: enqueue a `search_index` task,
       poll/lease consumer, stages `base_index` → `llm_enhancement`.
       Not query-time logic over `ai_resource`.
-- [ ] Replace the config-backed storage for MCP / Skill / AgentSpec / Prompt with
-      the `ai_resource*` path. No compatibility mode: Batata is unreleased and has
-      no stored data to migrate.
+- [x] Replaced the config-backed storage for **MCP / Skill / AgentSpec / A2A**
+      with the `ai_resource*` path. No compatibility mode: Batata is unreleased
+      and has no stored data to migrate.
+      Verified: `grep -rn "publish_config\|config_info::Entity" crates/batata-ai/src/`
+      returns **0** matches. The legacy config-group/data-id/tag constants in
+      `service/constants.rs` were deleted; only the NamingService endpoint
+      constants remain (endpoint resolution is still naming-based upstream too).
 - [ ] Rework `McpForm`-style simplified forms into structured request models
 
 ### Phase 2 — MCP parity (largest gap)
@@ -237,17 +306,32 @@ Goal: introduce the upstream layering before adding endpoints.
       in-memory `McpServerRegistry` fallback returns an explicit
       "versioning is not supported" error instead of faking one version.
 
-      Covered by `crates/batata-server/tests/mcp_console_routes.rs`
-      (5 route tests, run on live MySQL and PostgreSQL): version listing and
-      detail, draft creation, and 400 rejection of a missing `mcpName` /
-      unknown `status`. The test builds a real `AppState` (stub cluster
-      manager, `Configuration` with console auth disabled) on top of the real
-      database and the real MCP service.
+      Covered by `crates/batata-server/tests/mcp_console_routes.rs` — **13
+      route tests**, run on live MySQL and PostgreSQL. Each of the fourteen
+      endpoints has a success-path test asserting the state it produces
+      (`submit` → `reviewing`, `publish` / `force-publish` → `online`,
+      `redraft` → `draft`, `offline` → `offline`, `online` → `online`,
+      `labels` keeps `latest`, …), plus 400-rejection tests for a missing
+      `mcpName` and an unknown `status`.
 
-      > Note: only these five flows are covered. `submit`, `publish`,
-      > `force-publish`, `redraft`, `online`, `offline`, `labels` and `scope`
-      > have route tests only for the parameter-validation path; their success
-      > paths are covered at the service layer instead.
+      The test builds a real `AppState` (stub cluster manager, `Configuration`
+      with console auth disabled — console auth defaults to **enabled**) on top
+      of the real database and the real MCP service, so it exercises
+      path → handler → service rather than the service alone.
+
+      **MCP is endpoint-complete.** Upstream `McpAdminController` declares
+      exactly these fourteen (`McpAdminController.java:92-370`) — there is no
+      `biz-tags`, `version/meta`, `version/download` or `upload` on MCP; those
+      belong to `SkillAdminController`, `AgentSpecAdminController` and
+      `PromptAdminController`.
+
+      Batata additionally keeps its own legacy console endpoints (`list`,
+      detail, create, update, delete, `endpoint` add/remove, `stats`,
+      `importToolsFromMcp`, `import/validate`). The `endpoint` pair has no
+      upstream counterpart.
+
+      > Not covered by tests: `search` (needs the async `search_index` task and
+      > the document/chunk index) and the legacy console endpoints above.
 - [ ] `online` / `offline`
 - [ ] Admin/Client controller split (management vs runtime discovery)
 - [ ] Validation service equivalent to `McpServerValidationService`

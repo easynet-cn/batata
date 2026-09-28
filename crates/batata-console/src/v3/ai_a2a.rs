@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 
+use super::ai_trace::{self, get_username, trace_write};
+
 use batata_common::model::ai::a2a::{
     AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentListResponse,
     AgentRegistrationRequest, AgentRegistryStats, AgentVersionListQuery,
@@ -41,6 +43,7 @@ async fn list_agents(
     let search_type = q.search.as_deref().unwrap_or("blur");
     let page_no = q.page_no.unwrap_or(1);
     let page_size = q.page_size.unwrap_or(20);
+    let user = get_username(&req);
     match svc
         .list_agents(
             namespace,
@@ -48,6 +51,7 @@ async fn list_agents(
             search_type,
             page_no,
             page_size,
+            Some(&user),
         )
         .await
     {
@@ -80,9 +84,10 @@ async fn get_agent(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let user = get_username(&req);
     if let Some(ref name) = q.agent_name {
         match svc
-            .get_agent_card(namespace, name, q.version.as_deref())
+            .get_agent_card(namespace, name, q.version.as_deref(), Some(&user))
             .await
         {
             Ok(Some(agent)) => common_response::Result::<RegisteredAgent>::http_success(agent),
@@ -127,12 +132,21 @@ async fn register_agent(
     );
 
     let req_body = body.into_inner();
-    match svc
+    let user = get_username(&req);
+    let result = svc
         .register_agent(&req_body.card, &req_body.namespace, "manual")
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_A2A,
+        batata_common::ai_trace::OP_CREATE_DRAFT,
+        Some(&req_body.card.name),
+        Some(&req_body.card.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(_id) => match svc
-            .get_agent_card(&req_body.namespace, &req_body.card.name, None)
+            .get_agent_card(&req_body.namespace, &req_body.card.name, None, Some(&user))
             .await
         {
             Ok(Some(agent)) => common_response::Result::<RegisteredAgent>::http_success(agent),
@@ -170,11 +184,21 @@ async fn update_agent(
     let req_body = body.into_inner();
     let fallback_name = req_body.card.name.clone();
     let name = q.agent_name.unwrap_or(fallback_name);
+    let user = get_username(&req);
 
     let mut card = req_body.card;
     card.name = name.clone();
-    match svc.update_agent_card(&card, &namespace, "manual").await {
-        Ok(()) => match svc.get_agent_card(&namespace, &name, None).await {
+    let result = svc.update_agent_card(&card, &namespace, "manual").await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_A2A,
+        batata_common::ai_trace::OP_UPDATE_DRAFT,
+        Some(&name),
+        Some(&card.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => match svc.get_agent_card(&namespace, &name, None, Some(&user)).await {
             Ok(Some(agent)) => common_response::Result::<RegisteredAgent>::http_success(agent),
             _ => common_response::Result::<bool>::http_success(true),
         },
@@ -207,10 +231,25 @@ async fn delete_agent(
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
     if let Some(ref name) = q.agent_name {
-        match svc
+        // Upstream distinguishes deleting one version from deleting the whole
+        // resource by whether a version was supplied.
+        let operation = if q.version.as_deref().is_some_and(|v| !v.is_empty()) {
+            batata_common::ai_trace::OP_DELETE_VERSION
+        } else {
+            batata_common::ai_trace::OP_DELETE_RESOURCE
+        };
+        let result = svc
             .delete_agent(namespace, name, q.version.as_deref())
-            .await
-        {
+            .await;
+        trace_write(
+            &req,
+            batata_common::ai_trace::RESOURCE_TYPE_A2A,
+            operation,
+            Some(name),
+            q.version.as_deref(),
+            ai_trace::outcome_of(&result),
+        );
+        match result {
             Ok(()) => common_response::Result::<bool>::http_success(true),
             Err(e) => common_response::Result::<String>::http_response(
                 404,

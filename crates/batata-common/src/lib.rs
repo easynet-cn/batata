@@ -14,6 +14,7 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::result_large_err)]
 #![allow(clippy::empty_line_after_doc_comments)]
+pub mod ai_trace;
 pub mod bincode;
 pub mod crypto;
 pub mod error;

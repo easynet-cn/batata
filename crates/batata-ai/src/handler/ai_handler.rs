@@ -185,7 +185,15 @@ impl PayloadHandler for QueryMcpServerHandler {
         // Try operation service first
         if let Some(ref svc) = self.mcp_service {
             match svc
-                .get_mcp_server_detail(&request.namespace_id, None, Some(&request.mcp_name), None)
+                .get_mcp_server_detail(
+                    &request.namespace_id,
+                    None,
+                    Some(&request.mcp_name),
+                    None,
+                    // gRPC carries no end-user identity; visibility is not
+                    // enforced on this internal path.
+                    None,
+                )
                 .await
             {
                 Ok(Some(server)) => {
@@ -557,7 +565,9 @@ impl PayloadHandler for QueryAgentCardHandler {
         // Try operation service first
         if let Some(ref svc) = self.a2a_service {
             match svc
-                .get_agent_card(&request.namespace_id, &request.agent_name, None)
+                // gRPC carries no end-user identity; visibility is not
+                // enforced on this internal path.
+                .get_agent_card(&request.namespace_id, &request.agent_name, None, None)
                 .await
             {
                 Ok(Some(agent)) => {
@@ -824,7 +834,9 @@ impl PayloadHandler for AgentSearchRpcHandler {
 
         if let Some(ref svc) = self.a2a_service {
             match svc
-                .list_agents(namespace_id, agent_name_filter, "blur", page_no, page_size)
+                // gRPC carries no end-user identity; visibility is not
+                // enforced on this internal path.
+                .list_agents(namespace_id, agent_name_filter, "blur", page_no, page_size, None)
                 .await
             {
                 Ok(page) => {

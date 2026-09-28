@@ -37,12 +37,108 @@ struct A2aResourceExt {
 /// AI-resource-backed A2A agent operation service.
 pub struct A2aServerOperationService {
     persistence: Arc<dyn PersistenceService>,
+    visibility_manager: Arc<batata_visibility::VisibilityPluginManager>,
 }
 
 impl A2aServerOperationService {
     /// Creates a new `A2aServerOperationService` backed by the given persistence.
     pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
-        Self { persistence }
+        Self::with_visibility(persistence, None, false)
+    }
+
+    /// Creates a new `A2aServerOperationService` wired to the visibility plugin.
+    pub fn with_visibility(
+        persistence: Arc<dyn PersistenceService>,
+        auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
+        auth_enabled: bool,
+    ) -> Self {
+        let visibility_manager = batata_visibility::VisibilityPluginManager::instance();
+        if visibility_manager.default_service().is_none() {
+            let mut service = batata_visibility::DefaultVisibilityService::new()
+                .with_auth_disabled(!auth_enabled);
+            if let Some(plugin) = auth_plugin {
+                service = service.with_auth_plugin(plugin);
+            }
+            visibility_manager.register(Arc::new(service));
+        }
+        Self {
+            persistence,
+            visibility_manager,
+        }
+    }
+
+    /// Validate visibility for a single-resource operation.
+    async fn check_visibility(
+        &self,
+        user: Option<&str>,
+        action: &str,
+        resource: &AiResourceInfo,
+    ) -> anyhow::Result<()> {
+        let identity = user.unwrap_or("");
+        let vis_resource = batata_visibility::GenericVisibilityResource {
+            namespace_id: resource.namespace_id.clone(),
+            resource_name: resource.name.clone(),
+            resource_type: resource.resource_type.clone(),
+            scope: resource.scope.clone(),
+            owner: resource.owner.clone(),
+        };
+        let result = self
+            .visibility_manager
+            .validate_with_default(identity, action, "admin", &vis_resource)
+            .await;
+        if !result.is_allowed() {
+            anyhow::bail!(
+                "Visibility check failed: {}",
+                result.reason().unwrap_or("access denied")
+            );
+        }
+        Ok(())
+    }
+
+    /// Build an `AiResourceListFilter` from visibility query advice.
+    ///
+    /// The filter is applied by the persistence query, so it shrinks the
+    /// reported total rather than just the current page.
+    async fn build_list_filter<'a>(
+        &self,
+        user: Option<&'a str>,
+        name_filter: Option<&'a str>,
+        accurate: bool,
+    ) -> AiResourceListFilter<'a> {
+        let identity = user.unwrap_or("");
+        let advisor = self
+            .visibility_manager
+            .advise_with_default(
+                identity,
+                batata_visibility::ACTION_READ,
+                "admin",
+                &batata_visibility::VisibilityQueryContext {
+                    namespace_id: String::new(),
+                    resource_type: resource_type::AGENT.to_string(),
+                },
+            )
+            .await;
+
+        let mut filter = AiResourceListFilter::new().with_name_filter(name_filter, accurate);
+        match advisor.base_predicate {
+            batata_visibility::BaseVisibilityPredicate::All => {}
+            batata_visibility::BaseVisibilityPredicate::Public => {
+                filter = filter.with_scope(Some(batata_visibility::SCOPE_PUBLIC));
+            }
+            batata_visibility::BaseVisibilityPredicate::Owner => {
+                if !identity.is_empty() {
+                    filter = filter.with_owner(Some(identity), false);
+                }
+            }
+            batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
+                if !identity.is_empty() {
+                    filter = filter.with_owner(Some(identity), true);
+                } else {
+                    filter = filter.with_scope(Some(batata_visibility::SCOPE_PUBLIC));
+                }
+            }
+        }
+        filter
     }
 
     // =========================================================================
@@ -224,11 +320,15 @@ impl A2aServerOperationService {
     }
 
     /// Get agent card by name and optional version
+    ///
+    /// `user` is the caller identity; an agent the caller may not read is
+    /// reported as absent rather than leaking its contents.
     pub async fn get_agent_card(
         &self,
         namespace: &str,
         agent_name: &str,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<RegisteredAgent>> {
         let resource = match self
             .persistence
@@ -238,6 +338,9 @@ impl A2aServerOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
+
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         let version_info = Self::parse_version_info(&resource);
         let target_version = version
@@ -474,6 +577,7 @@ impl A2aServerOperationService {
     ///
     /// Returns `Page<AgentCardVersionInfo>` to match Nacos A2aServerOperationService.listAgents()
     /// which returns `Page<AgentCardVersionInfo>` (not full agent details).
+    /// List agents visible to `user`.
     pub async fn list_agents(
         &self,
         namespace: &str,
@@ -481,13 +585,16 @@ impl A2aServerOperationService {
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
         let page_no = page_no.max(1) as u64;
         let page_size_u64 = page_size as u64;
 
         let accurate = search_type == "accurate";
         let name_filter = agent_name.filter(|n| !n.is_empty());
-        let filter = AiResourceListFilter::new().with_name_filter(name_filter, accurate);
+        let filter = self
+            .build_list_filter(user, name_filter, accurate)
+            .await;
 
         let page = self
             .persistence
@@ -549,8 +656,10 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         namespace: &str,
         agent_name: &str,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<RegisteredAgent>> {
-        self.get_agent_card(namespace, agent_name, version).await
+        self.get_agent_card(namespace, agent_name, version, user)
+            .await
     }
 
     async fn update_agent_card(
@@ -579,8 +688,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
-        self.list_agents(namespace, agent_name, search_type, page_no, page_size)
+        self.list_agents(namespace, agent_name, search_type, page_no, page_size, user)
             .await
     }
 

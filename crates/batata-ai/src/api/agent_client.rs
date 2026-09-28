@@ -266,7 +266,8 @@ async fn search(
     let search_type = "blur";
 
     match a2a_service
-        .list_agents(ns, agent_name, search_type, page_no, page_size)
+        // No end-user identity on this internal client path.
+        .list_agents(ns, agent_name, search_type, page_no, page_size, None)
         .await
     {
         Ok(page) => {

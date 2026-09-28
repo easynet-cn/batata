@@ -99,7 +99,7 @@ async fn a2a_agent_round_trip() {
 
     // ---- read latest -------------------------------------------------------
     let agent = svc
-        .get_agent_card(NS, NAME, None)
+        .get_agent_card(NS, NAME, None, None)
         .await
         .expect("get")
         .expect("agent must exist");
@@ -114,14 +114,14 @@ async fn a2a_agent_round_trip() {
         .expect("add version");
 
     let latest = svc
-        .get_agent_card(NS, NAME, None)
+        .get_agent_card(NS, NAME, None, None)
         .await
         .expect("get")
         .expect("agent must exist");
     assert_eq!(latest.card.version, "2.0.0", "latest must advance");
 
     let old = svc
-        .get_agent_card(NS, NAME, Some("1.0.0"))
+        .get_agent_card(NS, NAME, Some("1.0.0"), None)
         .await
         .expect("get")
         .expect("old version must remain readable");
@@ -150,7 +150,7 @@ async fn a2a_agent_round_trip() {
         .expect("update existing");
 
     let reread = svc
-        .get_agent_card(NS, NAME, Some("2.0.0"))
+        .get_agent_card(NS, NAME, Some("2.0.0"), None)
         .await
         .expect("get")
         .expect("agent must exist");
@@ -164,7 +164,7 @@ async fn a2a_agent_round_trip() {
 
     // ---- list agents -------------------------------------------------------
     let page = svc
-        .list_agents(NS, Some(NAME), "accurate", 1, 10)
+        .list_agents(NS, Some(NAME), "accurate", 1, 10, None)
         .await
         .expect("list agents");
     assert_eq!(page.total_count, 1, "expected exactly one agent");
@@ -177,7 +177,7 @@ async fn a2a_agent_round_trip() {
         .await
         .expect("delete version");
     assert!(
-        svc.get_agent_card(NS, NAME, Some("1.0.0"))
+        svc.get_agent_card(NS, NAME, Some("1.0.0"), None)
             .await
             .expect("get")
             .is_none(),
@@ -191,9 +191,9 @@ async fn a2a_agent_round_trip() {
 
     // ---- delete the whole agent --------------------------------------------
     svc.delete_agent(NS, NAME, None).await.expect("delete agent");
-    assert!(svc.get_agent_card(NS, NAME, None).await.expect("get").is_none());
+    assert!(svc.get_agent_card(NS, NAME, None, None).await.expect("get").is_none());
     assert_eq!(
-        svc.list_agents(NS, Some(NAME), "accurate", 1, 10)
+        svc.list_agents(NS, Some(NAME), "accurate", 1, 10, None)
             .await
             .expect("list agents")
             .total_count,

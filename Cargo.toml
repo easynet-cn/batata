@@ -89,7 +89,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 yaml_serde = "0.10"
 serde_urlencoded = "0.7"
-serde_with = "3.23"
+serde_with = "3.24"
 
 # Auth
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }

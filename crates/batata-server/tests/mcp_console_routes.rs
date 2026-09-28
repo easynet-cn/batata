@@ -310,3 +310,188 @@ async fn draft_endpoint_creates_version() {
 
     clean(&store).await;
 }
+
+/// Create the server, then a draft version on top of it. The service requires
+/// the resource to exist before a draft can be added.
+async fn server_with_draft(svc: &McpServerOperationService, base: &str, draft: &str) {
+    svc.create_mcp_server(NS, &registration(base, "echo"))
+        .await
+        .unwrap_or_else(|e| panic!("create server {base}: {e}"));
+    svc.create_mcp_server_draft(NS, &registration(draft, "echo"), false)
+        .await
+        .unwrap_or_else(|e| panic!("create draft {draft}: {e}"));
+}
+
+/// Assert a lifecycle endpoint moved a version to `expected_status`.
+async fn assert_transition(uri: &str, expected_status: &str, label: &str) {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let req = test::TestRequest::post().uri(uri).to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "{label} should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains(expected_status),
+        "{label} should move the version to '{expected_status}': {body}"
+    );
+
+    clean(&store).await;
+}
+
+/// POST /ai/mcp/submit moves a draft to reviewing.
+#[actix_web::test]
+#[ignore]
+async fn submit_endpoint_moves_draft_to_reviewing() {
+    let (store, svc) = setup().await;
+    server_with_draft(&svc, "1.0.0", "2.0.0").await;
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/submit?mcpName=route-mcp&version=2.0.0")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "submit should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("reviewing"), "submit should review: {body}");
+
+    clean(&store).await;
+}
+
+/// POST /ai/mcp/publish moves a reviewed version online.
+#[actix_web::test]
+#[ignore]
+async fn publish_endpoint_moves_reviewing_to_online() {
+    let (store, svc) = setup().await;
+    server_with_draft(&svc, "1.0.0", "2.0.0").await;
+    svc.submit_mcp_server_version(NS, NAME, "2.0.0")
+        .await
+        .expect("submit");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/publish?mcpName=route-mcp&version=2.0.0")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "publish should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("online"), "publish should go online: {body}");
+
+    clean(&store).await;
+}
+
+/// POST /ai/mcp/force-publish publishes without passing review.
+#[actix_web::test]
+#[ignore]
+async fn force_publish_endpoint_skips_review() {
+    let (store, svc) = setup().await;
+    server_with_draft(&svc, "1.0.0", "2.0.0").await;
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/force-publish?mcpName=route-mcp&version=2.0.0")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "force-publish should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("online"), "force-publish should go online: {body}");
+
+    clean(&store).await;
+}
+
+/// POST /ai/mcp/redraft moves a version back to draft.
+#[actix_web::test]
+#[ignore]
+async fn redraft_endpoint_moves_version_back_to_draft() {
+    assert_transition("/ai/mcp/redraft?mcpName=route-mcp&version=1.0.0", "draft", "redraft").await;
+}
+
+/// POST /ai/mcp/offline takes an online version offline.
+#[actix_web::test]
+#[ignore]
+async fn offline_endpoint_takes_version_offline() {
+    assert_transition("/ai/mcp/offline?mcpName=route-mcp&version=1.0.0", "offline", "offline").await;
+}
+
+/// POST /ai/mcp/online brings an offline version back online.
+#[actix_web::test]
+#[ignore]
+async fn online_endpoint_brings_version_back_online() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+    svc.offline_mcp_server_version(NS, NAME, "1.0.0")
+        .await
+        .expect("offline");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/online?mcpName=route-mcp&version=1.0.0")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "online should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("online"), "online should go online: {body}");
+
+    clean(&store).await;
+}
+
+/// PUT /ai/mcp/labels replaces custom labels but keeps the server-managed
+/// `latest` label.
+#[actix_web::test]
+#[ignore]
+async fn labels_endpoint_replaces_labels_and_keeps_latest() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::put()
+        .uri("/ai/mcp/labels?mcpName=route-mcp")
+        .set_json(serde_json::json!({"labels": {"stable": "1.0.0"}}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "labels should succeed");
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("stable"), "custom label must be stored: {body}");
+    assert!(body.contains("latest"), "the latest label must survive: {body}");
+
+    clean(&store).await;
+}
+
+/// PUT /ai/mcp/scope changes the visibility scope.
+#[actix_web::test]
+#[ignore]
+async fn scope_endpoint_sets_scope() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let req = test::TestRequest::put()
+        .uri("/ai/mcp/scope?mcpName=route-mcp&scope=PUBLIC")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK, "scope should succeed");
+
+    clean(&store).await;
+}

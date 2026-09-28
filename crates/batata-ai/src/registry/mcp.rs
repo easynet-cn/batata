@@ -624,6 +624,7 @@ impl batata_common::McpServerService for McpServerRegistry {
         _id: Option<&str>,
         name: Option<&str>,
         _version: Option<&str>,
+        _user: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>> {
         if let Some(name) = name {
             Ok(self.get(namespace, name))
@@ -658,13 +659,14 @@ impl batata_common::McpServerService for McpServerRegistry {
         }
     }
 
-    fn list_mcp_servers(
+    async fn list_mcp_servers(
         &self,
         namespace: &str,
         name: Option<&str>,
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        _user: Option<&str>,
     ) -> batata_common::model::Page<McpServerBasicInfo> {
         let query = McpListQuery {
             namespace_id: Some(namespace.to_string()),

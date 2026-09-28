@@ -17,6 +17,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 postcard = { workspace = true }
 
+# Logging (AI resource trace lines)
+tracing = { workspace = true }
+
 # Async traits
 async-trait = { workspace = true }
 

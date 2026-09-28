@@ -210,11 +210,11 @@ the new tables but appears to still use the config-backed path in
 
 | # | Gap | Action | Phase |
 |---|---|---|---|
-| 1 | Missing `ai_resource_search_document` | Add table (edit existing migration) | 1 |
-| 2 | Missing `ai_resource_search_chunk` | Add table | 1 |
-| 3 | Missing `ai_resource_task` | Add table | 1 |
+| 1 | ~~Missing `ai_resource_search_document`~~ | **done** — migration `m20260412_000014`, verified on MySQL 8.4 + PostgreSQL 18 | 1 |
+| 2 | ~~Missing `ai_resource_search_chunk`~~ | **done** — same migration | 1 |
+| 3 | ~~Missing `ai_resource_task`~~ | **done** — same migration | 1 |
 | 4 | `ai_resource_search_embedding_pg` | Optional — needs pgvector; decide scope | later |
-| 5 | Legacy config-backed path still in use | Batata is unreleased, so replace it with the `ai_resource*` path domain by domain — **no compatibility mode needed** (upstream keeps its legacy service only for released users) | 1 |
+| 5 | ~~Legacy config-backed path still in use~~ | **done** — MCP, Skill, AgentSpec and A2A all use `ai_resource*`; zero `config_info` calls remain in `batata-ai`. No compatibility mode (Batata is unreleased). Legacy constants deleted from `service/constants.rs` | 1 |
 | 6 | No `repository/` abstraction over the 5 tables | Add repository layer | 1 |
 | 7 | `visibility/` not enforced from `scope`/`owner` | Add visibility layer | 1 |
 | 8 | `search/` built on document + chunk + task | Add search layer | 1 |

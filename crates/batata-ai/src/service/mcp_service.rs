@@ -34,12 +34,89 @@ const MCP_DEFAULT_FROM: &str = "local";
 pub struct McpServerOperationService {
     persistence: Arc<dyn PersistenceService>,
     index: Arc<McpServerIndex>,
+    visibility_manager: Arc<batata_visibility::VisibilityPluginManager>,
 }
 
 impl McpServerOperationService {
     /// Creates a new `McpServerOperationService` with the given persistence and index.
     pub fn new(persistence: Arc<dyn PersistenceService>, index: Arc<McpServerIndex>) -> Self {
-        Self { persistence, index }
+        Self::with_visibility(persistence, index, None, false)
+    }
+
+    /// Creates a new `McpServerOperationService` wired to the visibility plugin.
+    ///
+    /// Registers a default visibility service (with the optional auth plugin and
+    /// auth enabled flag) if one is not already present, mirroring
+    /// `SkillOperationService`.
+    pub fn with_visibility(
+        persistence: Arc<dyn PersistenceService>,
+        index: Arc<McpServerIndex>,
+        auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>>,
+        auth_enabled: bool,
+    ) -> Self {
+        let visibility_manager = batata_visibility::VisibilityPluginManager::instance();
+        if visibility_manager.default_service().is_none() {
+            let mut service = batata_visibility::DefaultVisibilityService::new()
+                .with_auth_disabled(!auth_enabled);
+            if let Some(plugin) = auth_plugin {
+                service = service.with_auth_plugin(plugin);
+            }
+            visibility_manager.register(Arc::new(service));
+        }
+        Self {
+            persistence,
+            index,
+            visibility_manager,
+        }
+    }
+
+    /// Ask the visibility plugin which rows the caller may read.
+    async fn read_predicate(
+        &self,
+        user: Option<&str>,
+    ) -> batata_visibility::BaseVisibilityPredicate {
+        let identity = user.unwrap_or("");
+        let advisor = self
+            .visibility_manager
+            .advise_with_default(
+                identity,
+                batata_visibility::ACTION_READ,
+                "admin",
+                &batata_visibility::VisibilityQueryContext {
+                    namespace_id: String::new(),
+                    resource_type: resource_type::MCP.to_string(),
+                },
+            )
+            .await;
+        advisor.base_predicate
+    }
+
+    /// Validate visibility for a single-resource operation.
+    async fn check_visibility(
+        &self,
+        user: Option<&str>,
+        action: &str,
+        resource: &AiResourceInfo,
+    ) -> anyhow::Result<()> {
+        let identity = user.unwrap_or("");
+        let vis_resource = batata_visibility::GenericVisibilityResource {
+            namespace_id: resource.namespace_id.clone(),
+            resource_name: resource.name.clone(),
+            resource_type: resource.resource_type.clone(),
+            scope: resource.scope.clone(),
+            owner: resource.owner.clone(),
+        };
+        let result = self
+            .visibility_manager
+            .validate_with_default(identity, action, "admin", &vis_resource)
+            .await;
+        if !result.is_allowed() {
+            anyhow::bail!(
+                "Visibility check failed: {}",
+                result.reason().unwrap_or("access denied")
+            );
+        }
+        Ok(())
     }
 
     // =========================================================================
@@ -280,6 +357,10 @@ impl McpServerOperationService {
             version_count: 1,
             create_time: now.timestamp_millis(),
             modify_time: now.timestamp_millis(),
+            // Matches the `ai_resource` row written above; new servers are
+            // private until `PUT /scope` changes them.
+            scope: scope::PRIVATE.to_string(),
+            owner: String::new(),
         });
 
         info!(
@@ -294,12 +375,16 @@ impl McpServerOperationService {
     }
 
     /// Get MCP server detail by ID or name, optionally with a specific version
+    ///
+    /// `user` is the caller identity; a resource the caller may not read is
+    /// reported as absent rather than leaking its contents.
     pub async fn get_mcp_server_detail(
         &self,
         namespace: &str,
         id: Option<&str>,
         name: Option<&str>,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>> {
         let (_resolved_id, resolved_name) = match self.resolve_server(namespace, id, name).await? {
             Some(v) => v,
@@ -314,6 +399,9 @@ impl McpServerOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
+
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         let resource_version = Self::parse_resource_version(&resource);
         let latest = resource_version
@@ -497,6 +585,16 @@ impl McpServerOperationService {
                 .map(|d| d.create_time)
                 .unwrap_or_else(|| now.timestamp_millis()),
             modify_time: now.timestamp_millis(),
+            // Carry the previous scope/owner forward; default to private so a
+            // freshly indexed row is never over-permissive.
+            scope: index_data
+                .as_ref()
+                .map(|d| d.scope.clone())
+                .unwrap_or_else(|| scope::PRIVATE.to_string()),
+            owner: index_data
+                .as_ref()
+                .map(|d| d.owner.clone())
+                .unwrap_or_default(),
         });
 
         info!(
@@ -564,21 +662,47 @@ impl McpServerOperationService {
 
     /// List MCP servers with pagination and search.
     /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
-    pub fn list_mcp_servers(
+    /// List MCP servers visible to `user`.
+    ///
+    /// Visibility is applied inside the index search so the reported total
+    /// excludes rows the caller may not read.
+    pub async fn list_mcp_servers(
         &self,
         namespace: &str,
         name: Option<&str>,
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> batata_api::model::Page<McpServerBasicInfo> {
         let page_no = page_no.max(1);
         let offset = ((page_no - 1) * page_size) as usize;
         let limit = page_size as usize;
 
-        let (entries, total) =
-            self.index
-                .search_by_name(namespace, name, search_type, offset, limit);
+        let identity = user.unwrap_or("").to_string();
+        let predicate = self.read_predicate(user).await;
+        let visible = |entry: &McpServerIndexData| match &predicate {
+            batata_visibility::BaseVisibilityPredicate::All => true,
+            batata_visibility::BaseVisibilityPredicate::Public => {
+                entry.scope == batata_visibility::SCOPE_PUBLIC
+            }
+            batata_visibility::BaseVisibilityPredicate::Owner => {
+                !identity.is_empty() && entry.owner == identity
+            }
+            batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
+                entry.scope == batata_visibility::SCOPE_PUBLIC
+                    || (!identity.is_empty() && entry.owner == identity)
+            }
+        };
+
+        let (entries, total) = self.index.search_by_name(
+            namespace,
+            name,
+            search_type,
+            offset,
+            limit,
+            Some(&visible),
+        );
 
         let page_items: Vec<McpServerBasicInfo> = entries
             .into_iter()
@@ -1232,12 +1356,27 @@ impl McpServerOperationService {
 
         self.persistence
             .ai_resource_update_scope(namespace, &resource.name, resource_type::MCP, new_scope)
-            .await
+            .await?;
+
+        // The list path reads the in-memory index, so the cached scope has to
+        // change too — otherwise visibility keeps using the old value until the
+        // next full refresh.
+        if let Some(mut entry) = self.index.get_by_name(namespace, &resource.name) {
+            entry.scope = new_scope.to_string();
+            self.index.upsert(entry);
+        }
+
+        Ok(())
     }
 
     /// Get all servers (for MCP Registry server)
+    ///
+    /// This is the registry feed rather than an admin listing, so no visibility
+    /// filter is applied — pass a predicate at the call site if that changes.
     pub fn list_all_servers(&self) -> Vec<McpServerIndexData> {
-        self.index.search_by_name("", None, "blur", 0, usize::MAX).0
+        self.index
+            .search_by_name("", None, "blur", 0, usize::MAX, None)
+            .0
     }
 }
 
@@ -1273,8 +1412,9 @@ impl super::traits::McpServerService for McpServerOperationService {
         id: Option<&str>,
         name: Option<&str>,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>> {
-        self.get_mcp_server_detail(namespace, id, name, version)
+        self.get_mcp_server_detail(namespace, id, name, version, user)
             .await
     }
 
@@ -1296,15 +1436,17 @@ impl super::traits::McpServerService for McpServerOperationService {
         self.delete_mcp_server(namespace, name, id, version).await
     }
 
-    fn list_mcp_servers(
+    async fn list_mcp_servers(
         &self,
         namespace: &str,
         name: Option<&str>,
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> batata_api::model::Page<McpServerBasicInfo> {
-        self.list_mcp_servers(namespace, name, search_type, page_no, page_size)
+        self.list_mcp_servers(namespace, name, search_type, page_no, page_size, user)
+            .await
     }
 
     async fn list_mcp_server_versions(

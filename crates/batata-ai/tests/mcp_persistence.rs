@@ -323,7 +323,7 @@ async fn mcp_server_round_trip() {
 
     // ---- read back ---------------------------------------------------------
     let server = svc
-        .get_mcp_server_detail(NS, None, Some(NAME), None)
+        .get_mcp_server_detail(NS, None, Some(NAME), None, None)
         .await
         .expect("get")
         .expect("server must exist");
@@ -340,7 +340,7 @@ async fn mcp_server_round_trip() {
         .expect("add version");
 
     let latest = svc
-        .get_mcp_server_detail(NS, None, Some(NAME), None)
+        .get_mcp_server_detail(NS, None, Some(NAME), None, None)
         .await
         .expect("get")
         .expect("server must exist");
@@ -348,7 +348,7 @@ async fn mcp_server_round_trip() {
     assert_eq!(latest.tools[0].name, "beta");
 
     let old = svc
-        .get_mcp_server_detail(NS, None, Some(NAME), Some("1.0.0"))
+        .get_mcp_server_detail(NS, None, Some(NAME), Some("1.0.0"), None)
         .await
         .expect("get")
         .expect("old version must remain readable");
@@ -365,7 +365,7 @@ async fn mcp_server_round_trip() {
     svc.update_mcp_server(NS, &updated).await.expect("update");
 
     let reread = svc
-        .get_mcp_server_detail(NS, None, Some(NAME), Some("2.0.0"))
+        .get_mcp_server_detail(NS, None, Some(NAME), Some("2.0.0"), None)
         .await
         .expect("get")
         .expect("server must exist");
@@ -391,14 +391,14 @@ async fn mcp_server_round_trip() {
         .await
         .expect("delete version");
     assert!(
-        svc.get_mcp_server_detail(NS, None, Some(NAME), Some("1.0.0"))
+        svc.get_mcp_server_detail(NS, None, Some(NAME), Some("1.0.0"), None)
             .await
             .expect("get")
             .is_none(),
         "deleted version must be gone"
     );
     assert!(
-        svc.get_mcp_server_detail(NS, None, Some(NAME), Some("2.0.0"))
+        svc.get_mcp_server_detail(NS, None, Some(NAME), Some("2.0.0"), None)
             .await
             .expect("get")
             .is_some(),
@@ -534,7 +534,7 @@ async fn mcp_server_round_trip() {
         .await
         .expect("delete server");
     assert!(
-        svc.get_mcp_server_detail(NS, None, Some(NAME), None)
+        svc.get_mcp_server_detail(NS, None, Some(NAME), None, None)
             .await
             .expect("get")
             .is_none(),

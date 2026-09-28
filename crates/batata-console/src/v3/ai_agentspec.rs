@@ -5,9 +5,7 @@
 
 use std::sync::Arc;
 
-use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web,
-};
+use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 
 use batata_common::AgentSpecService;
 use batata_common::DEFAULT_NAMESPACE_ID;
@@ -25,12 +23,7 @@ fn normalize_namespace(ns: &str) -> &str {
     }
 }
 
-fn get_username(req: &HttpRequest) -> String {
-    req.extensions()
-        .get::<batata_common::IdentityContext>()
-        .map(|ctx| ctx.username.clone())
-        .unwrap_or_default()
-}
+use super::ai_trace::{self, get_username, trace_write};
 
 /// GET /v3/console/ai/agentspecs — Get agentspec detail
 #[get("")]
@@ -194,7 +187,18 @@ async fn delete_agentspec(
         }
     };
 
-    match agentspec_service.delete(ns, name, Some(get_username(&req).as_str())).await {
+    let result = agentspec_service
+        .delete(ns, name, Some(get_username(&req).as_str()))
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_DELETE_RESOURCE,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_internal_error(e),
     }
@@ -294,10 +298,18 @@ async fn upload_agentspec(
 
     let name = form.agent_spec_name.clone();
 
-    match agentspec_service
+    let result = agentspec_service
         .upload(ns, &name, &spec, &author, overwrite)
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_UPLOAD,
+        Some(&name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(spec_name) => HttpResponse::Ok().json(common_response::Result::success(spec_name)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -346,7 +358,7 @@ async fn create_draft(
         );
     }
 
-    match agentspec_service
+    let result = agentspec_service
         .create_draft(
             ns,
             agent_spec_name,
@@ -355,8 +367,16 @@ async fn create_draft(
             initial_content.as_ref(),
             &author,
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_CREATE_DRAFT,
+        Some(agent_spec_name),
+        form.target_version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(version) => HttpResponse::Ok().json(common_response::Result::success(version)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -426,10 +446,18 @@ async fn update_draft(
         );
     }
 
-    match agentspec_service
+    let result = agentspec_service
         .update_draft(ns, agent_spec_name, &spec, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_UPDATE_DRAFT,
+        Some(agent_spec_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -465,7 +493,18 @@ async fn delete_draft(
         }
     };
 
-    match agentspec_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
+    let result = agentspec_service
+        .delete_draft(ns, name, Some(get_username(&req).as_str()))
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_DELETE_DRAFT,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -493,10 +532,18 @@ async fn submit_agentspec(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .submit(ns, &form.agent_spec_name, &form.version, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_SUBMIT_REVIEW,
+        Some(&form.agent_spec_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(version) => HttpResponse::Ok().json(common_response::Result::success(version)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -524,15 +571,23 @@ async fn publish_agentspec(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .publish(
             ns,
             &form.agent_spec_name,
             &form.version,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_PUBLISH,
+        Some(&form.agent_spec_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -571,10 +626,18 @@ async fn update_labels(
         }
     };
 
-    match agentspec_service
+    let result = agentspec_service
         .update_labels(ns, &form.agent_spec_name, labels, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_UPDATE_LABELS,
+        Some(&form.agent_spec_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -602,10 +665,18 @@ async fn update_biz_tags(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .update_biz_tags(ns, &form.agent_spec_name, &form.biz_tags, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_UPDATE_BIZ_TAGS,
+        Some(&form.agent_spec_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -633,7 +704,7 @@ async fn online_agentspec(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .change_online_status(
             ns,
             &form.agent_spec_name,
@@ -642,8 +713,16 @@ async fn online_agentspec(
             true,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_ONLINE_VERSION,
+        Some(&form.agent_spec_name),
+        form.version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -671,7 +750,7 @@ async fn offline_agentspec(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .change_online_status(
             ns,
             &form.agent_spec_name,
@@ -680,8 +759,16 @@ async fn offline_agentspec(
             false,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_OFFLINE_VERSION,
+        Some(&form.agent_spec_name),
+        form.version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -709,10 +796,18 @@ async fn update_scope(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match agentspec_service
+    let result = agentspec_service
         .update_scope(ns, &form.agent_spec_name, &form.scope, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_UPDATE_SCOPE,
+        Some(&form.agent_spec_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,

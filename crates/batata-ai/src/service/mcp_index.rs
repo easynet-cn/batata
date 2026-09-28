@@ -30,6 +30,10 @@ pub struct McpServerIndexData {
     pub create_time: i64,
     /// Last modification time in epoch millis.
     pub modify_time: i64,
+    /// Visibility scope (`PUBLIC` / `PRIVATE`), mirrored from `ai_resource.scope`.
+    pub scope: String,
+    /// Owning user, mirrored from `ai_resource.owner`.
+    pub owner: String,
 }
 
 /// MCP Server Index with DashMap L1 cache
@@ -87,6 +91,10 @@ impl McpServerIndex {
     }
 
     /// Search by name with pagination (from cache)
+    ///
+    /// `visible` is an optional visibility predicate. It is applied **before**
+    /// the total is computed — filtering afterwards would report a total that
+    /// includes rows the caller is not allowed to see.
     pub fn search_by_name(
         &self,
         namespace: &str,
@@ -94,6 +102,7 @@ impl McpServerIndex {
         search_type: &str,
         offset: usize,
         limit: usize,
+        visible: Option<&dyn Fn(&McpServerIndexData) -> bool>,
     ) -> (Vec<McpServerIndexData>, u64) {
         let mut results: Vec<McpServerIndexData> = self
             .by_id
@@ -104,15 +113,25 @@ impl McpServerIndex {
                 if !namespace.is_empty() && entry.namespace != namespace {
                     return false;
                 }
-                // Filter by name
+                // Filter by name. This must not return early: doing so would
+                // skip the visibility check below.
                 if let Some(n) = name
                     && !n.is_empty()
                 {
-                    if search_type == "accurate" {
-                        return entry.name == n;
+                    let matches = if search_type == "accurate" {
+                        entry.name == n
                     } else {
-                        return entry.name.contains(n);
+                        entry.name.contains(n)
+                    };
+                    if !matches {
+                        return false;
                     }
+                }
+                // Filter by visibility, before pagination
+                if let Some(predicate) = visible
+                    && !predicate(entry)
+                {
+                    return false;
                 }
                 true
             })
@@ -200,6 +219,8 @@ impl McpServerIndex {
                     version_count: resource_version.online_cnt as usize,
                     create_time: 0,
                     modify_time: 0,
+                    scope: resource.scope.clone(),
+                    owner: resource.owner.clone(),
                 });
             }
         }
@@ -242,6 +263,8 @@ mod tests {
             version_count: 1,
             create_time: 0,
             modify_time: 0,
+            scope: batata_visibility::SCOPE_PUBLIC.to_string(),
+            owner: String::new(),
         }
     }
 
@@ -283,7 +306,7 @@ mod tests {
         index.upsert(make_index_data("id2", "other-server", "public"));
         index.upsert(make_index_data("id3", "my-tool", "public"));
 
-        let (results, total) = index.search_by_name("public", Some("server"), "blur", 0, 10);
+        let (results, total) = index.search_by_name("public", Some("server"), "blur", 0, 10, None);
         assert_eq!(total, 2);
         assert_eq!(results.len(), 2);
     }
@@ -294,7 +317,8 @@ mod tests {
         index.upsert(make_index_data("id1", "my-server", "public"));
         index.upsert(make_index_data("id2", "my-server-v2", "public"));
 
-        let (results, total) = index.search_by_name("public", Some("my-server"), "accurate", 0, 10);
+        let (results, total) =
+            index.search_by_name("public", Some("my-server"), "accurate", 0, 10, None);
         assert_eq!(total, 1);
         assert_eq!(results[0].name, "my-server");
     }
@@ -310,11 +334,32 @@ mod tests {
             ));
         }
 
-        let (page1, total) = index.search_by_name("public", None, "blur", 0, 10);
+        let (page1, total) = index.search_by_name("public", None, "blur", 0, 10, None);
         assert_eq!(total, 25);
         assert_eq!(page1.len(), 10);
 
-        let (page3, _) = index.search_by_name("public", None, "blur", 20, 10);
+        let (page3, _) = index.search_by_name("public", None, "blur", 20, 10, None);
         assert_eq!(page3.len(), 5);
+    }
+
+    /// The visibility predicate must shrink the **total**, not just the page —
+    /// otherwise pagination reports rows the caller cannot see.
+    #[test]
+    fn test_search_visibility_filters_total() {
+        let index = McpServerIndex::new();
+        let mut public = make_index_data("id1", "public-server", "public");
+        public.scope = batata_visibility::SCOPE_PUBLIC.to_string();
+        let mut private = make_index_data("id2", "private-server", "public");
+        private.scope = batata_visibility::SCOPE_PRIVATE.to_string();
+        index.upsert(public);
+        index.upsert(private);
+
+        let visible = |e: &McpServerIndexData| e.scope == batata_visibility::SCOPE_PUBLIC;
+        let (page, total) =
+            index.search_by_name("public", None, "blur", 0, 10, Some(&visible));
+
+        assert_eq!(total, 1, "total must exclude non-visible rows");
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "public-server");
     }
 }

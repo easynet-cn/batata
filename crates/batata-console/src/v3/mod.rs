@@ -10,6 +10,7 @@ pub mod ai_mcp;
 pub mod ai_pipeline;
 pub mod ai_plugin;
 pub mod ai_skill;
+pub mod ai_trace;
 pub mod audit;
 pub mod cluster;
 pub mod cmdb;

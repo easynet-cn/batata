@@ -17,6 +17,7 @@ use batata_common::model::ai::mcp::{
     McpServerRegistration, McpServerVersionDetail, McpServerVersionSummary, McpStatusQuery, McpTool,
     McpVersionsQuery,
 };
+use super::ai_trace::{self, get_username, trace_write};
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
@@ -45,13 +46,17 @@ async fn list_servers(
     let search_type = q.search.as_deref().unwrap_or("blur");
     let page_no = q.page_no.unwrap_or(1);
     let page_size = q.page_size.unwrap_or(20);
-    let result = svc.list_mcp_servers(
-        namespace,
-        q.mcp_name.as_deref(),
-        search_type,
-        page_no,
-        page_size,
-    );
+    let user = get_username(&req);
+    let result = svc
+        .list_mcp_servers(
+            namespace,
+            q.mcp_name.as_deref(),
+            search_type,
+            page_no,
+            page_size,
+            Some(&user),
+        )
+        .await;
     common_response::Result::<Page<McpServerBasicInfo>>::http_success(result)
 }
 
@@ -74,12 +79,14 @@ async fn get_server(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let user = get_username(&req);
     match svc
         .get_mcp_server_detail(
             namespace,
             q.mcp_id.as_deref(),
             q.mcp_name.as_deref(),
             q.version.as_deref(),
+            Some(&user),
         )
         .await
     {
@@ -213,9 +220,10 @@ async fn register_server(
 
     let reg = body.into_inner();
     let namespace = reg.namespace.clone();
+    let user = get_username(&req);
     match svc.create_mcp_server(&namespace, &reg).await {
         Ok(id) => match svc
-            .get_mcp_server_detail(&namespace, Some(&id), None, None)
+            .get_mcp_server_detail(&namespace, Some(&id), None, None, Some(&user))
             .await
         {
             Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
@@ -256,9 +264,10 @@ async fn update_server(
     }
     reg.namespace = namespace.clone();
 
+    let user = get_username(&req);
     match svc.update_mcp_server(&namespace, &reg).await {
         Ok(()) => match svc
-            .get_mcp_server_detail(&namespace, None, Some(&reg.name), None)
+            .get_mcp_server_detail(&namespace, None, Some(&reg.name), None, Some(&user))
             .await
         {
             Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
@@ -437,8 +446,23 @@ fn server_error(message: String) -> HttpResponse {
     )
 }
 
-/// Render the outcome of a lifecycle operation.
-fn version_response(result: anyhow::Result<McpServerVersionDetail>) -> HttpResponse {
+/// Render the outcome of a lifecycle operation, tracing it first.
+fn version_response(
+    req: &HttpRequest,
+    operation: &str,
+    name: &str,
+    version: &str,
+    result: anyhow::Result<McpServerVersionDetail>,
+) -> HttpResponse {
+    trace_write(
+        req,
+        batata_common::ai_trace::RESOURCE_TYPE_MCP,
+        operation,
+        Some(name),
+        Some(version),
+        ai_trace::outcome_of(&result),
+    );
+
     match result {
         Ok(detail) => common_response::Result::<McpServerVersionDetail>::http_success(detail),
         Err(e) => server_error(e.to_string()),
@@ -480,6 +504,10 @@ async fn create_draft(
         reg.namespace.as_str()
     };
     version_response(
+        &req,
+        batata_common::ai_trace::OP_CREATE_DRAFT,
+        &reg.name.clone(),
+        &reg.version.clone(),
         svc.create_mcp_server_draft(namespace, &reg, q.overwrite.unwrap_or(false))
             .await,
     )
@@ -508,7 +536,13 @@ async fn update_draft(
     } else {
         reg.namespace.as_str()
     };
-    version_response(svc.update_mcp_server_draft(namespace, &reg).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_UPDATE_DRAFT,
+        &reg.name.clone(),
+        &reg.version.clone(),
+        svc.update_mcp_server_draft(namespace, &reg).await,
+    )
 }
 
 /// Delete a draft version
@@ -533,7 +567,16 @@ async fn delete_draft(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    match svc.delete_mcp_server_draft(namespace, name, version).await {
+    let result = svc.delete_mcp_server_draft(namespace, name, version).await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_MCP,
+        batata_common::ai_trace::OP_DELETE_DRAFT,
+        Some(name),
+        Some(version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => common_response::Result::<String>::http_success("ok".to_string()),
         Err(e) => server_error(e.to_string()),
     }
@@ -561,7 +604,13 @@ async fn submit_version(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    version_response(svc.submit_mcp_server_version(namespace, name, version).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_SUBMIT_REVIEW,
+        name,
+        version,
+        svc.submit_mcp_server_version(namespace, name, version).await,
+    )
 }
 
 /// Publish a reviewed version
@@ -586,7 +635,13 @@ async fn publish_version(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    version_response(svc.publish_mcp_server_version(namespace, name, version).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_PUBLISH,
+        name,
+        version,
+        svc.publish_mcp_server_version(namespace, name, version).await,
+    )
 }
 
 /// Publish a version bypassing the review gate
@@ -612,6 +667,10 @@ async fn force_publish_version(
         None => return bad_request("mcpName and version are required"),
     };
     version_response(
+        &req,
+        batata_common::ai_trace::OP_FORCE_PUBLISH,
+        name,
+        version,
         svc.force_publish_mcp_server_version(namespace, name, version)
             .await,
     )
@@ -639,7 +698,13 @@ async fn redraft_version(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    version_response(svc.redraft_mcp_server_version(namespace, name, version).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_REDRAFT,
+        name,
+        version,
+        svc.redraft_mcp_server_version(namespace, name, version).await,
+    )
 }
 
 /// Bring an offline version online
@@ -664,7 +729,13 @@ async fn online_version(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    version_response(svc.online_mcp_server_version(namespace, name, version).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_ONLINE_VERSION,
+        name,
+        version,
+        svc.online_mcp_server_version(namespace, name, version).await,
+    )
 }
 
 /// Take an online version offline
@@ -689,7 +760,13 @@ async fn offline_version(
         Some(target) => target,
         None => return bad_request("mcpName and version are required"),
     };
-    version_response(svc.offline_mcp_server_version(namespace, name, version).await)
+    version_response(
+        &req,
+        batata_common::ai_trace::OP_OFFLINE_VERSION,
+        name,
+        version,
+        svc.offline_mcp_server_version(namespace, name, version).await,
+    )
 }
 
 /// Replace the version labels
@@ -716,10 +793,18 @@ async fn update_labels(
         Some(n) => n,
         None => return bad_request("mcpName is required"),
     };
-    match svc
+    let result = svc
         .update_mcp_server_labels(namespace, name, body.into_inner().labels)
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_MCP,
+        batata_common::ai_trace::OP_UPDATE_LABELS,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(labels) => common_response::Result::<HashMap<String, String>>::http_success(labels),
         Err(e) => server_error(e.to_string()),
     }
@@ -757,7 +842,21 @@ async fn update_status(
         "disable" => false,
         other => return bad_request(&format!("status must be enable or disable, got '{other}'")),
     };
-    match svc.update_mcp_server_status(namespace, name, enabled).await {
+    let result = svc.update_mcp_server_status(namespace, name, enabled).await;
+    let operation = if enabled {
+        batata_common::ai_trace::OP_ENABLE
+    } else {
+        batata_common::ai_trace::OP_DISABLE
+    };
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_MCP,
+        operation,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => common_response::Result::<String>::http_success("ok".to_string()),
         Err(e) => server_error(e.to_string()),
     }
@@ -790,7 +889,16 @@ async fn update_scope(
         Some(s) => s,
         None => return bad_request("scope is required"),
     };
-    match svc.update_mcp_server_scope(namespace, name, scope).await {
+    let result = svc.update_mcp_server_scope(namespace, name, scope).await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_MCP,
+        batata_common::ai_trace::OP_UPDATE_SCOPE,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => common_response::Result::<String>::http_success("ok".to_string()),
         Err(e) => server_error(e.to_string()),
     }

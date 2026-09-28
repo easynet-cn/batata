@@ -634,6 +634,7 @@ impl batata_common::A2aAgentService for AgentRegistry {
         namespace: &str,
         agent_name: &str,
         _version: Option<&str>,
+        _user: Option<&str>,
     ) -> anyhow::Result<Option<RegisteredAgent>> {
         Ok(self.get(namespace, agent_name))
     }
@@ -670,6 +671,7 @@ impl batata_common::A2aAgentService for AgentRegistry {
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        _user: Option<&str>,
     ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
         let query = AgentListQuery {
             namespace_id: Some(namespace.to_string()),

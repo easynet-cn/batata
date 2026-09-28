@@ -345,12 +345,15 @@ pub trait McpServerService: Send + Sync {
     ) -> anyhow::Result<String>;
 
     /// The `get_mcp_server_detail` method.
+    ///
+    /// `user` is the caller identity used for the visibility check.
     async fn get_mcp_server_detail(
         &self,
         namespace: &str,
         id: Option<&str>,
         name: Option<&str>,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<McpServer>>;
 
     /// The `update_mcp_server` method.
@@ -370,13 +373,17 @@ pub trait McpServerService: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// The `list_mcp_servers` method.
-    fn list_mcp_servers(
+    ///
+    /// `user` is the caller identity used to filter by visibility scope and
+    /// owner; pass `None` for an unauthenticated caller.
+    async fn list_mcp_servers(
         &self,
         namespace: &str,
         name: Option<&str>,
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> Page<McpServerBasicInfo>;
 
     /// The `list_mcp_server_versions` method.
@@ -517,11 +524,14 @@ pub trait A2aAgentService: Send + Sync {
     ) -> anyhow::Result<String>;
 
     /// The `get_agent_card` method.
+    ///
+    /// `user` is the caller identity used for the visibility check.
     async fn get_agent_card(
         &self,
         namespace: &str,
         agent_name: &str,
         version: Option<&str>,
+        user: Option<&str>,
     ) -> anyhow::Result<Option<RegisteredAgent>>;
 
     /// The `update_agent_card` method.
@@ -541,6 +551,9 @@ pub trait A2aAgentService: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// The `list_agents` method.
+    ///
+    /// `user` is the caller identity used to filter by visibility scope and
+    /// owner; pass `None` for an unauthenticated caller.
     async fn list_agents(
         &self,
         namespace: &str,
@@ -548,6 +561,7 @@ pub trait A2aAgentService: Send + Sync {
         search_type: &str,
         page_no: u32,
         page_size: u32,
+        user: Option<&str>,
     ) -> anyhow::Result<Page<AgentCardVersionInfo>>;
 
     /// The `list_versions` method.

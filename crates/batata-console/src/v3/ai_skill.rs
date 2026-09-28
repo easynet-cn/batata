@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use actix_multipart::Multipart;
-use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web,
-};
+use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 use futures::StreamExt;
 
 use batata_common::DEFAULT_NAMESPACE_ID;
@@ -28,12 +26,7 @@ fn normalize_namespace(ns: &str) -> &str {
     }
 }
 
-fn get_username(req: &HttpRequest) -> String {
-    req.extensions()
-        .get::<batata_common::IdentityContext>()
-        .map(|ctx| ctx.username.clone())
-        .unwrap_or_default()
-}
+use super::ai_trace::{self, get_username, trace_write};
 
 /// GET /v3/console/ai/skills — Get skill detail
 #[get("")]
@@ -206,7 +199,18 @@ async fn delete_skill(
         }
     };
 
-    match skill_service.delete_skill(ns, name, Some(get_username(&req).as_str())).await {
+    let result = skill_service
+        .delete_skill(ns, name, Some(get_username(&req).as_str()))
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_DELETE_RESOURCE,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_internal_error(e),
     }
@@ -328,10 +332,18 @@ async fn upload_skill(
 
     let name = skill.name.clone();
 
-    match skill_service
+    let result = skill_service
         .upload_skill(ns, &name, &skill, &author, overwrite)
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_UPLOAD,
+        Some(&name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(skill_name) => HttpResponse::Ok().json(common_response::Result::success(skill_name)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -380,7 +392,7 @@ async fn create_draft(
         );
     }
 
-    match skill_service
+    let result = skill_service
         .create_draft(
             ns,
             skill_name,
@@ -389,8 +401,16 @@ async fn create_draft(
             initial_content.as_ref(),
             &author,
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_CREATE_DRAFT,
+        Some(skill_name),
+        form.target_version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(version) => HttpResponse::Ok().json(common_response::Result::success(version)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -460,7 +480,18 @@ async fn update_draft(
         );
     }
 
-    match skill_service.update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str())).await {
+    let result = skill_service
+        .update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str()))
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_UPDATE_DRAFT,
+        Some(skill_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -496,7 +527,18 @@ async fn delete_draft(
         }
     };
 
-    match skill_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
+    let result = skill_service
+        .delete_draft(ns, name, Some(get_username(&req).as_str()))
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_DELETE_DRAFT,
+        Some(name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -524,10 +566,18 @@ async fn submit_skill(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .submit(ns, &form.skill_name, &form.version, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_SUBMIT_REVIEW,
+        Some(&form.skill_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(version) => HttpResponse::Ok().json(common_response::Result::success(version)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -555,15 +605,23 @@ async fn publish_skill(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .publish(
             ns,
             &form.skill_name,
             &form.version,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_PUBLISH,
+        Some(&form.skill_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -602,10 +660,18 @@ async fn update_labels(
         }
     };
 
-    match skill_service
+    let result = skill_service
         .update_labels(ns, &form.skill_name, labels, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_UPDATE_LABELS,
+        Some(&form.skill_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -633,10 +699,18 @@ async fn update_biz_tags(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .update_biz_tags(ns, &form.skill_name, &form.biz_tags, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_UPDATE_BIZ_TAGS,
+        Some(&form.skill_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -664,7 +738,7 @@ async fn online_skill(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .change_online_status(
             ns,
             &form.skill_name,
@@ -673,8 +747,16 @@ async fn online_skill(
             true,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_ONLINE_VERSION,
+        Some(&form.skill_name),
+        form.version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -702,7 +784,7 @@ async fn offline_skill(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .change_online_status(
             ns,
             &form.skill_name,
@@ -711,8 +793,16 @@ async fn offline_skill(
             false,
             Some(get_username(&req).as_str()),
         )
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_OFFLINE_VERSION,
+        Some(&form.skill_name),
+        form.version.as_deref(),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -740,10 +830,18 @@ async fn update_scope(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
 
-    match skill_service
+    let result = skill_service
         .update_scope(ns, &form.skill_name, &form.scope, Some(get_username(&req).as_str()))
-        .await
-    {
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_UPDATE_SCOPE,
+        Some(&form.skill_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
         Err(e) => common_response::Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
