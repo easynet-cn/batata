@@ -14,6 +14,8 @@
 //!   cargo test -p batata-ai --test mcp_search_index -- --ignored --nocapture
 //! ```
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -30,7 +32,7 @@ use batata_persistence::entity::{
     ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
     ai_resource_version,
 };
-use batata_persistence::sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 const NS: &str = "public";
 const NAME: &str = "search-mcp";
@@ -94,9 +96,7 @@ async fn clean(store: &ExternalDbPersistService, resource_type: &str, name: &str
 async fn schedule_then_rebuild_then_skip() {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = McpServerOperationService::new(store.clone(), index);
@@ -187,9 +187,7 @@ async fn schedule_then_rebuild_then_skip() {
 async fn consumer_builds_index_and_completes_task() {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = McpServerOperationService::new(store.clone(), index);
@@ -263,9 +261,7 @@ async fn consumer_builds_index_and_completes_task() {
 async fn consumer_removes_task_for_missing_resource() {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let search = AiResourceSearchService::new(store.clone());
     let consumer = AiResourceIndexConsumer::new(store.clone());
@@ -304,9 +300,7 @@ async fn keyword_search_finds_and_ranks() {
 
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = McpServerOperationService::new(store.clone(), index);

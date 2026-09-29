@@ -61,3 +61,9 @@ base64 = { workspace = true }
 md-5 = { workspace = true }
 const-hex = { workspace = true }
 sha2 = { workspace = true }
+
+[dev-dependencies]
+# Embedded (RocksDB) persistence, exercised by the standalone-mode tests.
+batata-consistency = { workspace = true }
+rocksdb = { workspace = true }
+tempfile = { workspace = true }

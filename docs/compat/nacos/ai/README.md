@@ -184,7 +184,9 @@ Goal: introduce the upstream layering before adding endpoints.
       storage backend" error, as a safety net for any backend added later that
       forgets to implement the index.
 - [ ] `runtime/` layer (runtime endpoint resolution, heartbeat)
-- [x] `visibility/` layer via `ai_resource.scope` / `owner` — **MCP done**.
+- [x] `visibility/` layer via `ai_resource.scope` / `owner` — **done for all
+      four domains** (MCP 14, Skill 32, AgentSpec 32, A2A 13 `batata_visibility`
+      call sites). MCP is the documented reference case:
       `list_mcp_servers` and `get_mcp_server_detail` now take a `user`
       identity and consult `batata_visibility`; a resource the caller may not
       read is excluded from the list (and from `total_count`) or rejected on
@@ -340,6 +342,69 @@ they carry no end-user identity.
       > storage. Note the consumer loop runs on **every** node; with a
       > non-atomic claim this is safe (idempotent projection) but means
       > duplicate work across nodes.
+
+## Backend coverage (standalone vs cluster)
+
+**Upstream and Batata differ fundamentally here, and it changes what
+"supported" means.**
+
+Nacos standalone runs on **Derby** — an embedded *SQL* database. So every
+JDBC-based feature, including the `ai_resource_search_*` tables, works in
+standalone. Batata has no embedded SQL engine; its embedded store is RocksDB
+(key/value).
+
+Batata's four combinations:
+
+| Storage backend | Topology | Persistence | AI search index |
+|---|---|---|---|
+| `ExternalDb` | `Standalone` | SQL (shared DB) | ✅ full |
+| `ExternalDb` | `Cluster` | SQL (+ RocksDB for some state) | ✅ full |
+| `Embedded` | `Standalone` | RocksDB | ✅ full |
+| `Embedded` | `Cluster` | RocksDB + Raft | ✅ full |
+
+All three persistence backends (`sql`, `embedded`, `distributed`) implement the
+search document / chunk / task operations. The RocksDB column families
+(`CF_AI_RESOURCE_SEARCH_DOCUMENT`, `..._CHUNK`, `..._TASK`) already existed in
+`batata-consistency`, so no new CFs were needed.
+
+Keyword search is the one operation with two implementations, because RocksDB
+has no `LIKE`:
+
+- `sql/ai_resource.rs` — one SQL statement with a `CASE` for scoring.
+- `search_util::keyword_hits` — the same scoring rules applied in memory, used
+  by both `embedded` and `distributed` so the two paths cannot drift.
+
+    Verified end to end on RocksDB by
+    `crates/batata-ai/tests/mcp_search_embedded.rs` (no external database
+    needed — it opens RocksDB in a temp dir with just the five AI column
+    families): publish → schedule → consume → keyword search.
+
+> Known gaps per mode:
+> - **Embedded/Standalone**: verified working, but keyword search scans and
+>   matches in memory, so it is O(chunks in namespace) rather than
+>   index-backed. Fine at current scale; it will not scale like the SQL path. A
+>   term index would be needed if the chunk count grows.
+> - **Embedded/Cluster**: the consumer loop runs on every node; this is
+>   unverified — there is no test that drives the Raft-backed path.
+> - **Embedded/Cluster**: writes go through Raft; the consumer runs on every
+>   node and the claim is not atomic, so nodes can duplicate work (safe but
+>   wasteful). No per-node leader election for the consumer yet.
+> - **Embedding computation: done.** `search::embedding` ports upstream's
+>   default `HashingAiResourceEmbeddingService` — model id
+>   `nacos-local-hashing-embedding-v1`, 384 dims, CRC32 bucket hashing with
+>   parity sign, L2-normalized. It needs no model, no network and no pgvector,
+>   so it is unit-tested outright (14 tests). CRC32 is implemented locally
+>   (no new dependency) and pinned to the standard check value
+>   `crc32("123456789") == 0xCBF43926`.
+>
+>   **Embedding storage: still not implemented.** Upstream keeps vectors in the
+>   PostgreSQL-only, pgvector-backed `ai_resource_search_embedding_pg` table,
+>   loaded as an opt-in plugin by the operator. Batata has no pgvector, so the
+>   current behaviour — writing the document as `enabled` directly, which is
+>   what upstream does when `vectorIndex.available()` is false — is already the
+>   upstream-correct one. The embedder therefore has no consumer yet; adding a
+>   non-pgvector vector store would be a divergence from upstream and is left
+>   undone deliberately.
 - [x] Replaced the config-backed storage for **MCP / Skill / AgentSpec / A2A**
       with the `ai_resource*` path. No compatibility mode: Batata is unreleased
       and has no stored data to migrate.
@@ -368,7 +433,11 @@ they carry no end-user identity.
       > `meta_version` snapshot — `refresh_version_meta` re-reads the resource
       > so the optimistic lock cannot fail silently (this was a real bug found
       > by the test).
-- [ ] `force-publish`, `redraft`
+- [x] `force-publish`, `redraft` — service methods
+      `force_publish_mcp_server_version` (bypasses the review gate) and
+      `redraft_mcp_server_version` (moves a version back to `draft`)
+- [x] `online` / `offline` — service methods `online_mcp_server_version`
+      and `offline_mcp_server_version`
 - [x] Versioning: `versions`, `version` — service methods
       `list_mcp_server_versions` / `get_mcp_server_version`
 - [x] `labels`, `scope`, `status` — service methods
@@ -376,7 +445,10 @@ they carry no end-user identity.
       `latest` label is preserved; every label must point at an online
       version), `update_mcp_server_status` (enable/disable) and
       `update_mcp_server_scope` (`PUBLIC` / `PRIVATE`, validated)
-- [ ] `version/meta`, `biz-tags`
+- [x] ~~`version/meta`, `biz-tags`~~ — **not MCP endpoints.** Both live on
+      `SkillAdminController` / `AgentSpecAdminController` /
+      `PromptAdminController` upstream; `McpAdminController` declares exactly
+      the fourteen endpoints listed below. Tracked under those domains instead.
 - [x] **HTTP layer** — all fourteen Admin endpoints are wired on the console
       MCP scope, using the upstream paths:
 
@@ -418,7 +490,8 @@ they carry no end-user identity.
 
       > Not covered by tests: `search` (needs the async `search_index` task and
       > the document/chunk index) and the legacy console endpoints above.
-- [ ] `online` / `offline`
+- [x] ~~`online` / `offline`~~ — done (see above; also wired on
+      `POST /ai/mcp/online` and `POST /ai/mcp/offline`)
 - [ ] Admin/Client controller split (management vs runtime discovery)
 - [ ] Validation service equivalent to `McpServerValidationService`
 - [ ] Import service equivalent to `McpServerImportService` + legacy import adapter
@@ -437,8 +510,8 @@ they carry no end-user identity.
 ### Phase 4 — Tests and documentation
 
 - [ ] Port upstream AI test cases as Batata integration tests
-- [ ] Add `docs/compat/nacos/ai/api-mapping.md` (endpoint-level mapping)
-- [ ] Add `docs/compat/nacos/ai/model-mapping.md` (field-level mapping)
+- [x] Add `docs/compat/nacos/ai/api-mapping.md` (endpoint-level mapping)
+- [x] Add `docs/compat/nacos/ai/model-mapping.md` (field-level mapping)
 - [ ] Update `docs/feature-comparison.md` AI/module rows
 - [ ] Update `conf/application.yml` with the AI configuration keys that upstream exposes
       (`nacos.plugin.ai.importer.*`, `nacos.ai.resource.import.*`, ...)

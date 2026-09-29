@@ -7,7 +7,9 @@
 //! unchanged rebuilds be skipped.
 //!
 //! Out of scope for now (both optional upstream): the `llm_enhancement` stage
-//! and vector/embedding storage.
+//! and vector/embedding *storage* (upstream stores vectors in a PostgreSQL +
+//! pgvector table, which Batata has no equivalent for). The embedding
+//! computation itself is implemented in [`embedding`].
 //!
 //! Hashing: upstream uses MD5. Batata uses SHA-256 — the digests are only
 //! compared against themselves, and a 64-char hex digest still fits the
@@ -19,6 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::repository::search;
 
 pub mod consumer;
+pub mod embedding;
 pub mod query;
 pub mod service;
 pub mod task;

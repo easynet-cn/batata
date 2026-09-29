@@ -20,8 +20,31 @@ use batata_persistence::entity::{
 use batata_persistence::model::{
     AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo, AiResourceTaskInfo,
 };
-use batata_persistence::sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use batata_persistence::sea_orm::{
+    ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait, QueryFilter,
+};
 use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+
+/// Connect to the test database, failing fast with an actionable message.
+///
+/// A stopped Podman container leaves the forwarded port *accepting* TCP while
+/// nothing completes the handshake, so a plain `Database::connect` blocks for
+/// the default ~30s and then reports a pool timeout.
+async fn connect_database(url: &str) -> DatabaseConnection {
+    use std::time::Duration;
+    let mut options = ConnectOptions::new(url.to_string());
+    options
+        .connect_timeout(Duration::from_secs(3))
+        .acquire_timeout(Duration::from_secs(3));
+    match Database::connect(options).await {
+        Ok(connection) => connection,
+        Err(error) => panic!(
+            "cannot reach the test database at {url}: {error}\n\
+             hint: containers do not come back on their own after a machine \
+             restart or a podman machine stop — try `podman start mysql postgres`"
+        ),
+    }
+}
 
 const NS: &str = "public";
 const R_TYPE: &str = "skill";
@@ -113,9 +136,7 @@ fn task(key: &str, next_execute_at: i64) -> AiResourceTaskInfo {
 #[ignore]
 async fn search_index_persistence_round_trip() {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = connect_database(&url).await;
     let db = ExternalDbPersistService::new(conn);
     println!("--- backend: {:?} ---", db.db().get_database_backend());
 

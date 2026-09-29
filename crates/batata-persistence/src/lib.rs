@@ -27,6 +27,7 @@ pub mod entity;
 /// Storage-agnostic domain model types returned by the persistence traits.
 pub mod model;
 /// External database (MySQL/PostgreSQL via SeaORM) persistence backend.
+pub mod search_util;
 pub mod sql;
 /// Persistence trait abstractions for the unified storage layer.
 pub mod traits;

@@ -25,12 +25,34 @@ use batata_ai::{McpServerIndex, McpServerOperationService};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
 const NS: &str = "public";
 const NAME: &str = "route-mcp";
+
+/// Connect to the test database, failing fast with an actionable message.
+///
+/// A stopped Podman container leaves the forwarded port *accepting* TCP while
+/// nothing completes the handshake, so a plain `Database::connect` blocks for
+/// the default ~30s per test. With fifteen tests here that is several minutes
+/// of silence ending in a pool-timeout message that reads like a code bug.
+async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
+    use std::time::Duration;
+    let mut options = sea_orm::ConnectOptions::new(url.to_string());
+    options
+        .connect_timeout(Duration::from_secs(3))
+        .acquire_timeout(Duration::from_secs(3));
+    match sea_orm::Database::connect(options).await {
+        Ok(connection) => connection,
+        Err(error) => panic!(
+            "cannot reach the test database at {url}: {error}\n\
+             hint: containers do not come back on their own after a machine \
+             restart or a podman machine stop — try `podman start mysql postgres`"
+        ),
+    }
+}
 
 /// Cluster manager stub. The MCP routes never touch cluster state, so every
 /// method returns a fixed value; the ones that would need real member data are
@@ -181,9 +203,7 @@ async fn build_app(
 async fn setup() -> (Arc<ExternalDbPersistService>, Arc<McpServerOperationService>) {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = Arc::new(McpServerOperationService::new(store.clone(), index));

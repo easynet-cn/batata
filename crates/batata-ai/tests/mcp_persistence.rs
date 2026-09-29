@@ -14,6 +14,8 @@
 //!   cargo test -p batata-ai --test mcp_persistence -- --ignored --nocapture
 //! ```
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,7 +25,7 @@ use batata_ai::model::{
 use batata_ai::{McpServerIndex, McpServerOperationService};
 use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 const NS: &str = "public";
 const NAME: &str = "probe-mcp";
@@ -82,9 +84,7 @@ fn lifecycle_registration(version: &str) -> McpServerRegistration {
 #[ignore]
 async fn mcp_version_lifecycle() {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = McpServerOperationService::new(store.clone(), index);
@@ -293,9 +293,7 @@ async fn mcp_version_lifecycle() {
 #[ignore]
 async fn mcp_server_round_trip() {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = Database::connect(&url)
-        .await
-        .unwrap_or_else(|e| panic!("connect {url}: {e}"));
+    let conn = common::connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
     let index = Arc::new(McpServerIndex::new());
     let svc = McpServerOperationService::new(store.clone(), index.clone());

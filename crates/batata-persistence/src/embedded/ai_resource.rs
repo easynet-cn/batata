@@ -10,8 +10,8 @@ use batata_consistency::raft::state_machine::{
 
 use crate::model::{
     AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo,
-    AiResourceSearchDocumentInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
-    PipelineExecutionInfo,
+    AiResourceSearchDocumentInfo, AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo,
+    Page, PipelineExecutionInfo,
 };
 use crate::traits::ai_resource::AiResourcePersistence;
 
@@ -1013,6 +1013,21 @@ impl AiResourcePersistence for EmbeddedPersistService {
         let prefix =
             Self::search_chunk_prefix(namespace_id, resource_type, resource_name, resource_version);
         self.delete_search_chunks(&prefix)
+    }
+
+    async fn search_chunk_search(
+        &self,
+        namespace_id: &str,
+        text: &str,
+        resource_types: &[&str],
+        limit: u64,
+    ) -> anyhow::Result<Vec<AiResourceSearchHitInfo>> {
+        Ok(crate::search_util::keyword_hits(
+            self.scan_search_chunks(&format!("{}:", namespace_id))?,
+            text,
+            resource_types,
+            limit,
+        ))
     }
 
     // ========================================================================
