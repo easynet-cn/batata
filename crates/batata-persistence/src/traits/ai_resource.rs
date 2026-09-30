@@ -53,6 +53,15 @@ pub trait AiResourcePersistence: Send + Sync {
         biz_tags: &str,
     ) -> anyhow::Result<()>;
 
+    /// Update description for a resource
+    async fn ai_resource_update_description(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        resource_type: &str,
+        description: &str,
+    ) -> anyhow::Result<()>;
+
     /// Update status for a resource
     async fn ai_resource_update_status(
         &self,

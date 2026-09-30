@@ -589,21 +589,35 @@ has no `LIKE`:
       any future domain stay consistent.
 - [ ] `AiCapabilityClientController` equivalent
 - [ ] Prompt client contract parity
-- [ ] **Prompt migration to `ai_resource`** — the last domain still backed by
-      configs (group `nacos-ai-prompt`, four data-ids per prompt). Upstream
-      stores prompts as an `ai_resource` type, so the lifecycle endpoints
-      (`draft` / `submit` / `publish` / `force-publish` / `redraft` / `online` /
-      `offline` / `labels` / `description` / `biz-tags` — none of which exist
-      here) should be built on `ai_resource` once, not on configs and then
-      again after migrating.
-      **Prerequisite done:** the domain had *no tests at all* (599-line service,
-      597-line API, zero coverage). `tests/prompt_persistence.rs` now pins the
-      behaviour that is observable today — publish, version/label/latest
-      resolution, MD5 conditional query, publish guards, listings, delete — on
-      both engines, so the migration has a regression baseline to hold to.
-      Remaining after that: rewrite storage onto `ai_resource`, add the
-      lifecycle via the shared `version_lifecycle`, then add the ~14 missing
-      admin endpoints (batata has 10 of 24).
+- [x] **Prompt migration to `ai_resource` — done.** Prompts were the last
+      config-backed domain (group `nacos-ai-prompt`, four configs per prompt);
+      they now live in `ai_resource` / `ai_resource_version` like every other
+      domain, which is also what upstream does. `batata-ai` has zero config
+      calls left.
+      Because the domain had *no tests at all* (599-line service, 597-line API),
+      the move was made in two steps: `tests/prompt_persistence.rs` first pinned
+      the observable behaviour on the old storage, then the storage was swapped
+      underneath — the same 5 tests still pass on both engines, which is the
+      evidence that behaviour was preserved rather than assumed.
+      Two design notes: the description lives in the `version_info` JSON
+      because persistence has no API to update `ai_resource.description` after
+      insert; and the version list is derived from the version rows instead of
+      being kept in a separate mapping, so the two cannot drift apart.
+- [x] Prompt lifecycle endpoints — `draft` (POST/PUT/DELETE), `submit`,
+      `publish`, `force-publish`, `redraft`, `online`, `offline`, `labels`,
+      `description` and `biz-tags` are all wired on `/v3/admin/ai/prompt`. The
+      transitions delegate to the shared `version_lifecycle`; `description` and
+      `biz-tags` reuse `update_metadata`. Batata now exposes 22 of upstream's
+      24 admin endpoints.
+      Still absent: `GET /version/download` and `GET /governance`, which are
+      read views over the same data rather than new behaviour.
+- [x] Prompt route tests — `tests/prompt_admin_routes.rs` (3 tests, both
+      engines) covers the HTTP layer: the lifecycle endpoints are registered on
+      the scope, form parameters reach the service, and the review gate is
+      enforced over HTTP (publishing an unsubmitted draft is refused while
+      force-publish succeeds). Together with `tests/prompt_persistence.rs`
+      (7 service-level tests) the domain now has both layers covered, as MCP
+      does.
 - [x] Pipeline parity — **complete.** `/list` and `/detail` match upstream's
       `LIST_SUBPATH` / `DETAIL_SUBPATH`. The two endpoints upstream additionally
       exposes — `GET /{pipelineId}` and the base-path `listPipelinesLegacy` —

@@ -462,6 +462,29 @@ impl AiResourcePersistence for DistributedPersistService {
         }
     }
 
+    async fn ai_resource_update_description(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        resource_type: &str,
+        description: &str,
+    ) -> anyhow::Result<()> {
+        let key = Self::ai_resource_key(namespace_id, resource_type, name);
+        match self.get_ai_resource(&key)? {
+            Some(mut info) => {
+                info.description = Some(description.to_string());
+                info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
+                self.put_ai_resource(&key, &info)
+            }
+            None => Err(anyhow::anyhow!(
+                "AI resource not found: {}:{}:{}",
+                namespace_id,
+                resource_type,
+                name
+            )),
+        }
+    }
+
     async fn ai_resource_update_status(
         &self,
         namespace_id: &str,

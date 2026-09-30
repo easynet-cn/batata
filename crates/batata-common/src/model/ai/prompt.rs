@@ -188,7 +188,46 @@ impl PromptVersionInfo {
 }
 
 // ============================================================================
-// Internal storage models (stored as JSON configs)
+// Internal storage models
+// ============================================================================
+
+/// Per-version content, stored as `ai_resource_version.storage`.
+///
+/// Everything that used to live in the `{promptKey}.{version}.json` config.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptStorage {
+    /// The `prompt_key` field.
+    pub prompt_key: String,
+    /// The `template` field.
+    pub template: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `md5` field.
+    pub md5: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `commit_msg` field.
+    pub commit_msg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `src_user` field.
+    pub src_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `gmt_modified` field.
+    pub gmt_modified: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `variables` field.
+    pub variables: Option<Vec<PromptVariable>>,
+}
+
+// The resource-level version bookkeeping (`ai_resource.version_info`) is the
+// shared `ResourceVersionInfo`, not a prompt-specific type: prompts reuse the
+// same lifecycle as every other AI domain, and a second shape would silently
+// lose fields whenever that lifecycle rewrote the column.
+//
+// The version list is not stored at all — it is derived from the
+// `ai_resource_version` rows, so the two cannot drift apart.
+
+// ============================================================================
+// Legacy config-backed models
 // ============================================================================
 
 /// Prompt descriptor — metadata stored independently from versions.
@@ -246,6 +285,9 @@ fn default_schema_version() -> i32 {
 
 /// Fixed group for all prompt configs
 pub const PROMPT_GROUP: &str = "nacos-ai-prompt";
+
+/// Version assigned to a prompt when none is given.
+pub const PROMPT_DEFAULT_VERSION: &str = "0.0.1";
 
 /// Build DataId for latest version mirror: `{promptKey}.json`
 pub fn build_latest_data_id(prompt_key: &str) -> String {

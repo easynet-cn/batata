@@ -1,18 +1,32 @@
-//! Prompt management service — config-based storage (Nacos 3.2 compatible)
+//! Prompt management service — `ai_resource`-backed storage
 //!
-//! Prompts are stored as JSON configs in the config service with group `nacos-ai-prompt`.
-//! Each prompt has multiple configs:
-//! - `{key}.json` — latest version mirror
-//! - `{key}.{version}.json` — version-specific content
-//! - `{key}.descriptor.json` — metadata (description, bizTags)
-//! - `{key}.label-version-mapping.json` — label→version mappings
+//! Prompts are stored like every other AI domain, which is also how upstream
+//! does it:
+//! - `ai_resource` (type `prompt`) — biz tags, plus the resource-level
+//!   bookkeeping in `version_info`: label routing, latest version and (because
+//!   persistence cannot update the description column) the description.
+//! - `ai_resource_version` — one row per version, with the template and its
+//!   metadata in `storage`.
+//!
+//! This replaces the earlier config-backed layout (group `nacos-ai-prompt`,
+//! four configs per prompt). The public behaviour is unchanged:
+//! `tests/prompt_persistence.rs` pins it and must still pass.
 
 use std::sync::Arc;
 
+use batata_persistence::model::{
+    AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo, Page,
+};
 use batata_persistence::PersistenceService;
-use tracing::{debug, warn};
+use tracing::debug;
+
+use batata_common::model::ai::ResourceVersionInfo;
 
 use crate::model::prompt::*;
+use crate::repository::{meta_status, resource_type, scope, version_status};
+use crate::service::version_lifecycle;
+
+use md5::Digest;
 
 /// Prompt operation service (admin + client)
 pub struct PromptOperationService {
@@ -26,119 +40,149 @@ impl PromptOperationService {
     }
 
     // ========================================================================
-    // Internal helpers — config read/write
+    // Internal helpers — resource access
     // ========================================================================
 
-    async fn read_config(&self, data_id: &str, namespace_id: &str) -> Option<String> {
-        match self
-            .persistence
-            .config_find_one(data_id, PROMPT_GROUP, namespace_id)
+    async fn find_resource(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<Option<AiResourceInfo>> {
+        self.persistence
+            .ai_resource_find(namespace_id, prompt_key, resource_type::PROMPT)
             .await
-        {
-            Ok(Some(config)) => Some(config.content),
-            Ok(None) => None,
-            Err(e) => {
-                warn!("Failed to read prompt config {}: {}", data_id, e);
-                None
-            }
-        }
     }
 
-    async fn write_config(
+    /// Load the resource-level bookkeeping (labels, latest, description).
+    async fn load_meta(
         &self,
-        data_id: &str,
         namespace_id: &str,
-        content: &str,
-        src_user: &str,
-        src_ip: &str,
-    ) -> anyhow::Result<bool> {
+        prompt_key: &str,
+    ) -> anyhow::Result<Option<ResourceVersionInfo>> {
+        Ok(self
+            .find_resource(namespace_id, prompt_key)
+            .await?
+            .and_then(|resource| {
+                resource
+                    .version_info
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<ResourceVersionInfo>(json).ok())
+            }))
+    }
+
+    /// Load the bookkeeping, requiring the prompt to exist.
+    async fn require_meta(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<ResourceVersionInfo> {
+        self.load_meta(namespace_id, prompt_key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))
+    }
+
+    /// Save the bookkeeping under an optimistic lock.
+    async fn save_meta(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        meta: &ResourceVersionInfo,
+    ) -> anyhow::Result<()> {
+        let resource = self
+            .find_resource(namespace_id, prompt_key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))?;
+        let json = serde_json::to_string(meta)?;
         self.persistence
-            .config_create_or_update(
-                data_id,
-                PROMPT_GROUP,
+            .ai_resource_update_version_info_cas(
                 namespace_id,
-                content,
-                "",       // app_name
-                src_user, // src_user
-                src_ip,   // src_ip
-                "",       // config_tags
-                "",       // desc
-                "",       // use
-                "",       // effect
-                "json",   // type
-                "",       // schema
-                "",       // encrypted_data_key
-                None,     // cas_md5
+                prompt_key,
+                resource_type::PROMPT,
+                resource.meta_version,
+                &json,
+                resource.meta_version + 1,
             )
-            .await
+            .await?;
+        Ok(())
     }
 
-    async fn delete_config(
-        &self,
-        data_id: &str,
-        namespace_id: &str,
-        src_user: &str,
-    ) -> anyhow::Result<bool> {
-        self.persistence
-            .config_delete(data_id, PROMPT_GROUP, namespace_id, "", "", src_user)
-            .await
-    }
-
-    async fn load_mapping(
-        &self,
-        namespace_id: &str,
-        prompt_key: &str,
-    ) -> Option<PromptLabelVersionMapping> {
-        let data_id = build_label_version_mapping_data_id(prompt_key);
-        let content = self.read_config(&data_id, namespace_id).await?;
-        serde_json::from_str(&content).ok()
-    }
-
-    async fn save_mapping(
-        &self,
-        namespace_id: &str,
-        mapping: &PromptLabelVersionMapping,
-        src_user: &str,
-        src_ip: &str,
-    ) -> anyhow::Result<bool> {
-        let data_id = build_label_version_mapping_data_id(&mapping.prompt_key);
-        let content = serde_json::to_string(mapping)?;
-        self.write_config(&data_id, namespace_id, &content, src_user, src_ip)
-            .await
-    }
-
-    async fn load_descriptor(
-        &self,
-        namespace_id: &str,
-        prompt_key: &str,
-    ) -> Option<PromptDescriptor> {
-        let data_id = build_descriptor_data_id(prompt_key);
-        let content = self.read_config(&data_id, namespace_id).await?;
-        serde_json::from_str(&content).ok()
-    }
-
-    async fn save_descriptor(
-        &self,
-        namespace_id: &str,
-        descriptor: &PromptDescriptor,
-        src_user: &str,
-        src_ip: &str,
-    ) -> anyhow::Result<bool> {
-        let data_id = build_descriptor_data_id(&descriptor.prompt_key);
-        let content = serde_json::to_string(descriptor)?;
-        self.write_config(&data_id, namespace_id, &content, src_user, src_ip)
-            .await
-    }
-
-    async fn load_version_info(
+    /// Load one version's content.
+    async fn load_version(
         &self,
         namespace_id: &str,
         prompt_key: &str,
         version: &str,
-    ) -> Option<PromptVersionInfo> {
-        let data_id = build_version_data_id(prompt_key, version);
-        let content = self.read_config(&data_id, namespace_id).await?;
-        serde_json::from_str(&content).ok()
+    ) -> anyhow::Result<Option<PromptVersionInfo>> {
+        let Some(row) = self
+            .persistence
+            .ai_resource_version_find(namespace_id, prompt_key, resource_type::PROMPT, version)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self::version_info(&row)))
+    }
+
+    /// Every version of a prompt, newest first.
+    async fn all_versions(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<Vec<AiResourceVersionInfo>> {
+        let mut rows = self
+            .persistence
+            .ai_resource_version_list(namespace_id, prompt_key, resource_type::PROMPT)
+            .await?;
+        rows.sort_by(|a, b| compare_versions(&a.version, &b.version).reverse());
+        Ok(rows)
+    }
+
+    /// Rebuild the public view of one stored version.
+    fn version_info(row: &AiResourceVersionInfo) -> PromptVersionInfo {
+        let storage: PromptStorage = row
+            .storage
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+
+        PromptVersionInfo {
+            prompt_key: row.name.clone(),
+            version: row.version.clone(),
+            template: storage.template,
+            md5: storage.md5,
+            commit_msg: storage.commit_msg,
+            src_user: row.author.clone().or(storage.src_user),
+            gmt_modified: storage.gmt_modified,
+            variables: storage.variables,
+        }
+    }
+
+    /// Work out which version a request means: explicit version, label, or the
+    /// latest one.
+    fn resolve_version(
+        meta: &ResourceVersionInfo,
+        versions: &[String],
+        version: Option<&str>,
+        label: Option<&str>,
+    ) -> Option<String> {
+        if let Some(asked) = version.filter(|v| !v.is_empty()) {
+            return versions.iter().find(|v| *v == asked).cloned();
+        }
+        if let Some(name) = label.filter(|l| !l.is_empty()) {
+            return meta.labels.get(name).cloned();
+        }
+        meta.latest_version()
+            .cloned()
+            .or_else(|| versions.first().cloned())
+    }
+
+    /// Parse the comma-separated biz tags stored on the resource.
+    fn parse_biz_tags(raw: Option<&str>) -> Vec<String> {
+        raw.unwrap_or_default()
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
     }
 
     // ========================================================================
@@ -160,6 +204,9 @@ impl PromptOperationService {
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<bool> {
+        // Kept in the signature for API compatibility with the console layer.
+        let _ = src_ip;
+
         // Validate version format
         if !is_valid_version(version) {
             anyhow::bail!(
@@ -175,17 +222,13 @@ impl PromptOperationService {
         let now = chrono::Utc::now().timestamp_millis();
         let md5 = const_hex::encode(md5::Md5::digest(template.as_bytes()));
 
-        // Load or create mapping
-        let mut mapping = self
-            .load_mapping(namespace_id, prompt_key)
-            .await
-            .unwrap_or_else(|| PromptLabelVersionMapping {
-                prompt_key: prompt_key.to_string(),
-                ..Default::default()
-            });
-
-        // Check if version already exists
-        if mapping.versions.contains(&version.to_string()) {
+        // A version cannot be republished.
+        if self
+            .persistence
+            .ai_resource_version_find(namespace_id, prompt_key, resource_type::PROMPT, version)
+            .await?
+            .is_some()
+        {
             anyhow::bail!(
                 "Version '{}' already exists for prompt '{}'",
                 version,
@@ -193,10 +236,63 @@ impl PromptOperationService {
             );
         }
 
-        // Create version info
-        let version_info = PromptVersionInfo {
+        // First publish creates the resource.
+        let mut meta = match self.find_resource(namespace_id, prompt_key).await? {
+            Some(resource) => {
+                // The description lives on the resource itself.
+                if let Some(d) = description {
+                    self.persistence
+                        .ai_resource_update_description(
+                            namespace_id,
+                            prompt_key,
+                            resource_type::PROMPT,
+                            d,
+                        )
+                        .await?;
+                }
+                resource
+                    .version_info
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<ResourceVersionInfo>(json).ok())
+                    .unwrap_or_default()
+            }
+            None => {
+                let meta = ResourceVersionInfo::default();
+                self.persistence
+                    .ai_resource_insert(&AiResourceInfo {
+                        name: prompt_key.to_string(),
+                        resource_type: resource_type::PROMPT.to_string(),
+                        namespace_id: namespace_id.to_string(),
+                        description: description.map(|d| d.to_string()),
+                        status: Some(meta_status::ENABLE.to_string()),
+                        version_info: Some(serde_json::to_string(&meta)?),
+                        meta_version: 1,
+                        scope: scope::PRIVATE.to_string(),
+                        owner: src_user.to_string(),
+                        download_count: 0,
+                        ..Default::default()
+                    })
+                    .await?;
+                meta
+            }
+        };
+
+        meta.set_latest(version);
+
+        if !biz_tags.is_empty() {
+            self.persistence
+                .ai_resource_update_biz_tags(
+                    namespace_id,
+                    prompt_key,
+                    resource_type::PROMPT,
+                    &biz_tags.join(","),
+                )
+                .await?;
+        }
+
+        // Store the version itself.
+        let storage = PromptStorage {
             prompt_key: prompt_key.to_string(),
-            version: version.to_string(),
             template: template.to_string(),
             md5: Some(md5),
             commit_msg: commit_msg.map(|s| s.to_string()),
@@ -204,57 +300,22 @@ impl PromptOperationService {
             gmt_modified: Some(now),
             variables,
         };
-
-        // Save version config
-        let version_data_id = build_version_data_id(prompt_key, version);
-        let version_json = serde_json::to_string(&version_info)?;
-        self.write_config(
-            &version_data_id,
-            namespace_id,
-            &version_json,
-            src_user,
-            src_ip,
-        )
-        .await?;
-
-        // Update mapping
-        mapping.versions.push(version.to_string());
-        mapping
-            .versions
-            .sort_by(|a, b| compare_versions(a, b).reverse());
-        mapping.latest_version = Some(version.to_string());
-        mapping.gmt_modified = Some(now);
-        self.save_mapping(namespace_id, &mapping, src_user, src_ip)
+        self.persistence
+            .ai_resource_version_insert(&AiResourceVersionInfo {
+                name: prompt_key.to_string(),
+                resource_type: resource_type::PROMPT.to_string(),
+                namespace_id: namespace_id.to_string(),
+                version: version.to_string(),
+                status: version_status::ONLINE.to_string(),
+                author: Some(src_user.to_string()),
+                description: description.map(|d| d.to_string()),
+                storage: Some(serde_json::to_string(&storage)?),
+                download_count: 0,
+                ..Default::default()
+            })
             .await?;
 
-        // Create/update descriptor on first publish or if description provided
-        let descriptor = self.load_descriptor(namespace_id, prompt_key).await;
-        if descriptor.is_none() || description.is_some() {
-            let mut desc = descriptor.unwrap_or_else(|| PromptDescriptor {
-                prompt_key: prompt_key.to_string(),
-                ..Default::default()
-            });
-            if let Some(d) = description {
-                desc.description = Some(d.to_string());
-            }
-            if !biz_tags.is_empty() {
-                desc.biz_tags = biz_tags;
-            }
-            desc.gmt_modified = Some(now);
-            self.save_descriptor(namespace_id, &desc, src_user, src_ip)
-                .await?;
-        }
-
-        // Update latest mirror
-        let latest_data_id = build_latest_data_id(prompt_key);
-        self.write_config(
-            &latest_data_id,
-            namespace_id,
-            &version_json,
-            src_user,
-            src_ip,
-        )
-        .await?;
+        self.save_meta(namespace_id, prompt_key, &meta).await?;
 
         debug!(
             "Published prompt '{}' version '{}' in namespace '{}'",
@@ -264,49 +325,48 @@ impl PromptOperationService {
         Ok(true)
     }
 
-    /// Get prompt metadata (descriptor + label mapping composed)
+    /// Get prompt metadata (resource + version bookkeeping composed)
     pub async fn get_meta(&self, namespace_id: &str, prompt_key: &str) -> Option<PromptMetaInfo> {
-        let mapping = self.load_mapping(namespace_id, prompt_key).await?;
-        let descriptor = self.load_descriptor(namespace_id, prompt_key).await?;
-        Some(compose_meta_info(&descriptor, &mapping))
+        let resource = self.find_resource(namespace_id, prompt_key).await.ok()??;
+        let meta: ResourceVersionInfo = resource
+            .version_info
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let rows = self.all_versions(namespace_id, prompt_key).await.ok()?;
+
+        Some(PromptMetaInfo {
+            schema_version: 1,
+            prompt_key: prompt_key.to_string(),
+            description: resource.description,
+            biz_tags: Self::parse_biz_tags(resource.biz_tags.as_deref()),
+            latest_version: meta.latest_version().cloned(),
+            gmt_modified: rows.first().and_then(|row| {
+                row.storage
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<PromptStorage>(json).ok())
+                    .and_then(|storage| storage.gmt_modified)
+            }),
+            versions: rows.iter().map(|row| row.version.clone()).collect(),
+            labels: meta.labels,
+        })
     }
 
-    /// Delete a prompt and all its versions/metadata
+    /// Delete a prompt and all its versions
     pub async fn delete_prompt(
         &self,
         namespace_id: &str,
         prompt_key: &str,
         src_user: &str,
     ) -> anyhow::Result<bool> {
-        // Load mapping to get all versions
-        let mapping = self.load_mapping(namespace_id, prompt_key).await;
+        let _ = src_user;
 
-        // Delete all version configs
-        if let Some(ref m) = mapping {
-            for version in &m.versions {
-                let data_id = build_version_data_id(prompt_key, version);
-                let _ = self.delete_config(&data_id, namespace_id, src_user).await;
-            }
-        }
-
-        // Delete descriptor, mapping, latest mirror
-        let _ = self
-            .delete_config(
-                &build_descriptor_data_id(prompt_key),
-                namespace_id,
-                src_user,
-            )
-            .await;
-        let _ = self
-            .delete_config(
-                &build_label_version_mapping_data_id(prompt_key),
-                namespace_id,
-                src_user,
-            )
-            .await;
-        let _ = self
-            .delete_config(&build_latest_data_id(prompt_key), namespace_id, src_user)
-            .await;
+        self.persistence
+            .ai_resource_version_delete_all(namespace_id, prompt_key, resource_type::PROMPT)
+            .await?;
+        self.persistence
+            .ai_resource_delete(namespace_id, prompt_key, resource_type::PROMPT)
+            .await?;
 
         debug!(
             "Deleted prompt '{}' in namespace '{}'",
@@ -325,12 +385,16 @@ impl PromptOperationService {
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<bool> {
-        let mut mapping = self
-            .load_mapping(namespace_id, prompt_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))?;
+        let _ = (src_user, src_ip);
 
-        if !mapping.versions.contains(&version.to_string()) {
+        let mut meta = self.require_meta(namespace_id, prompt_key).await?;
+
+        let known = self
+            .persistence
+            .ai_resource_version_find(namespace_id, prompt_key, resource_type::PROMPT, version)
+            .await?
+            .is_some();
+        if !known {
             anyhow::bail!(
                 "Version '{}' not found for prompt '{}'",
                 version,
@@ -338,13 +402,8 @@ impl PromptOperationService {
             );
         }
 
-        mapping
-            .labels
-            .insert(label.to_string(), version.to_string());
-        mapping.gmt_modified = Some(chrono::Utc::now().timestamp_millis());
-
-        self.save_mapping(namespace_id, &mapping, src_user, src_ip)
-            .await?;
+        meta.labels.insert(label.to_string(), version.to_string());
+        self.save_meta(namespace_id, prompt_key, &meta).await?;
         Ok(true)
     }
 
@@ -357,16 +416,11 @@ impl PromptOperationService {
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<bool> {
-        let mut mapping = self
-            .load_mapping(namespace_id, prompt_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))?;
+        let _ = (src_user, src_ip);
 
-        mapping.labels.remove(label);
-        mapping.gmt_modified = Some(chrono::Utc::now().timestamp_millis());
-
-        self.save_mapping(namespace_id, &mapping, src_user, src_ip)
-            .await?;
+        let mut meta = self.require_meta(namespace_id, prompt_key).await?;
+        meta.labels.remove(label);
+        self.save_meta(namespace_id, prompt_key, &meta).await?;
         Ok(true)
     }
 
@@ -380,21 +434,27 @@ impl PromptOperationService {
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<bool> {
-        let mut descriptor = self
-            .load_descriptor(namespace_id, prompt_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))?;
+        let _ = (src_user, src_ip);
+
+        // Updating metadata for a prompt that does not exist is an error.
+        self.require_meta(namespace_id, prompt_key).await?;
 
         if let Some(d) = description {
-            descriptor.description = Some(d.to_string());
+            self.persistence
+                .ai_resource_update_description(namespace_id, prompt_key, resource_type::PROMPT, d)
+                .await?;
         }
-        if let Some(tags) = biz_tags {
-            descriptor.biz_tags = tags;
-        }
-        descriptor.gmt_modified = Some(chrono::Utc::now().timestamp_millis());
 
-        self.save_descriptor(namespace_id, &descriptor, src_user, src_ip)
-            .await?;
+        if let Some(tags) = biz_tags {
+            self.persistence
+                .ai_resource_update_biz_tags(
+                    namespace_id,
+                    prompt_key,
+                    resource_type::PROMPT,
+                    &tags.join(","),
+                )
+                .await?;
+        }
         Ok(true)
     }
 
@@ -406,14 +466,14 @@ impl PromptOperationService {
         version: Option<&str>,
         label: Option<&str>,
     ) -> anyhow::Result<Option<PromptVersionInfo>> {
-        let mapping = match self.load_mapping(namespace_id, prompt_key).await {
-            Some(m) => m,
-            None => return Ok(None),
+        let Some(meta) = self.load_meta(namespace_id, prompt_key).await? else {
+            return Ok(None);
         };
+        let rows = self.all_versions(namespace_id, prompt_key).await?;
+        let versions: Vec<String> = rows.iter().map(|row| row.version.clone()).collect();
 
-        let resolved = resolve_target_version(&mapping, version, label);
-        match resolved {
-            Some(v) => Ok(self.load_version_info(namespace_id, prompt_key, &v).await),
+        match Self::resolve_version(&meta, &versions, version, label) {
+            Some(resolved) => self.load_version(namespace_id, prompt_key, &resolved).await,
             None => {
                 if version.is_some() {
                     anyhow::bail!("Version not found for prompt '{}'", prompt_key);
@@ -424,6 +484,293 @@ impl PromptOperationService {
                 Ok(None)
             }
         }
+    }
+
+    // ========================================================================
+    // Version lifecycle
+    //
+    // The state machine is shared with every other AI resource type
+    // (`version_lifecycle`); only the resource type differs.
+    // ========================================================================
+
+    /// Create a draft version, which is not served until it is published.
+    pub async fn create_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        target_version: Option<&str>,
+        template: &str,
+        description: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String> {
+        if template.is_empty() {
+            anyhow::bail!("Template cannot be empty");
+        }
+
+        let version = match target_version {
+            Some(v) => {
+                if !is_valid_version(v) {
+                    anyhow::bail!(
+                        "Invalid version format '{}', must be major.minor.patch",
+                        v
+                    );
+                }
+                v.to_string()
+            }
+            None => PROMPT_DEFAULT_VERSION.to_string(),
+        };
+
+        if self
+            .persistence
+            .ai_resource_version_find(namespace_id, prompt_key, resource_type::PROMPT, &version)
+            .await?
+            .is_some()
+        {
+            anyhow::bail!(
+                "Version '{}' already exists for prompt '{}'",
+                version,
+                prompt_key
+            );
+        }
+
+        // Ensure the prompt exists and load its bookkeeping.
+        if self.find_resource(namespace_id, prompt_key).await?.is_none() {
+            self.persistence
+                .ai_resource_insert(&AiResourceInfo {
+                    name: prompt_key.to_string(),
+                    resource_type: resource_type::PROMPT.to_string(),
+                    namespace_id: namespace_id.to_string(),
+                    description: description.map(|d| d.to_string()),
+                    status: Some(meta_status::ENABLE.to_string()),
+                    version_info: Some(serde_json::to_string(&ResourceVersionInfo::default())?),
+                    meta_version: 1,
+                    scope: scope::PRIVATE.to_string(),
+                    owner: src_user.to_string(),
+                    download_count: 0,
+                    ..Default::default()
+                })
+                .await?;
+        }
+        let mut meta = self.require_meta(namespace_id, prompt_key).await?;
+
+        // Only one version may be edited at a time.
+        if meta.editing_version.is_some() {
+            anyhow::bail!("Prompt '{}' already has a draft version", prompt_key);
+        }
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = PromptStorage {
+            prompt_key: prompt_key.to_string(),
+            template: template.to_string(),
+            md5: Some(const_hex::encode(md5::Md5::digest(template.as_bytes()))),
+            commit_msg: None,
+            src_user: Some(src_user.to_string()),
+            gmt_modified: Some(now),
+            variables,
+        };
+        self.persistence
+            .ai_resource_version_insert(&AiResourceVersionInfo {
+                name: prompt_key.to_string(),
+                resource_type: resource_type::PROMPT.to_string(),
+                namespace_id: namespace_id.to_string(),
+                version: version.clone(),
+                status: version_status::DRAFT.to_string(),
+                author: Some(src_user.to_string()),
+                description: description.map(|d| d.to_string()),
+                storage: Some(serde_json::to_string(&storage)?),
+                download_count: 0,
+                ..Default::default()
+            })
+            .await?;
+
+        meta.editing_version = Some(version.clone());
+        self.save_meta(namespace_id, prompt_key, &meta).await?;
+
+        Ok(version)
+    }
+
+    /// Replace the content of the version currently being edited.
+    pub async fn update_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        template: &str,
+        commit_msg: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String> {
+        if template.is_empty() {
+            anyhow::bail!("Template cannot be empty");
+        }
+
+        let meta = self.require_meta(namespace_id, prompt_key).await?;
+        let version = meta
+            .editing_version
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' has no draft version", prompt_key))?;
+
+        let storage = PromptStorage {
+            prompt_key: prompt_key.to_string(),
+            template: template.to_string(),
+            md5: Some(const_hex::encode(md5::Md5::digest(template.as_bytes()))),
+            commit_msg: commit_msg.map(|s| s.to_string()),
+            src_user: Some(src_user.to_string()),
+            gmt_modified: Some(chrono::Utc::now().timestamp_millis()),
+            variables,
+        };
+        self.persistence
+            .ai_resource_version_update_storage(
+                namespace_id,
+                prompt_key,
+                resource_type::PROMPT,
+                &version,
+                &serde_json::to_string(&storage)?,
+                None,
+            )
+            .await?;
+
+        Ok(version)
+    }
+
+    /// Discard the version currently being edited.
+    pub async fn delete_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<()> {
+        let mut meta = self.require_meta(namespace_id, prompt_key).await?;
+        let version = meta
+            .editing_version
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' has no draft version", prompt_key))?;
+
+        self.persistence
+            .ai_resource_version_delete(namespace_id, prompt_key, resource_type::PROMPT, &version)
+            .await?;
+
+        meta.editing_version = None;
+        self.save_meta(namespace_id, prompt_key, &meta).await?;
+        Ok(())
+    }
+
+    /// Submit a draft for review (draft → reviewing).
+    pub async fn submit(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::submit(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a reviewed version (reviewing / reviewed / online → online).
+    pub async fn publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::publish(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a version bypassing the review gate.
+    pub async fn force_publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::force_publish(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn redraft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::redraft(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Bring an offline version back online.
+    pub async fn online(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::online(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Take an online version offline.
+    pub async fn offline(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        version_lifecycle::offline(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            version,
+        )
+        .await
+    }
+
+    /// Replace the label routing, preserving the server-managed `latest` label.
+    pub async fn update_labels(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        version_lifecycle::update_labels(
+            self.persistence.as_ref(),
+            namespace_id,
+            prompt_key,
+            resource_type::PROMPT,
+            labels,
+        )
+        .await
     }
 
     // ========================================================================
@@ -465,40 +812,32 @@ impl PromptOperationService {
         prompt_key: &str,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_persistence::model::Page<PromptVersionSummary>> {
-        let mapping = self
-            .load_mapping(namespace_id, prompt_key)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found", prompt_key))?;
+    ) -> anyhow::Result<Page<PromptVersionSummary>> {
+        if self.find_resource(namespace_id, prompt_key).await?.is_none() {
+            anyhow::bail!("Prompt '{}' not found", prompt_key);
+        }
 
-        // Sort versions descending
-        let mut versions = mapping.versions.clone();
-        versions.sort_by(|a, b| compare_versions(a, b).reverse());
-
-        // Paginate
-        let total = versions.len() as u64;
+        let rows = self.all_versions(namespace_id, prompt_key).await?;
+        let total = rows.len() as u64;
         let start = ((page_no.saturating_sub(1)) * page_size) as usize;
-        let page_versions: Vec<&String> = versions
+
+        let summaries = rows
             .iter()
             .skip(start)
             .take(page_size as usize)
-            .collect();
-
-        // Load version summaries
-        let mut summaries = Vec::with_capacity(page_versions.len());
-        for v in page_versions {
-            if let Some(info) = self.load_version_info(namespace_id, prompt_key, v).await {
-                summaries.push(PromptVersionSummary {
+            .map(|row| {
+                let info = Self::version_info(row);
+                PromptVersionSummary {
                     prompt_key: info.prompt_key,
                     version: info.version,
                     commit_msg: info.commit_msg,
                     src_user: info.src_user,
                     gmt_modified: info.gmt_modified,
-                });
-            }
-        }
+                }
+            })
+            .collect();
 
-        Ok(batata_persistence::model::Page {
+        Ok(Page {
             total_count: total,
             page_number: page_no,
             pages_available: total.div_ceil(page_size),
@@ -507,8 +846,6 @@ impl PromptOperationService {
     }
 
     /// List prompts with search/filter and pagination.
-    /// Searches config entries with group = "nacos-ai-prompt" and
-    /// dataId matching `*.descriptor.json` pattern.
     pub async fn list_prompts(
         &self,
         namespace_id: &str,
@@ -517,25 +854,17 @@ impl PromptOperationService {
         biz_tags: Option<&str>,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_persistence::model::Page<PromptMetaSummary>> {
-        // Build dataId search pattern
-        let data_id_pattern = match (prompt_key, search) {
-            (Some(key), Some("accurate")) if !key.is_empty() => {
-                // Exact match: {promptKey}.descriptor.json
-                build_descriptor_data_id(key)
-            }
-            (Some(key), _) if !key.is_empty() => {
-                // Blur match: *{promptKey}*.descriptor.json
-                format!("*{}*.descriptor.json", key)
-            }
-            _ => {
-                // All descriptors: *.descriptor.json
-                "*.descriptor.json".to_string()
-            }
-        };
+    ) -> anyhow::Result<Page<PromptMetaSummary>> {
+        let accurate = search == Some("accurate");
+        let filter = AiResourceListFilter::new()
+            .with_name_filter(prompt_key.filter(|key| !key.is_empty()), accurate);
 
-        // Build tags filter
-        let tags: Vec<String> = biz_tags
+        let page = self
+            .persistence
+            .ai_resource_list(namespace_id, resource_type::PROMPT, &filter, page_no, page_size)
+            .await?;
+
+        let wanted: Vec<String> = biz_tags
             .map(|t| {
                 t.split(',')
                     .map(|s| s.trim().to_string())
@@ -544,56 +873,34 @@ impl PromptOperationService {
             })
             .unwrap_or_default();
 
-        // Search config entries
-        let config_page = self
-            .persistence
-            .config_search_page(
-                page_no,
-                page_size,
-                namespace_id,
-                &data_id_pattern,
-                PROMPT_GROUP,
-                "", // app_name
-                tags,
-                vec![], // types
-                "",     // content
-            )
-            .await?;
+        let mut summaries = Vec::with_capacity(page.page_items.len());
+        for resource in &page.page_items {
+            let meta: ResourceVersionInfo = resource
+                .version_info
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok())
+                .unwrap_or_default();
 
-        // Convert config entries to PromptMetaSummary
-        let mut summaries = Vec::with_capacity(config_page.page_items.len());
-        for config in &config_page.page_items {
-            let Some(prompt_key) = extract_prompt_key_from_descriptor(&config.data_id) else {
+            let tags = Self::parse_biz_tags(resource.biz_tags.as_deref());
+            if !wanted.is_empty() && !wanted.iter().any(|t| tags.contains(t)) {
                 continue;
-            };
+            }
 
-            // Parse descriptor content
-            let descriptor: Option<PromptDescriptor> = serde_json::from_str(&config.content).ok();
-
-            // Load label-version mapping for latest_version
-            let mapping = self.load_mapping(namespace_id, prompt_key).await;
-
-            let summary = PromptMetaSummary {
+            summaries.push(PromptMetaSummary {
                 schema_version: 1,
-                prompt_key: prompt_key.to_string(),
-                description: descriptor.as_ref().and_then(|d| d.description.clone()),
-                biz_tags: descriptor
-                    .as_ref()
-                    .map(|d| d.biz_tags.clone())
-                    .unwrap_or_default(),
-                latest_version: mapping.and_then(|m| m.latest_version),
-                gmt_modified: descriptor.as_ref().and_then(|d| d.gmt_modified),
-            };
-            summaries.push(summary);
+                prompt_key: resource.name.clone(),
+                description: resource.description.clone(),
+                biz_tags: tags,
+                latest_version: meta.latest_version().cloned(),
+                gmt_modified: None,
+            });
         }
 
-        Ok(batata_persistence::model::Page {
-            total_count: config_page.total_count,
-            page_number: config_page.page_number,
-            pages_available: config_page.pages_available,
+        Ok(Page {
+            total_count: page.total_count,
+            page_number: page.page_number,
+            pages_available: page.pages_available,
             page_items: summaries,
         })
     }
 }
-
-use md5::Digest;

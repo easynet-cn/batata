@@ -278,6 +278,29 @@ impl AiResourcePersistence for ExternalDbPersistService {
         Ok(())
     }
 
+    async fn ai_resource_update_description(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        resource_type: &str,
+        description: &str,
+    ) -> anyhow::Result<()> {
+        let now = Utc::now().naive_utc();
+        ai_resource::Entity::update_many()
+            .col_expr(
+                ai_resource::Column::CDesc,
+                Expr::value(Some(description.to_string())),
+            )
+            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
+            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
+            .filter(ai_resource::Column::Name.eq(name))
+            .filter(ai_resource::Column::Type.eq(resource_type))
+            .exec(&self.db)
+            .await?;
+
+        Ok(())
+    }
+
     async fn ai_resource_update_status(
         &self,
         namespace_id: &str,

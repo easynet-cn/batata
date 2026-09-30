@@ -16,7 +16,7 @@ mod common;
 use std::sync::Arc;
 
 use batata_ai::PromptOperationService;
-use batata_persistence::ExternalDbPersistService;
+use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
 
 const NS: &str = "public";
 
@@ -220,4 +220,110 @@ async fn delete_prompt_removes_everything() {
         "the metadata must be gone"
     );
     println!("ok: delete removes versions and metadata");
+}
+
+/// Status of one version, read straight from the version table.
+async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
+    store
+        .ai_resource_version_find(NS, KEY, "prompt", version)
+        .await
+        .expect("version lookup")
+        .expect("version must exist")
+        .status
+}
+
+/// The draft lifecycle, driven through the shared `version_lifecycle`.
+#[tokio::test]
+#[ignore]
+async fn prompt_version_lifecycle() {
+    let store = setup().await;
+    let svc = PromptOperationService::new(store.clone());
+    clean(&svc).await;
+
+    let version = svc
+        .create_draft(NS, KEY, Some("1.0.0"), "draft body", Some("desc"), None, "tester")
+        .await
+        .expect("create draft");
+    assert_eq!(version, "1.0.0");
+    assert_eq!(status_of(&store, "1.0.0").await, "draft");
+
+    // A draft is not publishable: it has to be reviewed first.
+    assert!(
+        svc.publish(NS, KEY, "1.0.0").await.is_err(),
+        "publishing a draft must fail"
+    );
+
+    svc.submit(NS, KEY, "1.0.0").await.expect("submit");
+    assert_eq!(status_of(&store, "1.0.0").await, "reviewing");
+    println!("ok: draft → reviewing");
+
+    svc.publish(NS, KEY, "1.0.0").await.expect("publish");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+
+    // Publishing makes the version the one served by default.
+    let served = svc
+        .query_detail(NS, KEY, None, None)
+        .await
+        .expect("query")
+        .expect("a published version must be served");
+    assert_eq!(served.version, "1.0.0");
+    assert_eq!(served.template, "draft body");
+    println!("ok: publish serves the version");
+
+    svc.offline(NS, KEY, "1.0.0").await.expect("offline");
+    assert_eq!(status_of(&store, "1.0.0").await, "offline");
+    svc.online(NS, KEY, "1.0.0").await.expect("online");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+    println!("ok: offline → online");
+
+    svc.redraft(NS, KEY, "1.0.0").await.expect("redraft");
+    assert_eq!(status_of(&store, "1.0.0").await, "draft");
+
+    // The point of force-publish: it skips the review gate.
+    svc.force_publish(NS, KEY, "1.0.0")
+        .await
+        .expect("force publish");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+    println!("ok: force publish bypasses review");
+
+    clean(&svc).await;
+}
+
+/// A draft can be edited and then discarded.
+#[tokio::test]
+#[ignore]
+async fn draft_can_be_updated_and_discarded() {
+    let store = setup().await;
+    let svc = PromptOperationService::new(store.clone());
+    clean(&svc).await;
+
+    svc.create_draft(NS, KEY, Some("2.0.0"), "first", None, None, "tester")
+        .await
+        .expect("create draft");
+
+    let updated = svc
+        .update_draft(NS, KEY, "second", Some("tweak"), None, "tester")
+        .await
+        .expect("update draft");
+    assert_eq!(updated, "2.0.0");
+    let draft = svc
+        .query_detail(NS, KEY, Some("2.0.0"), None)
+        .await
+        .expect("query")
+        .expect("the draft must exist");
+    assert_eq!(draft.template, "second");
+    println!("ok: draft updated");
+
+    svc.delete_draft(NS, KEY).await.expect("delete draft");
+    assert!(
+        store
+            .ai_resource_version_find(NS, KEY, "prompt", "2.0.0")
+            .await
+            .expect("lookup")
+            .is_none(),
+        "the draft must be gone"
+    );
+    println!("ok: draft discarded");
+
+    clean(&svc).await;
 }

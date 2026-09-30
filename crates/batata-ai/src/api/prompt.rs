@@ -578,6 +578,527 @@ async fn client_query_prompt(
 // ============================================================================
 
 /// Configure admin prompt routes at `/v3/admin/ai/prompt`
+// ============================================================================
+// Lifecycle request forms
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for a lifecycle action on one prompt version.
+pub struct PromptVersionActionForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// Target version.
+    pub version: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for creating a prompt draft.
+pub struct PromptDraftCreateForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// Version to create; defaults to `0.0.1` when absent.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Prompt template content.
+    #[serde(default)]
+    pub template: String,
+    /// Optional description.
+    pub description: Option<String>,
+    /// Optional commit message.
+    #[serde(alias = "commitMsg")]
+    pub commit_msg: Option<String>,
+    /// JSON array of PromptVariable.
+    pub variables: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for updating the prompt draft.
+pub struct PromptDraftUpdateForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// Prompt template content.
+    #[serde(default)]
+    pub template: String,
+    /// Optional commit message.
+    #[serde(alias = "commitMsg")]
+    pub commit_msg: Option<String>,
+    /// JSON array of PromptVariable.
+    pub variables: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Query parameters for discarding a prompt draft.
+pub struct PromptDraftForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for replacing the label routing.
+pub struct PromptLabelsForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// JSON object mapping each label to a version.
+    pub labels: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for updating the prompt description.
+pub struct PromptDescriptionForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// New description.
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// Request body for updating the prompt biz tags.
+pub struct PromptBizTagsForm {
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Prompt key (identifier).
+    #[serde(alias = "promptKey")]
+    pub prompt_key: String,
+    /// Comma-separated biz tags.
+    #[serde(alias = "bizTags")]
+    pub biz_tags: Option<String>,
+}
+
+// ============================================================================
+// Lifecycle handlers
+// ============================================================================
+
+/// POST /v3/admin/ai/prompt/draft — Create a draft version
+#[post("draft")]
+async fn create_draft(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptDraftCreateForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let src_user = req
+        .extensions()
+        .get::<batata_common::IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+    let variables: Option<Vec<PromptVariable>> = form
+        .variables
+        .as_deref()
+        .and_then(|v| serde_json::from_str(v).ok());
+
+    match prompt_service
+        .create_draft(
+            ns,
+            &form.prompt_key,
+            form.version.as_deref(),
+            &form.template,
+            form.description.as_deref(),
+            variables,
+            &src_user,
+        )
+        .await
+    {
+        Ok(version) => HttpResponse::Ok().json(Result::success(version)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// PUT /v3/admin/ai/prompt/draft — Replace the draft content
+#[put("draft")]
+async fn update_draft(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptDraftUpdateForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let src_user = req
+        .extensions()
+        .get::<batata_common::IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+    let variables: Option<Vec<PromptVariable>> = form
+        .variables
+        .as_deref()
+        .and_then(|v| serde_json::from_str(v).ok());
+
+    match prompt_service
+        .update_draft(
+            ns,
+            &form.prompt_key,
+            &form.template,
+            form.commit_msg.as_deref(),
+            variables,
+            &src_user,
+        )
+        .await
+    {
+        Ok(version) => HttpResponse::Ok().json(Result::success(version)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// DELETE /v3/admin/ai/prompt/draft — Discard the draft version
+#[delete("draft")]
+async fn delete_draft(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptDraftForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    match prompt_service.delete_draft(ns, &query.prompt_key).await {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/submit — Send a draft for review
+#[post("submit")]
+async fn submit_prompt(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .submit(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/publish — Publish a reviewed version
+#[post("publish")]
+async fn publish_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .publish(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/force-publish — Publish bypassing the review gate
+#[post("force-publish")]
+async fn force_publish_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .force_publish(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/redraft — Move a version back to draft
+#[post("redraft")]
+async fn redraft_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .redraft(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/online — Bring an offline version back online
+#[post("online")]
+async fn online_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .online(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/prompt/offline — Take an online version offline
+#[post("offline")]
+async fn offline_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptVersionActionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .offline(ns, &form.prompt_key, &form.version)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// PUT /v3/admin/ai/prompt/labels — Replace the label routing
+#[put("labels")]
+async fn update_labels(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptLabelsForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let labels: std::collections::HashMap<String, String> = form
+        .labels
+        .as_deref()
+        .and_then(|l| serde_json::from_str(l).ok())
+        .unwrap_or_default();
+
+    match prompt_service
+        .update_labels(ns, &form.prompt_key, labels)
+        .await
+    {
+        Ok(labels) => HttpResponse::Ok().json(Result::success(labels)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// PUT /v3/admin/ai/prompt/description — Update the prompt description
+#[put("description")]
+async fn update_description(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptDescriptionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match prompt_service
+        .update_metadata(ns, &form.prompt_key, Some(&form.description), None, "", "")
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// PUT /v3/admin/ai/prompt/biz-tags — Update the prompt biz tags
+#[put("biz-tags")]
+async fn update_biz_tags(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    body: web::Form<PromptBizTagsForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let tags = parse_biz_tags(form.biz_tags.as_deref());
+    match prompt_service
+        .update_metadata(ns, &form.prompt_key, None, Some(tags), "", "")
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// Configure admin prompt routes at `/v3/admin/ai/prompt`
 pub fn admin_routes() -> actix_web::Scope {
     web::scope("/prompt")
         .service(publish_prompt)
@@ -589,6 +1110,18 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(unbind_label)
         .service(update_metadata)
         .service(delete_prompt)
+        .service(create_draft)
+        .service(update_draft)
+        .service(delete_draft)
+        .service(submit_prompt)
+        .service(publish_version)
+        .service(force_publish_version)
+        .service(redraft_version)
+        .service(online_version)
+        .service(offline_version)
+        .service(update_labels)
+        .service(update_description)
+        .service(update_biz_tags)
 }
 
 /// Configure client prompt routes at `/v3/client/ai/prompt`
