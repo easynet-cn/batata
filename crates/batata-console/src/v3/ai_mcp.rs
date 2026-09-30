@@ -10,12 +10,14 @@ use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, 
 
 use batata_common::McpServerService;
 use batata_common::model::Page;
+use batata_common::model::ai::mcp_validation;
 use batata_common::model::ai::mcp::{
-    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery,
+    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery, McpImportExecuteRequest,
     McpImportValidateRequest, McpImportValidateResponse, McpLabelsRequest, McpListQuery,
-    McpRegistryStats, McpScopeQuery, McpSearchQuery, McpServer, McpServerBasicInfo, McpServerConfig,
-    McpServerRegistration, McpServerVersionDetail, McpServerVersionSummary, McpStatusQuery, McpTool,
-    McpVersionsQuery,
+    McpRegistryStats, McpScopeQuery, McpSearchQuery, McpServer, McpServerBasicInfo,
+    McpServerImportItem, McpServerImportResponse, McpServerImportResult, McpServerRegistration,
+    McpServerVersionDetail, McpServerVersionSummary, McpStatusQuery, McpTool, McpVersionsQuery,
+    CONFLICT_EXISTING, import_result_status,
 };
 use super::ai_trace::{self, get_username, trace_write};
 use batata_server_common::error;
@@ -23,6 +25,38 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
 use batata_server_common::secured::Secured;
 use batata_server_common::{ActionTypes, ApiType, SignType, secured};
+
+/// Resolve which `(name, version)` pairs of an import batch already exist.
+///
+/// A lookup failure is treated as "not present": the entry is simply not
+/// marked as a duplicate, and any real conflict surfaces when the import
+/// itself is attempted.
+async fn existing_servers(
+    svc: &Arc<dyn McpServerService>,
+    namespace: &str,
+    servers: &[McpServerImportItem],
+) -> std::collections::HashSet<(String, String)> {
+    let mut existing = std::collections::HashSet::new();
+    for server in servers {
+        let name = match server.name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name,
+            _ => continue,
+        };
+        let version = server.version().to_string();
+        let version = if version.is_empty() {
+            None
+        } else {
+            Some(version.as_str())
+        };
+        if let Ok(Some(_)) = svc
+            .get_mcp_server_detail(namespace, None, Some(name), version, None)
+            .await
+        {
+            existing.insert((name.to_string(), server.version().to_string()));
+        }
+    }
+    existing
+}
 
 /// List MCP servers
 /// GET /v3/console/ai/mcp/list
@@ -368,6 +402,7 @@ async fn import_tools_from_mcp(
 async fn import_validate(
     req: HttpRequest,
     data: web::Data<AppState>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     body: web::Json<McpImportValidateRequest>,
 ) -> impl Responder {
     secured!(
@@ -378,25 +413,168 @@ async fn import_validate(
             .build()
     );
 
-    let content = &body.content;
-    match serde_json::from_str::<HashMap<String, McpServerConfig>>(content) {
-        Ok(servers) => {
-            let response = McpImportValidateResponse {
-                valid: true,
-                message: String::new(),
-                server_count: servers.len() as u32,
-            };
-            common_response::Result::<McpImportValidateResponse>::http_success(response)
-        }
-        Err(e) => {
+    let request = body.into_inner();
+    let namespace = request.namespace_id.as_deref().unwrap_or("public");
+
+    // Upstream validates the batch semantically, not just as JSON: required
+    // fields, protocol, batch/namespace duplicates and protocol-specific
+    // configuration. Existence needs the database, so resolve it first and hand
+    // the answers to the pure rule function.
+    let servers = match mcp_validation::parse_import_payload(&request.content) {
+        Ok(servers) => servers,
+        Err(message) => {
             let response = McpImportValidateResponse {
                 valid: false,
-                message: format!("Invalid JSON: {}", e),
+                message,
                 server_count: 0,
+                valid_count: 0,
+                invalid_count: 0,
+                duplicate_count: 0,
+                servers: Vec::new(),
             };
-            common_response::Result::<McpImportValidateResponse>::http_success(response)
+            return common_response::Result::<McpImportValidateResponse>::http_success(response);
+        }
+    };
+
+    let existing = existing_servers(&svc, namespace, &servers).await;
+    let result = mcp_validation::validate_servers(&servers, |name, version| {
+        existing.contains(&(name.to_string(), version.to_string()))
+    });
+    let response: McpImportValidateResponse = result.into();
+    common_response::Result::<McpImportValidateResponse>::http_success(response)
+}
+
+/// Import a validated batch of MCP servers
+/// POST /v3/console/ai/mcp/import/execute
+#[post("/import/execute")]
+async fn import_execute(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    svc: web::Data<Arc<dyn McpServerService>>,
+    body: web::Json<McpImportExecuteRequest>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/mcp")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let request = body.into_inner();
+    let namespace = if request.namespace.is_empty() {
+        "public"
+    } else {
+        request.namespace.as_str()
+    };
+
+    let servers = match mcp_validation::parse_import_payload(&request.content) {
+        Ok(servers) => servers,
+        Err(message) => {
+            return common_response::Result::<McpServerImportResponse>::http_success(
+                McpServerImportResponse::error(message),
+            )
+        }
+    };
+
+    let existing = existing_servers(&svc, namespace, &servers).await;
+    let validation = mcp_validation::validate_servers(&servers, |name, version| {
+        existing.contains(&(name.to_string(), version.to_string()))
+    });
+
+    // Upstream refuses the batch unless it is valid or the caller asked to skip
+    // the invalid entries.
+    if !validation.valid && !request.skip_invalid {
+        return common_response::Result::<McpServerImportResponse>::http_success(
+            McpServerImportResponse::error(format!(
+                "Import validation failed: {}",
+                validation.errors.join(", ")
+            )),
+        );
+    }
+
+    let chosen = mcp_validation::select_importable_items(
+        &validation.servers,
+        &request.selected_servers,
+    );
+
+    let mut results = Vec::with_capacity(chosen.len());
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut skipped_count = 0u32;
+
+    for index in chosen {
+        let verdict = &validation.servers[index];
+        let name = verdict.server_name.clone().unwrap_or_default();
+        let server_id = verdict.server_id.clone();
+
+        // An existing server is skipped unless overwrite was requested.
+        if verdict.exists && !request.overwrite {
+            skipped_count += 1;
+            results.push(McpServerImportResult {
+                server_name: Some(name),
+                server_id,
+                status: import_result_status::SKIPPED.to_string(),
+                conflict_type: Some(CONFLICT_EXISTING.to_string()),
+                error_message: None,
+            });
+            continue;
+        }
+
+        match mcp_validation::import_item_to_registration(namespace, &servers[index]) {
+            Ok(registration) => {
+                let outcome = if verdict.exists {
+                    svc.update_mcp_server(namespace, &registration).await.map(|_| ())
+                } else {
+                    svc.create_mcp_server(namespace, &registration).await.map(|_| ())
+                };
+                match outcome {
+                    Ok(()) => {
+                        success_count += 1;
+                        results.push(McpServerImportResult {
+                            server_name: Some(name),
+                            server_id,
+                            status: import_result_status::SUCCESS.to_string(),
+                            conflict_type: None,
+                            error_message: None,
+                        });
+                    }
+                    Err(e) => {
+                        failed_count += 1;
+                        results.push(McpServerImportResult {
+                            server_name: Some(name),
+                            server_id,
+                            status: import_result_status::FAILED.to_string(),
+                            conflict_type: None,
+                            error_message: Some(format!("Failed to import server: {e}")),
+                        });
+                    }
+                }
+            }
+            Err(message) => {
+                failed_count += 1;
+                results.push(McpServerImportResult {
+                    server_name: Some(name),
+                    server_id,
+                    status: import_result_status::FAILED.to_string(),
+                    conflict_type: None,
+                    error_message: Some(format!("Failed to import server: {message}")),
+                });
+            }
         }
     }
+
+    let response = McpServerImportResponse {
+        // Skips do not fail the batch upstream.
+        success: failed_count == 0,
+        total_count: results.len() as u32,
+        success_count,
+        failed_count,
+        skipped_count,
+        error_message: None,
+        results,
+    };
+    common_response::Result::<McpServerImportResponse>::http_success(response)
 }
 
 /// Get MCP registry statistics
@@ -981,5 +1159,6 @@ pub fn routes() -> Scope {
         .service(update_labels)
         .service(update_status)
         .service(update_scope)
+        .service(import_execute)
         .service(delete_server)
 }

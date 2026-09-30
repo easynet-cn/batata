@@ -156,7 +156,8 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing · ❓ needs verificati
 - [x] Confirm upstream Nacos commit/tag used as the baseline
 - [x] Produce a per-endpoint diff table → [`api-mapping.md`](api-mapping.md)
 - [x] Produce a data-model field diff → [`model-mapping.md`](model-mapping.md)
-- [ ] Record current test coverage for AI in Batata
+- [x] Record current test coverage for AI in Batata — see
+      [§ Test coverage](#test-coverage)
 
 ### Phase 1 — Core architecture
 
@@ -183,7 +184,16 @@ Goal: introduce the upstream layering before adding endpoints.
       > The trait default still returns an explicit "not supported by this
       storage backend" error, as a safety net for any backend added later that
       forgets to implement the index.
-- [ ] `runtime/` layer (runtime endpoint resolution, heartbeat)
+- [ ] `runtime/` layer — **not MCP, and blocked.** Upstream's `runtime/` is
+      `service/agent/runtime/`, the Agent **RAD** subsystem:
+      `AgentRuntimeRegistryService` is backed directly by Naming client
+      publications (`ServiceStorage`, `EphemeralClientOperationServiceImpl`),
+      with `AgentRuntimePublicationCapacityGate` and
+      `RuntimeEndpointRevision` fingerprinting. It therefore depends on RAD and
+      ARD (`nacos.ai.rad.capacity.*`, `nacos.ai.ard.enabled`), neither of which
+      Batata has, plus Naming ephemeral registrations for liveness. Building it
+      standalone would sit on missing foundations; it should follow ARD/RAD,
+      not precede them.
 - [x] `visibility/` layer via `ai_resource.scope` / `owner` — **done for all
       four domains** (MCP 14, Skill 32, AgentSpec 32, A2A 13 `batata_visibility`
       call sites). MCP is the documented reference case:
@@ -408,8 +418,13 @@ has no `LIKE`:
 - [x] Replaced the config-backed storage for **MCP / Skill / AgentSpec / A2A**
       with the `ai_resource*` path. No compatibility mode: Batata is unreleased
       and has no stored data to migrate.
-      Verified: `grep -rn "publish_config\|config_info::Entity" crates/batata-ai/src/`
-      returns **0** matches. The legacy config-group/data-id/tag constants in
+      **Correction:** an earlier claim here that "zero config calls remain in
+      `batata-ai`" was wrong. The check grepped
+      `publish_config\|config_info::Entity` and missed the trait-level
+      `config_find_one` / `config_create_or_update` calls. **Prompt is still
+      config-backed** (`service/prompt/mod.rs`, group `nacos-ai-prompt`,
+      3 call sites) and is the only remaining domain on the legacy path.
+      The legacy config-group/data-id/tag constants in
       `service/constants.rs` were deleted; only the NamingService endpoint
       constants remain (endpoint resolution is still naming-based upstream too).
 - [ ] Rework `McpForm`-style simplified forms into structured request models
@@ -492,14 +507,86 @@ has no `LIKE`:
       > the document/chunk index) and the legacy console endpoints above.
 - [x] ~~`online` / `offline`~~ — done (see above; also wired on
       `POST /ai/mcp/online` and `POST /ai/mcp/offline`)
-- [ ] Admin/Client controller split (management vs runtime discovery)
-- [ ] Validation service equivalent to `McpServerValidationService`
-- [ ] Import service equivalent to `McpServerImportService` + legacy import adapter
-- [ ] Cache invalidation equivalent to `McpServerCacheInvalidateService`
+- [x] ~~Admin/Client controller split (management vs runtime discovery)~~ —
+      **the split already exists in a different shape:**
+      - management: the console MCP endpoints (`/v3/console/ai/mcp/*`,
+        `SignType::Console`)
+      - client discovery: a dedicated **MCP Registry server** on its own port
+        (default 9080) implementing the official MCP Registry OpenAPI
+        (`GET /v0/servers`, `GET /v0/servers/{id}`) —
+        `startup/http.rs:259` — plus the Skills `.well-known` registry.
+
+      Upstream's `McpClientController` (added in 3.3.0) additionally exposes
+      `GET` (latest serving version), `POST` (release), `POST /endpoints` and
+      `GET /search`. Of those, `/endpoints` plus
+      `AiHttpClientLifecycleService` are RAD/runtime-endpoint territory and are
+      blocked as described under `runtime/` above; query, release and search
+      are already reachable through the admin endpoints, the registry and the
+      MCP keyword search. Nothing is missing that is not otherwise blocked.
+- [x] Validation service equivalent to `McpServerValidationService` —
+      `model::ai::mcp_validation`, wired into `POST /ai/mcp/import/validate`.
+      The endpoint previously only parsed the JSON and answered `valid: true`
+      with a server count; it now applies upstream's rules: name/protocol/
+      description required, protocol in `stdio|sse|streamable|http|dubbo`,
+      duplicates inside the batch (keyed on name + version), already-exists in
+      the namespace, `stdio` needs `localServerConfig` or `packages`, other
+      protocols need `remoteServerConfig`, and a supplied `toolSpec` must carry
+      at least one tool. Upstream's `valid` is `invalidCount == 0`, so
+      duplicates are counted separately and do **not** invalidate the batch —
+      that is reproduced deliberately.
+      Existence is resolved before the pure rules run, so the rules are
+      unit-tested (16) without a database; 3 route tests cover the endpoint.
+- [x] Import **execute** — `POST /ai/mcp/import/execute`. Upstream's
+      `McpServerImportService` is `@Deprecated` ("use the unified AI resource
+      import flow instead, planned for removal in 3.4.0"), so the rules were
+      taken from it but the endpoint is Batata's own. Semantics: refuse the
+      batch unless it is valid or `skipInvalid` is set; import only the
+      selected (or non-invalid) entries; an existing server is `skipped` with
+      `conflictType: existing` unless `overwrite` is requested, in which case
+      it is updated; `success` is `failedCount == 0`, so skips do not fail the
+      batch. `dubbo` is reported as failed rather than silently mapped, since
+      Batata has no matching server type.
+      The **external sources** half — `AiResourceImportManager` with the
+      `mcp-official` / `skills-sh` / well-known / MCP-registry-protocol
+      plugins, outbound fetching and `AiResourceImportSecurityGuard` — is
+      **not implemented**; see below.
+- [x] ~~Cache invalidation equivalent to `McpServerCacheInvalidateService`~~ —
+      **not applicable, and already covered.** Upstream's service is a
+      `Subscriber<LocalDataChangeEvent>`: it invalidates `McpServerIndex` when a
+      **config** in group `mcp-server-versions` changes. That exists only
+      because upstream stores MCP servers as configs. Batata stores them in
+      `ai_resource` (zero config calls in `batata-ai`), so there is no such
+      event to subscribe to.
+      Batata instead refreshes the whole index from persistence every 30s
+      (`start_mcp_index_refresh`, `builder/app_builder.rs:1185`), which bounds
+      cross-node staleness without needing change events. Implementing the
+      upstream subscriber here would be dead code.
 
 ### Phase 3 — Remaining domains
 
-- [ ] Agent admin CRUD + lifecycle (mirror `service/agent/`)
+- [ ] Agent admin CRUD + lifecycle (mirror `service/agent/`) — **service layer
+      done**: `A2aServerOperationService` (which is the `agent` resource type)
+      now has `submit` / `publish` / `force_publish` / `redraft` / `online` /
+      `offline` / `labels` / `scope`, all delegating to the shared
+      `version_lifecycle`, plus `create` / `update` / `delete_agent_draft`.
+      Covered by `agent_version_lifecycle` in `tests/a2a_persistence.rs` and
+      by 3 route tests in `tests/mcp_console_routes.rs` (both engines).
+
+      **HTTP**: 17 of the 18 upstream admin endpoints are wired at
+      `/v3/admin/ai/agents` — `GET` (detail), `/list`, `/versions`,
+      `POST`/`PUT`/`DELETE` (create/update/delete), the three `draft` verbs,
+      `POST /submit`, `/publish`, `/force-publish`, `/redraft`, `/online`,
+      `/offline`, `PUT /labels`, `/scope`.
+      Only `GET /runtime-endpoints` is missing: it is RAD (see above).
+      `GET /version` is served by `GET` with a `version` parameter, matching
+      how `get_agent_card` resolves one.
+
+      Bug found by that test: agent versions never received the server-managed
+      `latest` label, because `refresh_version_meta` (which maintains `latest`
+      and `online_cnt`) was MCP-only. It has been moved into
+      `version_lifecycle::refresh_latest` and is now applied on every
+      online/offline transition for **every** resource type, so MCP, agents and
+      any future domain stay consistent.
 - [ ] `AiCapabilityClientController` equivalent
 - [ ] Prompt client contract parity
 - [ ] Pipeline parity verification
@@ -512,9 +599,85 @@ has no `LIKE`:
 - [ ] Port upstream AI test cases as Batata integration tests
 - [x] Add `docs/compat/nacos/ai/api-mapping.md` (endpoint-level mapping)
 - [x] Add `docs/compat/nacos/ai/model-mapping.md` (field-level mapping)
-- [ ] Update `docs/feature-comparison.md` AI/module rows
-- [ ] Update `conf/application.yml` with the AI configuration keys that upstream exposes
-      (`nacos.plugin.ai.importer.*`, `nacos.ai.resource.import.*`, ...)
+- [x] Update `docs/feature-comparison.md` AI/module rows — added a 13-row AI
+      Registry comparison and an AI row to the completeness summary; also
+      dropped the incorrect claim that AI integration is Batata-exclusive
+      (Nacos has an AI module too).
+- [x] `conf/application.yml` has an **AI Module** section covering the keys
+      Batata reads (`batata.ai.mcp.registry.*`, `batata.ai.skill.registry.*`,
+      `batata.ai.skill.auto_publish_after_review.*`,
+      `batata.ai.resource.import.*`, `batata.extension.ai.enabled`,
+      `batata.core.auth.default.anonymous.ai.enabled`). AI resource **search**
+      has no config knobs — the index runs whenever the tables exist — so the
+      upstream `nacos.ai.resource.search.*`, `nacos.ai.ard.*` and
+      `nacos.ai.rad.capacity.*` keys have no Batata equivalent and are not
+      supported (documented here, not in `conf/application.yml`).
+
+---
+
+## Test coverage
+
+Counts are of test functions, taken from the sources (not from memory).
+
+### Unit (no database)
+
+| Crate | Tests | AI-relevant content |
+|---|---|---|
+| `batata-ai` | 94 | projection determinism, chunk hashing, task scheduling, **embedding (14)** |
+| `batata-common` | 124 | AI models, traits |
+| `batata-persistence` | 47 | `ai_resource*` persistence, embedded backend |
+| `batata-console` | 24 | MCP console routes |
+
+`cargo test -p <crate> --lib`
+
+### Live database (`#[ignore]`, need `DATABASE_URL`)
+
+| Test binary | Tests | What it pins down |
+|---|---|---|
+| `batata-server` / `mcp_console_routes` | 15 | all 14 MCP Admin endpoints end to end (path → handler → service → DB) |
+| `batata-ai` / `mcp_search_index` | 4 | publish → schedule → consume → keyword search |
+| `batata-ai` / `mcp_persistence` | 2 | `ai_resource` round-trip and the full version lifecycle |
+| `batata-ai` / `mcp_visibility` | 3 | MCP scope/owner enforcement |
+| `batata-ai` / `a2a_visibility` | 2 | A2A scope/owner enforcement |
+| `batata-ai` / `a2a_persistence` | 1 | A2A `ai_resource` round-trip |
+| `batata-persistence` / `ai_search_persistence` | 1 | document/chunk/task persistence |
+| `batata-migration` / `migration_smoke` | 1 | the AI tables exist after `Migrator::up` |
+
+```bash
+DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
+  cargo test -p batata-ai --test mcp_search_index -- --ignored --test-threads=1
+```
+
+Run on **MySQL 8.4** and **PostgreSQL 18**; both are expected to pass.
+
+Two notes that cost real time and are easy to trip over:
+
+- **The Podman containers stop.** They do not come back after a machine
+  restart or a `podman machine stop`, because Podman is daemonless and the
+  `unless-stopped` policy is not enforced across a VM restart. The symptom is
+  a ~30s-per-test pool timeout. The live tests now use a 3s connect timeout and
+  panic with the URL plus a hint, so a stopped container costs seconds instead
+  of minutes and says what is wrong.
+- **Some binaries must stay separate.** `mcp_visibility` and `a2a_visibility`
+  are separate test binaries on purpose: `VisibilityPluginManager` is a
+  process-global singleton, so sharing a binary would leave auth disabled and
+  nothing would be filtered.
+
+### Embedded RocksDB (no external database)
+
+| Test binary | Tests | What it pins down |
+|---|---|---|
+| `batata-ai` / `mcp_search_embedded` | 1 | the whole search loop on RocksDB: publish → schedule → consume → keyword search |
+
+`cargo test -p batata-ai --test mcp_search_embedded` — runs by default, needs
+nothing external.
+
+### Not covered
+
+- Embedded + **Cluster** (Raft) search path — no test drives it.
+- Skill / AgentSpec / Prompt live paths (MCP and A2A are the covered domains).
+- Legacy console endpoints (`stats`, `importToolsFromMcp`, `import/validate`,
+  `endpoint` add/remove).
 
 ---
 

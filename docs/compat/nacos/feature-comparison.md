@@ -55,6 +55,19 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | Health Endpoint | ✅ | ✅ | Full |
 | OpenTelemetry | ✅ | ✅ | Full |
 | Operation Audit Logs | ✅ | ✅ | Full |
+| **AI Registry (MCP / A2A / Skill / AgentSpec / Prompt)** | | | |
+| MCP admin API (all 14 endpoints) | ✅ | ✅ | Full — service + HTTP + 15 route tests |
+| MCP draft lifecycle (draft → submit → publish → redraft) | ✅ | ✅ | Full |
+| MCP version labels / status / scope | ✅ | ✅ | Full |
+| MCP + A2A visibility (scope + owner) | ✅ | ✅ | Full — all four domains |
+| A2A agent registry CRUD + versions | ✅ | ✅ | Full |
+| Resource keyword search | ✅ | ✅ | Full — no vector channel |
+| `ai_resource` table-backed storage | ✅ | ✅ | Full — replaces the config-backed path |
+| Vector / embedding search | ✅ | ❌ | Needs pgvector; embedder ported, storage not |
+| MCP validation service | ✅ | ❌ | Not implemented |
+| MCP import service (registry, `skills.sh`) | ✅ | ❌ | Not implemented |
+| Runtime endpoint resolution + heartbeat | ✅ | ❌ | Not implemented |
+| Prompt / Pipeline domains | ✅ | ❌ | Not implemented |
 
 ## Batata Exclusive Features
 
@@ -67,7 +80,7 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | **OpenTelemetry Tracing** | OTLP export for distributed tracing (Jaeger, Zipkin, etc.) |
 | **Multi-datacenter Support** | Locality-aware replication with local-first sync |
 | **Service Mesh (xDS)** | EDS, CDS, LDS, RDS, ADS protocol support |
-| **AI Integration** | MCP Server Registry and A2A Agent Registry |
+| **AI Integration** | MCP Server Registry and A2A Agent Registry — mirrors the upstream Nacos AI module rather than being Batata-only (see `docs/compat/nacos/ai/`) |
 | **Distributed Lock** | Raft-based distributed locking mechanism |
 | **Kubernetes Sync** | Bidirectional service sync with Kubernetes |
 | **Database Migration** | Automatic schema migration via `batata-migration` crate |
@@ -84,4 +97,5 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | API Compatibility | **100%+** | Full Nacos V2/V3 + Consul APIs |
 | Apollo Compatibility | **~81%** | Apollo Config/Admin/OpenAPI fully ported (see `docs/compat/apollo/`); legacy WebUI (SSO/signin) and apollo config-value encryption (`EncryptionDecorator`) not ported |
 | Cloud Native | **85%** | K8s, Prometheus, xDS (basic) |
-| **Overall** | **~98%** | Production ready |
+| AI Registry | **partial** | MCP complete and tested; A2A/Skill/AgentSpec CRUD; no validation, import, runtime layer or vector search (see `docs/compat/nacos/ai/`) |
+| **Overall** | **~98%** | Production ready — excluding the AI module, which is tracked separately above |

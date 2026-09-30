@@ -26,6 +26,7 @@ use super::constants::*;
 use super::mcp_index::{McpServerIndex, McpServerIndexData};
 use crate::model::*;
 use crate::repository::{meta_status, resource_type, scope, version_status};
+use crate::service::version_lifecycle;
 use batata_common::model::ai::search::AiResourceSearchHit;
 
 /// Origin recorded for locally registered MCP servers.
@@ -161,49 +162,15 @@ impl McpServerOperationService {
         name: &str,
         preferred: Option<&str>,
     ) -> anyhow::Result<()> {
-        // Re-read the resource: callers commonly update the version index just
-        // before this, which advances meta_version. Using the caller's stale
-        // snapshot would make the optimistic-lock update below fail silently.
-        let resource = match self
-            .persistence
-            .ai_resource_find(namespace, name, resource_type::MCP)
-            .await?
-        {
-            Some(r) => r,
-            None => return Ok(()),
-        };
-        let resource = &resource;
-
-        let rows = self
-            .persistence
-            .ai_resource_version_list(namespace, name, resource_type::MCP)
-            .await?;
-
-        let mut online: Vec<String> = rows
-            .iter()
-            .filter(|r| r.status == version_status::ONLINE)
-            .map(|r| r.version.clone())
-            .collect();
-        online.sort();
-
-        let mut rv = Self::parse_resource_version(resource);
-        rv.online_cnt = online.len() as i64;
-
-        let current = rv.latest_version().cloned();
-        let next = match preferred {
-            Some(v) if online.iter().any(|o| o == v) => Some(v.to_string()),
-            _ => match current {
-                Some(ref v) if online.contains(v) => Some(v.clone()),
-                _ => online.last().cloned(),
-            },
-        };
-
-        match next {
-            Some(v) => rv.set_latest(&v),
-            None => rv.clear_latest(),
-        }
-
-        self.save_version_info(namespace, name, resource, &rv).await
+        // The rule is shared by every AI resource type; only the type differs.
+        version_lifecycle::refresh_latest(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            preferred,
+        )
+        .await
     }
 
     /// Advance the meta_version and write the version index back.
@@ -563,7 +530,7 @@ impl McpServerOperationService {
         }
 
         // Recompute the online count and the latest label from what is stored.
-        self.refresh_version_meta(namespace, name, Some(version))
+        self.after_transition(namespace, name, version, version_status::ONLINE)
             .await?;
         let version_count = self
             .persistence
@@ -1058,67 +1025,20 @@ impl McpServerOperationService {
         Ok(())
     }
 
-    /// Load one version row, failing when it does not exist.
-    async fn find_version_row(
-        &self,
-        namespace: &str,
-        name: &str,
-        version: &str,
-    ) -> anyhow::Result<AiResourceVersionInfo> {
-        self.persistence
-            .ai_resource_version_find(namespace, name, resource_type::MCP, version)
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("Version '{}' of MCP server '{}' not found", version, name)
-            })
-    }
-
-    /// Move a version to `target` status and reconcile the resource-level
-    /// editing / reviewing / latest markers.
-    async fn transition_version(
+    /// Apply an MCP-specific follow-up after a shared status transition.
+    ///
+    /// The published metadata is derived from the online set, so it is rebuilt
+    /// whenever that set changes. The transition itself lives in
+    /// [`version_lifecycle`], shared by every AI resource type.
+    async fn after_transition(
         &self,
         namespace: &str,
         name: &str,
         version: &str,
         target: &str,
-    ) -> anyhow::Result<McpServerVersionDetail> {
-        let resource = self
-            .persistence
-            .ai_resource_find(namespace, name, resource_type::MCP)
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "MCP server '{}' not found in namespace '{}'",
-                    name,
-                    namespace
-                )
-            })?;
-
-        self.persistence
-            .ai_resource_version_update_status(namespace, name, resource_type::MCP, version, target)
-            .await?;
-
-        let mut resource_version = Self::parse_resource_version(&resource);
+    ) -> anyhow::Result<()> {
         match target {
-            version_status::DRAFT => {
-                resource_version.editing_version = Some(version.to_string());
-                if resource_version.reviewing_version.as_deref() == Some(version) {
-                    resource_version.reviewing_version = None;
-                }
-                self.save_version_info(namespace, name, &resource, &resource_version)
-                    .await?;
-            }
-            version_status::REVIEWING => {
-                resource_version.editing_version = None;
-                resource_version.reviewing_version = Some(version.to_string());
-                self.save_version_info(namespace, name, &resource, &resource_version)
-                    .await?;
-            }
             version_status::ONLINE => {
-                resource_version.editing_version = None;
-                resource_version.reviewing_version = None;
-                self.save_version_info(namespace, name, &resource, &resource_version)
-                    .await?;
                 self.refresh_version_meta(namespace, name, Some(version))
                     .await?;
             }
@@ -1127,15 +1047,9 @@ impl McpServerOperationService {
                 // to move to another version.
                 self.refresh_version_meta(namespace, name, None).await?;
             }
-            _ => {
-                self.save_version_info(namespace, name, &resource, &resource_version)
-                    .await?;
-            }
+            _ => {}
         }
-
-        self.get_mcp_server_version(namespace, name, version)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
+        Ok(())
     }
 
     /// Submit a draft for review (draft → reviewing).
@@ -1145,16 +1059,17 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        let row = self.find_version_row(namespace, name, version).await?;
-        if row.status != version_status::DRAFT {
-            anyhow::bail!(
-                "Version '{}' must be in draft status to submit (current: '{}')",
-                version,
-                row.status
-            );
-        }
-        self.transition_version(namespace, name, version, version_status::REVIEWING)
-            .await
+        version_lifecycle::submit(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Publish a version that passed review (reviewing / reviewed → online).
@@ -1166,22 +1081,21 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        let row = self.find_version_row(namespace, name, version).await?;
-        if row.status != version_status::REVIEWING
-            && row.status != version_status::REVIEWED
-            && row.status != version_status::ONLINE
-        {
-            anyhow::bail!(
-                "Version '{}' must be in reviewing, reviewed or online status to publish (current: '{}')",
-                version,
-                row.status
-            );
-        }
-        let detail = self
-            .transition_version(namespace, name, version, version_status::ONLINE)
+        version_lifecycle::publish(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        // MCP-specific: the published metadata is derived from the online set.
+        self.after_transition(namespace, name, version, version_status::ONLINE)
             .await?;
         self.schedule_search_index(namespace, name).await;
-        Ok(detail)
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Publish a version bypassing the review state check.
@@ -1191,12 +1105,20 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.find_version_row(namespace, name, version).await?;
-        let detail = self
-            .transition_version(namespace, name, version, version_status::ONLINE)
+        version_lifecycle::force_publish(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        self.after_transition(namespace, name, version, version_status::ONLINE)
             .await?;
         self.schedule_search_index(namespace, name).await;
-        Ok(detail)
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Queue a `base_index` task for a resource.
@@ -1221,9 +1143,17 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.find_version_row(namespace, name, version).await?;
-        self.transition_version(namespace, name, version, version_status::DRAFT)
-            .await
+        version_lifecycle::redraft(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Bring an offline version back online.
@@ -1233,16 +1163,19 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        let row = self.find_version_row(namespace, name, version).await?;
-        if row.status != version_status::OFFLINE {
-            anyhow::bail!(
-                "Version '{}' must be offline to bring online (current: '{}')",
-                version,
-                row.status
-            );
-        }
-        self.transition_version(namespace, name, version, version_status::ONLINE)
-            .await
+        version_lifecycle::online(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        self.after_transition(namespace, name, version, version_status::ONLINE)
+            .await?;
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Take an online version offline.
@@ -1252,16 +1185,19 @@ impl McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        let row = self.find_version_row(namespace, name, version).await?;
-        if row.status != version_status::ONLINE {
-            anyhow::bail!(
-                "Version '{}' must be online to take offline (current: '{}')",
-                version,
-                row.status
-            );
-        }
-        self.transition_version(namespace, name, version, version_status::OFFLINE)
-            .await
+        version_lifecycle::offline(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::MCP,
+            version,
+        )
+        .await?;
+        self.after_transition(namespace, name, version, version_status::OFFLINE)
+            .await?;
+        self.get_mcp_server_version(namespace, name, version)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("version '{}' was not persisted", version))
     }
 
     /// Replace the custom version labels, preserving the server-managed

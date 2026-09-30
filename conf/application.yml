@@ -692,6 +692,14 @@ batata.ai.mcp.registry.port: 9080
 #batata.plugin.ai.importer.<preset>.allow_http: false
 #batata.plugin.ai.importer.<preset>.allow_private_network: false
 
+# --- AI Resource Search ---
+# There is no configuration switch for resource search: publishing a version
+# schedules a `search_index` task and the consumer builds the index, so keyword
+# search works on every backend.
+#
+# Vector search is unavailable — embeddings are computed but never stored, and
+# documents are written as `enabled` directly.
+
 # =============================================================================
 # Service Mesh (xDS)
 # =============================================================================

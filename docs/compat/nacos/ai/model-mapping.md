@@ -214,10 +214,10 @@ the new tables but appears to still use the config-backed path in
 | 2 | ~~Missing `ai_resource_search_chunk`~~ | **done** — same migration | 1 |
 | 3 | ~~Missing `ai_resource_task`~~ | **done** — same migration | 1 |
 | 4 | `ai_resource_search_embedding_pg` | Optional — needs pgvector; decide scope | later |
-| 5 | ~~Legacy config-backed path still in use~~ | **done** — MCP, Skill, AgentSpec and A2A all use `ai_resource*`; zero `config_info` calls remain in `batata-ai`. No compatibility mode (Batata is unreleased). Legacy constants deleted from `service/constants.rs` | 1 |
-| 6 | No `repository/` abstraction over the 5 tables | Add repository layer | 1 |
-| 7 | `visibility/` not enforced from `scope`/`owner` | Add visibility layer | 1 |
-| 8 | `search/` built on document + chunk + task | Add search layer | 1 |
+| 5 | Legacy config-backed path still in use | **partial** — MCP, Skill, AgentSpec and A2A are on `ai_resource*`; **Prompt is not** (`service/prompt/mod.rs` still reads/writes configs in group `nacos-ai-prompt`, 3 call sites). No compatibility mode (Batata is unreleased). Legacy constants deleted from `service/constants.rs`.<br>⚠️ An earlier note here claimed "zero config calls remain in `batata-ai`"; that was wrong — the check grepped `publish_config\|config_info::Entity` and missed the `config_find_one` / `config_create_or_update` trait calls. | 1 |
+| 6 | No `repository/` abstraction over the 5 tables | **partial** — `AiResourceRepository` wraps `ai_resource` / `ai_resource_version` (find, insert, list, CAS update). The three search tables are still reached through `PersistenceService` directly from `search/service.rs`; folding them in is cosmetic, not behavioural | 1 |
+| 7 | ~~`visibility/` not enforced from `scope`/`owner`~~ | **done** — all four domains consult `batata_visibility` (MCP 14, Skill 32, AgentSpec 32, A2A 13 call sites). See `docs/compat/nacos/ai/README.md` § Phase 1 for the two real bugs this uncovered | 1 |
+| 8 | ~~`search/` built on document + chunk + task~~ | **done** — projection, scheduling, consumer and keyword query. Verified on ExternalDb (MySQL 8.4 + PostgreSQL 18, standalone and cluster) and on embedded RocksDB | 1 |
 | 9 | `trace/` | **Not a table** — emit JSON-line trace events (see §6) | 2 |
 
 ---

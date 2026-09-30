@@ -19,9 +19,10 @@ use std::sync::Arc;
 use actix_web::http::StatusCode;
 use actix_web::{test, web, App};
 use batata_ai::model::{
-    McpCapability, McpServerRegistration, McpServerType, McpTool, McpTransport,
+    AgentCapabilities, AgentCard, AgentSkill, McpCapability, McpServerRegistration, McpServerType,
+    McpTool, McpTransport,
 };
-use batata_ai::{McpServerIndex, McpServerOperationService};
+use batata_ai::{A2aServerOperationService, McpServerIndex, McpServerOperationService};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
@@ -161,6 +162,10 @@ async fn build_app(
         Arc::new(batata_core::ConfigSubscriberManager::new());
     let cluster: Arc<dyn ClusterManager> = Arc::new(StubClusterManager);
 
+    // Cloned before `store` is moved into `AppState`: the agent service needs
+    // its own handle to the same persistence.
+    let agent_store = store.clone();
+
     let console_datasource = Arc::new(batata_console::datasource::local::LocalDataSource::new(
         store.clone(),
         cluster,
@@ -190,11 +195,18 @@ async fn build_app(
 
     let mcp: Arc<dyn batata_common::McpServerService> = svc;
 
+    // Agent admin routes are mounted in the same app so the agent version
+    // lifecycle can be exercised over HTTP without rebuilding AppState.
+    let agents: Arc<dyn batata_common::A2aAgentService> =
+        Arc::new(batata_ai::A2aServerOperationService::new(agent_store));
+
     test::init_service(
         App::new()
             .app_data(web::Data::from(app_state))
             .app_data(web::Data::new(mcp))
-            .service(batata_console::v3::ai_mcp::routes()),
+            .app_data(web::Data::new(agents))
+            .service(batata_console::v3::ai_mcp::routes())
+            .service(web::scope("/v3/admin/ai").service(batata_ai::agent_admin_routes())),
     )
     .await
 }
@@ -571,6 +583,514 @@ async fn scope_endpoint_sets_scope() {
     let resp = test::call_service(&app, req).await;
 
     assert_eq!(resp.status(), StatusCode::OK, "scope should succeed");
+
+    clean(&store).await;
+}
+
+/// Post a JSON body to `/ai/mcp/import/validate` and return the response body.
+async fn validate_payload<S>(app: &S, content: &str) -> String
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+{
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/import/validate")
+        .set_json(serde_json::json!({ "content": content }))
+        .to_request();
+    let resp = test::call_service(app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "validate should answer 200");
+    let body = test::read_body(resp).await;
+    String::from_utf8_lossy(&body).to_string()
+}
+
+/// Import validation must judge the payload semantically, not merely parse it
+/// as JSON — that is the whole point of upstream's validation service.
+#[actix_web::test]
+#[ignore]
+async fn import_validate_rejects_an_incomplete_server() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    // Parses fine, but has no protocol, no description and no remote config.
+    let body = validate_payload(&app, r#"[{"name":"broken"}]"#).await;
+    assert!(body.contains("\"valid\":false"), "must be invalid: {body}");
+    assert!(body.contains("Protocol is required"), "missing protocol: {body}");
+    assert!(
+        body.contains("Description is required"),
+        "missing description: {body}"
+    );
+
+    clean(&store).await;
+}
+
+#[actix_web::test]
+#[ignore]
+async fn import_validate_accepts_a_complete_server() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let content = r#"[{"name":"complete","protocol":"http","description":"does things","remoteServerConfig":{"url":"http://localhost:8080"}}]"#;
+    let body = validate_payload(&app, content).await;
+    assert!(body.contains("\"valid\":true"), "must be valid: {body}");
+    assert!(body.contains("\"validCount\":1"), "one valid server: {body}");
+
+    clean(&store).await;
+}
+
+// ---- agent admin endpoints (`/v3/admin/ai/agents`) --------------------------
+
+/// Build an agent card for `name` at `version`.
+fn agent_card(name: &str, version: &str) -> AgentCard {
+    AgentCard {
+        name: name.to_string(),
+        display_name: name.to_string(),
+        description: "route agent".to_string(),
+        version: version.to_string(),
+        url: "http://localhost:8080".to_string(),
+        protocol_version: "1.0".to_string(),
+        capabilities: AgentCapabilities {
+            streaming: true,
+            tool_use: true,
+            ..Default::default()
+        },
+        skills: vec![AgentSkill {
+            name: "coding".to_string(),
+            description: "code generation".to_string(),
+            proficiency: 90,
+            examples: vec![],
+        }],
+        default_input_modes: vec!["text".to_string()],
+        default_output_modes: vec!["text".to_string()],
+        preferred_transport: None,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        supports_authenticated_extended_card: None,
+        metadata: Default::default(),
+        tags: vec![],
+    }
+}
+
+/// Register an agent so it has an online version to act on.
+async fn register_agent(svc: &A2aServerOperationService, name: &str) {
+    svc.register_agent(&agent_card(name, "1.0.0"), NS, "manual")
+        .await
+        .unwrap_or_else(|e| panic!("register agent {name}: {e}"));
+}
+
+/// Remove rows for an agent so the tests are repeatable.
+async fn clean_agent(store: &ExternalDbPersistService, name: &str) {
+    let db = store.db();
+    ai_resource_version::Entity::delete_many()
+        .filter(ai_resource_version::Column::Name.eq(name))
+        .exec(db)
+        .await
+        .expect("clean versions");
+    ai_resource::Entity::delete_many()
+        .filter(ai_resource::Column::Name.eq(name))
+        .exec(db)
+        .await
+        .expect("clean resources");
+}
+
+/// Post to an agent admin endpoint and return `(status, body)`.
+async fn agent_post<S>(app: &S, path: &str) -> (StatusCode, String)
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+{
+    let req = test::TestRequest::post().uri(path).to_request();
+    let resp = test::call_service(app, req).await;
+    let status = resp.status();
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    (status, body)
+}
+
+/// The agent lifecycle endpoints drive the shared state machine over HTTP.
+#[actix_web::test]
+#[ignore]
+async fn agent_admin_endpoints_walk_the_lifecycle() {
+    let (store, _svc) = setup().await;
+    let agents = Arc::new(A2aServerOperationService::new(store.clone()));
+    register_agent(&agents, "route-agent").await;
+
+    let app = build_app(store.clone(), _svc.clone()).await;
+
+    let base = "/v3/admin/ai/agents";
+    let name = "route-agent";
+    let version = "1.0.0";
+
+    // Registration publishes directly, so the version starts online.
+    let (status, body) = agent_post(&app, &format!("{base}/offline?agentName={name}&version={version}")).await;
+    assert_eq!(status, StatusCode::OK, "offline should succeed: {body}");
+    assert!(body.contains("offline"), "must report the new status: {body}");
+
+    let (status, body) = agent_post(&app, &format!("{base}/online?agentName={name}&version={version}")).await;
+    assert_eq!(status, StatusCode::OK, "online should succeed: {body}");
+    assert!(body.contains("online"), "must report the new status: {body}");
+
+    let (status, body) = agent_post(&app, &format!("{base}/redraft?agentName={name}&version={version}")).await;
+    assert_eq!(status, StatusCode::OK, "redraft should succeed: {body}");
+    assert!(body.contains("draft"), "must report the new status: {body}");
+
+    let (status, body) = agent_post(&app, &format!("{base}/submit?agentName={name}&version={version}")).await;
+    assert_eq!(status, StatusCode::OK, "submit should succeed: {body}");
+    assert!(body.contains("reviewing"), "must report the new status: {body}");
+
+    let (status, body) = agent_post(&app, &format!("{base}/publish?agentName={name}&version={version}")).await;
+    assert_eq!(status, StatusCode::OK, "publish should succeed: {body}");
+    assert!(body.contains("online"), "must report the new status: {body}");
+
+    clean_agent(&store, name).await;
+    clean(&store).await;
+}
+
+/// Drafts are created, updated, submitted and deleted through the endpoints.
+#[actix_web::test]
+#[ignore]
+async fn agent_admin_draft_endpoints_walk_the_flow() {
+    use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
+
+    let (store, _svc) = setup().await;
+    let agents = Arc::new(A2aServerOperationService::new(store.clone()));
+    register_agent(&agents, "draft-agent").await;
+
+    let app = build_app(store.clone(), _svc.clone()).await;
+    let base = "/v3/admin/ai/agents";
+    let name = "draft-agent";
+
+    // A draft is a new version on an agent that already exists.
+    let mut card = AgentCard {
+        name: name.to_string(),
+        display_name: name.to_string(),
+        description: "draft version".to_string(),
+        version: "2.0.0".to_string(),
+        url: "http://localhost:8080".to_string(),
+        protocol_version: "1.0".to_string(),
+        capabilities: AgentCapabilities {
+            streaming: true,
+            tool_use: true,
+            ..Default::default()
+        },
+        skills: vec![AgentSkill {
+            name: "coding".to_string(),
+            description: "code generation".to_string(),
+            proficiency: 90,
+            examples: vec![],
+        }],
+        default_input_modes: vec!["text".to_string()],
+        default_output_modes: vec!["text".to_string()],
+        preferred_transport: None,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        supports_authenticated_extended_card: None,
+        metadata: Default::default(),
+        tags: vec![],
+    };
+
+    let req = test::TestRequest::post()
+        .uri(&format!("{base}/draft?namespaceId={NS}&overwrite=false"))
+        .set_json(&card)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "create draft should succeed");
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(body.contains("draft"), "the new version must be a draft: {body}");
+
+    // A second draft without overwrite must be refused: only one is edited.
+    let req = test::TestRequest::post()
+        .uri(&format!("{base}/draft?namespaceId={NS}&overwrite=false"))
+        .set_json(&card)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(
+        resp.status() != StatusCode::OK,
+        "a second draft must not silently replace the first"
+    );
+
+    // Updating the draft being edited works.
+    card.description = "edited draft".to_string();
+    let req = test::TestRequest::put()
+        .uri(&format!("{base}/draft?namespaceId={NS}"))
+        .set_json(&card)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "update draft should succeed");
+
+    // The draft can then be submitted for review.
+    let (status, body) =
+        agent_post(&app, &format!("{base}/submit?agentName={name}&version=2.0.0")).await;
+    assert_eq!(status, StatusCode::OK, "submit should succeed: {body}");
+    assert!(body.contains("reviewing"), "must report the new status: {body}");
+
+    // And the leftover draft of another version can be deleted.
+    let req = test::TestRequest::delete()
+        .uri(&format!("{base}/draft?agentName={name}&version=2.0.0"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "delete draft should succeed");
+
+    clean_agent(&store, name).await;
+    clean(&store).await;
+}
+
+/// The read endpoints and create / update / delete work over HTTP.
+#[actix_web::test]
+#[ignore]
+async fn agent_admin_crud_endpoints_work() {
+    let (store, _svc) = setup().await;
+    let app = build_app(store.clone(), _svc.clone()).await;
+    let base = "/v3/admin/ai/agents";
+    let name = "crud-agent";
+
+    // ---- create -------------------------------------------------------------
+    let card = serde_json::to_value(agent_card(name, "1.0.0")).expect("serialize card");
+    let req = test::TestRequest::post()
+        .uri(&format!("{base}?namespaceId={NS}"))
+        .set_json(&card)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "create should succeed");
+    println!("ok: create");
+
+    // ---- detail -------------------------------------------------------------
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}?agentName={name}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "detail should succeed");
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(body.contains(name), "detail must name the agent: {body}");
+
+    // ---- versions -----------------------------------------------------------
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}/versions?agentName={name}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "versions should succeed");
+
+    // ---- list ---------------------------------------------------------------
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}/list?pageNo=1&pageSize=20"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "list should succeed");
+    println!("ok: read endpoints");
+
+    // ---- update -------------------------------------------------------------
+    let mut updated = agent_card(name, "1.0.0");
+    updated.description = "updated description".to_string();
+    let req = test::TestRequest::put()
+        .uri(&format!("{base}?namespaceId={NS}"))
+        .set_json(&updated)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "update should succeed");
+
+    // ---- delete -------------------------------------------------------------
+    let req = test::TestRequest::delete()
+        .uri(&format!("{base}?agentName={name}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "delete should succeed");
+
+    // The agent is really gone.
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}?agentName={name}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "agent must be gone");
+    println!("ok: delete removed the agent");
+
+    clean_agent(&store, name).await;
+    clean(&store).await;
+}
+
+/// Missing parameters are rejected rather than silently ignored.
+#[actix_web::test]
+#[ignore]
+async fn agent_admin_endpoints_require_the_version() {
+    let (store, _svc) = setup().await;
+    let app = build_app(store.clone(), _svc.clone()).await;
+
+    let (status, _body) = agent_post(&app, "/v3/admin/ai/agents/offline?agentName=route-agent").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "version is required");
+
+    clean(&store).await;
+}
+
+/// Post a JSON body to `/ai/mcp/import/execute` and return the response body.
+async fn execute_payload<S>(app: &S, body: serde_json::Value) -> String
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+{
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/import/execute")
+        .set_json(body)
+        .to_request();
+    let resp = test::call_service(app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "execute should answer 200");
+    String::from_utf8_lossy(&test::read_body(resp).await).to_string()
+}
+
+/// A one-server import payload for `name`.
+///
+/// Each import test uses its own name: `clean` only removes `NAME`, so a
+/// shared name would leak between tests and make the next run see an
+/// already-existing server.
+fn import_content(name: &str) -> String {
+    format!(
+        r#"[{{"name":"{name}","protocol":"http","description":"imported server","version":"1.0.0","remoteServerConfig":{{"url":"http://localhost:9099"}}}}]"#
+    )
+}
+
+/// Remove one server by name, including its versions.
+async fn clean_named(store: &ExternalDbPersistService, name: &str) {
+    let db = store.db();
+    ai_resource_version::Entity::delete_many()
+        .filter(ai_resource_version::Column::Name.eq(name))
+        .exec(db)
+        .await
+        .expect("clean versions");
+    ai_resource::Entity::delete_many()
+        .filter(ai_resource::Column::Name.eq(name))
+        .exec(db)
+        .await
+        .expect("clean resources");
+}
+
+/// A valid batch is actually imported: the server must exist afterwards.
+#[actix_web::test]
+#[ignore]
+async fn import_execute_creates_the_server() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let body = execute_payload(
+        &app,
+        serde_json::json!({ "content": import_content("imported-create"), "namespace": NS }),
+    )
+    .await;
+    assert!(body.contains("\"success\":true"), "import must succeed: {body}");
+    assert!(body.contains("\"successCount\":1"), "one imported: {body}");
+
+    // The point of the endpoint: the server is now really there.
+    let detail = svc
+        .get_mcp_server_detail(NS, None, Some("imported-create"), Some("1.0.0"), None)
+        .await
+        .expect("detail lookup");
+    assert!(detail.is_some(), "the imported server must exist");
+
+    clean_named(&store, "imported-create").await;
+    clean(&store).await;
+}
+
+/// Without `overwrite`, an existing server is skipped and flagged, not clobbered.
+#[actix_web::test]
+#[ignore]
+async fn import_execute_skips_an_existing_server() {
+    let (store, svc) = setup().await;
+    let mut registration = registration("1.0.0", "echo");
+    registration.name = "imported-skip".to_string();
+    svc.create_mcp_server(NS, &registration)
+        .await
+        .expect("create server");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let body = execute_payload(
+        &app,
+        serde_json::json!({ "content": import_content("imported-skip"), "namespace": NS }),
+    )
+    .await;
+    assert!(body.contains("\"skippedCount\":1"), "must skip: {body}");
+    assert!(body.contains("existing"), "must report the conflict: {body}");
+    // A skip is not a failure.
+    assert!(body.contains("\"success\":true"), "skips do not fail: {body}");
+
+    clean_named(&store, "imported-skip").await;
+    clean(&store).await;
+}
+
+/// An invalid batch is refused outright unless the caller opts into skipping.
+#[actix_web::test]
+#[ignore]
+async fn import_execute_refuses_an_invalid_batch() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let body = execute_payload(
+        &app,
+        serde_json::json!({ "content": r#"[{"name":"broken"}]"#, "namespace": NS }),
+    )
+    .await;
+    assert!(body.contains("\"success\":false"), "must be refused: {body}");
+    assert!(
+        body.contains("Import validation failed"),
+        "must explain why: {body}"
+    );
+
+    clean(&store).await;
+}
+
+/// A server that already exists is imported as an update.
+#[actix_web::test]
+#[ignore]
+async fn import_execute_updates_when_overwrite_is_requested() {
+    let (store, svc) = setup().await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let content = import_content("imported-update");
+    let body = execute_payload(
+        &app,
+        serde_json::json!({ "content": content, "namespace": NS }),
+    )
+    .await;
+    assert!(body.contains("\"successCount\":1"), "first import: {body}");
+
+    let body = execute_payload(
+        &app,
+        serde_json::json!({ "content": content, "namespace": NS, "overwrite": true }),
+    )
+    .await;
+    assert!(body.contains("\"successCount\":1"), "second import updates: {body}");
+    assert!(
+        !body.contains("\"skippedCount\":1"),
+        "overwrite must not skip: {body}"
+    );
+
+    clean_named(&store, "imported-update").await;
+    clean(&store).await;
+}
+
+/// A server that already exists in the namespace is reported as a duplicate
+/// rather than silently accepted.
+#[actix_web::test]
+#[ignore]
+async fn import_validate_flags_an_existing_server_as_duplicate() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+
+    let app = build_app(store.clone(), svc.clone()).await;
+    let content = r#"[{"name":"route-mcp","protocol":"http","description":"d","version":"1.0.0","remoteServerConfig":{}}]"#;
+    let body = validate_payload(&app, content).await;
+    assert!(
+        body.contains("Server already exists"),
+        "must report the existing server: {body}"
+    );
+    assert!(body.contains("\"duplicateCount\":1"), "one duplicate: {body}");
 
     clean(&store).await;
 }

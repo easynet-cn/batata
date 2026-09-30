@@ -11,6 +11,7 @@ pub fn routes() -> Scope {
     web::scope("/ai")
         .service(mcp::routes())
         .service(a2a::routes())
+        .service(batata_ai::agent_admin_routes())
         .service(batata_ai::prompt_admin_routes())
         .service(batata_ai::skill_admin_routes())
         .service(batata_ai::agentspec_admin_routes())

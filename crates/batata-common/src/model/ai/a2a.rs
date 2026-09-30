@@ -401,6 +401,34 @@ pub struct AgentCardVersionInfo {
     pub version_details: Vec<VersionDetail>,
 }
 
+/// One agent version as returned by the version lifecycle endpoints.
+///
+/// Mirrors `McpServerVersionDetail` for MCP: the lifecycle endpoints answer
+/// with the version they just moved, so callers can assert the transition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentVersionDetail {
+    /// Namespace ID.
+    #[serde(default)]
+    pub namespace_id: String,
+
+    /// Agent name.
+    #[serde(default)]
+    pub name: String,
+
+    /// Version string.
+    #[serde(default)]
+    pub version: String,
+
+    /// Lifecycle status (draft / reviewing / reviewed / online / offline).
+    #[serde(default)]
+    pub status: String,
+
+    /// Optional description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 fn default_registration_type() -> String {
     "manual".to_string()
 }

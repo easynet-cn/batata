@@ -578,6 +578,9 @@ pub struct ImportToolsQuery {
 pub struct McpImportValidateRequest {
     /// Content to validate (JSON string)
     pub content: String,
+    /// Namespace the servers would be imported into (defaults to `public`)
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
 }
 
 /// MCP import validate response
@@ -591,6 +594,226 @@ pub struct McpImportValidateResponse {
     pub message: String,
     /// Number of servers found in the import
     pub server_count: u32,
+    /// Valid servers count
+    #[serde(default)]
+    pub valid_count: u32,
+    /// Invalid servers count
+    #[serde(default)]
+    pub invalid_count: u32,
+    /// Duplicate servers count
+    #[serde(default)]
+    pub duplicate_count: u32,
+    /// Per-server verdicts
+    #[serde(default)]
+    pub servers: Vec<McpServerValidationItem>,
+}
+
+impl From<McpServerImportValidationResult> for McpImportValidateResponse {
+    fn from(result: McpServerImportValidationResult) -> Self {
+        Self {
+            valid: result.valid,
+            message: result.errors.join("; "),
+            server_count: result.total_count,
+            valid_count: result.valid_count,
+            invalid_count: result.invalid_count,
+            duplicate_count: result.duplicate_count,
+            servers: result.servers,
+        }
+    }
+}
+
+/// Validation statuses for an MCP import item
+pub mod validation_status {
+    /// The server passed every check.
+    pub const VALID: &str = "valid";
+    /// The server failed at least one check.
+    pub const INVALID: &str = "invalid";
+    /// The server duplicates another one in the batch or already exists.
+    pub const DUPLICATE: &str = "duplicate";
+}
+
+/// Protocols accepted for an MCP server, mirroring `AiConstants.Mcp`
+/// (`McpServerValidationService.isValidProtocol`).
+pub const VALID_MCP_PROTOCOLS: [&str; 5] = ["stdio", "sse", "streamable", "http", "dubbo"];
+
+/// One server parsed out of an import payload.
+///
+/// Mirrors the fields `McpServerValidationService` reads from
+/// `McpServerBasicInfo` / `McpServerDetailInfo`. Everything is optional so a
+/// malformed payload produces validation errors rather than a parse failure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerImportItem {
+    /// Server name.
+    pub name: Option<String>,
+    /// Server ID, when the payload carries one.
+    pub id: Option<String>,
+    /// Protocol, one of [`VALID_MCP_PROTOCOLS`].
+    pub protocol: Option<String>,
+    /// Description.
+    pub description: Option<String>,
+    /// Version, when it is carried outside `versionDetail`.
+    pub version: Option<String>,
+    /// Version detail holding the version.
+    pub version_detail: Option<McpImportVersionDetail>,
+    /// `localServerConfig`; required for the `stdio` protocol.
+    pub local_server_config: Option<serde_json::Value>,
+    /// Packages; an alternative to `localServerConfig` for `stdio`.
+    pub packages: Option<Vec<serde_json::Value>>,
+    /// `remoteServerConfig`; required for every non-`stdio` protocol.
+    pub remote_server_config: Option<serde_json::Value>,
+    /// Tool specification, validated when present.
+    pub tool_spec: Option<McpImportToolSpec>,
+}
+
+impl McpServerImportItem {
+    /// The version of this server, preferring `versionDetail.version`.
+    pub fn version(&self) -> &str {
+        self.version_detail
+            .as_ref()
+            .and_then(|d| d.version.as_deref())
+            .or(self.version.as_deref())
+            .unwrap_or_default()
+    }
+}
+
+/// The `versionDetail` object of an import payload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportVersionDetail {
+    /// Version string.
+    pub version: Option<String>,
+}
+
+/// The `toolSpec` object of an import payload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportToolSpec {
+    /// Declared tools.
+    pub tools: Option<Vec<serde_json::Value>>,
+}
+
+/// The validation verdict for one server in an import batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerValidationItem {
+    /// Server name.
+    pub server_name: Option<String>,
+    /// Server ID.
+    pub server_id: Option<String>,
+    /// One of the `validation_status::*` constants.
+    pub status: String,
+    /// Per-server validation errors.
+    #[serde(default)]
+    pub errors: Vec<String>,
+    /// Whether this server already exists in the namespace.
+    #[serde(default)]
+    pub exists: bool,
+    /// Whether the item is selected for import.
+    #[serde(default = "default_selected")]
+    pub selected: bool,
+}
+
+fn default_selected() -> bool {
+    true
+}
+
+/// Result statuses for one imported server, mirroring
+/// `McpImportResultStatusEnum`.
+pub mod import_result_status {
+    /// The server was created or updated.
+    pub const SUCCESS: &str = "success";
+    /// The import threw; `errorMessage` carries the reason.
+    pub const FAILED: &str = "failed";
+    /// The server already existed and overwrite was not requested.
+    pub const SKIPPED: &str = "skipped";
+}
+
+/// Why an item was skipped, mirroring upstream's `conflictType`.
+pub const CONFLICT_EXISTING: &str = "existing";
+
+/// The outcome of importing a single server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerImportResult {
+    /// Server name.
+    pub server_name: Option<String>,
+    /// Server ID.
+    pub server_id: Option<String>,
+    /// One of the `import_result_status::*` constants.
+    pub status: String,
+    /// Set to [`CONFLICT_EXISTING`] when an existing server was skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_type: Option<String>,
+    /// Populated when the import failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+/// The outcome of importing one batch.
+///
+/// Mirrors upstream `McpServerImportResponse`: `success` is
+/// `failedCount == 0`, so skips do not fail the batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerImportResponse {
+    /// Whether every importable item succeeded (skips do not count).
+    pub success: bool,
+    /// Items attempted.
+    pub total_count: u32,
+    /// Imported successfully.
+    pub success_count: u32,
+    /// Failed to import.
+    pub failed_count: u32,
+    /// Skipped because they already exist.
+    pub skipped_count: u32,
+    /// Batch-level error, used when the whole import is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    /// Per-server outcomes.
+    #[serde(default)]
+    pub results: Vec<McpServerImportResult>,
+}
+
+impl McpServerImportResponse {
+    /// A batch-level refusal: nothing was attempted.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            total_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            skipped_count: 0,
+            error_message: Some(message.into()),
+            results: Vec::new(),
+        }
+    }
+}
+
+/// The result of validating one import batch.
+///
+/// Mirrors upstream `McpServerImportValidationResult`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerImportValidationResult {
+    /// Whether the batch is valid. Upstream sets this to
+    /// `invalidCount == 0`; duplicates are counted separately and do **not**
+    /// make the batch invalid.
+    pub valid: bool,
+    /// Parsed servers count.
+    pub total_count: u32,
+    /// Valid servers count.
+    pub valid_count: u32,
+    /// Invalid servers count.
+    pub invalid_count: u32,
+    /// Duplicate servers count.
+    pub duplicate_count: u32,
+    /// Per-server verdicts.
+    #[serde(default)]
+    pub servers: Vec<McpServerValidationItem>,
+    /// Batch-level errors.
+    #[serde(default)]
+    pub errors: Vec<String>,
 }
 
 /// MCP import execute request
@@ -605,6 +828,12 @@ pub struct McpImportExecuteRequest {
     /// Whether to overwrite existing servers
     #[serde(default)]
     pub overwrite: bool,
+    /// Import the usable entries even when the batch as a whole is invalid
+    #[serde(default)]
+    pub skip_invalid: bool,
+    /// Limit the import to these server ids; empty means every usable entry
+    #[serde(default)]
+    pub selected_servers: Vec<String>,
 }
 
 /// MCP-specific fields kept in `ai_resource.ext`.

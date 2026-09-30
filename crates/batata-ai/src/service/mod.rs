@@ -14,6 +14,7 @@ pub mod mcp_index;
 /// Config-backed operation service for MCP servers.
 pub mod mcp_service;
 pub mod pipeline_service;
+pub mod version_lifecycle;
 pub mod prompt;
 pub mod skill_service;
 pub mod traits;

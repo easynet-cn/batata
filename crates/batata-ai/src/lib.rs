@@ -46,6 +46,7 @@ pub use service::traits::{
 
 // Re-export configure functions for route setup
 pub use api::a2a::configure as configure_a2a;
+pub use api::agent::admin_routes as agent_admin_routes;
 pub use api::agent_client::agent_client_routes;
 pub use api::agentspec::{
     admin_routes as agentspec_admin_routes, client_routes as agentspec_client_routes,

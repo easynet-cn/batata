@@ -4,8 +4,8 @@
 use crate::model::Page;
 use crate::model::ai::VersionDetail;
 use crate::model::ai::a2a::{
-    AgentCard, AgentCardVersionInfo, AgentRegistryStats, BatchAgentRegistrationRequest,
-    BatchRegistrationResponse, RegisteredAgent,
+    AgentCard, AgentCardVersionInfo, AgentRegistryStats, AgentVersionDetail,
+    BatchAgentRegistrationRequest, BatchRegistrationResponse, RegisteredAgent,
 };
 use crate::model::ai::agentspec::{AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecSummary};
 use crate::model::ai::mcp::McpRegistryStats;
@@ -595,6 +595,100 @@ pub trait A2aAgentService: Send + Sync {
 
     /// Get registry statistics
     async fn stats(&self) -> anyhow::Result<AgentRegistryStats>;
+
+    // ---- version lifecycle -------------------------------------------------
+    //
+    // Shared with every other AI resource type; see
+    // `batata_ai::service::version_lifecycle`.
+
+    /// Create a draft version for an agent that already exists.
+    ///
+    /// `overwrite` replaces the draft currently being edited.
+    async fn create_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        overwrite: bool,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Update the draft version currently being edited.
+    async fn update_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Delete a draft version.
+    async fn delete_agent_draft(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Submit a draft version for review (draft → reviewing).
+    async fn submit_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Publish a version that passed review.
+    async fn publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Publish a version bypassing the review gate.
+    async fn force_publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Move a version back to draft.
+    async fn redraft_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Bring an offline version back online.
+    async fn online_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Take an online version offline.
+    async fn offline_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail>;
+
+    /// Replace the custom labels, preserving the server-managed `latest` label.
+    async fn update_agent_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+
+    /// Change the visibility scope (`PUBLIC` / `PRIVATE`).
+    async fn update_agent_scope(
+        &self,
+        namespace: &str,
+        name: &str,
+        new_scope: &str,
+    ) -> anyhow::Result<()>;
 }
 
 /// Trait for pipeline query operations

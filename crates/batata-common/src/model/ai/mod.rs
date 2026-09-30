@@ -7,6 +7,7 @@
 pub mod a2a;
 pub mod agentspec;
 pub mod mcp;
+pub mod mcp_validation;
 pub mod pipeline;
 pub mod prompt;
 pub mod search;

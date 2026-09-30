@@ -21,6 +21,7 @@ use batata_persistence::PersistenceService;
 
 use crate::model::*;
 use crate::repository::{meta_status, resource_type, scope, version_status};
+use crate::service::version_lifecycle;
 
 /// Origin recorded for locally registered agents.
 const AGENT_DEFAULT_FROM: &str = "local";
@@ -637,6 +638,344 @@ impl A2aServerOperationService {
             None => Vec::new(),
         })
     }
+
+    // ========================================================================
+    // Version lifecycle
+    //
+    // The state machine is shared with every other AI resource type
+    // (`version_lifecycle`); only the resource type differs.
+    // ========================================================================
+
+    /// Load one version as the detail the lifecycle endpoints answer with.
+    async fn version_row(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        let row = version_lifecycle::find_version(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        Ok(AgentVersionDetail {
+            namespace_id: row.namespace_id,
+            name: row.name,
+            version: row.version,
+            status: row.status,
+            description: row.description,
+        })
+    }
+
+    /// Submit a draft version for review (draft → reviewing).
+    pub async fn submit_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::submit(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Publish a version that passed review (reviewing / reviewed → online).
+    pub async fn publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::publish(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Publish a version bypassing the review gate.
+    pub async fn force_publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::force_publish(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn redraft_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::redraft(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Bring an offline version back online.
+    pub async fn online_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::online(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Take an online version offline.
+    pub async fn offline_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        version_lifecycle::offline(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            version,
+        )
+        .await?;
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Replace the custom version labels, preserving the server-managed
+    /// `latest` label.
+    pub async fn update_agent_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        version_lifecycle::update_labels(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            labels,
+        )
+        .await
+    }
+
+    /// Change the visibility scope (`PUBLIC` / `PRIVATE`).
+    pub async fn update_agent_scope(
+        &self,
+        namespace: &str,
+        name: &str,
+        new_scope: &str,
+    ) -> anyhow::Result<()> {
+        if new_scope != scope::PUBLIC && new_scope != scope::PRIVATE {
+            anyhow::bail!(
+                "Invalid scope '{}', must be '{}' or '{}'",
+                new_scope,
+                scope::PUBLIC,
+                scope::PRIVATE
+            );
+        }
+        version_lifecycle::set_scope(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            new_scope,
+        )
+        .await
+    }
+
+    // ========================================================================
+    // Drafts
+    // ========================================================================
+
+    /// The resource-level version index plus the extension that carries the
+    /// agent id, for a resource that must already exist.
+    async fn existing_resource(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> anyhow::Result<(AiResourceInfo, ResourceVersionInfo, String, String)> {
+        let resource = version_lifecycle::find_resource(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+        )
+        .await?;
+        let version_info = version_lifecycle::parse_version_info(&resource);
+        let ext = Self::parse_ext(&resource).unwrap_or(A2aResourceExt {
+            id: String::new(),
+            registration_type: String::new(),
+        });
+        Ok((resource, version_info, ext.id, ext.registration_type))
+    }
+
+    /// Create a draft version for an agent that already exists.
+    ///
+    /// Mirrors `create_mcp_server_draft`: at most one draft is being edited at
+    /// a time, and `overwrite` is required to replace it.
+    pub async fn create_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        overwrite: bool,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        let name = &card.name;
+        let version = &card.version;
+
+        let (resource, mut version_info, id, registration_type) =
+            self.existing_resource(namespace, name).await?;
+
+        if let Some(ref editing) = version_info.editing_version {
+            if !overwrite {
+                anyhow::bail!(
+                    "Agent '{}' already has an editing version '{}', set overwrite=true",
+                    name,
+                    editing
+                );
+            }
+            self.persistence
+                .ai_resource_version_delete(namespace, name, resource_type::AGENT, editing)
+                .await?;
+        }
+
+        let detail = Self::build_detail(&id, card, &registration_type);
+        let now = Utc::now().naive_utc().to_string();
+        self.persistence
+            .ai_resource_version_insert(&AiResourceVersionInfo {
+                id: 0,
+                resource_type: resource_type::AGENT.to_string(),
+                author: None,
+                name: name.clone(),
+                description: Some(card.description.clone()),
+                status: version_status::DRAFT.to_string(),
+                version: version.clone(),
+                namespace_id: namespace.to_string(),
+                storage: Some(serde_json::to_string(&detail)?),
+                publish_pipeline_info: None,
+                download_count: 0,
+                gmt_create: Some(now.clone()),
+                gmt_modified: Some(now),
+            })
+            .await?;
+
+        version_info.editing_version = Some(version.clone());
+        version_lifecycle::save_version_info(
+            self.persistence.as_ref(),
+            namespace,
+            name,
+            resource_type::AGENT,
+            &resource,
+            &version_info,
+        )
+        .await?;
+
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Update the draft version currently being edited.
+    pub async fn update_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        let name = &card.name;
+        let version = &card.version;
+
+        let (_resource, version_info, id, registration_type) =
+            self.existing_resource(namespace, name).await?;
+
+        let editing = version_info.editing_version.clone().ok_or_else(|| {
+            anyhow::anyhow!("Agent '{}' has no editing version", name)
+        })?;
+        if editing != *version {
+            anyhow::bail!(
+                "Agent '{}' editing version is '{}', not '{}'",
+                name,
+                editing,
+                version
+            );
+        }
+
+        let detail = Self::build_detail(&id, card, &registration_type);
+        self.persistence
+            .ai_resource_version_update_storage(
+                namespace,
+                name,
+                resource_type::AGENT,
+                version,
+                &serde_json::to_string(&detail)?,
+                Some(card.description.as_str()),
+            )
+            .await?;
+
+        self.version_row(namespace, name, version).await
+    }
+
+    /// Delete a draft version.
+    pub async fn delete_agent_draft(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        let (resource, mut version_info, _, _) = self.existing_resource(namespace, name).await?;
+
+        self.persistence
+            .ai_resource_version_delete(namespace, name, resource_type::AGENT, version)
+            .await?;
+
+        if version_info.editing_version.as_deref() == Some(version) {
+            version_info.editing_version = None;
+            version_lifecycle::save_version_info(
+                self.persistence.as_ref(),
+                namespace,
+                name,
+                resource_type::AGENT,
+                &resource,
+                &version_info,
+            )
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -734,6 +1073,105 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
             failed_count,
             errors,
         })
+    }
+
+    async fn create_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        overwrite: bool,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.create_agent_draft(namespace, card, overwrite).await
+    }
+
+    async fn update_agent_draft(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.update_agent_draft(namespace, card).await
+    }
+
+    async fn delete_agent_draft(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.delete_agent_draft(namespace, name, version).await
+    }
+
+    async fn submit_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.submit_agent_version(namespace, name, version).await
+    }
+
+    async fn publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.publish_agent_version(namespace, name, version).await
+    }
+
+    async fn force_publish_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.force_publish_agent_version(namespace, name, version)
+            .await
+    }
+
+    async fn redraft_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.redraft_agent_version(namespace, name, version).await
+    }
+
+    async fn online_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.online_agent_version(namespace, name, version).await
+    }
+
+    async fn offline_agent_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        self.offline_agent_version(namespace, name, version).await
+    }
+
+    async fn update_agent_labels(
+        &self,
+        namespace: &str,
+        name: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        self.update_agent_labels(namespace, name, labels).await
+    }
+
+    async fn update_agent_scope(
+        &self,
+        namespace: &str,
+        name: &str,
+        new_scope: &str,
+    ) -> anyhow::Result<()> {
+        self.update_agent_scope(namespace, name, new_scope).await
     }
 
     async fn stats(&self) -> anyhow::Result<batata_common::model::ai::a2a::AgentRegistryStats> {

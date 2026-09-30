@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::VERSIONING_UNSUPPORTED;
+
 use actix_web::{HttpResponse, delete, get, post, put, web};
 use chrono::Utc;
 use dashmap::DashMap;
@@ -598,12 +600,6 @@ pub use batata_common::model::ai::mcp::McpRegistryStats;
 // =============================================================================
 // Trait implementation for McpServerRegistry
 // =============================================================================
-
-/// Error returned by the in-memory registry for operations that require the
-/// versioned, `ai_resource`-backed MCP service.
-const VERSIONING_UNSUPPORTED: &str =
-    "versioning is not supported by the in-memory MCP registry; \
-     it requires the ai_resource-backed MCP service";
 
 #[async_trait::async_trait]
 impl batata_common::McpServerService for McpServerRegistry {

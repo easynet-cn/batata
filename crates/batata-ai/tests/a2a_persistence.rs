@@ -22,7 +22,7 @@ use batata_ai::model::{AgentCard, AgentCapabilities, AgentSkill};
 use batata_ai::A2aServerOperationService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::ExternalDbPersistService;
+use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
 
 const NS: &str = "public";
 const NAME: &str = "probe-agent";
@@ -206,4 +206,126 @@ async fn a2a_agent_round_trip() {
         .await
         .expect("deleting a missing agent must be a no-op");
     println!("ok: delete missing is idempotent");
+}
+
+/// Status of one agent version, read straight from the version table.
+async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
+    store
+        .ai_resource_version_find(NS, NAME, "agent", version)
+        .await
+        .expect("version lookup")
+        .expect("version must exist")
+        .status
+}
+
+/// Walk the shared version lifecycle for the `agent` resource type.
+///
+/// The state machine lives in `version_lifecycle` and is shared with MCP, so
+/// this proves it behaves identically for a second resource type rather than
+/// only working for the one it was extracted from.
+#[tokio::test]
+#[ignore]
+async fn agent_version_lifecycle() {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let conn = common::connect_database(&url).await;
+    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let svc = A2aServerOperationService::new(store.clone());
+
+    clean(&store).await;
+
+    // Registration publishes directly, so the version starts online.
+    svc.register_agent(&card("1.0.0"), NS, "manual")
+        .await
+        .expect("register");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+
+    // ---- offline / online ---------------------------------------------------
+    svc.offline_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("offline");
+    assert_eq!(status_of(&store, "1.0.0").await, "offline");
+    println!("ok: offline");
+
+    svc.online_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("online");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+    println!("ok: back online");
+
+    // ---- redraft → submit → publish -----------------------------------------
+    svc.redraft_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("redraft");
+    assert_eq!(status_of(&store, "1.0.0").await, "draft");
+
+    svc.submit_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("submit");
+    assert_eq!(status_of(&store, "1.0.0").await, "reviewing");
+    println!("ok: redraft → submit");
+
+    svc.publish_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("publish");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+    println!("ok: publish");
+
+    // ---- guard rails --------------------------------------------------------
+    // A draft cannot be submitted twice, and an online version is not offline.
+    svc.redraft_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("redraft again");
+    svc.submit_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("submit");
+    assert!(
+        svc.submit_agent_version(NS, NAME, "1.0.0").await.is_err(),
+        "submitting a reviewing version must fail"
+    );
+    assert!(
+        svc.offline_agent_version(NS, NAME, "1.0.0").await.is_err(),
+        "taking a reviewing version offline must fail"
+    );
+    println!("ok: invalid transitions are rejected");
+
+    // ---- force publish ------------------------------------------------------
+    svc.force_publish_agent_version(NS, NAME, "1.0.0")
+        .await
+        .expect("force publish");
+    assert_eq!(status_of(&store, "1.0.0").await, "online");
+    println!("ok: force publish bypasses review");
+
+    // ---- labels -------------------------------------------------------------
+    let mut labels = std::collections::HashMap::new();
+    labels.insert("stable".to_string(), "1.0.0".to_string());
+    let stored = svc
+        .update_agent_labels(NS, NAME, labels)
+        .await
+        .expect("update labels");
+    assert_eq!(stored.get("stable").map(String::as_str), Some("1.0.0"));
+    assert_eq!(
+        stored.get("latest").map(String::as_str),
+        Some("1.0.0"),
+        "the server-managed latest label must survive"
+    );
+
+    let mut bad = std::collections::HashMap::new();
+    bad.insert("gone".to_string(), "9.9.9".to_string());
+    assert!(
+        svc.update_agent_labels(NS, NAME, bad).await.is_err(),
+        "labelling a non-online version must fail"
+    );
+    println!("ok: labels");
+
+    // ---- scope --------------------------------------------------------------
+    svc.update_agent_scope(NS, NAME, "PUBLIC")
+        .await
+        .expect("set public");
+    assert!(
+        svc.update_agent_scope(NS, NAME, "BOGUS").await.is_err(),
+        "an unknown scope must be rejected"
+    );
+    println!("ok: scope");
+
+    clean(&store).await;
 }

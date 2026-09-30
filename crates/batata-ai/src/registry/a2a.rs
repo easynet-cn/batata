@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::VERSIONING_UNSUPPORTED;
 use actix_web::{HttpResponse, delete, get, post, put, web};
 use chrono::Utc;
 use dashmap::DashMap;
@@ -708,6 +709,104 @@ impl batata_common::A2aAgentService for AgentRegistry {
         request: batata_common::model::ai::a2a::BatchAgentRegistrationRequest,
     ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
         Ok(self.batch_register(request))
+    }
+
+    async fn create_agent_draft(
+        &self,
+        _namespace: &str,
+        _card: &batata_common::model::ai::a2a::AgentCard,
+        _overwrite: bool,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_agent_draft(
+        &self,
+        _namespace: &str,
+        _card: &batata_common::model::ai::a2a::AgentCard,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn delete_agent_draft(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn submit_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn publish_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn force_publish_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn redraft_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn online_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn offline_agent_version(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_agent_labels(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
+    async fn update_agent_scope(
+        &self,
+        _namespace: &str,
+        _name: &str,
+        _new_scope: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
 
     async fn stats(&self) -> anyhow::Result<AgentRegistryStats> {

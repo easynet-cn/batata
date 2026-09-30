@@ -1,6 +1,7 @@
 //! HTTP API handlers for AI routes (MCP, A2A, Prompts, Skills, and AgentSpecs)
 
 pub mod a2a;
+pub mod agent;
 pub mod agent_client;
 pub mod agentspec;
 pub mod mcp;
