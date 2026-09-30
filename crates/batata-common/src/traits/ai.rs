@@ -15,7 +15,9 @@ use crate::model::ai::mcp::{
 };
 use crate::model::ai::pipeline::PipelineExecution;
 use crate::model::ai::search::AiResourceSearchHit;
-use crate::model::ai::skill::{Skill, SkillBasicInfo, SkillMeta, SkillSummary};
+use crate::model::ai::skill::{
+    BatchUploadResult, Skill, SkillBasicInfo, SkillMeta, SkillSummary, SkillUploadPrecheckResult,
+};
 
 /// Trait for skill lifecycle operations (CRUD, draft, publish, etc.)
 #[async_trait::async_trait]
@@ -76,6 +78,23 @@ pub trait SkillService: Send + Sync {
         overwrite: bool,
     ) -> anyhow::Result<String>;
 
+    /// Check what uploading a skill ZIP would do, persisting nothing.
+    async fn precheck_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        user: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillUploadPrecheckResult>>;
+
+    /// Upload every skill in a ZIP, continuing past individual failures.
+    async fn batch_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+        user: Option<&str>,
+    ) -> anyhow::Result<BatchUploadResult>;
+
     /// The `create_draft` method.
     async fn create_draft(
         &self,
@@ -115,6 +134,24 @@ pub trait SkillService: Send + Sync {
 
     /// The `publish` method.
     async fn publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Publish a version bypassing the review gate.
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Move a version back to draft so it can be edited again.
+    async fn redraft(
         &self,
         namespace_id: &str,
         name: &str,
@@ -201,6 +238,15 @@ pub trait AgentSpecService: Send + Sync {
         user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>>;
 
+    /// Get a version's metadata: main content plus resource name + type only.
+    async fn get_version_meta(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<Option<AgentSpec>>;
+
     /// The `delete` method.
     async fn delete(
         &self,
@@ -269,6 +315,24 @@ pub trait AgentSpecService: Send + Sync {
 
     /// The `publish` method.
     async fn publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Publish a version bypassing the review gate.
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Move a version back to draft so it can be edited again.
+    async fn redraft(
         &self,
         namespace_id: &str,
         name: &str,

@@ -589,7 +589,51 @@ has no `LIKE`:
       any future domain stay consistent.
 - [ ] `AiCapabilityClientController` equivalent
 - [ ] Prompt client contract parity
-- [ ] Pipeline parity verification
+- [ ] **Prompt migration to `ai_resource`** — the last domain still backed by
+      configs (group `nacos-ai-prompt`, four data-ids per prompt). Upstream
+      stores prompts as an `ai_resource` type, so the lifecycle endpoints
+      (`draft` / `submit` / `publish` / `force-publish` / `redraft` / `online` /
+      `offline` / `labels` / `description` / `biz-tags` — none of which exist
+      here) should be built on `ai_resource` once, not on configs and then
+      again after migrating.
+      **Prerequisite done:** the domain had *no tests at all* (599-line service,
+      597-line API, zero coverage). `tests/prompt_persistence.rs` now pins the
+      behaviour that is observable today — publish, version/label/latest
+      resolution, MD5 conditional query, publish guards, listings, delete — on
+      both engines, so the migration has a regression baseline to hold to.
+      Remaining after that: rewrite storage onto `ai_resource`, add the
+      lifecycle via the shared `version_lifecycle`, then add the ~14 missing
+      admin endpoints (batata has 10 of 24).
+- [x] Pipeline parity — **complete.** `/list` and `/detail` match upstream's
+      `LIST_SUBPATH` / `DETAIL_SUBPATH`. The two endpoints upstream additionally
+      exposes — `GET /{pipelineId}` and the base-path `listPipelinesLegacy` —
+      are both `@Deprecated(since = "3.2.1", forRemoval = true)` upstream and
+      exist only for legacy clients. Batata is unreleased, so it deliberately
+      does not carry them (see the module doc in `api/pipeline.rs`).
+      ~~Still missing `GET /{pipelineId}` and legacy list~~ — correction: an
+      earlier pass listed these as gaps; they are intentional omissions.
+- [x] AgentSpec admin parity — **complete (19/19 admin + 2/2 client).**
+      `force-publish`, `redraft` and `version/meta` were the missing three;
+      the first two delegate to the shared `version_lifecycle`, and
+      `version/meta` returns the main content plus a resource list of name +
+      type only, skipping file contents (upstream `getAgentSpecVersionMeta`).
+- [x] Skill admin parity — **complete (20/20 admin + 2/2 client).** The four
+      missing endpoints were `force-publish`, `redraft`, `upload/precheck` and
+      `upload/batch`. The first two delegate to the shared `version_lifecycle`
+      (`tests/skill_agentspec_lifecycle.rs`); the upload pair needed
+      multi-skill ZIP parsing, which did not exist — `parse_skills_from_zip`
+      now reads one-level subdirectories, each with its own SKILL.md, and
+      `parse_skill_from_zip` shares its entry reader
+      (`tests/skill_upload.rs`, plus unit tests in `model/ai/skill_zip.rs`).
+      `precheck` persists nothing and also refuses to describe a skill the
+      caller cannot read (`NO_PERMISSION`).
+      Note: the **console** layer (`batata-console/src/v3/ai_skill.rs`) has no
+      force-publish / redraft either. Trace records are only emitted from the
+      console layer, so these new admin endpoints are currently **untraced** —
+      unlike MCP, whose lifecycle lives in the console.
+- [ ] AgentSpec admin parity — `force-publish` and `redraft` added the same
+      way. Still missing `GET /version/meta` (upstream
+      `getAgentSpecVersionMeta`). Same console/tracing caveat as Skill.
 - [ ] Resource import parity (official registry, `skills.sh`, well-known)
 - [ ] Resource search parity
 - [ ] Skill download counting

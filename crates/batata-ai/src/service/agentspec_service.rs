@@ -14,6 +14,7 @@ use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo, Page};
 use tracing::debug;
 
 use crate::model::agentspec::*;
+use crate::service::version_lifecycle;
 
 /// Parse ISO8601 datetime string to epoch milliseconds
 fn parse_datetime_to_millis(s: &str) -> Option<i64> {
@@ -333,6 +334,62 @@ impl AgentSpecOperationService {
                     name: file.name.clone(),
                     resource_type: file.file_type.clone(),
                     content: file.content.clone(),
+                    metadata: HashMap::new(),
+                };
+                resources.insert(r.resource_identifier(), r);
+            }
+        }
+
+        Ok(Some(AgentSpec {
+            namespace_id: namespace_id.to_string(),
+            name: name.to_string(),
+            description: ver.description.clone(),
+            content,
+            biz_tags: None,
+            resource: resources,
+        }))
+    }
+
+    /// Returns a version's metadata: the main content plus a resource list of
+    /// name + type only, without resource file contents.
+    ///
+    /// Mirrors upstream `getAgentSpecVersionMeta`, which exists to answer
+    /// "what does this version contain" while skipping resource file IO.
+    pub async fn get_version_meta(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<Option<AgentSpec>> {
+        let resource = match self.find_resource(namespace_id, name).await? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
+
+        let ver = match self.find_version(namespace_id, name, version).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let storage: AgentSpecStorage = ver
+            .storage
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+
+        let mut resources = HashMap::new();
+        let mut content = None;
+        for file in &storage.files {
+            if file.name == AGENTSPEC_MAIN_FILE {
+                content = file.content.clone();
+            } else {
+                let r = AgentSpecResource {
+                    name: file.name.clone(),
+                    resource_type: file.file_type.clone(),
+                    // Metadata only: the file contents are deliberately omitted.
+                    content: None,
                     metadata: HashMap::new(),
                 };
                 resources.insert(r.resource_identifier(), r);
@@ -724,6 +781,61 @@ impl AgentSpecOperationService {
         Ok(())
     }
 
+    /// Publish a version bypassing the review gate.
+    ///
+    /// The state machine is shared with every other AI resource type; only the
+    /// resource type differs.
+    pub async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let resource = self
+            .find_resource(namespace_id, name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
+
+        version_lifecycle::force_publish(
+            self.persistence.as_ref(),
+            namespace_id,
+            name,
+            AGENTSPEC_TYPE,
+            version,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn redraft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let resource = self
+            .find_resource(namespace_id, name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
+
+        version_lifecycle::redraft(
+            self.persistence.as_ref(),
+            namespace_id,
+            name,
+            AGENTSPEC_TYPE,
+            version,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Replaces the label → version routing for an AgentSpec.
     pub async fn update_labels(
         &self,
@@ -1076,6 +1188,17 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         self.get_version_detail(namespace_id, name, version, _user).await
     }
 
+    async fn get_version_meta(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<Option<AgentSpec>> {
+        self.get_version_meta(namespace_id, name, version, _user)
+            .await
+    }
+
     async fn delete(&self, namespace_id: &str, name: &str, _user: Option<&str>) -> anyhow::Result<()> {
         self.delete(namespace_id, name, _user).await
     }
@@ -1157,6 +1280,27 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
         self.publish(namespace_id, name, version, _user).await
+    }
+
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.force_publish(namespace_id, name, version, _user)
+            .await
+    }
+
+    async fn redraft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.redraft(namespace_id, name, version, _user).await
     }
 
     async fn update_labels(

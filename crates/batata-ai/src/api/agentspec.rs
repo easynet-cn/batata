@@ -122,6 +122,56 @@ async fn get_agentspec_version(
     }
 }
 
+/// GET /v3/admin/ai/agentspecs/version/meta — Version metadata, skipping resource
+/// file contents
+#[get("version/meta")]
+async fn get_agentspec_version_meta(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
+    query: web::Query<AgentSpecForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    let name = match query.agent_spec_name.as_deref() {
+        Some(n) if !n.is_empty() => n,
+        _ => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "agentSpecName is required",
+            );
+        }
+    };
+    let version = match query.version.as_deref() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "version is required",
+            );
+        }
+    };
+
+    match agentspec_service
+        .get_version_meta(ns, name, version, Some(get_username(&req).as_str()))
+        .await
+    {
+        Ok(Some(spec)) => HttpResponse::Ok().json(Result::success(spec)),
+        Ok(None) => Result::<()>::http_not_found(
+            &batata_common::error::RESOURCE_NOT_FOUND,
+            format!("AgentSpec '{}' version '{}' not found", name, version),
+        ),
+        Err(e) => Result::<()>::http_internal_error(e),
+    }
+}
+
 /// GET /v3/admin/ai/agentspecs/version/download — Download agentspec version as JSON
 #[get("version/download")]
 async fn download_agentspec_version(
@@ -621,6 +671,78 @@ async fn publish_agentspec(
     }
 }
 
+/// POST /v3/admin/ai/agentspecs/force-publish — Publish bypassing the review gate
+#[post("force-publish")]
+async fn force_publish_agentspec(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
+    body: web::Form<AgentSpecPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    match agentspec_service
+        .force_publish(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/admin/ai/agentspecs/redraft — Move a version back to draft
+#[post("redraft")]
+async fn redraft_agentspec(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
+    body: web::Form<AgentSpecPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    match agentspec_service
+        .redraft(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
 /// PUT /v3/admin/ai/agentspecs/labels — Update label->version routing
 #[put("labels")]
 async fn update_labels(
@@ -897,12 +1019,15 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(list_agentspecs)
         .service(download_agentspec_version)
         .service(get_agentspec_version)
+        .service(get_agentspec_version_meta)
         .service(upload_agentspec)
         .service(create_draft)
         .service(update_draft)
         .service(delete_draft)
         .service(submit_agentspec)
         .service(publish_agentspec)
+        .service(force_publish_agentspec)
+        .service(redraft_agentspec)
         .service(update_labels)
         .service(update_biz_tags)
         .service(online_agentspec)

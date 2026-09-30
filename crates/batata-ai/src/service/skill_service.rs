@@ -12,6 +12,7 @@ use chrono::Utc;
 use tracing::debug;
 
 use crate::model::skill::*;
+use crate::service::version_lifecycle;
 
 /// Convert a NaiveDateTime string (from DB) to epoch millis.
 /// Accepts formats like "2026-03-30 04:05:41.069118" or ISO 8601.
@@ -569,6 +570,156 @@ impl SkillOperationService {
         Ok(name.to_string())
     }
 
+    /// Check what uploading a skill ZIP would do, without persisting anything.
+    ///
+    /// Mirrors upstream `precheckUploadSkillFromZip`. A ZIP may hold several
+    /// skills — one-level subdirectories, each with its own SKILL.md — and every
+    /// archive entry gets its own verdict.
+    pub async fn precheck_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        user: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillUploadPrecheckResult>> {
+        let entries = crate::service::skill_zip::parse_skills_from_zip(zip_bytes, namespace_id)?;
+        let mut out = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            let mut result = SkillUploadPrecheckResult {
+                namespace_id: namespace_id.to_string(),
+                entry_path: entry.entry_path.clone(),
+                ..Default::default()
+            };
+
+            let skill = match entry.skill {
+                Some(skill) => skill,
+                None => {
+                    result.reason = entry.error.clone();
+                    result.precheck_code = Some(precheck_code::NOT_A_SKILL.to_string());
+                    out.push(result);
+                    continue;
+                }
+            };
+
+            if skill.name.trim().is_empty() {
+                result.reason = Some("SKILL.md missing required 'name' field".to_string());
+                result.precheck_code = Some(precheck_code::INVALID_SKILL.to_string());
+                out.push(result);
+                continue;
+            }
+            result.skill_name = skill.name.clone();
+
+            let parsed_version = crate::service::skill_zip::extract_version_from_skill_md(&skill);
+            result.parsed_version = parsed_version.clone();
+
+            let Some(resource) = self.find_resource(namespace_id, &skill.name).await? else {
+                result.target_version =
+                    Some(parsed_version.unwrap_or_else(|| SKILL_DEFAULT_VERSION.to_string()));
+                result.precheck_code = Some(precheck_code::READY.to_string());
+                out.push(result);
+                continue;
+            };
+
+            // A precheck must not describe a skill the caller cannot read.
+            if let Err(e) = self
+                .check_visibility(user, batata_visibility::ACTION_READ, &resource)
+                .await
+            {
+                result.reason = Some(e.to_string());
+                result.precheck_code = Some(precheck_code::NO_PERMISSION.to_string());
+                out.push(result);
+                continue;
+            }
+
+            result.exists = true;
+            result.owner = Some(resource.owner.clone());
+
+            let version_info = Self::parse_version_info(&resource);
+            result.editing_version = version_info.editing_version.clone();
+            result.reviewing_version = version_info.reviewing_version.clone();
+
+            let rows = self
+                .persistence
+                .ai_resource_version_list(namespace_id, &skill.name, SKILL_TYPE)
+                .await?;
+            let max_published = rows
+                .iter()
+                .filter(|r| r.status == VERSION_STATUS_ONLINE)
+                .map(|r| r.version.clone())
+                .max_by(|a, b| compare_versions(a, b));
+            result.max_published_version = max_published.clone();
+
+            // A manifest version that is not ahead of what is already published
+            // cannot be created as-is, so the upload would have to bump it.
+            let (target, adjusted) = match (parsed_version, max_published) {
+                (Some(parsed), Some(published))
+                    if compare_versions(&parsed, &published)
+                        != std::cmp::Ordering::Greater =>
+                {
+                    (next_patch_version(&published), true)
+                }
+                (Some(parsed), _) => (parsed, false),
+                (None, Some(published)) => (next_patch_version(&published), true),
+                (None, None) => (SKILL_DEFAULT_VERSION.to_string(), false),
+            };
+            result.target_version = Some(target);
+
+            result.precheck_code = Some(
+                if version_info.editing_version.is_some() {
+                    precheck_code::DRAFT_EXISTS
+                } else if version_info.reviewing_version.is_some() {
+                    precheck_code::REVIEWING_EXISTS
+                } else if adjusted {
+                    precheck_code::VERSION_ADJUSTED
+                } else {
+                    precheck_code::READY
+                }
+                .to_string(),
+            );
+            out.push(result);
+        }
+
+        Ok(out)
+    }
+
+    /// Upload every skill in a ZIP, continuing past individual failures.
+    ///
+    /// Mirrors upstream `batchUploadSkillsFromZip`, which uses a best-effort
+    /// strategy: one broken skill does not discard the rest of the archive.
+    pub async fn batch_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+        user: Option<&str>,
+    ) -> anyhow::Result<BatchUploadResult> {
+        let entries = crate::service::skill_zip::parse_skills_from_zip(zip_bytes, namespace_id)?;
+        let mut result = BatchUploadResult::default();
+        let author = user.unwrap_or_default();
+
+        for entry in entries {
+            let label = entry.entry_path.clone();
+            let skill = match entry.skill {
+                Some(skill) => skill,
+                None => {
+                    let reason = entry.error.unwrap_or_else(|| "not a skill".to_string());
+                    result.add_failure(&label, &reason);
+                    continue;
+                }
+            };
+
+            match self
+                .upload_skill(namespace_id, &skill.name, &skill, author, overwrite)
+                .await
+            {
+                Ok(_) => result.add_success(&skill.name),
+                Err(e) => result.add_failure(&skill.name, &e.to_string()),
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Create a draft version
     pub async fn create_draft(
         &self,
@@ -863,6 +1014,71 @@ impl SkillOperationService {
 
         debug!(
             "Published skill '{}' version '{}' in namespace '{}'",
+            name, version, namespace_id
+        );
+        Ok(())
+    }
+
+    /// Publish a version bypassing the review gate.
+    ///
+    /// The state machine is shared with every other AI resource type; only the
+    /// resource type differs.
+    pub async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let resource = self
+            .find_resource(namespace_id, name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
+
+        version_lifecycle::force_publish(
+            self.persistence.as_ref(),
+            namespace_id,
+            name,
+            SKILL_TYPE,
+            version,
+        )
+        .await?;
+
+        debug!(
+            "Force published skill '{}' version '{}' in namespace '{}'",
+            name, version, namespace_id
+        );
+        Ok(())
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn redraft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let resource = self
+            .find_resource(namespace_id, name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
+
+        version_lifecycle::redraft(
+            self.persistence.as_ref(),
+            namespace_id,
+            name,
+            SKILL_TYPE,
+            version,
+        )
+        .await?;
+
+        debug!(
+            "Redrafted skill '{}' version '{}' in namespace '{}'",
             name, version, namespace_id
         );
         Ok(())
@@ -1421,6 +1637,27 @@ impl super::traits::SkillService for SkillOperationService {
             .await
     }
 
+    async fn precheck_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        _user: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillUploadPrecheckResult>> {
+        self.precheck_upload_from_zip(namespace_id, zip_bytes, _user)
+            .await
+    }
+
+    async fn batch_upload_from_zip(
+        &self,
+        namespace_id: &str,
+        zip_bytes: &[u8],
+        overwrite: bool,
+        _user: Option<&str>,
+    ) -> anyhow::Result<BatchUploadResult> {
+        self.batch_upload_from_zip(namespace_id, zip_bytes, overwrite, _user)
+            .await
+    }
+
     async fn create_draft(
         &self,
         namespace_id: &str,
@@ -1473,6 +1710,27 @@ impl super::traits::SkillService for SkillOperationService {
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
         self.publish(namespace_id, name, version, _user).await
+    }
+
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.force_publish(namespace_id, name, version, _user)
+            .await
+    }
+
+    async fn redraft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.redraft(namespace_id, name, version, _user).await
     }
 
     async fn update_labels(

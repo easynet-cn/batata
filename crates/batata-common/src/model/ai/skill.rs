@@ -570,6 +570,179 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// Precheck verdict codes, mirroring upstream `SkillUploadPrecheckResult`.
+pub mod precheck_code {
+    /// Nothing blocks the upload.
+    pub const READY: &str = "READY";
+    /// The manifest version is not ahead of the published one and was bumped.
+    pub const VERSION_ADJUSTED: &str = "VERSION_ADJUSTED";
+    /// The skill already has a draft version.
+    pub const DRAFT_EXISTS: &str = "DRAFT_EXISTS";
+    /// The skill already has a version under review.
+    pub const REVIEWING_EXISTS: &str = "REVIEWING_EXISTS";
+    /// The caller may not overwrite the existing skill.
+    pub const NO_PERMISSION: &str = "NO_PERMISSION";
+    /// The archive entry is not a skill at all.
+    pub const NOT_A_SKILL: &str = "NOT_A_SKILL";
+    /// The entry parses as a directory but the skill content is unusable.
+    pub const INVALID_SKILL: &str = "INVALID_SKILL";
+}
+
+/// The action upstream suggests for a precheck result.
+pub mod precheck_action {
+    /// Create a new draft version.
+    pub const CREATE_DRAFT: &str = "CREATE_DRAFT";
+    /// Replace the existing draft version.
+    pub const OVERWRITE_DRAFT: &str = "OVERWRITE_DRAFT";
+    /// Drop the existing draft and create a fresh one.
+    pub const DELETE_DRAFT_AND_CREATE: &str = "DELETE_DRAFT_AND_CREATE";
+}
+
+/// The verdict for one skill in an upload precheck.
+///
+/// Produced without persisting anything, so a console can show what an upload
+/// would do before it happens.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUploadPrecheckResult {
+    /// Namespace the upload would target.
+    pub namespace_id: String,
+    /// Archive directory the skill was found in.
+    pub entry_path: String,
+    /// Parsed skill name, when the manifest carried one.
+    pub skill_name: String,
+    /// Why the entry is not ready, when it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Owner of the existing skill, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Highest currently online version, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_published_version: Option<String>,
+    /// Version declared in the manifest, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parsed_version: Option<String>,
+    /// Version the upload would actually create.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_version: Option<String>,
+    /// Whether the skill already exists in the namespace.
+    #[serde(default)]
+    pub exists: bool,
+    /// Draft version in progress, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_version: Option<String>,
+    /// Version under review, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewing_version: Option<String>,
+    /// One of the `precheck_code::*` constants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precheck_code: Option<String>,
+}
+
+/// Error codes for one batch upload item.
+pub mod batch_error_code {
+    /// The item was uploaded.
+    pub const SUCCESS: &str = "SUCCESS";
+    /// The item could not be uploaded.
+    pub const UPLOAD_FAILED: &str = "UPLOAD_FAILED";
+}
+
+/// The outcome of uploading one skill in a batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchUploadItemResult {
+    /// Skill name.
+    pub name: String,
+    /// Whether the upload succeeded.
+    pub success: bool,
+    /// One of the `batch_error_code::*` constants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// Failure detail, when the upload failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    /// Owner, when a conflict was reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+impl BatchUploadItemResult {
+    /// A successful item.
+    pub fn success(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            success: true,
+            error_code: Some(batch_error_code::SUCCESS.to_string()),
+            error_message: None,
+            owner: None,
+        }
+    }
+
+    /// A failed item.
+    pub fn failure(name: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            success: false,
+            error_code: Some(batch_error_code::UPLOAD_FAILED.to_string()),
+            error_message: Some(message.into()),
+            owner: None,
+        }
+    }
+}
+
+/// One skill that failed during a batch upload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchUploadFailedItem {
+    /// Skill name.
+    pub name: String,
+    /// Owner, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Why the upload failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// The outcome of a batch upload.
+///
+/// Upstream keeps both the newer `results` list and the older `succeeded` /
+/// `failed` lists in sync; [`BatchUploadResult::add_success`] and
+/// [`BatchUploadResult::add_failure`] do the same.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchUploadResult {
+    /// Names uploaded successfully.
+    #[serde(default)]
+    pub succeeded: Vec<String>,
+    /// Names that failed, with a reason.
+    #[serde(default)]
+    pub failed: Vec<BatchUploadFailedItem>,
+    /// Per-skill outcomes.
+    #[serde(default)]
+    pub results: Vec<BatchUploadItemResult>,
+}
+
+impl BatchUploadResult {
+    /// Record one success in both shapes.
+    pub fn add_success(&mut self, name: &str) {
+        self.succeeded.push(name.to_string());
+        self.results.push(BatchUploadItemResult::success(name));
+    }
+
+    /// Record one failure in both shapes.
+    pub fn add_failure(&mut self, name: &str, reason: &str) {
+        self.failed.push(BatchUploadFailedItem {
+            name: name.to_string(),
+            owner: None,
+            reason: Some(reason.to_string()),
+        });
+        self.results
+            .push(BatchUploadItemResult::failure(name, reason));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

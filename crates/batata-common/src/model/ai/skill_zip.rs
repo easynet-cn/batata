@@ -26,7 +26,12 @@ const BINARY_EXTENSIONS: &[&str] = &[
 ];
 
 /// Parse a Skill from ZIP bytes.
-pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Result<Skill> {
+/// Read and validate every file in a ZIP archive.
+///
+/// Shared by the single- and multi-skill parsers so both inherit the same
+/// limits: ZIP magic header, upload size, entry count, path traversal and
+/// total decompressed size.
+fn read_zip_entries(zip_bytes: &[u8]) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     if zip_bytes.len() < 30 {
         anyhow::bail!("Invalid ZIP: too small");
     }
@@ -83,6 +88,16 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
         entries.insert(name, content);
     }
 
+    Ok(entries)
+}
+
+/// Parse a Skill from ZIP bytes.
+///
+/// Returns the first skill found. Use [`parse_skills_from_zip`] when the
+/// archive may hold several skills.
+pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Result<Skill> {
+    let entries = read_zip_entries(zip_bytes)?;
+
     // Find SKILL.md
     let skill_md_key = entries
         .keys()
@@ -90,8 +105,31 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("ZIP does not contain SKILL.md"))?;
 
-    let skill_md_bytes = entries.remove(&skill_md_key).unwrap();
-    let skill_md_content = strip_bom(&String::from_utf8_lossy(&skill_md_bytes));
+    // Determine the skill root prefix (e.g., "skillName/" or empty)
+    let root_prefix = if skill_md_key.contains('/') {
+        let idx = skill_md_key.find('/').unwrap();
+        skill_md_key[..=idx].to_string()
+    } else {
+        String::new()
+    };
+
+    skill_from_entries(&entries, &root_prefix, &skill_md_key, namespace_id)
+}
+
+/// Build one skill from the entries under `root_prefix`, using `skill_md_key`
+/// as its SKILL.md.
+///
+/// Shared by the single- and multi-skill parsers.
+fn skill_from_entries(
+    entries: &HashMap<String, Vec<u8>>,
+    root_prefix: &str,
+    skill_md_key: &str,
+    namespace_id: &str,
+) -> anyhow::Result<Skill> {
+    let skill_md_bytes = entries
+        .get(skill_md_key)
+        .ok_or_else(|| anyhow::anyhow!("ZIP does not contain SKILL.md"))?;
+    let skill_md_content = strip_bom(&String::from_utf8_lossy(skill_md_bytes));
 
     // Parse YAML front matter
     let (front_matter, _body) = parse_yaml_front_matter(&skill_md_content);
@@ -105,18 +143,10 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
 
     let description = front_matter.get("description").cloned();
 
-    // Determine the skill root prefix (e.g., "skillName/" or empty)
-    let root_prefix = if skill_md_key.contains('/') {
-        let idx = skill_md_key.find('/').unwrap();
-        &skill_md_key[..=idx]
-    } else {
-        ""
-    };
-
     // Parse resources
     let mut resources = HashMap::new();
 
-    for (path, content) in &entries {
+    for (path, content) in entries {
         // Strip root prefix
         let relative = if !root_prefix.is_empty() && path.starts_with(root_prefix) {
             &path[root_prefix.len()..]
@@ -169,6 +199,93 @@ pub fn parse_skill_from_zip(zip_bytes: &[u8], namespace_id: &str) -> anyhow::Res
         skill_md: Some(skill_md_content),
         resource: resources,
     })
+}
+
+/// One skill candidate found in a multi-skill ZIP.
+#[derive(Debug, Clone)]
+pub struct SkillZipEntry {
+    /// Top-level directory the skill was found in (empty for a bare archive).
+    pub entry_path: String,
+    /// The parsed skill, when the directory held a usable SKILL.md.
+    pub skill: Option<Skill>,
+    /// Why the directory could not be parsed, when it could not.
+    pub error: Option<String>,
+}
+
+/// Parse every skill contained in a ZIP archive.
+///
+/// A multi-skill ZIP holds one-level subdirectories, each with its own
+/// SKILL.md — the layout upstream requires for `POST /upload/batch`.
+/// Directories without a SKILL.md are reported with an error rather than
+/// silently dropped, so the caller can explain what it skipped.
+///
+/// Archive-level limits (size, entry count, traversal) are the same as
+/// [`parse_skill_from_zip`]; an archive that fails them yields an `Err` rather
+/// than a list of failed entries.
+pub fn parse_skills_from_zip(
+    zip_bytes: &[u8],
+    namespace_id: &str,
+) -> anyhow::Result<Vec<SkillZipEntry>> {
+    let entries = read_zip_entries(zip_bytes)?;
+
+    // Group by top-level directory. A SKILL.md at the archive root means the
+    // archive holds a single skill.
+    let mut roots: Vec<String> = Vec::new();
+    for path in entries.keys() {
+        let root = match path.find('/') {
+            Some(idx) => path[..idx].to_string(),
+            None => String::new(),
+        };
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots.sort();
+
+    let mut out = Vec::with_capacity(roots.len());
+    for root in roots {
+        let prefix = if root.is_empty() {
+            String::new()
+        } else {
+            format!("{root}/")
+        };
+        let label = if root.is_empty() {
+            ".".to_string()
+        } else {
+            root.clone()
+        };
+
+        let skill_md_key = entries
+            .keys()
+            .find(|k| {
+                k.strip_prefix(prefix.as_str())
+                    .is_some_and(|rest| rest == "SKILL.md")
+            })
+            .cloned();
+
+        let entry = match skill_md_key {
+            Some(ref key) => match skill_from_entries(&entries, &prefix, key, namespace_id) {
+                Ok(skill) => SkillZipEntry {
+                    entry_path: label,
+                    skill: Some(skill),
+                    error: None,
+                },
+                Err(e) => SkillZipEntry {
+                    entry_path: label,
+                    skill: None,
+                    error: Some(e.to_string()),
+                },
+            },
+            None => SkillZipEntry {
+                entry_path: label,
+                skill: None,
+                error: Some("directory does not contain SKILL.md".to_string()),
+            },
+        };
+        out.push(entry);
+    }
+
+    Ok(out)
 }
 
 /// Convert a Skill to ZIP bytes.
@@ -439,5 +556,70 @@ mod tests {
             extract_version_from_skill_md(&skill),
             Some("1.2.3".to_string())
         );
+    }
+
+    /// Build a ZIP in memory from (path, content) pairs.
+    fn build_zip(files: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (path, content) in files {
+            writer.start_file(*path, options).unwrap();
+            writer.write_all(content.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    /// A multi-skill archive yields one entry per top-level directory.
+    #[test]
+    fn parse_skills_from_zip_reads_every_subdirectory() {
+        let zip_bytes = build_zip(&[
+            ("alpha/SKILL.md", "---\nname: alpha\n---\n"),
+            ("beta/SKILL.md", "---\nname: beta\n---\n"),
+        ]);
+
+        let entries = parse_skills_from_zip(&zip_bytes, "public").expect("parse");
+        assert_eq!(entries.len(), 2, "one entry per top-level directory");
+
+        let names: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| e.skill.as_ref())
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    /// A directory without a manifest is reported, not silently dropped.
+    #[test]
+    fn parse_skills_from_zip_reports_directories_without_a_manifest() {
+        let zip_bytes = build_zip(&[
+            ("alpha/SKILL.md", "---\nname: alpha\n---\n"),
+            ("gamma/notes.txt", "no manifest here"),
+        ]);
+
+        let entries = parse_skills_from_zip(&zip_bytes, "public").expect("parse");
+        assert_eq!(entries.len(), 2);
+
+        let bad = entries
+            .iter()
+            .find(|e| e.entry_path == "gamma")
+            .expect("gamma must be reported");
+        assert!(bad.skill.is_none());
+        assert!(
+            bad.error
+                .as_deref()
+                .is_some_and(|e| e.contains("SKILL.md")),
+            "must explain the missing manifest: {:?}",
+            bad.error
+        );
+    }
+
+    /// The single-skill parser still works after sharing its entry reader.
+    #[test]
+    fn parse_skill_from_zip_still_reads_one_skill() {
+        let zip_bytes = build_zip(&[("alpha/SKILL.md", "---\nname: alpha\n---\n")]);
+        let skill = parse_skill_from_zip(&zip_bytes, "public").expect("parse");
+        assert_eq!(skill.name, "alpha");
     }
 }
