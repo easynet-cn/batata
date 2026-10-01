@@ -33,7 +33,7 @@ No external database required. Simplest mode to test.
 cargo run -p batata-server -- -m standalone &
 
 # Wait for server to be ready, then run tests
-./scripts/run_console_tests.sh standalone-embedded
+./scripts/test.sh console standalone-embedded
 ```
 
 ### 2. Standalone + ExternalDb (MySQL/PostgreSQL)
@@ -46,7 +46,7 @@ cargo run -p batata-server -- -m standalone &
 cargo run -p batata-server -- -m standalone --db-url "mysql://user:pass@localhost:3306/batata" &
 
 # Run tests
-./scripts/run_console_tests.sh standalone-externaldb
+./scripts/test.sh console standalone-externaldb
 ```
 
 ### 3. Cluster + ExternalDb (3-node)
@@ -75,7 +75,7 @@ cargo run -p batata-server -- -m cluster \
   --main-port 8868 --console-port 8083 &
 
 # Run tests
-./scripts/run_console_tests.sh cluster-externaldb
+./scripts/test.sh console cluster-externaldb
 ```
 
 ### 4. Cluster + Embedded (Raft + RocksDB, 3-node)
@@ -100,7 +100,7 @@ cargo run -p batata-server -- -m cluster \
   --main-port 8868 --console-port 8083 &
 
 # Run tests
-./scripts/run_console_tests.sh cluster-embedded
+./scripts/test.sh console cluster-embedded
 ```
 
 ## File Structure
@@ -108,7 +108,7 @@ cargo run -p batata-server -- -m cluster \
 ```
 scripts/
 ├── README.md                       # This file
-├── run_console_tests.sh            # Main entry point / test runner
+├── test.sh                         # Unified test entry point (console / separation / apollo / sdk / all)
 ├── test_utils.sh                   # Shared utilities (login, HTTP, assertions)
 ├── test_standalone_embedded.sh     # Standalone + RocksDB tests
 ├── test_standalone_externaldb.sh   # Standalone + MySQL/PostgreSQL tests
@@ -155,7 +155,7 @@ Shared library sourced by all test scripts. Provides:
 Example with custom ports:
 
 ```bash
-MAIN_PORT=9848 CONSOLE_PORT=9081 ./scripts/run_console_tests.sh standalone-embedded
+MAIN_PORT=9848 CONSOLE_PORT=9081 ./scripts/test.sh console standalone-embedded
 ```
 
 ## Test Coverage

@@ -1,7 +1,7 @@
 //! Shared test utilities for batata-client functional tests.
 //!
 //! All tests require a running Batata server.
-//! Start with: ./scripts/start-embedded.sh
+//! Start with: ./scripts/startup.sh -m standalone -p embedded
 //! Init admin: ./scripts/init-admin.sh
 
 use std::collections::HashMap;

@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Verifies cross-node data replication (Raft for config, Distro for naming).
  *
  * Prerequisites:
- *   - 3-node cluster running (use ./scripts/start-cluster.sh)
+ *   - 3-node cluster running (use ./scripts/startup.sh cluster)
  *   - Node 1: 127.0.0.1:8848, Node 2: 127.0.0.1:8858, Node 3: 127.0.0.1:8868
  *   - Admin user initialized (nacos/nacos)
  *

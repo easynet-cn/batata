@@ -1,7 +1,7 @@
 //! Shared test utilities for batata-consul-client tests.
 //!
 //! All tests require a running Batata server with Consul compatibility enabled.
-//! Start with: ./scripts/start-embedded.sh (with --batata.plugin.consul.enabled=true)
+//! Start with: ./scripts/startup.sh -m standalone -p embedded (add --batata.plugin.consul.enabled=true)
 
 // Each integration test file compiles common.rs as its own module, so Rust
 // warns about helpers that a given test happens not to use. Suppress those

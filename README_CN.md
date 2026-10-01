@@ -74,7 +74,7 @@ cargo build --release -p batata-server
 ./target/release/batata-server --batata.sql.init.platform=embedded
 
 # 或使用启动脚本
-./scripts/start-embedded.sh
+./scripts/startup.sh -m standalone -p embedded
 ```
 
 首次启动后初始化管理员用户：

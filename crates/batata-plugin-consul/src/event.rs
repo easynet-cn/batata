@@ -201,7 +201,7 @@ impl ConsulEventService {
         let incoming_ltime = event.ltime;
         let _ = self
             .ltime
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 if incoming_ltime >= current {
                     Some(incoming_ltime + 1)
                 } else {

@@ -95,7 +95,7 @@ python3 scripts/compat_check.py
 1. **Feature ID** is the primary key and the single anchor for all tracking. Every feature, test, and bug carries a globally-unique ID; tests and bugs reference the feature they belong to (see **ID scheme** below).
 2. New feature → add as `⚪ planned` → set `⚡` while developing → set `🟢` once verified.
 3. A bug marked `done` must include a GitHub Issue link or fixing commit; `open` rows are the todo backlog.
-4. After running `scripts/run_sdk_matrix.sh`, batch-refresh the "Latest result" column of `tests.md`.
+4. After running `scripts/test.sh sdk --matrix`, batch-refresh the "Latest result" column of `tests.md`.
 5. When a PR touches a module, review must confirm status columns match reality.
 
 ---

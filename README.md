@@ -76,7 +76,7 @@ cargo build --release -p batata-server
 ./target/release/batata-server --batata.sql.init.platform=embedded
 
 # Or use the convenience script
-./scripts/start-embedded.sh
+./scripts/startup.sh -m standalone -p embedded
 ```
 
 Initialize the admin user on first startup:

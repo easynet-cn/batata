@@ -19,22 +19,22 @@ Convenience scripts are provided in the `scripts/` directory:
 
 ```bash
 # Start in embedded mode (no database required)
-./scripts/start-embedded.sh
+./scripts/startup.sh -m standalone -p embedded
 
 # Start server-only (main server on 8848, no console)
-./scripts/start-server.sh
+./scripts/startup.sh -d server -m standalone -p embedded
 
 # Start console-only (connects to a remote server)
-./scripts/start-console.sh [server_addr]
+./scripts/startup.sh -d console -R http://127.0.0.1:8848
 
 # Start with MySQL database
-./scripts/start-mysql.sh [db_url]
+./scripts/startup.sh -m standalone -U "mysql://user:password@localhost:3306/batata"
 
 # Initialize admin user (required on first startup)
 ./scripts/init-admin.sh [username] [password] [server_url]
 
 # Test console/server route separation
-./scripts/test-separation.sh
+./scripts/test.sh separation
 ```
 
 ## Standalone Mode
@@ -105,7 +105,7 @@ podman-compose -f deploy/compose/podman-compose.yml --profile cluster up
 podman-compose -f deploy/compose/podman-compose.yml --profile split up
 ```
 
-`scripts/podman-up.sh` wraps these invocations.
+`scripts/podman.sh up` wraps these invocations.
 
 ## Docker Compose
 

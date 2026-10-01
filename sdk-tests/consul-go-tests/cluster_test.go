@@ -14,7 +14,7 @@ import (
 //
 // Prerequisites:
 //   - 3-node cluster running with Consul enabled
-//     (CONSUL_ENABLED=true ./scripts/start-cluster.sh)
+//     (CONSUL_ENABLED=true ./scripts/startup.sh cluster)
 //   - Node 1 Consul: 127.0.0.1:8500 (default)
 //
 // Environment:

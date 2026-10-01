@@ -115,7 +115,7 @@ batata.console.context_path:
 #   platform = "mysql"/"postgresql"       -> External DB (requires batata.db.url)
 #   platform = empty + standalone=true    -> Embedded RocksDB (single node)
 #   platform = empty + standalone=false   -> Distributed Raft + RocksDB (cluster)
-batata.sql.init.platform: mysql
+batata.sql.init.platform:
 
 # Database connection URL
 # For MySQL:      mysql://user:password@localhost:3306/batata
