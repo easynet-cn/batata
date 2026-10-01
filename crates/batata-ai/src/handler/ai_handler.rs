@@ -1402,6 +1402,7 @@ fn default_agent_card() -> AgentCard {
         supports_authenticated_extended_card: None,
         metadata: Default::default(),
         tags: vec![],
+        ..Default::default()
     }
 }
 

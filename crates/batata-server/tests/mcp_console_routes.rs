@@ -671,6 +671,7 @@ fn agent_card(name: &str, version: &str) -> AgentCard {
         supports_authenticated_extended_card: None,
         metadata: Default::default(),
         tags: vec![],
+        ..Default::default()
     }
 }
 
@@ -793,6 +794,7 @@ async fn agent_admin_draft_endpoints_walk_the_flow() {
         supports_authenticated_extended_card: None,
         metadata: Default::default(),
         tags: vec![],
+        ..Default::default()
     };
 
     let req = test::TestRequest::post()

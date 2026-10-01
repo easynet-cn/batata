@@ -1,21 +1,22 @@
-//! Route-level test for the prompt admin API.
+//! Route-level test for the console agent API.
 //!
-//! The service layer is covered by `batata-ai`'s `prompt_persistence` test.
-//! This one covers the HTTP layer: that the lifecycle endpoints are actually
-//! registered on the scope, and that form parameters reach the service.
+//! Covers what the service-level test cannot: that the lifecycle endpoints are
+//! registered on the console scope (`/v3/console/ai/agents`, distinct from the
+//! A2A registry's `/ai/a2a`), and that writes accept the form-encoded bodies
+//! the Nacos console UI sends.
 //!
 //! Ignored by default: needs a reachable database with the migrations applied.
 //!
 //! ```bash
 //! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test prompt_admin_routes -- --ignored --nocapture
+//!   cargo test -p batata-server --test agent_console_routes -- --ignored --nocapture
 //! ```
 
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{test, web, App};
-use batata_ai::PromptOperationService;
+use batata_ai::A2aServerOperationService;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -23,7 +24,7 @@ use batata_persistence::ExternalDbPersistService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
-const KEY: &str = "route-prompt";
+const NAME: &str = "console-route-agent";
 
 /// Connect to the test database, failing fast with an actionable message.
 async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
@@ -42,7 +43,7 @@ async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
     }
 }
 
-/// Cluster manager stub. The prompt routes never touch cluster state.
+/// Cluster manager stub. The agent routes never touch cluster state.
 struct StubClusterManager;
 
 impl ClusterManager for StubClusterManager {
@@ -74,7 +75,7 @@ impl ClusterManager for StubClusterManager {
         None
     }
     fn get_self_member(&self) -> ExtendedMemberInfo {
-        unimplemented!("not used by the prompt admin routes")
+        unimplemented!("not used by the console agent routes")
     }
     fn health_summary(&self) -> ClusterHealthSummary {
         ClusterHealthSummary::default()
@@ -91,21 +92,21 @@ impl ClusterManager for StubClusterManager {
 async fn clean(store: &ExternalDbPersistService) {
     let db = store.db();
     ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(KEY))
+        .filter(ai_resource_version::Column::Name.eq(NAME))
         .exec(db)
         .await
         .expect("clean versions");
     ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(KEY))
+        .filter(ai_resource::Column::Name.eq(NAME))
         .exec(db)
         .await
         .expect("clean resources");
 }
 
-/// Build an actix app exposing the real prompt admin routes.
+/// Build an actix app exposing the real console agent routes.
 async fn build_app(
     store: Arc<ExternalDbPersistService>,
-    svc: Arc<PromptOperationService>,
+    svc: Arc<A2aServerOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -145,25 +146,59 @@ async fn build_app(
         log_level_setter: None,
     });
 
+    let agents: Arc<dyn batata_common::A2aAgentService> = svc;
+
     test::init_service(
         App::new()
             .app_data(web::Data::from(app_state))
-            .app_data(web::Data::new(svc))
-            .service(web::scope("/v3/admin/ai").service(batata_ai::prompt_admin_routes())),
+            .app_data(web::Data::new(agents))
+            // Mounted exactly as the server does: console routes live under
+            // `/v3/console`, and the module adds its own `/ai/...` prefix.
+            .service(web::scope("/v3/console").service(batata_console::v3::ai_agent::routes())),
     )
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<PromptOperationService>) {
+async fn setup() -> (Arc<ExternalDbPersistService>, Arc<A2aServerOperationService>) {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
     let conn = connect_database(&url).await;
     let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = Arc::new(PromptOperationService::new(store.clone()));
+    let svc = Arc::new(A2aServerOperationService::new(store.clone()));
     (store, svc)
 }
 
-/// POST a form-encoded body and return (status, body).
+/// Register the agent under test.
+///
+/// Unlike Skill and Prompt, an agent draft is a *new version of an existing
+/// agent*, so the agent must exist before `/draft` can succeed.
+async fn register(svc: &A2aServerOperationService) {
+    let card = batata_common::model::ai::a2a::AgentCard {
+        name: NAME.to_string(),
+        display_name: NAME.to_string(),
+        description: String::new(),
+        version: "1.0.0".to_string(),
+        url: String::new(),
+        protocol_version: String::new(),
+        capabilities: Default::default(),
+        skills: vec![],
+        default_input_modes: vec![],
+        default_output_modes: vec![],
+        preferred_transport: None,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        supports_authenticated_extended_card: None,
+        metadata: std::collections::HashMap::new(),
+        tags: vec![],
+        ..Default::default()
+    };
+    svc.register_agent(&card, "public", "manual")
+        .await
+        .expect("register agent");
+}
+
+/// POST a form-encoded body, as the console UI does for every write.
 async fn post_form<S>(app: &S, uri: &str, form: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
@@ -183,31 +218,32 @@ where
     (status, String::from_utf8_lossy(&body).to_string())
 }
 
-/// The draft lifecycle is reachable over HTTP, and the review gate is enforced.
+/// The agent lifecycle is reachable on `/v3/console/ai/agents`, and the review
+/// gate is enforced.
 #[actix_web::test]
 #[ignore]
-async fn draft_lifecycle_over_http() {
+async fn draft_lifecycle_over_console_http() {
     let (store, svc) = setup().await;
     clean(&store).await;
+    register(&svc).await;
     let app = build_app(store.clone(), svc.clone()).await;
 
-    let base = "/v3/admin/ai/prompt";
+    let base = "/v3/console/ai/agents";
 
-    // Create a draft.
     let (status, body) = post_form(
         &app,
         &format!("{base}/draft"),
-        &format!("promptKey={KEY}&version=1.0.0&template=hello"),
+        &format!("agentName={NAME}&version=2.0.0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
-    println!("ok: POST draft");
+    println!("ok: POST draft (form-encoded)");
 
     // A draft cannot be published before it is submitted.
     let (status, _) = post_form(
         &app,
         &format!("{base}/publish"),
-        &format!("promptKey={KEY}&version=1.0.0"),
+        &format!("agentName={NAME}&version=2.0.0"),
     )
     .await;
     assert!(
@@ -220,7 +256,7 @@ async fn draft_lifecycle_over_http() {
     let (status, body) = post_form(
         &app,
         &format!("{base}/submit"),
-        &format!("promptKey={KEY}&version=1.0.0"),
+        &format!("agentName={NAME}&version=2.0.0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "submit failed: {body}");
@@ -228,7 +264,7 @@ async fn draft_lifecycle_over_http() {
     let (status, body) = post_form(
         &app,
         &format!("{base}/publish"),
-        &format!("promptKey={KEY}&version=1.0.0"),
+        &format!("agentName={NAME}&version=2.0.0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "publish failed: {body}");
@@ -237,138 +273,32 @@ async fn draft_lifecycle_over_http() {
     clean(&store).await;
 }
 
-/// force-publish bypasses the review gate.
+/// Versions are listed on the console scope.
 #[actix_web::test]
 #[ignore]
-async fn force_publish_over_http() {
+async fn versions_are_listable_over_console_http() {
     let (store, svc) = setup().await;
     clean(&store).await;
+    register(&svc).await;
     let app = build_app(store.clone(), svc.clone()).await;
 
-    let base = "/v3/admin/ai/prompt";
-    post_form(
-        &app,
-        &format!("{base}/draft"),
-        &format!("promptKey={KEY}&version=2.0.0&template=draft"),
-    )
-    .await;
-
-    // No submit: force-publish must still succeed.
     let (status, body) = post_form(
         &app,
-        &format!("{base}/force-publish"),
-        &format!("promptKey={KEY}&version=2.0.0"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "force publish failed: {body}");
-    println!("ok: force publish bypasses review");
-
-    clean(&store).await;
-}
-
-/// A lifecycle action on a prompt that does not exist is refused.
-#[actix_web::test]
-#[ignore]
-async fn lifecycle_action_on_a_missing_prompt_is_refused() {
-    let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
-
-    let (status, _) = post_form(
-        &app,
-        "/v3/admin/ai/prompt/publish",
-        "promptKey=route-prompt-absent&version=9.9.9",
-    )
-    .await;
-    assert!(
-        status.is_client_error(),
-        "an unknown prompt must be refused, got {status}"
-    );
-    println!("ok: unknown prompt refused");
-}
-
-/// GET a query-string endpoint and return (status, body).
-async fn get<S>(app: &S, uri: &str) -> (StatusCode, String)
-where
-    S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
-{
-    let resp = test::call_service(app, test::TestRequest::get().uri(uri).to_request()).await;
-    let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
-}
-
-/// `GET /governance` answers with the version summary of one prompt. These two
-/// endpoints existed on the console layer only; the admin layer gained them
-/// later, so they are covered here too.
-#[actix_web::test]
-#[ignore]
-async fn governance_and_download_are_reachable_on_admin() {
-    let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
-
-    let base = "/v3/admin/ai/prompt";
-    let (status, body) = post_form(
-        &app,
-        &format!("{base}/draft"),
-        &format!("promptKey={KEY}&version=1.0.0&template=hello"),
+        "/v3/console/ai/agents/draft",
+        &format!("agentName={NAME}&version=3.0.0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
 
-    // Governance: the same shape as the metadata endpoint upstream.
-    let (status, body) = get(&app, &format!("{base}/governance?promptKey={KEY}")).await;
-    assert_eq!(status, StatusCode::OK, "governance failed: {body}");
-    assert!(body.contains(KEY), "must name the prompt: {body}");
-    println!("ok: governance is reachable on admin");
-
-    // Download: one version, as Markdown.
-    let (status, body) = get(
-        &app,
-        &format!("{base}/version/download?promptKey={KEY}&version=1.0.0"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "download failed: {body}");
-    assert!(body.contains("hello"), "must carry the template: {body}");
-    println!("ok: version/download is reachable on admin");
+    let req = test::TestRequest::get()
+        .uri(&format!("/v3/console/ai/agents/versions?agentName={NAME}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(body.contains("3.0.0"), "must list the draft: {body}");
+    assert!(body.contains("1.0.0"), "must list the registered version: {body}");
+    println!("ok: versions listed");
 
     clean(&store).await;
-}
-
-/// Both read endpoints 404 for a prompt that does not exist, rather than
-/// returning an empty document that looks like a match.
-#[actix_web::test]
-#[ignore]
-async fn governance_and_download_refuse_an_unknown_prompt() {
-    let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
-
-    let base = "/v3/admin/ai/prompt";
-    let (status, _) = get(
-        &app,
-        &format!("{base}/governance?promptKey={KEY}-absent"),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "an unknown prompt must 404 on governance"
-    );
-
-    let (status, _) = get(
-        &app,
-        &format!("{base}/version/download?promptKey={KEY}-absent&version=1.0.0"),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "an unknown prompt must 404 on download"
-    );
-    println!("ok: both read endpoints refuse an unknown prompt");
 }

@@ -15,6 +15,7 @@ pub mod mcp_index;
 pub mod mcp_service;
 pub mod pipeline_service;
 pub mod version_lifecycle;
+pub mod version_range;
 pub mod prompt;
 pub mod skill_service;
 pub mod traits;

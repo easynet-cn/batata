@@ -1,5 +1,7 @@
-//! AI service traits: SkillService, AgentSpecService, McpServerService,
-//! A2aAgentService, PipelineService.
+//! AI service traits: PromptService, SkillService, AgentSpecService,
+//! McpServerService, A2aAgentService, PipelineService.
+
+use std::collections::HashMap;
 
 use crate::model::Page;
 use crate::model::ai::VersionDetail;
@@ -14,10 +16,165 @@ use crate::model::ai::mcp::{
     McpServerVersionSummary,
 };
 use crate::model::ai::pipeline::PipelineExecution;
+use crate::model::ai::prompt::{
+    PromptMetaInfo, PromptMetaSummary, PromptVariable, PromptVersionInfo, PromptVersionSummary,
+};
 use crate::model::ai::search::AiResourceSearchHit;
 use crate::model::ai::skill::{
     BatchUploadResult, Skill, SkillBasicInfo, SkillMeta, SkillSummary, SkillUploadPrecheckResult,
 };
+
+/// Trait for prompt lifecycle operations (draft, review, publish, metadata).
+///
+/// Exists so the console layer can drive prompts: `batata-console` depends on
+/// `batata-common` only, not on `batata-ai`.
+#[async_trait::async_trait]
+pub trait PromptService: Send + Sync {
+    /// List prompts with optional search and pagination.
+    #[allow(clippy::too_many_arguments)]
+    async fn list_prompts(
+        &self,
+        namespace_id: &str,
+        prompt_key: Option<&str>,
+        search: Option<&str>,
+        biz_tags: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptMetaSummary>>;
+
+    /// Governance view: metadata plus the state that drives the lifecycle.
+    async fn get_governance(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<Option<PromptMetaInfo>>;
+
+    /// One version's content.
+    async fn query_detail(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<Option<PromptVersionInfo>>;
+
+    /// Version history, newest first.
+    async fn list_versions(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptVersionSummary>>;
+
+    /// Create a draft version.
+    #[allow(clippy::too_many_arguments)]
+    async fn create_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        target_version: Option<&str>,
+        template: &str,
+        description: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String>;
+
+    /// Replace the draft content.
+    async fn update_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        template: &str,
+        commit_msg: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String>;
+
+    /// Discard the draft.
+    async fn delete_draft(&self, namespace_id: &str, prompt_key: &str) -> anyhow::Result<()>;
+
+    /// Submit a version for review.
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Submit the version currently being edited. Upstream's submit carries an
+    /// optional version, so omitting it means "the draft".
+    async fn submit_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<String>;
+
+    /// Publish a reviewed version.
+    async fn publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Publish bypassing the review gate.
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Move a version back to draft.
+    async fn redraft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Bring an offline version back online.
+    async fn online(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Take an online version offline.
+    async fn offline(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Replace the label routing, preserving the server-managed `latest` label.
+    async fn update_labels(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        labels: HashMap<String, String>,
+    ) -> anyhow::Result<HashMap<String, String>>;
+
+    /// Update the description and/or biz tags.
+    async fn update_metadata(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        description: Option<&str>,
+        biz_tags: Option<Vec<String>>,
+    ) -> anyhow::Result<bool>;
+
+    /// Delete the prompt and all its versions.
+    async fn delete_prompt(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        src_user: &str,
+    ) -> anyhow::Result<bool>;
+}
 
 /// Trait for skill lifecycle operations (CRUD, draft, publish, etc.)
 #[async_trait::async_trait]

@@ -390,6 +390,7 @@ impl A2aServerOperationService {
                 supports_authenticated_extended_card: None,
                 metadata: Default::default(),
                 tags: vec![],
+                ..Default::default()
             },
         };
 
@@ -628,15 +629,36 @@ impl A2aServerOperationService {
         namespace: &str,
         agent_name: &str,
     ) -> anyhow::Result<Vec<VersionDetail>> {
-        let resource = self
+        // Derived from the version rows rather than the denormalised index in
+        // `version_info`: a draft created through `/draft` only ever lands in
+        // the version table, so reading the index would hide it.
+        let resource = match self
             .persistence
             .ai_resource_find(namespace, agent_name, resource_type::AGENT)
+            .await?
+        {
+            Some(resource) => resource,
+            None => return Ok(Vec::new()),
+        };
+        let latest = Self::parse_version_info(&resource).latest_published_version;
+        let rows = self
+            .persistence
+            .ai_resource_version_list(namespace, agent_name, resource_type::AGENT)
             .await?;
 
-        Ok(match resource {
-            Some(r) => Self::parse_version_info(&r).version_details,
-            None => Vec::new(),
-        })
+        let mut versions: Vec<VersionDetail> = rows
+            .iter()
+            .map(|row| VersionDetail {
+                version: row.version.clone(),
+                release_date: String::new(),
+                is_latest: !latest.is_empty() && latest == row.version,
+            })
+            .collect();
+        versions.sort_by(|a, b| {
+            batata_common::model::ai::skill::compare_versions(&a.version, &b.version).reverse()
+        });
+
+        Ok(versions)
     }
 
     // ========================================================================

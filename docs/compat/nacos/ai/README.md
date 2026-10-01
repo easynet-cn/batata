@@ -184,16 +184,59 @@ Goal: introduce the upstream layering before adding endpoints.
       > The trait default still returns an explicit "not supported by this
       storage backend" error, as a safety net for any backend added later that
       forgets to implement the index.
-- [ ] `runtime/` layer — **not MCP, and blocked.** Upstream's `runtime/` is
-      `service/agent/runtime/`, the Agent **RAD** subsystem:
-      `AgentRuntimeRegistryService` is backed directly by Naming client
-      publications (`ServiceStorage`, `EphemeralClientOperationServiceImpl`),
-      with `AgentRuntimePublicationCapacityGate` and
-      `RuntimeEndpointRevision` fingerprinting. It therefore depends on RAD and
-      ARD (`nacos.ai.rad.capacity.*`, `nacos.ai.ard.enabled`), neither of which
-      Batata has, plus Naming ephemeral registrations for liveness. Building it
-      standalone would sit on missing foundations; it should follow ARD/RAD,
-      not precede them.
+- [ ] `runtime/` layer — **the dependency is not the blocker; the work simply
+      is not done.** Correction to an earlier note that called this blocked:
+      Batata does have the foundation it was said to lack —
+      `EphemeralClientOperationService` (DashMap + Distro) for Naming ephemeral
+      registrations, and `batata-ai`'s `AiEndpointService`, which already
+      registers MCP and A2A endpoints in Naming and is constructed in
+      `AIServices::with_persistence`.
+      **Now implemented.** The client-facing RAD contract was already partly
+      there — `POST/DELETE /endpoints` and `PUT /endpoints/heartbeat` register
+      agent runtime endpoints as Naming ephemeral instances through
+      `AiEndpointService`. What was missing was `RuntimeVersionRangeSupport`:
+      `GET /v3/client/ai/agents` (discover) accepted only an *exact* version.
+      It now resolves constraints — `latest`, `1.2.x`, `1.x` and `^1.2.0` —
+      against the published versions, via
+      `batata-ai/src/service/version_range.rs` (9 unit tests).
+      The capability declaration now reports `radV1: true`.
+      Still missing: upstream's `AgentRuntimePublicationCapacityGate`, which
+      caps endpoints per publisher. It is a server-side protective limit rather
+      than part of the client contract, so it does not change the declaration.
+      Coverage note: the range resolution is unit-tested, not route-tested —
+      `NamingServiceProvider` has 47 methods, so a stub for an end-to-end
+      discover test would dwarf the behaviour it checks.
+- [x] **MCP admin moved onto the `ai_resource` service.** `api/v3/admin/ai/route.rs`
+      mounted a legacy shim backed by the in-memory `McpServerRegistry`, which
+      exposed ~5 endpoints; it now mounts `batata_ai::mcp_admin_routes()`, which
+      exposes all 19 upstream endpoints backed by the same service the console
+      uses. The SDK encoding is preserved: create and update still take
+      `serverSpecification` / `toolSpecification` as JSON *strings* in a form
+      body (upstream `McpDetailForm`). The legacy shim file was deleted.
+      Covered by `tests/mcp_admin_routes.rs` (7 tests, both engines): the SDK
+      form encoding, a malformed specification, the draft → submit → publish
+      walk, force-publish proving the review gate is what separates it from
+      publish, redraft, labels/status/scope, and the version endpoints.
+      Ordering matters: a draft version can only be added to a server that
+      already exists, so the tests create the server first.
+- [x] **Fixed: Skill, AgentSpec and Pipeline routes never worked at runtime.**
+      `AIServices::with_persistence` left `skill_service`, `agentspec_service`
+      and `pipeline_service` as `None`, so their `web::Data` was never
+      registered and actix failed every request before it reached a handler.
+      Route tests missed it because they construct their own services — a
+      reminder that a passing route test says nothing about wiring.
+- [x] **Ported upstream pipeline invariants.** From
+      `PipelineExecutionStatusTest` and
+      `PipelineExecutionStatusConsistencyTest`: an execution is `APPROVED`
+      exactly when every node passed. The port walks all node combinations up
+      to three nodes rather than the few upstream enumerates by hand.
+      Also from `PipelineNodeResultRoundTripTest`: a node result survives JSON
+      with its optional fields intact — including the ones upstream sends as
+      null, which must stay absent rather than be invented on the way back.
+- [x] Prompt admin `governance` and `version/download` are covered by
+      `tests/prompt_admin_routes.rs`: both are reachable, the download body
+      carries the template, and both 404 for an unknown prompt instead of
+      returning a document that looks like a match.
 - [x] `visibility/` layer via `ai_resource.scope` / `owner` — **done for all
       four domains** (MCP 14, Skill 32, AgentSpec 32, A2A 13 `batata_visibility`
       call sites). MCP is the documented reference case:
@@ -427,7 +470,21 @@ has no `LIKE`:
       The legacy config-group/data-id/tag constants in
       `service/constants.rs` were deleted; only the NamingService endpoint
       constants remain (endpoint resolution is still naming-based upstream too).
-- [ ] Rework `McpForm`-style simplified forms into structured request models
+- [ ] **MCP admin still runs on the legacy shim** — this is what the old
+      "rework `McpForm` into structured models" note was really about, and the
+      note was misleading: `McpForm`'s JSON-as-string parameters are a
+      deliberate Nacos SDK compatibility shim (the maintainer client posts
+      `serverSpecification=<JSON>`), not an unfinished model.
+      The actual problem: `api/v3/admin/ai/route.rs` still mounts
+      `mcp::routes()` from `batata-server`, which is backed by the **in-memory
+      `McpServerRegistry`** — while `batata-ai`'s `McpServerOperationService`
+      (the `ai_resource`-backed one the console uses) is not mounted on the
+      admin API at all. The legacy shim exposes ~5 endpoints where upstream's
+      `McpAdminController` has 13 subpaths plus base CRUD, matching the 25
+      handlers in `batata-console/src/v3/ai_mcp.rs`.
+      Fixing this means mirroring ~1164 lines of console handlers with admin
+      auth, so it deserves its own pass rather than a mechanical copy: the
+      handlers should be shared instead of duplicated.
 
 ### Phase 2 — MCP parity (largest gap)
 
@@ -564,8 +621,10 @@ has no `LIKE`:
 
 ### Phase 3 — Remaining domains
 
-- [ ] Agent admin CRUD + lifecycle (mirror `service/agent/`) — **service layer
-      done**: `A2aServerOperationService` (which is the `agent` resource type)
+- [x] Agent admin CRUD + lifecycle (mirror `service/agent/`) — **complete.**
+      The admin endpoints and the console layer both exist; the item below
+      about them being service-only is superseded.
+      `A2aServerOperationService` (which is the `agent` resource type)
       now has `submit` / `publish` / `force_publish` / `redraft` / `online` /
       `offline` / `labels` / `scope`, all delegating to the shared
       `version_lifecycle`, plus `create` / `update` / `delete_agent_draft`.
@@ -587,8 +646,25 @@ has no `LIKE`:
       `version_lifecycle::refresh_latest` and is now applied on every
       online/offline transition for **every** resource type, so MCP, agents and
       any future domain stay consistent.
-- [ ] `AiCapabilityClientController` equivalent
-- [ ] Prompt client contract parity
+- [x] Prompt admin `governance` and `version/download` — both were missing
+      from the admin layer while the console already had them. Added; admin
+      `governance` reuses the same `PromptMetaInfo` as metadata, as upstream
+      does.
+- [x] Prompt config-era leftovers removed — the dead `PROMPT_GROUP` constant,
+      the six `*.json` DataId helpers (referenced only by their own unit tests)
+      and the module comment claiming prompts are stored as configs are gone.
+      Prompts are `ai_resource` backed, like every other domain.
+- [x] `AiCapabilityClientController` equivalent — `GET
+      /v3/client/ai/capabilities` returns the schema version and the feature
+      map. **`radV1` is `false`**: RAD is the Agent runtime registry, which
+      Batata has no equivalent of, so declaring it would point clients at
+      endpoints that do not exist. Covered by
+      `tests/capability_client_routes.rs` (no database needed).
+- [x] Prompt client contract parity — client routes already existed at
+      `/v3/client/ai/prompt` but exposed only `queryPrompt`; `GET /search` was
+      the missing half and is now implemented. Note: upstream answers `/search`
+      from its resource search service, while Batata filters the visible list
+      by keyword — same request and response shape, narrower matching.
 - [x] **Prompt migration to `ai_resource` — done.** Prompts were the last
       config-backed domain (group `nacos-ai-prompt`, four configs per prompt);
       they now live in `ai_resource` / `ai_resource_version` like every other
@@ -609,8 +685,49 @@ has no `LIKE`:
       transitions delegate to the shared `version_lifecycle`; `description` and
       `biz-tags` reuse `update_metadata`. Batata now exposes 22 of upstream's
       24 admin endpoints.
-      Still absent: `GET /version/download` and `GET /governance`, which are
-      read views over the same data rather than new behaviour.
+      Still absent on the **admin** scope: `GET /version/download` and
+      `GET /governance`.
+- [x] **Prompt console layer** — `crates/batata-console/src/v3/ai_prompt.rs`
+      mirrors upstream `ConsolePromptController` on `/v3/console/ai/prompt`.
+      Reads and deletes take query parameters; **every write is form-encoded**,
+      which is how the Nacos console UI calls them (checked against
+      `console-ui-next/src/api/prompt.ts`). Governance answers with
+      `PromptMetaInfo`, as upstream does, rather than a bespoke governance type.
+      This required adding a `PromptService` trait to `batata-common`, because
+      `batata-console` cannot depend on `batata-ai`.
+      Covered by `tests/prompt_console_routes.rs` (2 tests, both engines).
+- [x] **Agent console layer** — `crates/batata-console/src/v3/ai_agent.rs`
+      mirrors upstream `ConsoleAgentController` on `/v3/console/ai/agents`,
+      which is a **different scope** from the A2A registry endpoints in
+      `ai_a2a.rs` (`/ai/a2a`, upstream `ConsoleA2aController`). Reads take query
+      parameters and writes are form-encoded. `runtime-endpoints` is omitted: it
+      belongs to RAD, which Batata does not have.
+      Covered by `tests/agent_console_routes.rs` (2 tests, both engines).
+      This surfaced a real bug: `list_versions` for agents read the denormalised
+      index in `version_info`, so a draft created through `/draft` — which only
+      ever lands in the version table — was invisible. It now derives from the
+      version rows, as the other domains already did.
+      `AgentCard` gained the A2A fields it was missing: `additionalInterfaces`
+      and `supportedInterfaces` (url, transport, protocolBinding,
+      protocolVersion, tenant), `securitySchemes`, `security`,
+      `securityRequirements` and `signatures`. All are omitted when empty, so
+      cards that do not use them serialize exactly as before.
+      Correction: an earlier line here called these `extensions` and
+      `callInterfaces` — those are not the names upstream uses.
+- [x] **Skill console layer** — force-publish, redraft, upload/batch and
+      upload/precheck added to `ai_skill.rs`. The three upload endpoints are
+      `multipart/form-data` and now share one reader; every other skill write is
+      JSON. Covered by `tests/skill_console_routes.rs` (5 tests, both engines).
+- [x] **AgentSpec console layer** — force-publish and redraft added to
+      `ai_agentspec.rs`. Covered by `tests/agentspec_console_routes.rs`
+      (2 tests, both engines).
+      The console layer is now complete for MCP, Agent, AgentSpec, Skill and
+      Prompt.
+      Path fix found by testing: console routes are mounted under
+      `/v3/console`, so each module must carry its own `/ai/...` prefix. The
+      new prompt and agent modules originally used `/prompt` and `/agents`,
+      which would have exposed them at `/v3/console/prompt` — the tests hid it
+      by mounting them under `/v3/console/ai` themselves.
 - [x] Prompt route tests — `tests/prompt_admin_routes.rs` (3 tests, both
       engines) covers the HTTP layer: the lifecycle endpoints are registered on
       the scope, form parameters reach the service, and the review gate is
@@ -645,12 +762,28 @@ has no `LIKE`:
       force-publish / redraft either. Trace records are only emitted from the
       console layer, so these new admin endpoints are currently **untraced** —
       unlike MCP, whose lifecycle lives in the console.
-- [ ] AgentSpec admin parity — `force-publish` and `redraft` added the same
-      way. Still missing `GET /version/meta` (upstream
-      `getAgentSpecVersionMeta`). Same console/tracing caveat as Skill.
-- [ ] Resource import parity (official registry, `skills.sh`, well-known)
-- [ ] Resource search parity
-- [ ] Skill download counting
+- [x] AgentSpec admin parity — **complete.** `force-publish`, `redraft` and
+      `version/meta` (upstream `getAgentSpecVersionMeta`) are all implemented;
+      the entry that called `version/meta` missing is superseded.
+- [x] Resource import parity — **already implemented.** An earlier pass listed
+      this as a gap; `batata-console/src/v3/ai_import.rs` already exposes all
+      four upstream endpoints (`/sources`, `/search`, `/validate`, `/execute`)
+      and is mounted at `/v3/admin/ai/import`, matching upstream's
+      `AI_RESOURCE_IMPORT_ADMIN_PATH`.
+- [~] Resource search parity — the **client API is now exposed**:
+      `GET /v3/client/ai/resources/search` calls the existing `query::search`
+      and is covered by `tests/resource_search_routes.rs`. Two differences from
+      upstream are deliberate and documented in `api/search.rs`:
+      - Upstream pages with a `cursor` and caps with `limit`; Batata uses
+        `pageNo` / `pageSize`, as every other AI list endpoint here does.
+      - Upstream can blend a vector channel where pgvector is available.
+        Batata has no pgvector equivalent, so keyword hits *are* the ranking.
+        Embeddings are computed but not stored, exactly as before.
+- [x] Skill download counting — **already implemented** and covered by
+      `tests/skill_console_routes.rs::download_counts_the_download`. The
+      service counts the download inside `download_skill_version` (resource and
+      version level), so handlers must not count again: an earlier pass added a
+      handler-level increment and the test caught the resulting double count.
 
 ### Phase 4 — Tests and documentation
 

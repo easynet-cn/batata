@@ -81,12 +81,80 @@ mod tests {
             supports_authenticated_extended_card: None,
             metadata: HashMap::new(),
             tags: vec!["test".to_string()],
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&card).unwrap();
         assert!(json.contains("test-agent"));
         assert!(json.contains("coding"));
         assert!(json.contains("\"url\":\"http://localhost:8080\""));
+    }
+
+    /// The A2A interface and security fields must survive a round trip, and
+    /// must stay off the wire when empty so existing clients see no change.
+    #[test]
+    fn test_agent_card_interface_and_security_round_trip() {
+        let mut schemes = HashMap::new();
+        schemes.insert(
+            "apiKey".to_string(),
+            serde_json::json!({"type": "apiKey", "name": "x-api-key"}),
+        );
+        let mut requirement = HashMap::new();
+        requirement.insert("apiKey".to_string(), vec![]);
+
+        let card = AgentCard {
+            additional_interfaces: vec![AgentInterface {
+                url: "https://agent.example.com/a2a".to_string(),
+                transport: "HTTP".to_string(),
+                protocol_binding: Some("JSONRPC".to_string()),
+                protocol_version: Some("1.0".to_string()),
+                tenant: None,
+            }],
+            supported_interfaces: vec![AgentInterface {
+                url: "https://agent.example.com/grpc".to_string(),
+                transport: "GRPC".to_string(),
+                ..Default::default()
+            }],
+            security_schemes: schemes,
+            security: vec![requirement.clone()],
+            security_requirements: vec![requirement],
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&card).expect("serialize");
+        assert!(json.contains("\"additionalInterfaces\""), "{json}");
+        assert!(json.contains("\"supportedInterfaces\""), "{json}");
+        assert!(json.contains("\"securitySchemes\""), "{json}");
+        assert!(json.contains("\"securityRequirements\""), "{json}");
+        // camelCase inside the interface object too.
+        assert!(json.contains("\"protocolBinding\""), "{json}");
+
+        let back: AgentCard = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.additional_interfaces.len(), 1);
+        assert_eq!(back.additional_interfaces[0].transport, "HTTP");
+        assert_eq!(
+            back.additional_interfaces[0].protocol_binding.as_deref(),
+            Some("JSONRPC")
+        );
+        assert_eq!(back.supported_interfaces.len(), 1);
+        assert_eq!(back.security_schemes.len(), 1);
+        assert_eq!(back.security.len(), 1);
+        assert_eq!(back.security_requirements.len(), 1);
+    }
+
+    /// Empty interface and security sections are omitted, not emitted as `[]`.
+    #[test]
+    fn test_agent_card_omits_empty_interface_and_security() {
+        let json = serde_json::to_string(&AgentCard::default()).expect("serialize");
+        for key in [
+            "additionalInterfaces",
+            "supportedInterfaces",
+            "securitySchemes",
+            "securityRequirements",
+            "signatures",
+        ] {
+            assert!(!json.contains(key), "{key} must be omitted: {json}");
+        }
     }
 
     #[test]

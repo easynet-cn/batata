@@ -10,6 +10,7 @@ pub mod client;
 pub mod v3 {
     /// Re-exported item.
     pub use batata_console::v3::ai_a2a;
+    pub use batata_console::v3::ai_agent;
     /// Re-exported item.
     pub use batata_console::v3::ai_agentspec;
     /// Re-exported item.
@@ -20,6 +21,7 @@ pub mod v3 {
     pub use batata_console::v3::ai_pipeline;
     /// Re-exported item.
     pub use batata_console::v3::ai_plugin;
+    pub use batata_console::v3::ai_prompt;
     /// Re-exported item.
     pub use batata_console::v3::ai_skill;
 }

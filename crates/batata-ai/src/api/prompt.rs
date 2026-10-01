@@ -401,6 +401,82 @@ async fn query_detail(
     }
 }
 
+/// GET /v3/admin/ai/prompt/governance — Governance detail with version summaries
+#[get("governance")]
+async fn get_governance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptQueryForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    match prompt_service
+        .get_governance(ns, &query.prompt_key)
+        .await
+    {
+        Some(meta) => HttpResponse::Ok().json(Result::success(meta)),
+        None => Result::<()>::http_not_found(
+            &batata_common::error::RESOURCE_NOT_FOUND,
+            format!("Prompt '{}' not found", query.prompt_key),
+        ),
+    }
+}
+
+/// GET /v3/admin/ai/prompt/version/download — Download one version as Markdown
+#[get("version/download")]
+async fn download_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptQueryForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    match prompt_service
+        .query_detail(
+            ns,
+            &query.prompt_key,
+            query.version.as_deref(),
+            query.label.as_deref(),
+        )
+        .await
+    {
+        Ok(Some(info)) => HttpResponse::Ok()
+            .content_type("text/markdown; charset=utf-8")
+            .insert_header((
+                "content-disposition",
+                format!(
+                    "attachment; filename=\"{}-{}.md\"",
+                    info.prompt_key, info.version
+                ),
+            ))
+            .body(info.template),
+        Ok(None) => Result::<()>::http_not_found(
+            &batata_common::error::RESOURCE_NOT_FOUND,
+            format!("Prompt '{}' not found", query.prompt_key),
+        ),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
 /// PUT /v3/admin/ai/prompt/label — Bind label to version
 #[put("label")]
 async fn bind_label(
@@ -566,6 +642,37 @@ async fn client_query_prompt(
             // NOT_MODIFIED (client already has latest)
             HttpResponse::Ok().json(Result::<()>::new(304, "Not Modified".to_string(), ()))
         }
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// GET /v3/client/ai/prompt/search — Search visible prompts
+///
+/// Upstream answers this from its resource search service. Batata has no
+/// search index for prompts yet, so this filters the visible list by keyword
+/// instead — same request and response shape, narrower matching.
+#[get("search")]
+async fn client_search_prompts(
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptListForm>,
+) -> impl Responder {
+    let ns = normalize_namespace(&query.namespace_id);
+
+    match prompt_service
+        .list_prompts(
+            ns,
+            query.prompt_key.as_deref(),
+            query.search.as_deref(),
+            query.biz_tags.as_deref(),
+            query.page_no,
+            query.page_size,
+        )
+        .await
+    {
+        Ok(page) => HttpResponse::Ok().json(Result::success(page)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
             e.to_string(),
@@ -1106,6 +1213,8 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(list_prompts)
         .service(list_versions)
         .service(query_detail)
+        .service(get_governance)
+        .service(download_version)
         .service(bind_label)
         .service(unbind_label)
         .service(update_metadata)
@@ -1126,5 +1235,7 @@ pub fn admin_routes() -> actix_web::Scope {
 
 /// Configure client prompt routes at `/v3/client/ai/prompt`
 pub fn client_routes() -> actix_web::Scope {
-    web::scope("/prompt").service(client_query_prompt)
+    web::scope("/prompt")
+        .service(client_query_prompt)
+        .service(client_search_prompts)
 }

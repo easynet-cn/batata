@@ -48,10 +48,12 @@ pub use service::traits::{
 pub use api::a2a::configure as configure_a2a;
 pub use api::agent::admin_routes as agent_admin_routes;
 pub use api::agent_client::agent_client_routes;
+pub use api::capability::client_routes as capability_client_routes;
+pub use api::search::client_routes as resource_search_client_routes;
 pub use api::agentspec::{
     admin_routes as agentspec_admin_routes, client_routes as agentspec_client_routes,
 };
-pub use api::mcp::configure as configure_mcp;
+pub use api::mcp::{admin_routes as mcp_admin_routes, configure as configure_mcp};
 pub use api::pipeline::admin_routes as pipeline_admin_routes;
 pub use api::prompt::{admin_routes as prompt_admin_routes, client_routes as prompt_client_routes};
 pub use api::skill::{admin_routes as skill_admin_routes, client_routes as skill_client_routes};

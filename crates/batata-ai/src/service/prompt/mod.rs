@@ -338,8 +338,9 @@ impl PromptOperationService {
         Some(PromptMetaInfo {
             schema_version: 1,
             prompt_key: prompt_key.to_string(),
-            description: resource.description,
+            description: resource.description.clone(),
             biz_tags: Self::parse_biz_tags(resource.biz_tags.as_deref()),
+            biz_tags_str: resource.biz_tags.clone(),
             latest_version: meta.latest_version().cloned(),
             gmt_modified: rows.first().and_then(|row| {
                 row.storage
@@ -347,9 +348,34 @@ impl PromptOperationService {
                     .and_then(|json| serde_json::from_str::<PromptStorage>(json).ok())
                     .and_then(|storage| storage.gmt_modified)
             }),
+            editing_version: meta.editing_version.clone(),
+            reviewing_version: meta.reviewing_version.clone(),
+            online_cnt: meta.online_cnt,
+            download_count: Some(resource.download_count),
             versions: rows.iter().map(|row| row.version.clone()).collect(),
-            labels: meta.labels,
+            version_details: Self::version_summaries(&rows),
+            labels: meta.labels.clone(),
         })
+    }
+
+    /// Build version summaries, newest first, each carrying its lifecycle
+    /// status — the console governance view renders them for that reason.
+    fn version_summaries(rows: &[AiResourceVersionInfo]) -> Vec<PromptVersionSummary> {
+        rows.iter()
+            .map(|row| {
+                let info = Self::version_info(row);
+                PromptVersionSummary {
+                    prompt_key: info.prompt_key,
+                    version: info.version,
+                    status: row.status.clone(),
+                    commit_msg: info.commit_msg,
+                    src_user: info.src_user,
+                    gmt_modified: info.gmt_modified,
+                    publish_pipeline_info: None,
+                    download_count: Some(row.download_count),
+                }
+            })
+            .collect()
     }
 
     /// Delete a prompt and all its versions
@@ -773,6 +799,36 @@ impl PromptOperationService {
         .await
     }
 
+    /// Governance view.
+    ///
+    /// Upstream answers `GET /governance` with the same `PromptMetaInfo` as the
+    /// metadata endpoint, so this is deliberately not a second shape.
+    pub async fn get_governance(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> Option<PromptMetaInfo> {
+        self.get_meta(namespace_id, prompt_key).await
+    }
+
+    /// Submit the version currently being edited.
+    ///
+    /// The console's submit action carries no version — it acts on the draft —
+    /// so the draft is resolved here.
+    pub async fn submit_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<String> {
+        let meta = self.require_meta(namespace_id, prompt_key).await?;
+        let version = meta
+            .editing_version
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Prompt '{}' has no draft version", prompt_key))?;
+        self.submit(namespace_id, prompt_key, &version).await?;
+        Ok(version)
+    }
+
     // ========================================================================
     // Client operations
     // ========================================================================
@@ -821,20 +877,10 @@ impl PromptOperationService {
         let total = rows.len() as u64;
         let start = ((page_no.saturating_sub(1)) * page_size) as usize;
 
-        let summaries = rows
-            .iter()
+        let summaries = Self::version_summaries(&rows)
+            .into_iter()
             .skip(start)
             .take(page_size as usize)
-            .map(|row| {
-                let info = Self::version_info(row);
-                PromptVersionSummary {
-                    prompt_key: info.prompt_key,
-                    version: info.version,
-                    commit_msg: info.commit_msg,
-                    src_user: info.src_user,
-                    gmt_modified: info.gmt_modified,
-                }
-            })
             .collect();
 
         Ok(Page {
@@ -891,8 +937,14 @@ impl PromptOperationService {
                 prompt_key: resource.name.clone(),
                 description: resource.description.clone(),
                 biz_tags: tags,
+                biz_tags_str: resource.biz_tags.clone(),
                 latest_version: meta.latest_version().cloned(),
                 gmt_modified: None,
+                editing_version: meta.editing_version.clone(),
+                reviewing_version: meta.reviewing_version.clone(),
+                online_cnt: meta.online_cnt,
+                labels: meta.labels.clone(),
+                download_count: Some(resource.download_count),
             });
         }
 
@@ -902,5 +954,189 @@ impl PromptOperationService {
             pages_available: page.pages_available,
             page_items: summaries,
         })
+    }
+}
+
+/// Console-facing surface.
+///
+/// The console lives in `batata-console`, which depends on `batata-common`
+/// only, so it reaches prompts through the [`PromptService`] trait rather than
+/// this concrete type.
+#[async_trait::async_trait]
+impl batata_common::PromptService for PromptOperationService {
+    async fn list_prompts(
+        &self,
+        namespace_id: &str,
+        prompt_key: Option<&str>,
+        search: Option<&str>,
+        biz_tags: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptMetaSummary>> {
+        self.list_prompts(namespace_id, prompt_key, search, biz_tags, page_no, page_size)
+            .await
+    }
+
+    async fn get_governance(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+    ) -> anyhow::Result<Option<PromptMetaInfo>> {
+        Ok(self.get_governance(namespace_id, prompt_key).await)
+    }
+
+    async fn query_detail(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<Option<PromptVersionInfo>> {
+        self.query_detail(namespace_id, prompt_key, version, label)
+            .await
+    }
+
+    async fn list_versions(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<PromptVersionSummary>> {
+        self.list_versions(namespace_id, prompt_key, page_no, page_size)
+            .await
+    }
+
+    async fn create_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        target_version: Option<&str>,
+        template: &str,
+        description: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String> {
+        self.create_draft(
+            namespace_id,
+            prompt_key,
+            target_version,
+            template,
+            description,
+            variables,
+            src_user,
+        )
+        .await
+    }
+
+    async fn update_draft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        template: &str,
+        commit_msg: Option<&str>,
+        variables: Option<Vec<PromptVariable>>,
+        src_user: &str,
+    ) -> anyhow::Result<String> {
+        self.update_draft(
+            namespace_id,
+            prompt_key,
+            template,
+            commit_msg,
+            variables,
+            src_user,
+        )
+        .await
+    }
+
+    async fn delete_draft(&self, namespace_id: &str, prompt_key: &str) -> anyhow::Result<()> {
+        self.delete_draft(namespace_id, prompt_key).await
+    }
+
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.submit(namespace_id, prompt_key, version).await
+    }
+
+    async fn submit_draft(&self, namespace_id: &str, prompt_key: &str) -> anyhow::Result<String> {
+        self.submit_draft(namespace_id, prompt_key).await
+    }
+
+    async fn publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.publish(namespace_id, prompt_key, version).await
+    }
+
+    async fn force_publish(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.force_publish(namespace_id, prompt_key, version).await
+    }
+
+    async fn redraft(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.redraft(namespace_id, prompt_key, version).await
+    }
+
+    async fn online(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.online(namespace_id, prompt_key, version).await
+    }
+
+    async fn offline(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        self.offline(namespace_id, prompt_key, version).await
+    }
+
+    async fn update_labels(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        labels: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        self.update_labels(namespace_id, prompt_key, labels).await
+    }
+
+    async fn update_metadata(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        description: Option<&str>,
+        biz_tags: Option<Vec<String>>,
+    ) -> anyhow::Result<bool> {
+        self.update_metadata(namespace_id, prompt_key, description, biz_tags, "", "")
+            .await
+    }
+
+    async fn delete_prompt(
+        &self,
+        namespace_id: &str,
+        prompt_key: &str,
+        src_user: &str,
+    ) -> anyhow::Result<bool> {
+        self.delete_prompt(namespace_id, prompt_key, src_user).await
     }
 }

@@ -263,6 +263,45 @@ pub struct ConsoleSkillUploadQuery {
     pub overwrite: bool,
 }
 
+/// Read the `file` field of a multipart upload, enforcing the ZIP size limit.
+///
+/// Shared by `/upload`, `/upload/precheck` and `/upload/batch`, which upstream
+/// all declare as `multipart/form-data`.
+async fn read_upload_zip(mut payload: Multipart) -> std::result::Result<Vec<u8>, HttpResponse> {
+    while let Some(Ok(mut field)) = payload.next().await {
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name().map(|s| s.to_string()))
+            .unwrap_or_default();
+        if field_name != "file" {
+            continue;
+        }
+
+        let mut bytes = Vec::new();
+        while let Some(Ok(chunk)) = field.next().await {
+            bytes.extend_from_slice(&chunk);
+            if bytes.len() > skill_zip::MAX_UPLOAD_ZIP_BYTES {
+                return Err(common_response::Result::<()>::http_bad_request(
+                    &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                    format!(
+                        "File too large (max {} bytes)",
+                        skill_zip::MAX_UPLOAD_ZIP_BYTES
+                    ),
+                ));
+            }
+        }
+        if bytes.is_empty() {
+            break;
+        }
+        return Ok(bytes);
+    }
+
+    Err(common_response::Result::<()>::http_bad_request(
+        &batata_common::error::PARAMETER_MISSING,
+        "file field is required",
+    ))
+}
+
 /// POST /v3/console/ai/skills/upload — Upload skill from ZIP file
 #[post("/upload")]
 async fn upload_skill(
@@ -270,7 +309,7 @@ async fn upload_skill(
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<ConsoleSkillUploadQuery>,
-    mut payload: Multipart,
+    payload: Multipart,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/skills")
@@ -284,40 +323,9 @@ async fn upload_skill(
     let overwrite = query.overwrite;
     let author = get_username(&req);
 
-    // Read ZIP file from multipart
-    let mut zip_bytes: Option<Vec<u8>> = None;
-    while let Some(Ok(mut field)) = payload.next().await {
-        let field_name = field
-            .content_disposition()
-            .and_then(|cd| cd.get_name().map(|s| s.to_string()))
-            .unwrap_or_default();
-        if field_name == "file" {
-            let mut bytes = Vec::new();
-            while let Some(Ok(chunk)) = field.next().await {
-                bytes.extend_from_slice(&chunk);
-                if bytes.len() > skill_zip::MAX_UPLOAD_ZIP_BYTES {
-                    return common_response::Result::<()>::http_bad_request(
-                        &batata_common::error::PARAMETER_VALIDATE_ERROR,
-                        format!(
-                            "File too large (max {} bytes)",
-                            skill_zip::MAX_UPLOAD_ZIP_BYTES
-                        ),
-                    );
-                }
-            }
-            zip_bytes = Some(bytes);
-            break;
-        }
-    }
-
-    let zip_bytes = match zip_bytes {
-        Some(b) if !b.is_empty() => b,
-        _ => {
-            return common_response::Result::<()>::http_bad_request(
-                &batata_common::error::PARAMETER_MISSING,
-                "file field is required",
-            );
-        }
+    let zip_bytes = match read_upload_zip(payload).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
     };
 
     let skill = match skill_zip::parse_skill_from_zip(&zip_bytes, ns) {
@@ -630,6 +638,170 @@ async fn publish_skill(
     }
 }
 
+/// POST /v3/console/ai/skills/force-publish — Publish bypassing the review gate
+#[post("/force-publish")]
+async fn force_publish_skill(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
+    body: web::Json<SkillPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/skills")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    let result = skill_service
+        .force_publish(
+            ns,
+            &form.skill_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_FORCE_PUBLISH,
+        Some(&form.skill_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/console/ai/skills/redraft — Move a version back to draft
+#[post("/redraft")]
+async fn redraft_skill(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
+    body: web::Json<SkillPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/skills")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    let result = skill_service
+        .redraft(
+            ns,
+            &form.skill_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_SKILL,
+        batata_common::ai_trace::OP_REDRAFT,
+        Some(&form.skill_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/console/ai/skills/upload/precheck — Report what an upload would do,
+/// without persisting anything
+#[post("/upload/precheck")]
+async fn precheck_upload_skill(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
+    query: web::Query<ConsoleSkillUploadQuery>,
+    payload: Multipart,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/skills")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    let zip_bytes = match read_upload_zip(payload).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
+    let result = skill_service
+        .precheck_upload_from_zip(ns, &zip_bytes, Some(get_username(&req).as_str()))
+        .await;
+    match result {
+        Ok(results) => HttpResponse::Ok().json(common_response::Result::success(results)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/console/ai/skills/upload/batch — Upload every skill in a ZIP
+#[post("/upload/batch")]
+async fn batch_upload_skills(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
+    query: web::Query<ConsoleSkillUploadQuery>,
+    payload: Multipart,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/skills")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    let zip_bytes = match read_upload_zip(payload).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
+    let result = skill_service
+        .batch_upload_from_zip(
+            ns,
+            &zip_bytes,
+            query.overwrite,
+            Some(get_username(&req).as_str()),
+        )
+        .await;
+    match result {
+        Ok(result) => HttpResponse::Ok().json(common_response::Result::success(result)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
 /// PUT /v3/console/ai/skills/labels — Update labels
 #[put("/labels")]
 async fn update_labels(
@@ -857,11 +1029,15 @@ pub fn routes() -> Scope {
         .service(download_skill_version)
         .service(get_skill_version)
         .service(upload_skill)
+        .service(precheck_upload_skill)
+        .service(batch_upload_skills)
         .service(create_draft)
         .service(update_draft)
         .service(delete_draft)
         .service(submit_skill)
         .service(publish_skill)
+        .service(force_publish_skill)
+        .service(redraft_skill)
         .service(update_labels)
         .service(update_biz_tags)
         .service(online_skill)

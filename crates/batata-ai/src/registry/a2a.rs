@@ -983,6 +983,7 @@ mod tests {
             supports_authenticated_extended_card: None,
             metadata: HashMap::new(),
             tags: vec!["test".to_string()],
+            ..Default::default()
         }
     }
 

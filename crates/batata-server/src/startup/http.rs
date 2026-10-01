@@ -29,8 +29,10 @@ use crate::{
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
     console::v3::{
-        ai_a2a as console_a2a, ai_agentspec as console_agentspec, ai_mcp as console_mcp,
-        ai_pipeline as console_pipeline, ai_plugin as console_plugin, ai_skill as console_skill,
+        ai_a2a as console_a2a, ai_agent as console_agent, ai_agentspec as console_agentspec,
+        ai_mcp as console_mcp,
+        ai_pipeline as console_pipeline, ai_plugin as console_plugin, ai_prompt as console_prompt,
+        ai_skill as console_skill,
     },
     middleware::{
         auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
@@ -116,6 +118,10 @@ pub fn console_server(
         }
         if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
+            // The console layer reaches prompts through the trait, since
+            // `batata-console` cannot depend on `batata-ai`.
+            let prompt_svc: Arc<dyn batata_common::PromptService> = svc.clone();
+            app = app.app_data(web::Data::new(prompt_svc));
         }
         if let Some(ref svc) = ai_services.skill_service {
             app = app.app_data(web::Data::new(svc.clone()));
@@ -149,9 +155,11 @@ pub fn console_server(
                         .configure(batata_console::configure_v3_console_routes)
                         .service(console_mcp::routes())
                         .service(console_a2a::routes())
+                        .service(console_agent::routes())
                         .service(console_plugin::routes())
                         .service(console_skill::routes())
                         .service(console_agentspec::routes())
+                        .service(console_prompt::routes())
                         .service(console_pipeline::routes())
                         .service(batata_copilot::copilot_console_routes())
                         .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
@@ -345,9 +353,28 @@ impl AIServices {
         ));
         let prompt_service = Arc::new(batata_ai::PromptOperationService::new(persistence.clone()));
         let a2a_service = Arc::new(crate::service::ai::A2aServerOperationService::new(
-            persistence,
+            persistence.clone(),
         ));
         let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(naming_service));
+        // These three were left unset, which silently broke every Skill,
+        // AgentSpec and Pipeline route: actix cannot extract a `web::Data` that
+        // was never registered, so each request failed before reaching a
+        // handler. Route tests did not catch it because they build their own
+        // services.
+        let skill_service = Arc::new(batata_ai::SkillOperationService::new(
+            persistence.clone(),
+            None,
+            false,
+        ));
+        let agentspec_service = Arc::new(batata_ai::AgentSpecOperationService::new(
+            persistence.clone(),
+            None,
+            false,
+        ));
+        let pipeline_service =
+            Arc::new(batata_ai::service::pipeline_service::PipelineQueryService::new(
+                persistence.clone(),
+            ));
 
         Self {
             mcp_registry: Arc::new(McpServerRegistry::new()),
@@ -357,9 +384,9 @@ impl AIServices {
             endpoint_service: Some(endpoint_service),
             mcp_index: Some(mcp_index),
             prompt_service: Some(prompt_service),
-            skill_service: None,
-            agentspec_service: None,
-            pipeline_service: None,
+            skill_service: Some(skill_service),
+            agentspec_service: Some(agentspec_service),
+            pipeline_service: Some(pipeline_service),
             copilot_agent_manager: None,
             copilot_services: None,
         }
@@ -567,6 +594,10 @@ pub fn main_server(
         }
         if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
+            // The console layer reaches prompts through the trait, since
+            // `batata-console` cannot depend on `batata-ai`.
+            let prompt_svc: Arc<dyn batata_common::PromptService> = svc.clone();
+            app = app.app_data(web::Data::new(prompt_svc));
         }
         if let Some(ref svc) = ai_services.skill_service {
             app = app.app_data(web::Data::new(svc.clone()));
@@ -595,9 +626,11 @@ pub fn main_server(
                         .configure(batata_console::configure_v3_console_routes)
                         .service(console_mcp::routes())
                         .service(console_a2a::routes())
+                        .service(console_agent::routes())
                         .service(console_plugin::routes())
                         .service(console_skill::routes())
                         .service(console_agentspec::routes())
+                        .service(console_prompt::routes())
                         .service(console_pipeline::routes())
                         .service(batata_copilot::copilot_console_routes()),
                 )

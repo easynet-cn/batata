@@ -596,6 +596,94 @@ async fn publish_agentspec(
     }
 }
 
+/// POST /v3/console/ai/agentspecs/force-publish — Publish bypassing the review gate
+#[post("/force-publish")]
+async fn force_publish_agentspec(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
+    body: web::Json<AgentSpecPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/agentspecs")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    let result = agentspec_service
+        .force_publish(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_FORCE_PUBLISH,
+        Some(&form.agent_spec_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// POST /v3/console/ai/agentspecs/redraft — Move a version back to draft
+#[post("/redraft")]
+async fn redraft_agentspec(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
+    body: web::Json<AgentSpecPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/agentspecs")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+
+    let result = agentspec_service
+        .redraft(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
+        .await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENTSPEC,
+        batata_common::ai_trace::OP_REDRAFT,
+        Some(&form.agent_spec_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
 /// PUT /v3/console/ai/agentspecs/labels — Update labels
 #[put("/labels")]
 async fn update_labels(
@@ -828,6 +916,8 @@ pub fn routes() -> Scope {
         .service(delete_draft)
         .service(submit_agentspec)
         .service(publish_agentspec)
+        .service(force_publish_agentspec)
+        .service(redraft_agentspec)
         .service(update_labels)
         .service(update_biz_tags)
         .service(online_agentspec)

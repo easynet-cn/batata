@@ -55,6 +55,7 @@ fn card(version: &str) -> AgentCard {
         supports_authenticated_extended_card: None,
         metadata: Default::default(),
         tags: vec![],
+        ..Default::default()
     }
 }
 

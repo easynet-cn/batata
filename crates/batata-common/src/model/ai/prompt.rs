@@ -1,7 +1,8 @@
 //! Prompt model types — aligned with Nacos 3.2 API
 //!
-//! Storage: Prompts are stored as configs in the config service with group `nacos-ai-prompt`.
-//! No dedicated database tables — all data is JSON configs with naming conventions.
+//! Storage: prompts live in `ai_resource` / `ai_resource_version`, like every
+//! other AI resource type. An earlier revision kept them as configs in group
+//! `nacos-ai-prompt`; that is gone and nothing here depends on it.
 
 use std::collections::HashMap;
 
@@ -91,12 +92,30 @@ pub struct PromptMetaSummary {
     #[serde(default)]
     /// The `biz_tags` field.
     pub biz_tags: Vec<String>,
+    /// Raw biz tags string, exactly as stored on the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub biz_tags_str: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `latest_version` field.
     pub latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
+    /// Draft version being edited, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_version: Option<String>,
+    /// Version under review, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewing_version: Option<String>,
+    /// Number of versions currently online.
+    #[serde(default)]
+    pub online_cnt: i64,
+    /// Label routing.
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The `download_count` field.
+    pub download_count: Option<i64>,
 }
 
 /// Full prompt metadata (extends summary with versions and labels)
@@ -114,15 +133,34 @@ pub struct PromptMetaInfo {
     #[serde(default)]
     /// The `biz_tags` field.
     pub biz_tags: Vec<String>,
+    /// Raw biz tags string, exactly as stored on the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub biz_tags_str: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `latest_version` field.
     pub latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
+    /// Draft version being edited, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_version: Option<String>,
+    /// Version under review, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewing_version: Option<String>,
+    /// Number of versions currently online.
+    #[serde(default)]
+    pub online_cnt: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The `download_count` field.
+    pub download_count: Option<i64>,
     #[serde(default)]
     /// The `versions` field.
     pub versions: Vec<String>,
+    /// Per-version summaries, newest first. The console governance view renders
+    /// these because it needs each version's status.
+    #[serde(default)]
+    pub version_details: Vec<PromptVersionSummary>,
     #[serde(default)]
     /// The `labels` field.
     pub labels: HashMap<String, String>,
@@ -136,6 +174,9 @@ pub struct PromptVersionSummary {
     pub prompt_key: String,
     /// The `version` field.
     pub version: String,
+    /// Lifecycle status (draft / reviewing / reviewed / online / offline).
+    #[serde(default)]
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `commit_msg` field.
     pub commit_msg: Option<String>,
@@ -145,6 +186,12 @@ pub struct PromptVersionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `gmt_modified` field.
     pub gmt_modified: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Pipeline information attached to the version, when any.
+    pub publish_pipeline_info: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The `download_count` field.
+    pub download_count: Option<i64>,
 }
 
 /// Full prompt version info (extends summary with content)
@@ -279,45 +326,8 @@ fn default_schema_version() -> i32 {
     1
 }
 
-// ============================================================================
-// DataId utilities (Nacos naming conventions)
-// ============================================================================
-
-/// Fixed group for all prompt configs
-pub const PROMPT_GROUP: &str = "nacos-ai-prompt";
-
 /// Version assigned to a prompt when none is given.
 pub const PROMPT_DEFAULT_VERSION: &str = "0.0.1";
-
-/// Build DataId for latest version mirror: `{promptKey}.json`
-pub fn build_latest_data_id(prompt_key: &str) -> String {
-    format!("{}.json", prompt_key)
-}
-
-/// Build DataId for a specific version: `{promptKey}.{version}.json`
-pub fn build_version_data_id(prompt_key: &str, version: &str) -> String {
-    format!("{}.{}.json", prompt_key, version)
-}
-
-/// Build DataId for descriptor: `{promptKey}.descriptor.json`
-pub fn build_descriptor_data_id(prompt_key: &str) -> String {
-    format!("{}.descriptor.json", prompt_key)
-}
-
-/// Build DataId for label-version mapping: `{promptKey}.label-version-mapping.json`
-pub fn build_label_version_mapping_data_id(prompt_key: &str) -> String {
-    format!("{}.label-version-mapping.json", prompt_key)
-}
-
-/// Check if a DataId is a descriptor
-pub fn is_descriptor_data_id(data_id: &str) -> bool {
-    data_id.ends_with(".descriptor.json")
-}
-
-/// Extract promptKey from descriptor DataId
-pub fn extract_prompt_key_from_descriptor(data_id: &str) -> Option<&str> {
-    data_id.strip_suffix(".descriptor.json")
-}
 
 // ============================================================================
 // Version utilities
@@ -376,14 +386,23 @@ pub fn compose_meta_info(
     descriptor: &PromptDescriptor,
     mapping: &PromptLabelVersionMapping,
 ) -> PromptMetaInfo {
+    // Legacy helper kept for the config-era types; the service builds
+    // `PromptMetaInfo` from `ai_resource` instead, so the governance fields
+    // below have no source here.
     PromptMetaInfo {
         schema_version: descriptor.schema_version,
         prompt_key: descriptor.prompt_key.clone(),
         description: descriptor.description.clone(),
         biz_tags: descriptor.biz_tags.clone(),
+        biz_tags_str: None,
         latest_version: mapping.latest_version.clone(),
         gmt_modified: descriptor.gmt_modified,
+        editing_version: None,
+        reviewing_version: None,
+        online_cnt: 0,
+        download_count: None,
         versions: mapping.versions.clone(),
+        version_details: Vec::new(),
         labels: mapping.labels.clone(),
     }
 }
@@ -418,43 +437,6 @@ mod tests {
             compare_versions("1.0.1", "1.0.0"),
             std::cmp::Ordering::Greater
         );
-    }
-
-    #[test]
-    fn test_data_id_builders() {
-        assert_eq!(build_latest_data_id("greeting"), "greeting.json");
-        assert_eq!(
-            build_version_data_id("greeting", "1.0.0"),
-            "greeting.1.0.0.json"
-        );
-        assert_eq!(
-            build_descriptor_data_id("greeting"),
-            "greeting.descriptor.json"
-        );
-        assert_eq!(
-            build_label_version_mapping_data_id("greeting"),
-            "greeting.label-version-mapping.json"
-        );
-    }
-
-    #[test]
-    fn test_is_descriptor_data_id() {
-        assert!(is_descriptor_data_id("greeting.descriptor.json"));
-        assert!(!is_descriptor_data_id("greeting.json"));
-        assert!(!is_descriptor_data_id("greeting.1.0.0.json"));
-    }
-
-    #[test]
-    fn test_extract_prompt_key() {
-        assert_eq!(
-            extract_prompt_key_from_descriptor("greeting.descriptor.json"),
-            Some("greeting")
-        );
-        assert_eq!(
-            extract_prompt_key_from_descriptor("my-prompt.descriptor.json"),
-            Some("my-prompt")
-        );
-        assert_eq!(extract_prompt_key_from_descriptor("greeting.json"), None);
     }
 
     #[test]

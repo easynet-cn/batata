@@ -318,6 +318,7 @@ async fn discover(
     req: HttpRequest,
     data: web::Data<AppState>,
     endpoint_service: web::Data<Arc<AiEndpointService>>,
+    agent_service: web::Data<Arc<dyn A2aAgentService>>,
     query: web::Query<AgentDiscoveryQuery>,
 ) -> impl Responder {
     secured!(
@@ -329,7 +330,7 @@ async fn discover(
     );
 
     let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or(""));
-    let version = match query.version.as_deref() {
+    let requested = match query.version.as_deref() {
         Some(v) if !v.is_empty() => v.to_string(),
         _ => {
             return Result::<()>::http_bad_request(
@@ -337,6 +338,36 @@ async fn discover(
                 "version is required",
             );
         }
+    };
+
+    // A range is resolved against what is actually published; an exact version
+    // is used as given, so asking for an unpublished one reports "not found"
+    // rather than quietly serving a different version's endpoints.
+    let version = if crate::service::version_range::is_range(&requested) {
+        let versions = match agent_service.list_versions(ns, &query.agent_name).await {
+            Ok(versions) => versions,
+            Err(e) => {
+                return Result::<()>::http_bad_request(
+                    &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                    e.to_string(),
+                );
+            }
+        };
+        let available: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+        match crate::service::version_range::select_version(&available, &requested) {
+            Some(v) => v.to_string(),
+            None => {
+                return Result::<()>::http_not_found(
+                    &batata_common::error::RESOURCE_NOT_FOUND,
+                    format!(
+                        "no published version of agent '{}' matches '{}'",
+                        query.agent_name, requested
+                    ),
+                );
+            }
+        }
+    } else {
+        requested
     };
 
     let endpoints = endpoint_service.get_agent_endpoints(ns, &query.agent_name, &version);

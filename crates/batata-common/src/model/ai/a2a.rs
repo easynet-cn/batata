@@ -19,7 +19,7 @@ use super::{
 /// - AgentCardBasicInfo: protocolVersion, name, description, version, iconUrl, capabilities, skills
 /// - AgentCard: url, preferredTransport, additionalInterfaces, provider, documentationUrl,
 ///   securitySchemes, security, defaultInputModes, defaultOutputModes, supportsAuthenticatedExtendedCard
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCard {
     /// Agent name (unique identifier)
@@ -89,6 +89,52 @@ pub struct AgentCard {
     /// Tags for categorization (batata extension)
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Extra endpoints the agent can be reached on, beyond `url`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_interfaces: Vec<AgentInterface>,
+
+    /// Transports the agent declares support for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_interfaces: Vec<AgentInterface>,
+
+    /// Security schemes by name. Upstream's `SecurityScheme` is a free-form map,
+    /// so the contents are not modelled here.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub security_schemes: HashMap<String, serde_json::Value>,
+
+    /// Security requirements (A2A 0.2 shape).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security: Vec<HashMap<String, Vec<String>>>,
+
+    /// Security requirements (A2A 0.3 shape), preferred over `security`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security_requirements: Vec<HashMap<String, Vec<String>>>,
+
+    /// Signatures over the card contents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<HashMap<String, serde_json::Value>>,
+}
+
+/// One way of reaching an agent (aligned with Nacos AgentInterface).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInterface {
+    /// Endpoint URL
+    #[serde(default)]
+    pub url: String,
+    /// Transport, e.g. `JSONRPC` or `HTTP`
+    #[serde(default)]
+    pub transport: String,
+    /// Protocol binding layered on the transport
+    #[serde(default)]
+    pub protocol_binding: Option<String>,
+    /// Protocol version spoken on this interface
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+    /// Tenant the interface belongs to
+    #[serde(default)]
+    pub tenant: Option<String>,
 }
 
 /// Agent provider information (aligned with Nacos AgentProvider)

@@ -1,7 +1,7 @@
 //! Module `api::v3::admin::ai::route` of the `batata-server` crate.
 use actix_web::{Scope, web};
 
-use super::{a2a, mcp};
+use super::a2a;
 
 /// `routes` function.
 ///
@@ -9,7 +9,8 @@ use super::{a2a, mcp};
 /// `Scope`.
 pub fn routes() -> Scope {
     web::scope("/ai")
-        .service(mcp::routes())
+        // Backed by the `ai_resource` service, like the console layer.
+        .service(batata_ai::mcp_admin_routes())
         .service(a2a::routes())
         .service(batata_ai::agent_admin_routes())
         .service(batata_ai::prompt_admin_routes())
