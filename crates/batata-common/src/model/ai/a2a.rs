@@ -116,6 +116,70 @@ pub struct AgentCard {
     pub signatures: Vec<HashMap<String, serde_json::Value>>,
 }
 
+/// What `GET /runtime-endpoints` answers: the live endpoints of one agent
+/// version, plus the Naming service they are published under.
+///
+/// Upstream nests endpoints inside `callInterface.endpointSets`, grouping them
+/// by source. Batata publishes every endpoint as one Naming instance, so the
+/// grouping carries no information here and the endpoints are returned flat.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleRuntimeEndpointView {
+    /// The live endpoint snapshot.
+    pub runtime_endpoint_snapshot: RuntimeEndpointSnapshot,
+    /// Where the snapshot was read from.
+    pub naming_service_ref: NamingServiceRef,
+}
+
+/// The live endpoints of one agent version.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeEndpointSnapshot {
+    /// Namespace the agent lives in.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Agent version.
+    pub version: String,
+    /// How the agent is called.
+    pub call_interface: AgentCallInterface,
+}
+
+/// The protocol and endpoints of one call interface.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCallInterface {
+    /// Requested protocol, e.g. `JSONRPC`.
+    pub protocol: String,
+    /// Endpoints currently registered.
+    #[serde(default)]
+    pub endpoints: Vec<RuntimeEndpoint>,
+}
+
+/// One reachable agent endpoint.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeEndpoint {
+    /// Address.
+    pub address: String,
+    /// Port.
+    pub port: u16,
+    /// Whether the endpoint is healthy.
+    pub healthy: bool,
+}
+
+/// The Naming service an agent's endpoints are published under.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamingServiceRef {
+    /// Namespace.
+    pub namespace_id: String,
+    /// Group, e.g. `agent-endpoints`.
+    pub group_name: String,
+    /// Service name.
+    pub service_name: String,
+}
+
 /// One way of reaching an agent (aligned with Nacos AgentInterface).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

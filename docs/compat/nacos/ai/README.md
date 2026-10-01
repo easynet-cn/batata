@@ -219,6 +219,31 @@ Goal: introduce the upstream layering before adding endpoints.
       publish, redraft, labels/status/scope, and the version endpoints.
       Ordering matters: a draft version can only be added to a server that
       already exists, so the tests create the server first.
+- [x] **Agent console `GET /runtime-endpoints`.** nacos pins this one: its
+      `console-ui-next/src/api/__tests__/agent-console-source-contract.test.ts`
+      asserts the next console exposes `getRuntimeEndpoints` against
+      `${BASE}/runtime-endpoints`, and that `/v3/console/ai/a2a` appears only in
+      the **legacy** console. Batata was missing it.
+      Runtime endpoints live in Naming, so `A2aServerOperationService` gained an
+      injectable `AiEndpointService` (`with_endpoint_service`, keeping `new()`
+      intact). With no endpoint backend the read **fails** rather than returning
+      an empty snapshot, which would be indistinguishable from an agent with no
+      endpoints.
+- [~] **`batata-ui` is aligned to the legacy console, not the next one.** The
+      backend follows `console-ui-next`; the UI was written against
+      `console-ui`. Known deviations, all on the UI side:
+      - Agent uses `/v3/console/ai/a2a` (legacy) instead of `/ai/agents`.
+      - `POST /ai/mcp/openapi/import` and `/openapi/validate` — present in
+        neither nacos UI nor Batata; the real endpoints are
+        `/ai/mcp/import/execute` and `/import/validate`.
+      - `GET/PUT /ai/prompt/metadata`, `GET /ai/prompt/detail`,
+        `PUT /ai/prompt/label` — present in neither; the real ones are
+        `/ai/prompt/governance` (or base GET), `/ai/prompt/version` and
+        `/ai/prompt/labels`. A PUT of prompt metadata is `/description` plus
+        `/biz-tags` upstream.
+      The UI's axios instance has only `/v3/console` and `/v3/auth`, so those
+      five calls currently 404. They are live: `McpListView`,
+      `PromptDetailView` and `PromptEditorView` use them.
 - [x] **Fixed: Skill, AgentSpec and Pipeline routes never worked at runtime.**
       `AIServices::with_persistence` left `skill_service`, `agentspec_service`
       and `pipeline_service` as `None`, so their `web::Data` was never

@@ -809,6 +809,19 @@ impl batata_common::A2aAgentService for AgentRegistry {
         anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
 
+    async fn get_runtime_endpoints(
+        &self,
+        _namespace: &str,
+        _agent_name: &str,
+        _protocol: &str,
+        _version: &str,
+    ) -> anyhow::Result<ConsoleRuntimeEndpointView> {
+        // The in-memory registry publishes nothing to Naming, so it cannot
+        // answer for live endpoints. Failing loudly is better than reporting an
+        // empty snapshot that looks like the agent has no endpoints.
+        anyhow::bail!("{}", VERSIONING_UNSUPPORTED)
+    }
+
     async fn stats(&self) -> anyhow::Result<AgentRegistryStats> {
         Ok(self.stats())
     }

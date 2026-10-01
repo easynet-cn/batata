@@ -302,3 +302,46 @@ async fn versions_are_listable_over_console_http() {
 
     clean(&store).await;
 }
+
+/// `GET /runtime-endpoints` is part of the console Agent contract — nacos pins
+/// it in `agent-console-source-contract.test.ts`, which asserts the next
+/// console exposes `getRuntimeEndpoints`.
+///
+/// This covers the route being mounted, and its behaviour with no endpoint
+/// backend: it must fail rather than answer with an empty snapshot, because an
+/// empty snapshot is indistinguishable from an agent that has no endpoints.
+#[actix_web::test]
+#[ignore]
+async fn runtime_endpoints_fail_loudly_without_an_endpoint_backend() {
+    let (store, svc) = setup().await;
+    clean(&store).await;
+    register(&svc).await;
+    let app = build_app(store.clone(), svc.clone()).await;
+
+    let req = test::TestRequest::get()
+        .uri(&format!(
+            "/v3/console/ai/agents/runtime-endpoints?agentName={NAME}&version=1.0.0&protocol=JSONRPC"
+        ))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    // 404 would mean the route is not mounted at all; that is the failure this
+    // guards against.
+    assert_ne!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "runtime-endpoints must be mounted"
+    );
+    assert!(
+        resp.status().is_client_error(),
+        "must refuse rather than report an empty snapshot, got {}",
+        resp.status()
+    );
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(
+        body.contains("endpoint service"),
+        "must explain why: {body}"
+    );
+    println!("ok: runtime-endpoints refuses without an endpoint backend");
+
+    clean(&store).await;
+}

@@ -352,10 +352,14 @@ impl AIServices {
             mcp_index.clone(),
         ));
         let prompt_service = Arc::new(batata_ai::PromptOperationService::new(persistence.clone()));
-        let a2a_service = Arc::new(crate::service::ai::A2aServerOperationService::new(
-            persistence.clone(),
-        ));
         let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(naming_service));
+        // Runtime endpoint reads go through Naming, so the agent service needs
+        // the endpoint backend; without it `GET /runtime-endpoints` has nothing
+        // to ask.
+        let a2a_service = Arc::new(
+            crate::service::ai::A2aServerOperationService::new(persistence.clone())
+                .with_endpoint_service(endpoint_service.clone()),
+        );
         // These three were left unset, which silently broke every Skill,
         // AgentSpec and Pipeline route: actix cannot extract a `web::Data` that
         // was never registered, so each request failed before reaching a

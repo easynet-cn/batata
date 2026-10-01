@@ -101,11 +101,29 @@ pub struct AgentVersionActionForm {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Form for reading one version's runtime endpoints.
+pub struct AgentRuntimeEndpointForm {
+    /// Agent name (identifier).
+    #[serde(alias = "agentName")]
+    pub agent_name: String,
+    /// Target version.
+    #[serde(default)]
+    pub version: String,
+    /// Namespace identifier.
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    /// Protocol the console wants the snapshot for, e.g. `JSONRPC`.
+    #[serde(default)]
+    pub protocol: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// Form for creating a draft version.
 ///
-/// `extensions` and `callInterfaces` from upstream are accepted so the console
-/// UI does not break, but `AgentCard` has nowhere to keep them — see the module
-/// note on the model gap.
+/// `AgentCard` carries the A2A interface fields (`additionalInterfaces`,
+/// `supportedInterfaces`) and the security block, so nothing sent here is
+/// silently dropped.
 pub struct AgentDraftCreateForm {
     /// Agent name (identifier).
     #[serde(alias = "agentName")]
@@ -308,6 +326,40 @@ async fn get_version(
 // ============================================================================
 // Draft handlers
 // ============================================================================
+
+/// GET /v3/console/ai/agents/runtime-endpoints — Live endpoints of one version
+///
+/// Required by the console's Agent pages: nacos pins this in
+/// `agent-console-source-contract.test.ts`, which asserts the next console
+/// exposes `getRuntimeEndpoints` against `${BASE}/runtime-endpoints`.
+#[get("/runtime-endpoints")]
+async fn get_runtime_endpoints(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agent_service: web::Data<Arc<dyn A2aAgentService>>,
+    query: web::Query<AgentRuntimeEndpointForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/agents")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = query.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    match agent_service
+        .get_runtime_endpoints(ns, &form.agent_name, &form.protocol, &form.version)
+        .await
+    {
+        Ok(view) => HttpResponse::Ok().json(common_response::Result::success(view)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
 
 /// POST /v3/console/ai/agents/draft — Create a draft version
 #[post("/draft")]
@@ -631,6 +683,7 @@ pub fn routes() -> Scope {
         .service(get_agent)
         .service(list_versions)
         .service(get_version)
+        .service(get_runtime_endpoints)
         .service(create_draft)
         .service(delete_draft)
         .service(submit)

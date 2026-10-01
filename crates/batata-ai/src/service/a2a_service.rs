@@ -21,6 +21,7 @@ use batata_persistence::PersistenceService;
 
 use crate::model::*;
 use crate::repository::{meta_status, resource_type, scope, version_status};
+use crate::service::endpoint_service::AiEndpointService;
 use crate::service::version_lifecycle;
 
 /// Origin recorded for locally registered agents.
@@ -39,6 +40,9 @@ struct A2aResourceExt {
 pub struct A2aServerOperationService {
     persistence: Arc<dyn PersistenceService>,
     visibility_manager: Arc<batata_visibility::VisibilityPluginManager>,
+    /// Endpoint backend used to read live runtime endpoints. Absent when the
+    /// server runs without a Naming-backed endpoint service.
+    endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
 impl A2aServerOperationService {
@@ -65,7 +69,15 @@ impl A2aServerOperationService {
         Self {
             persistence,
             visibility_manager,
+            endpoint_service: None,
         }
+    }
+
+    /// Wires the endpoint service, without which runtime endpoint reads are
+    /// impossible rather than merely empty.
+    pub fn with_endpoint_service(mut self, endpoint_service: Arc<AiEndpointService>) -> Self {
+        self.endpoint_service = Some(endpoint_service);
+        self
     }
 
     /// Validate visibility for a single-resource operation.
@@ -1204,6 +1216,46 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
             unhealthy_agents: 0,
             by_namespace: std::collections::HashMap::new(),
             by_skill: std::collections::HashMap::new(),
+        })
+    }
+
+    async fn get_runtime_endpoints(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: &str,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::ConsoleRuntimeEndpointView> {
+        let endpoint_service = self.endpoint_service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "runtime endpoints are unavailable: no endpoint service is configured"
+            )
+        })?;
+
+        let endpoints = endpoint_service.get_agent_endpoints(namespace, agent_name, version);
+
+        Ok(batata_common::model::ai::a2a::ConsoleRuntimeEndpointView {
+            runtime_endpoint_snapshot: batata_common::model::ai::a2a::RuntimeEndpointSnapshot {
+                namespace_id: namespace.to_string(),
+                agent_name: agent_name.to_string(),
+                version: version.to_string(),
+                call_interface: batata_common::model::ai::a2a::AgentCallInterface {
+                    protocol: protocol.to_string(),
+                    endpoints: endpoints
+                        .iter()
+                        .map(|e| batata_common::model::ai::a2a::RuntimeEndpoint {
+                            address: e.address.clone(),
+                            port: e.port,
+                            healthy: e.healthy,
+                        })
+                        .collect(),
+                },
+            },
+            naming_service_ref: batata_common::model::ai::a2a::NamingServiceRef {
+                namespace_id: namespace.to_string(),
+                group_name: crate::service::constants::AGENT_ENDPOINT_GROUP.to_string(),
+                service_name: crate::service::constants::a2a_service_name(agent_name, version),
+            },
         })
     }
 }

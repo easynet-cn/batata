@@ -7,7 +7,8 @@ use crate::model::Page;
 use crate::model::ai::VersionDetail;
 use crate::model::ai::a2a::{
     AgentCard, AgentCardVersionInfo, AgentRegistryStats, AgentVersionDetail,
-    BatchAgentRegistrationRequest, BatchRegistrationResponse, RegisteredAgent,
+    BatchAgentRegistrationRequest, BatchRegistrationResponse, ConsoleRuntimeEndpointView,
+    RegisteredAgent,
 };
 use crate::model::ai::agentspec::{AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecSummary};
 use crate::model::ai::mcp::McpRegistryStats;
@@ -910,6 +911,19 @@ pub trait A2aAgentService: Send + Sync {
         name: &str,
         new_scope: &str,
     ) -> anyhow::Result<()>;
+
+    /// Read one agent version's live runtime endpoints, and the Naming service
+    /// they are published under.
+    ///
+    /// Fails when no endpoint backend is configured, rather than reporting an
+    /// empty list that would look like the agent simply has no endpoints.
+    async fn get_runtime_endpoints(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        protocol: &str,
+        version: &str,
+    ) -> anyhow::Result<ConsoleRuntimeEndpointView>;
 }
 
 /// Trait for pipeline query operations
