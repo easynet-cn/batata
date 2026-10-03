@@ -12,11 +12,13 @@
 use actix_web::{HttpRequest, HttpResponse, Scope, get, post, web};
 
 use crate::acl::AclService;
+use crate::agent::ConsulAgentService;
 use crate::connect::{
     ConsulConnectService, DiscoveryChainOverrides, DiscoveryChainQueryParams,
-    ServiceVisibilityQueryParams,
+    ProxyConfigQueryParams, ServiceVisibilityQueryParams,
 };
 use crate::index_provider::ConsulIndexProvider;
+use crate::model::ConsulDatacenterConfig;
 
 // ============================================================================
 // In-memory handlers
@@ -182,6 +184,26 @@ async fn list_imported_services_persistent_handler(
     .await
 }
 
+// ============================================================================
+// Connect Proxy config (Envoy bootstrap)
+// ============================================================================
+
+async fn get_proxy_config_handler(
+    req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
+    acl_service: web::Data<AclService>,
+    connect_service: web::Data<ConsulConnectService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+    query: web::Query<ProxyConfigQueryParams>,
+) -> HttpResponse {
+    crate::connect::get_proxy_config(
+        req, agent, acl_service, connect_service, dc_config, index_provider, path, query,
+    )
+    .await
+}
+
 /// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/discovery-chain")
@@ -189,6 +211,11 @@ pub fn routes() -> Scope {
         .service(post_discovery_chain)
         .service(get_discovery_chain_persistent)
         .service(post_discovery_chain_persistent)
+}
+
+/// The `proxy_resource` function.
+pub fn proxy_resource() -> actix_web::Resource {
+    web::resource("/connect/proxy/{service_id}").route(web::get().to(get_proxy_config_handler))
 }
 
 /// The `exported_services_resource` function.

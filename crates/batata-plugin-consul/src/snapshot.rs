@@ -69,7 +69,9 @@ impl ConsulSnapshotService {
                 ("operator", crate::constants::CF_CONSUL_OPERATOR),
                 ("events", crate::constants::CF_CONSUL_EVENTS),
                 ("namespaces", crate::constants::CF_CONSUL_NAMESPACES),
+                ("partitions", crate::constants::CF_CONSUL_PARTITIONS),
                 ("catalog", crate::constants::CF_CONSUL_CATALOG),
+                ("health_checks", crate::constants::CF_CONSUL_HEALTH_CHECKS),
             ];
 
             for (name, cf_name) in &cf_names {
@@ -169,7 +171,9 @@ impl ConsulSnapshotService {
                 ("operator", crate::constants::CF_CONSUL_OPERATOR),
                 ("events", crate::constants::CF_CONSUL_EVENTS),
                 ("namespaces", crate::constants::CF_CONSUL_NAMESPACES),
+                ("partitions", crate::constants::CF_CONSUL_PARTITIONS),
                 ("catalog", crate::constants::CF_CONSUL_CATALOG),
+                ("health_checks", crate::constants::CF_CONSUL_HEALTH_CHECKS),
             ];
 
             for (name, cf_name) in &cf_names {

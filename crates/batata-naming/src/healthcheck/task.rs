@@ -136,7 +136,9 @@ impl HealthCheckTask {
             HealthCheckType::None
             | HealthCheckType::Ttl
             | HealthCheckType::Grpc
-            | HealthCheckType::Mysql => {
+            | HealthCheckType::Mysql
+            | HealthCheckType::Script
+            | HealthCheckType::Docker => {
                 return Duration::from_secs(5);
             }
         };
@@ -255,7 +257,9 @@ impl HealthCheckTask {
             HealthCheckType::None
             | HealthCheckType::Ttl
             | HealthCheckType::Grpc
-            | HealthCheckType::Mysql => return,
+            | HealthCheckType::Mysql
+            | HealthCheckType::Script
+            | HealthCheckType::Docker => return,
         };
 
         // Speed up checks when healthy (multiply by factor)
@@ -271,7 +275,9 @@ impl HealthCheckTask {
             HealthCheckType::None
             | HealthCheckType::Ttl
             | HealthCheckType::Grpc
-            | HealthCheckType::Mysql => return,
+            | HealthCheckType::Mysql
+            | HealthCheckType::Script
+            | HealthCheckType::Docker => return,
         };
 
         // Slow down checks when failing (increase interval)
@@ -282,7 +288,9 @@ impl HealthCheckTask {
             HealthCheckType::None
             | HealthCheckType::Ttl
             | HealthCheckType::Grpc
-            | HealthCheckType::Mysql => 5000.0,
+            | HealthCheckType::Mysql
+            | HealthCheckType::Script
+            | HealthCheckType::Docker => 5000.0,
         };
 
         let new_interval = (current * (1.0 - factor) + factor * max) as u64;
@@ -303,7 +311,9 @@ impl HealthCheckTask {
             HealthCheckType::None
             | HealthCheckType::Ttl
             | HealthCheckType::Grpc
-            | HealthCheckType::Mysql => (2000, 5000),
+            | HealthCheckType::Mysql
+            | HealthCheckType::Script
+            | HealthCheckType::Docker => (2000, 5000),
         };
 
         let current = self.check_rt_normalized.as_millis() as u64;

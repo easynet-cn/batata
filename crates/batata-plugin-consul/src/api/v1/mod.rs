@@ -33,6 +33,7 @@ pub fn routes() -> actix_web::Scope {
         .service(connect::routes())
         .service(connect::exported_services_resource())
         .service(connect::imported_services_resource())
+        .service(connect::proxy_resource())
         .service(connect_ca::routes())
         .service(coordinate::routes())
         .service(event::routes())

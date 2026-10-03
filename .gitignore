@@ -30,6 +30,7 @@ target/
 
 .claude/
 .workbuddy/
+.trae/
 
 .VSCodeCounter
 Cargo.lock

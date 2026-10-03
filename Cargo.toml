@@ -120,7 +120,7 @@ reqwest = { version = "0.13", features = ["json", "stream", "query", "form"] }
 
 # Utils
 chrono = "0.4"
-uuid = { version = "1.26", features = ["v4"] }
+uuid = { version = "1.27", features = ["v4"] }
 regex = "1.13"
 base64 = "0.23"
 md-5 = "0.11"

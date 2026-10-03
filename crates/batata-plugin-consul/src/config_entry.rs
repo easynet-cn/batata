@@ -374,6 +374,149 @@ impl Default for ConsulConfigEntryService {
 }
 
 // ============================================================================
+// Config Entry Semantic Validation
+// ============================================================================
+
+/// Valid protocols for service-defaults / proxy-defaults.
+const VALID_PROTOCOLS: &[&str] = &["tcp", "http", "http2", "grpc"];
+
+/// Validate a config entry request before persisting.
+///
+/// Returns `Ok(())` on success or an error string suitable for a 400 response.
+/// Unsupported kinds are rejected by the caller before this is invoked.
+pub fn validate_config_entry(req: &ConfigEntryRequest) -> Result<(), String> {
+    match req.kind.as_str() {
+        "service-defaults" => validate_service_defaults(req),
+        "proxy-defaults" => validate_proxy_defaults(req),
+        "service-router" => validate_service_router(req),
+        "service-splitter" => validate_service_splitter(req),
+        "service-resolver" => validate_service_resolver(req),
+        // Kinds without specific structural validation: ingress-gateway,
+        // terminating-gateway, service-intentions, mesh, exported-services,
+        // api-gateway, http-route, tcp-route, jwt-provider.
+        _ => Ok(()),
+    }
+}
+
+/// Validate `service-defaults` entries.
+fn validate_service_defaults(req: &ConfigEntryRequest) -> Result<(), String> {
+    if req.name.trim().is_empty() {
+        return Err("service-defaults requires a non-empty Name".into());
+    }
+    if let Some(protocol) = req.extra.get("Protocol").and_then(|v| v.as_str()) {
+        if !VALID_PROTOCOLS.contains(&protocol) {
+            return Err(format!(
+                "service-defaults Protocol '{}' is invalid; must be one of: {}",
+                protocol,
+                VALID_PROTOCOLS.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate `proxy-defaults` entries.
+fn validate_proxy_defaults(req: &ConfigEntryRequest) -> Result<(), String> {
+    // Consul requires proxy-defaults Name to be exactly "global".
+    if req.name != "global" {
+        return Err("proxy-defaults Name must be 'global'".into());
+    }
+    if let Some(protocol) = req.extra.get("Protocol").and_then(|v| v.as_str()) {
+        if !VALID_PROTOCOLS.contains(&protocol) {
+            return Err(format!(
+                "proxy-defaults Protocol '{}' is invalid; must be one of: {}",
+                protocol,
+                VALID_PROTOCOLS.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate `service-router` entries.
+fn validate_service_router(req: &ConfigEntryRequest) -> Result<(), String> {
+    if req.name.trim().is_empty() {
+        return Err("service-router requires a non-empty Name".into());
+    }
+    let routes = req.extra.get("Routes");
+    match routes {
+        Some(serde_json::Value::Array(arr)) if !arr.is_empty() => {
+            for (i, route) in arr.iter().enumerate() {
+                if !route.is_object() {
+                    return Err(format!("service-router Routes[{}] must be an object", i));
+                }
+            }
+            Ok(())
+        }
+        Some(serde_json::Value::Array(_)) => {
+            Err("service-router Routes must contain at least one route".into())
+        }
+        Some(_) => Err("service-router Routes must be an array".into()),
+        None => Ok(()), // Routes is optional
+    }
+}
+
+/// Validate `service-splitter` entries.
+fn validate_service_splitter(req: &ConfigEntryRequest) -> Result<(), String> {
+    if req.name.trim().is_empty() {
+        return Err("service-splitter requires a non-empty Name".into());
+    }
+    let splits = req.extra.get("Splits");
+    match splits {
+        Some(serde_json::Value::Array(arr)) if !arr.is_empty() => {
+            let mut total: i64 = 0;
+            for (i, split) in arr.iter().enumerate() {
+                let weight = split
+                    .get("Weight")
+                    .and_then(|w| w.as_i64())
+                    .ok_or_else(|| {
+                        format!("service-splitter Splits[{}] must have an integer Weight", i)
+                    })?;
+                if weight < 0 {
+                    return Err(format!(
+                        "service-splitter Splits[{}] Weight must be non-negative",
+                        i
+                    ));
+                }
+                total += weight;
+            }
+            if total != 100 {
+                return Err(format!(
+                    "service-splitter Splits weights must sum to 100, got {}",
+                    total
+                ));
+            }
+            Ok(())
+        }
+        Some(serde_json::Value::Array(_)) => {
+            Err("service-splitter Splits must contain at least one entry".into())
+        }
+        Some(_) => Err("service-splitter Splits must be an array".into()),
+        None => Ok(()), // Splits is optional
+    }
+}
+
+/// Validate `service-resolver` entries.
+fn validate_service_resolver(req: &ConfigEntryRequest) -> Result<(), String> {
+    if req.name.trim().is_empty() {
+        return Err("service-resolver requires a non-empty Name".into());
+    }
+    if let Some(serde_json::Value::Object(subsets)) = req.extra.get("Subsets") {
+        for (name, subset) in subsets {
+            if let Some(filter) = subset.get("Filter").and_then(|f| f.as_str()) {
+                if filter.trim().is_empty() {
+                    return Err(format!(
+                        "service-resolver Subsets.{} Filter must be a non-empty string",
+                        name
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // HTTP Handlers (In-Memory)
 // ============================================================================
 
@@ -455,6 +598,11 @@ pub async fn apply_config_entry(
             "Unsupported config entry kind: {}",
             entry_req.kind
         )));
+    }
+
+    // Semantic validation per kind
+    if let Err(msg) = validate_config_entry(&entry_req) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(msg));
     }
 
     // Parse optional CAS parameter from query string
@@ -683,5 +831,148 @@ mod tests {
             .await;
         assert!(result.unwrap());
         assert!(service.get_entry("mesh", "mesh").is_none());
+    }
+
+    // ========================================================================
+    // Validation failure-path tests
+    // ========================================================================
+
+    fn req(kind: &str, name: &str, extra: HashMap<String, serde_json::Value>) -> ConfigEntryRequest {
+        ConfigEntryRequest {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn validate_service_defaults_empty_name_rejected() {
+        let r = req("service-defaults", "  ", HashMap::new());
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_service_defaults_invalid_protocol_rejected() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "Protocol".to_string(),
+            serde_json::Value::String("ftp".to_string()),
+        );
+        let r = req("service-defaults", "web", extra);
+        let err = validate_config_entry(&r).unwrap_err();
+        assert!(err.contains("Protocol") && err.contains("invalid"));
+    }
+
+    #[test]
+    fn validate_service_defaults_valid_protocol_accepted() {
+        for proto in ["tcp", "http", "http2", "grpc"] {
+            let mut extra = HashMap::new();
+            extra.insert(
+                "Protocol".to_string(),
+                serde_json::Value::String(proto.to_string()),
+            );
+            let r = req("service-defaults", "web", extra);
+            assert!(
+                validate_config_entry(&r).is_ok(),
+                "protocol '{}' should be accepted",
+                proto
+            );
+        }
+    }
+
+    #[test]
+    fn validate_proxy_defaults_non_global_name_rejected() {
+        let r = req("proxy-defaults", "not-global", HashMap::new());
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_proxy_defaults_global_name_accepted() {
+        let r = req("proxy-defaults", "global", HashMap::new());
+        assert!(validate_config_entry(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_proxy_defaults_invalid_protocol_rejected() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "Protocol".to_string(),
+            serde_json::Value::String("bad".to_string()),
+        );
+        let r = req("proxy-defaults", "global", extra);
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_service_router_empty_name_rejected() {
+        let r = req("service-router", "", HashMap::new());
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_service_splitter_weights_not_100_rejected() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "Splits".to_string(),
+            serde_json::json!([
+                { "Weight": 60 },
+                { "Weight": 30 },
+            ]),
+        );
+        let r = req("service-splitter", "web", extra);
+        let err = validate_config_entry(&r).unwrap_err();
+        assert!(err.contains("100"), "error should mention 100: {}", err);
+    }
+
+    #[test]
+    fn validate_service_splitter_negative_weight_rejected() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "Splits".to_string(),
+            serde_json::json!([
+                { "Weight": -10 },
+                { "Weight": 110 },
+            ]),
+        );
+        let r = req("service-splitter", "web", extra);
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_service_splitter_weights_sum_100_accepted() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "Splits".to_string(),
+            serde_json::json!([
+                { "Weight": 70 },
+                { "Weight": 30 },
+            ]),
+        );
+        let r = req("service-splitter", "web", extra);
+        assert!(validate_config_entry(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_service_splitter_empty_splits_rejected() {
+        let mut extra = HashMap::new();
+        extra.insert("Splits".to_string(), serde_json::json!([]));
+        let r = req("service-splitter", "web", extra);
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_service_resolver_empty_name_rejected() {
+        let r = req("service-resolver", "   ", HashMap::new());
+        assert!(validate_config_entry(&r).is_err());
+    }
+
+    #[test]
+    fn validate_unknown_kind_accepted() {
+        // Kinds without specific validation should pass through.
+        let r = req("ingress-gateway", "gateway", HashMap::new());
+        assert!(validate_config_entry(&r).is_ok());
     }
 }

@@ -89,6 +89,10 @@ pub enum CheckType {
     Grpc,
     /// MySQL/Database health check
     Mysql,
+    /// External script/command execution (Consul-compatible)
+    Script,
+    /// Execute command inside a Docker container (Consul-compatible)
+    Docker,
 }
 
 impl CheckType {
@@ -101,6 +105,8 @@ impl CheckType {
             Self::Ttl => "ttl",
             Self::Grpc => "grpc",
             Self::Mysql => "mysql",
+            Self::Script => "script",
+            Self::Docker => "docker",
         }
     }
 
@@ -112,6 +118,8 @@ impl CheckType {
             "ttl" => Self::Ttl,
             "grpc" => Self::Grpc,
             "mysql" => Self::Mysql,
+            "script" => Self::Script,
+            "docker" => Self::Docker,
             "none" | "" => Self::None,
             _ => Self::None,
         }
@@ -119,7 +127,7 @@ impl CheckType {
 
     /// Whether this check type requires active (outbound) checking
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Tcp | Self::Http | Self::Grpc | Self::Mysql)
+        matches!(self, Self::Tcp | Self::Http | Self::Grpc | Self::Mysql | Self::Script | Self::Docker)
     }
 }
 
@@ -154,6 +162,12 @@ pub struct InstanceCheckConfig {
     pub grpc_addr: Option<String>,
     /// Database connection URL for database health check (MySQL/PostgreSQL/SQLite)
     pub db_url: Option<String>,
+    /// Script command string (Consul-compatible script check)
+    pub script: Option<String>,
+    /// Script arguments array (Consul-compatible args check)
+    pub args: Option<Vec<String>>,
+    /// Docker container ID for docker exec checks (Consul-compatible)
+    pub docker_container_id: Option<String>,
     /// The `interval` value.
     pub interval: Duration,
     /// The `timeout` value.
@@ -431,6 +445,78 @@ impl InstanceCheckRegistry {
             return;
         }
         self.apply_status_local(check_key, success, output, response_time_ms);
+    }
+
+    /// Update a check result with an explicit tri-state status (passing/warning/critical).
+    ///
+    /// Used by Consul-compatible Script and Docker checks where the exit code
+    /// maps to three states: 0 → passing, 1 → warning, other → critical.
+    /// For checks that only need binary pass/fail, use [`Self::update_check_result`].
+    pub async fn update_check_result_with_status(
+        &self,
+        check_key: &str,
+        status: CheckStatus,
+        output: String,
+        response_time_ms: u64,
+    ) {
+        // In cluster mode the replicator forwards the raw status string via
+        // replicate_ttl for full fidelity. Otherwise apply locally.
+        if let Some(replicator) = self.replicator.get()
+            && replicator
+                .replicate_ttl(check_key, status.as_str(), Some(output.as_str()))
+                .await
+        {
+            return;
+        }
+        self.apply_status_local_with_status(check_key, status, output, response_time_ms);
+    }
+
+    /// Local-only apply with explicit tri-state status.
+    ///
+    /// Unlike [`Self::apply_status_local`] which derives status from a boolean
+    /// success flag, this method sets the status directly. Used for
+    /// Consul-compatible Script/Docker checks that produce warning state.
+    pub fn apply_status_local_with_status(
+        &self,
+        check_key: &str,
+        status: CheckStatus,
+        output: String,
+        response_time_ms: u64,
+    ) {
+        let config = match self.configs.get(check_key) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        if let Some(mut s) = self.statuses.get_mut(check_key) {
+            let now = current_timestamp_ms();
+            s.last_updated = now;
+            s.last_response_time_ms = response_time_ms;
+            s.output = output;
+
+            match status {
+                CheckStatus::Passing => {
+                    s.consecutive_successes += 1;
+                    s.consecutive_failures = 0;
+                    s.status = CheckStatus::Passing;
+                    s.critical_since = None;
+                }
+                CheckStatus::Warning => {
+                    s.status = CheckStatus::Warning;
+                }
+                CheckStatus::Critical => {
+                    s.consecutive_failures += 1;
+                    s.consecutive_successes = 0;
+                    if s.status != CheckStatus::Critical {
+                        s.status = CheckStatus::Critical;
+                        s.critical_since = Some(now);
+                        self.result_handler.on_check_critical(check_key);
+                    }
+                }
+            }
+        }
+
+        self.aggregate_and_sync(&config);
     }
 
     /// Local-only apply path. Called either directly from
@@ -899,6 +985,9 @@ mod tests {
             tcp_addr: None,
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: None,
@@ -1136,6 +1225,9 @@ mod tests {
             tcp_addr: None,
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: Some(Duration::from_secs(30)),

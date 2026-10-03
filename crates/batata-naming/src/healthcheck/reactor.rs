@@ -266,7 +266,9 @@ impl HealthCheckReactor {
                     HealthCheckType::None
                     | HealthCheckType::Ttl
                     | HealthCheckType::Grpc
-                    | HealthCheckType::Mysql => {
+                    | HealthCheckType::Mysql
+                    | HealthCheckType::Script
+                    | HealthCheckType::Docker => {
                         task.do_check(&NoneHealthCheckProcessor::new()).await
                     }
                 };
@@ -548,6 +550,9 @@ mod tests {
             tcp_addr: Some("127.0.0.1:19".to_string()),
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_millis(100),
             timeout: Duration::from_millis(200),
             ttl: None,
@@ -633,6 +638,9 @@ mod tests {
             tcp_addr: Some("127.0.0.1:19".to_string()), // Port 19 — typically not listening
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_millis(100), // Fast interval for test
             timeout: Duration::from_millis(200),
             ttl: None,
@@ -718,6 +726,9 @@ mod tests {
             tcp_addr: Some("127.0.0.1:19".to_string()),
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_millis(50),
             timeout: Duration::from_millis(100),
             ttl: None,

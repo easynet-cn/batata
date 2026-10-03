@@ -1427,6 +1427,7 @@ pub async fn get_service(
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
     config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = dc_config.resolve_ns(&query.ns);
@@ -1526,6 +1527,27 @@ pub async fn get_service(
         for svc in &mut services {
             apply_central_config(svc, service_defaults.as_ref(), proxy_defaults.as_ref());
         }
+    }
+
+    // Sort by estimated RTT from the `near` node (Consul ?near= parameter).
+    if let Some(ref near_node) = query.near
+        && !near_node.is_empty()
+    {
+        let near = if near_node == "_agent" {
+            &dc_config.node_name
+        } else {
+            near_node.as_str()
+        };
+        services.sort_by(|a, b| {
+            let rtt_a = coord_service.estimate_rtt(near, &a.node);
+            let rtt_b = coord_service.estimate_rtt(near, &b.node);
+            match (rtt_a, rtt_b) {
+                (Some(ra), Some(rb)) => ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));

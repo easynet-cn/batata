@@ -108,6 +108,8 @@ pub mod snapshot_archive;
 pub mod status;
 /// The `vivaldi` module.
 pub mod vivaldi;
+/// The `xds_sync` module.
+pub mod xds_sync;
 
 // Re-export route functions for easy integration
 pub use route::routes;

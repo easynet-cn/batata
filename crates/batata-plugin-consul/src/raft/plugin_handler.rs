@@ -408,29 +408,14 @@ fn apply_consul_request(
         ConsulRaftRequest::ACLTokenSet {
             accessor_id,
             token_json,
-        } => apply_generic_put(
-            db,
-            CF_CONSUL_ACL,
-            &format!("token::{}", accessor_id),
-            &token_json,
-            log_index,
-        ),
+        } => apply_acl_token_put(db, &accessor_id, &token_json, log_index),
         ConsulRaftRequest::ACLBootstrap { token_json } => {
-            // Bootstrap token: accessor_id is embedded in the JSON
-            apply_generic_put(
-                db,
-                CF_CONSUL_ACL,
-                "token::bootstrap",
-                &token_json,
-                log_index,
-            )
+            // Bootstrap token: accessor_id and secret_id are embedded in the JSON
+            apply_acl_token_put_from_json(db, &token_json, log_index)
         }
-        ConsulRaftRequest::ACLTokenDelete { accessor_id } => apply_generic_delete(
-            db,
-            CF_CONSUL_ACL,
-            &format!("token::{}", accessor_id),
-            log_index,
-        ),
+        ConsulRaftRequest::ACLTokenDelete { accessor_id } => {
+            apply_acl_token_delete(db, &accessor_id, log_index)
+        }
         ConsulRaftRequest::ACLPolicySet { id, policy_json } => apply_generic_put(
             db,
             CF_CONSUL_ACL,
@@ -959,6 +944,141 @@ fn apply_generic_delete(db: &DB, cf_name: &str, key: &str, _log_index: u64) -> C
         }
         Err(e) => ConsulRaftResponse::failure(format!("delete {}:{} failed: {}", cf_name, key, e)),
     }
+}
+
+// ============================================================================
+// ACL token helpers — maintain both token::{secret_id} and the
+// token_accessor::{accessor_id} index so AclStore::Persistent can read
+// replicated tokens correctly on followers.
+// ============================================================================
+
+/// Write a token to RocksDB with the correct key layout:
+/// `token::{secret_id}` → token JSON, `token_accessor::{accessor_id}` → secret_id.
+fn apply_acl_token_put(
+    db: &DB,
+    accessor_id: &str,
+    token_json: &str,
+    log_index: u64,
+) -> ConsulRaftResponse {
+    // Extract secret_id from the token JSON so we can build the correct key.
+    let secret_id = extract_secret_id_from_token_json(token_json);
+    let json = rewrite_json_index(token_json, log_index, false);
+
+    let Some(cf) = db.cf_handle(CF_CONSUL_ACL) else {
+        return ConsulRaftResponse::failure(format!("CF '{}' not found", CF_CONSUL_ACL));
+    };
+
+    let token_key = format!("token::{}", secret_id);
+    let index_key = format!("token_accessor::{}", accessor_id);
+
+    match db.put_cf(cf, token_key.as_bytes(), json.as_bytes()) {
+        Ok(_) => {
+            if let Err(e) = db.put_cf(cf, index_key.as_bytes(), secret_id.as_bytes()) {
+                error!("Failed to write ACL token accessor index: {}", e);
+            }
+            debug!("Consul ACL token put {}", token_key);
+            ConsulRaftResponse::success()
+        }
+        Err(e) => ConsulRaftResponse::failure(format!("put ACL token failed: {}", e)),
+    }
+}
+
+/// Same as `apply_acl_token_put` but extracts accessor_id from the JSON too
+/// (used by ACLBootstrap where accessor_id is not a separate field).
+fn apply_acl_token_put_from_json(
+    db: &DB,
+    token_json: &str,
+    log_index: u64,
+) -> ConsulRaftResponse {
+    let parsed: serde_json::Value = match serde_json::from_str(token_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return ConsulRaftResponse::failure(format!("invalid token JSON: {}", e));
+        }
+    };
+    let accessor_id = parsed["AccessorID"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let secret_id = parsed["SecretID"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    if accessor_id.is_empty() || secret_id.is_empty() {
+        return ConsulRaftResponse::failure("missing accessor_id or secret_id in token JSON".to_string());
+    }
+    apply_acl_token_put(db, &accessor_id, token_json, log_index)
+}
+
+/// Delete a token from RocksDB by accessor_id.
+/// Looks up the accessor index to find the secret_id, then deletes both keys.
+fn apply_acl_token_delete(db: &DB, accessor_id: &str, _log_index: u64) -> ConsulRaftResponse {
+    let Some(cf) = db.cf_handle(CF_CONSUL_ACL) else {
+        return ConsulRaftResponse::failure(format!("CF '{}' not found", CF_CONSUL_ACL));
+    };
+
+    let index_key = format!("token_accessor::{}", accessor_id);
+
+    // Try the index first (O(1)).
+    let secret_id = db
+        .get_cf(cf, index_key.as_bytes())
+        .ok()
+        .flatten()
+        .and_then(|v| String::from_utf8(v).ok())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Fallback: scan token:: prefix to find a token with matching accessor_id.
+            let prefix = b"token::";
+            let iter = db.iterator_cf(
+                cf,
+                rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward),
+            );
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if !key_bytes.starts_with(prefix) {
+                    break;
+                }
+                // Skip token_accessor:: entries
+                if key_bytes.starts_with(b"token_accessor::") {
+                    continue;
+                }
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&value_bytes)
+                    && val["AccessorID"].as_str() == Some(accessor_id)
+                {
+                    let key_str = String::from_utf8_lossy(&key_bytes);
+                    return Some(key_str.strip_prefix("token::").unwrap_or("").to_string());
+                }
+            }
+            None
+        });
+
+    match secret_id {
+        Some(sid) => {
+            let token_key = format!("token::{}", sid);
+            if let Err(e) = db.delete_cf(cf, token_key.as_bytes()) {
+                return ConsulRaftResponse::failure(format!(
+                    "delete ACL token failed: {}",
+                    e
+                ));
+            }
+            let _ = db.delete_cf(cf, index_key.as_bytes());
+            debug!("Consul ACL token delete {}", token_key);
+            ConsulRaftResponse::success()
+        }
+        None => {
+            // Token not found — still succeed (idempotent delete).
+            debug!("Consul ACL token delete (not found): {}", accessor_id);
+            ConsulRaftResponse::success()
+        }
+    }
+}
+
+/// Extract the SecretID field from a serialized AclToken JSON.
+fn extract_secret_id_from_token_json(token_json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(token_json)
+        .ok()
+        .and_then(|v| v["SecretID"].as_str().map(|s| s.to_string()))
+        .unwrap_or_default()
 }
 
 fn compute_checksum(data: &[u8]) -> u64 {

@@ -9,7 +9,7 @@ use std::time::Duration;
 use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
 use tracing::{debug, warn};
 
-use super::registry::{CheckType, InstanceCheckRegistry};
+use super::registry::{CheckStatus, CheckType, InstanceCheckRegistry};
 
 /// A check task driven by InstanceCheckRegistry
 pub struct RegistryCheckTask {
@@ -70,6 +70,33 @@ impl RegistryCheckTask {
                     let addr = config.tcp_addr.as_deref().unwrap_or(&default_tcp_addr);
                     execute_tcp_check(addr, config.timeout).await
                 }
+            }
+            CheckType::Script => {
+                let (status, out) = execute_script_check(
+                    config.script.as_deref(),
+                    config.args.as_deref(),
+                    config.timeout,
+                )
+                .await;
+                let response_time_ms = start.elapsed().as_millis() as u64;
+                self.registry
+                    .update_check_result_with_status(&self.check_key, status, out, response_time_ms)
+                    .await;
+                return;
+            }
+            CheckType::Docker => {
+                let (status, out) = execute_docker_check(
+                    config.docker_container_id.as_deref(),
+                    config.script.as_deref(),
+                    config.args.as_deref(),
+                    config.timeout,
+                )
+                .await;
+                let response_time_ms = start.elapsed().as_millis() as u64;
+                self.registry
+                    .update_check_result_with_status(&self.check_key, status, out, response_time_ms)
+                    .await;
+                return;
             }
             CheckType::None | CheckType::Ttl => return,
         };
@@ -316,6 +343,189 @@ fn sanitize_db_url(url: &str) -> String {
     url.to_string()
 }
 
+/// Execute a Consul-compatible script health check.
+///
+/// Exit code mapping (matches Consul's check_monitor.go):
+/// - 0 → Passing
+/// - 1 → Warning
+/// - any other → Critical
+///
+/// If both `script` and `args` are provided, `args` takes precedence
+/// (args[0] is the program, args[1..] are arguments).
+/// If only `script` is provided, it is executed via shell (`sh -c`).
+async fn execute_script_check(
+    script: Option<&str>,
+    args: Option<&[String]>,
+    timeout_duration: Duration,
+) -> (CheckStatus, String) {
+    let start = std::time::Instant::now();
+
+    // Determine the command to execute
+    let program: &str;
+    let cmd_args: Vec<String>;
+
+    if let Some(arg_list) = args {
+        if arg_list.is_empty() {
+            return (
+                CheckStatus::Critical,
+                "Script check: args array is empty".to_string(),
+            );
+        }
+        program = &arg_list[0];
+        cmd_args = arg_list[1..].to_vec();
+    } else if let Some(s) = script {
+        // Execute via shell to support pipes, redirects, etc.
+        program = "sh";
+        cmd_args = vec!["-c".to_string(), s.to_string()];
+    } else {
+        return (
+            CheckStatus::Critical,
+            "Script check: neither script nor args provided".to_string(),
+        );
+    }
+
+    let result = tokio::time::timeout(timeout_duration, async {
+        tokio::process::Command::new(program)
+            .args(&cmd_args)
+            .output()
+            .await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let combined = if stderr.is_empty() {
+                stdout
+            } else if stdout.is_empty() {
+                stderr
+            } else {
+                format!("{}\n{}", stdout, stderr)
+            };
+
+            let status = match output.status.code() {
+                Some(0) => CheckStatus::Passing,
+                Some(1) => CheckStatus::Warning,
+                Some(_) | None => CheckStatus::Critical,
+            };
+
+            debug!(
+                "Script check exited with status {:?} ({}ms)",
+                status,
+                start.elapsed().as_millis()
+            );
+            (status, combined)
+        }
+        Ok(Err(e)) => {
+            warn!("Script check execution failed: {}", e);
+            (
+                CheckStatus::Critical,
+                format!("Script execution failed: {}", e),
+            )
+        }
+        Err(_) => {
+            warn!("Script check timed out after {:?}", timeout_duration);
+            (
+                CheckStatus::Critical,
+                format!("Script check timed out after {:?}", timeout_duration),
+            )
+        }
+    }
+}
+
+/// Execute a Consul-compatible Docker health check.
+///
+/// Runs the command inside the specified Docker container via `docker exec`.
+/// Exit code mapping is the same as script checks.
+/// Requires the `docker` CLI to be available on the host.
+async fn execute_docker_check(
+    container_id: Option<&str>,
+    script: Option<&str>,
+    args: Option<&[String]>,
+    timeout_duration: Duration,
+) -> (CheckStatus, String) {
+    let Some(container) = container_id else {
+        return (
+            CheckStatus::Critical,
+            "Docker check: no container ID specified".to_string(),
+        );
+    };
+
+    let start = std::time::Instant::now();
+
+    // Build the docker exec command: docker exec <container> <program> [args...]
+    let mut docker_args = vec!["exec".to_string(), container.to_string()];
+
+    if let Some(arg_list) = args {
+        if arg_list.is_empty() {
+            return (
+                CheckStatus::Critical,
+                "Docker check: args array is empty".to_string(),
+            );
+        }
+        docker_args.extend(arg_list.iter().cloned());
+    } else if let Some(s) = script {
+        docker_args.push("sh".to_string());
+        docker_args.push("-c".to_string());
+        docker_args.push(s.to_string());
+    } else {
+        return (
+            CheckStatus::Critical,
+            "Docker check: neither script nor args provided".to_string(),
+        );
+    }
+
+    let result = tokio::time::timeout(timeout_duration, async {
+        tokio::process::Command::new("docker")
+            .args(&docker_args)
+            .output()
+            .await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let combined = if stderr.is_empty() {
+                stdout
+            } else if stdout.is_empty() {
+                stderr
+            } else {
+                format!("{}\n{}", stdout, stderr)
+            };
+
+            let status = match output.status.code() {
+                Some(0) => CheckStatus::Passing,
+                Some(1) => CheckStatus::Warning,
+                Some(_) | None => CheckStatus::Critical,
+            };
+
+            debug!(
+                "Docker check exited with status {:?} ({}ms)",
+                status,
+                start.elapsed().as_millis()
+            );
+            (status, combined)
+        }
+        Ok(Err(e)) => {
+            warn!("Docker check execution failed: {}", e);
+            (
+                CheckStatus::Critical,
+                format!("Docker exec failed: {}", e),
+            )
+        }
+        Err(_) => {
+            warn!("Docker check timed out after {:?}", timeout_duration);
+            (
+                CheckStatus::Critical,
+                format!("Docker check timed out after {:?}", timeout_duration),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::registry::*;
@@ -342,6 +552,9 @@ mod tests {
             tcp_addr: None,
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(2),
             ttl: None,
@@ -486,5 +699,66 @@ mod tests {
     #[test]
     fn test_sanitize_db_url_no_password() {
         assert_eq!(sanitize_db_url("sqlite://data.db"), "sqlite://data.db");
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_exit_zero_is_passing() {
+        let (status, _output) =
+            execute_script_check(Some("exit 0"), None, Duration::from_secs(5)).await;
+        assert_eq!(status, CheckStatus::Passing);
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_exit_one_is_warning() {
+        let (status, _output) =
+            execute_script_check(Some("exit 1"), None, Duration::from_secs(5)).await;
+        assert_eq!(status, CheckStatus::Warning);
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_exit_two_is_critical() {
+        let (status, _output) =
+            execute_script_check(Some("exit 2"), None, Duration::from_secs(5)).await;
+        assert_eq!(status, CheckStatus::Critical);
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_no_script_or_args_is_critical() {
+        let (status, output) =
+            execute_script_check(None, None, Duration::from_secs(5)).await;
+        assert_eq!(status, CheckStatus::Critical);
+        assert!(output.contains("neither script nor args"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_empty_args_is_critical() {
+        let (status, output) = execute_script_check(
+            None,
+            Some(&[]),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(status, CheckStatus::Critical);
+        assert!(output.contains("args array is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_with_args_array() {
+        let args = vec!["true".to_string()];
+        let (status, _output) =
+            execute_script_check(None, Some(&args), Duration::from_secs(5)).await;
+        assert_eq!(status, CheckStatus::Passing);
+    }
+
+    #[tokio::test]
+    async fn test_execute_script_check_timeout_is_critical() {
+        let (status, output) = execute_script_check(
+            Some("sleep 10"),
+            None,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(status, CheckStatus::Critical);
+        assert!(output.contains("timed out"));
     }
 }

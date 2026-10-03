@@ -91,8 +91,9 @@ pub struct AclTokenExpanded {
 #[serde(rename_all = "PascalCase")]
 pub struct AclToken {
 /// The `accessor_id` field.
+    #[serde(rename = "AccessorID")]
     pub accessor_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "SecretID")]
 /// The `secret_id` field.
     pub secret_id: Option<String>,
 /// The `description` field.
@@ -264,6 +265,8 @@ pub struct ResourceRule {
     pub prefix: String,
 /// The `policy` field.
     pub policy: RulePolicy,
+/// Whether this is an exact match (true) or prefix match (false).
+    pub exact: bool,
 }
 
 /// Rule policy type
@@ -321,6 +324,12 @@ pub enum ResourceType {
     Session,
 /// The `Query` variant.
     Query,
+/// The `Namespace` variant.
+    Namespace,
+/// The `Peering` variant.
+    Peering,
+/// The `Mesh` variant.
+    Mesh,
 }
 
 /// ACL authorization result
@@ -530,6 +539,11 @@ query_prefix "" { policy = "write" }
     /// Check if ACL is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Check if RAFT replication is active (cluster mode).
+    pub fn is_raft_enabled(&self) -> bool {
+        self.raft_node.is_some()
     }
 
     /// Extract token from request.
@@ -815,6 +829,8 @@ query_prefix "" { policy = "write" }
         name: &str,
         description: &str,
         policies: Vec<String>,
+        service_identities: Option<Vec<ServiceIdentity>>,
+        node_identities: Option<Vec<NodeIdentity>>,
     ) -> AclRole {
         let now = chrono::Utc::now().to_rfc3339();
         let role_id = uuid::Uuid::new_v4().to_string();
@@ -834,8 +850,8 @@ query_prefix "" { policy = "write" }
             name: name.to_string(),
             description: description.to_string(),
             policies: policy_links,
-            service_identities: None,
-            node_identities: None,
+            service_identities,
+            node_identities,
             create_time: now.clone(),
             modify_time: now,
         };
@@ -874,6 +890,8 @@ query_prefix "" { policy = "write" }
         name: Option<&str>,
         description: Option<&str>,
         policies: Option<Vec<String>>,
+        service_identities: Option<Vec<ServiceIdentity>>,
+        node_identities: Option<Vec<NodeIdentity>>,
     ) -> Option<AclRole> {
         let mut role = self.get_role(id)?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -901,6 +919,14 @@ query_prefix "" { policy = "write" }
                 })
                 .collect();
             role.policies = policy_links;
+        }
+
+        if service_identities.is_some() {
+            role.service_identities = service_identities;
+        }
+
+        if node_identities.is_some() {
+            role.node_identities = node_identities;
         }
 
         role.modify_time = now;
@@ -1099,65 +1125,136 @@ query_prefix "" { policy = "write" }
         self.store.list_auth_methods()
     }
 
-    /// Parse policy rules into structured format
+    /// Parse policy rules into structured format.
+    /// Supports both single-line and multi-line Consul HCL blocks:
+    ///   service "web" { policy = "write" }
+    ///   service_prefix "" {
+    ///     policy = "read"
+    ///   }
     pub fn parse_rules(&self, rules: &str) -> ParsedRules {
         let mut parsed = ParsedRules::default();
 
-        for line in rules.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
+        // Strip line comments and collapse to a stream for brace matching.
+        let cleaned: String = rules
+            .lines()
+            .map(|l| {
+                let l = l.trim();
+                if l.starts_with('#') {
+                    ""
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let bytes = cleaned.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            // Skip whitespace and newlines.
+            while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
             }
 
-            // Parse rules like: agent_prefix "" { policy = "write" }
-            if let Some((resource_part, policy_part)) = line.split_once('{') {
-                let resource_part = resource_part.trim();
-                let policy_part = policy_part.trim().trim_end_matches('}').trim();
+            // Read an identifier (resource type), possibly ending with "_prefix".
+            let ident_start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+            {
+                i += 1;
+            }
+            if i == ident_start {
+                // Unexpected character; advance to avoid infinite loop.
+                i += 1;
+                continue;
+            }
+            let ident = &cleaned[ident_start..i];
 
-                // Extract prefix
-                let (resource_type, prefix) =
-                    if let Some(rest) = resource_part.strip_prefix("agent_prefix") {
-                        ("agent", rest.trim().trim_matches('"'))
-                    } else if let Some(rest) = resource_part.strip_prefix("key_prefix") {
-                        ("key", rest.trim().trim_matches('"'))
-                    } else if let Some(rest) = resource_part.strip_prefix("node_prefix") {
-                        ("node", rest.trim().trim_matches('"'))
-                    } else if let Some(rest) = resource_part.strip_prefix("service_prefix") {
-                        ("service", rest.trim().trim_matches('"'))
-                    } else if let Some(rest) = resource_part.strip_prefix("session_prefix") {
-                        ("session", rest.trim().trim_matches('"'))
-                    } else if let Some(rest) = resource_part.strip_prefix("query_prefix") {
-                        ("query", rest.trim().trim_matches('"'))
-                    } else {
-                        continue;
-                    };
+            // Skip whitespace before the name (quoted string).
+            while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                i += 1;
+            }
 
-                // Extract policy
-                let policy = if let Some(policy_str) = policy_part.strip_prefix("policy") {
-                    let policy_str = policy_str
-                        .trim()
-                        .trim_start_matches('=')
-                        .trim()
-                        .trim_matches('"');
-                    policy_str.parse::<RulePolicy>().unwrap_or(RulePolicy::Deny)
-                } else {
-                    continue;
-                };
-
-                let rule = ResourceRule {
-                    prefix: prefix.to_string(),
-                    policy,
-                };
-
-                match resource_type {
-                    "agent" => parsed.agent_rules.push(rule),
-                    "key" => parsed.key_rules.push(rule),
-                    "node" => parsed.node_rules.push(rule),
-                    "service" => parsed.service_rules.push(rule),
-                    "session" => parsed.session_rules.push(rule),
-                    "query" => parsed.query_rules.push(rule),
-                    _ => {}
+            // Extract the quoted name.
+            let mut prefix = String::new();
+            if i < bytes.len() && bytes[i] == b'"' {
+                i += 1;
+                let name_start = i;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += 1;
                 }
+                if i < bytes.len() {
+                    prefix = cleaned[name_start..i].to_string();
+                    i += 1; // closing quote
+                }
+            }
+
+            // Skip whitespace before '{'
+            while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                i += 1;
+            }
+
+            if i >= bytes.len() || bytes[i] != b'{' {
+                continue;
+            }
+            i += 1; // opening brace
+
+            // Find matching closing brace.
+            let body_start = i;
+            let mut depth = 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i] == b'{' {
+                    depth += 1;
+                } else if bytes[i] == b'}' {
+                    depth -= 1;
+                }
+                if depth > 0 {
+                    i += 1;
+                }
+            }
+            let body = &cleaned[body_start..i];
+            if i < bytes.len() {
+                i += 1; // closing brace
+            }
+
+            // Parse policy from body: look for `policy = "value"`.
+            let policy = body
+                .split('=')
+                .nth(1)
+                .map(|v| v.trim().trim_matches('"').to_string())
+                .and_then(|p| p.parse::<RulePolicy>().ok())
+                .unwrap_or(RulePolicy::Deny);
+
+            // Determine resource type and whether exact or prefix match.
+            let (resource_type, exact) = if let Some(rt) = ident.strip_suffix("_prefix") {
+                (rt, false)
+            } else {
+                (ident, true)
+            };
+
+            let rule = ResourceRule {
+                prefix,
+                policy,
+                exact,
+            };
+
+            match resource_type {
+                "agent" => parsed.agent_rules.push(rule),
+                "key" => parsed.key_rules.push(rule),
+                "node" => parsed.node_rules.push(rule),
+                "service" => parsed.service_rules.push(rule),
+                "session" => parsed.session_rules.push(rule),
+                "query" => parsed.query_rules.push(rule),
+                "namespace" | "operator" | "keyring" | "peering" | "mesh" => {
+                    // Global resources are stored as key rules for now (single global match).
+                    // They use the resource name as the key and exact match.
+                    parsed.key_rules.push(rule);
+                }
+                _ => {}
             }
         }
 
@@ -1176,23 +1273,58 @@ query_prefix "" { policy = "write" }
             return AuthzResult::allowed();
         }
 
-        // Get all rules from token's policies (cached to avoid re-parsing on every request)
+        // Collect all rules: token's direct policies + role policies + identity implicit rules.
         let mut all_rules = ParsedRules::default();
+
         for policy_link in &token.policies {
-            if let Some(policy) = self.get_policy(&policy_link.id) {
-                let parsed = if let Some(cached) = PARSED_RULES_CACHE.get(&policy.id) {
-                    cached
-                } else {
-                    let fresh = self.parse_rules(&policy.rules);
-                    PARSED_RULES_CACHE.insert(policy.id.clone(), fresh.clone());
-                    fresh
-                };
-                all_rules.agent_rules.extend(parsed.agent_rules);
-                all_rules.key_rules.extend(parsed.key_rules);
-                all_rules.node_rules.extend(parsed.node_rules);
-                all_rules.service_rules.extend(parsed.service_rules);
-                all_rules.session_rules.extend(parsed.session_rules);
-                all_rules.query_rules.extend(parsed.query_rules);
+            self.append_policy_rules(&policy_link.id, &mut all_rules);
+        }
+
+        for role_link in &token.roles {
+            if let Some(role) = self.get_role(&role_link.id) {
+                for policy_link in &role.policies {
+                    self.append_policy_rules(&policy_link.id, &mut all_rules);
+                }
+                // Service identity implicit rules.
+                if let Some(service_ids) = &role.service_identities {
+                    for si in service_ids {
+                        // service "<name>" { policy = "write" }
+                        all_rules.service_rules.push(ResourceRule {
+                            prefix: si.service_name.clone(),
+                            policy: RulePolicy::Write,
+                            exact: true,
+                        });
+                        // service_prefix "" { policy = "read" }
+                        all_rules.service_rules.push(ResourceRule {
+                            prefix: String::new(),
+                            policy: RulePolicy::Read,
+                            exact: false,
+                        });
+                    }
+                }
+                // Node identity implicit rules.
+                if let Some(node_ids) = &role.node_identities {
+                    for ni in node_ids {
+                        // node "<name>" { policy = "write" }
+                        all_rules.node_rules.push(ResourceRule {
+                            prefix: ni.node_name.clone(),
+                            policy: RulePolicy::Write,
+                            exact: true,
+                        });
+                        // node_prefix "" { policy = "read" }
+                        all_rules.node_rules.push(ResourceRule {
+                            prefix: String::new(),
+                            policy: RulePolicy::Read,
+                            exact: false,
+                        });
+                        // service_prefix "" { policy = "read" }
+                        all_rules.service_rules.push(ResourceRule {
+                            prefix: String::new(),
+                            policy: RulePolicy::Read,
+                            exact: false,
+                        });
+                    }
+                }
             }
         }
 
@@ -1206,21 +1338,33 @@ query_prefix "" { policy = "write" }
             ResourceType::Service => &all_rules.service_rules,
             ResourceType::Session => &all_rules.session_rules,
             ResourceType::Query => &all_rules.query_rules,
+            ResourceType::Namespace | ResourceType::Peering | ResourceType::Mesh => {
+                &all_rules.key_rules
+            }
         };
 
-        // Find the most specific matching rule
-        let mut best_match: Option<&ResourceRule> = None;
-        let mut best_match_len = 0;
+        // Find the best matching rule: exact match takes precedence over prefix match.
+        let mut exact_match: Option<&ResourceRule> = None;
+        let mut prefix_match: Option<&ResourceRule> = None;
+        let mut best_prefix_len = 0;
 
         for rule in rules {
-            if resource_name.starts_with(&rule.prefix) && rule.prefix.len() >= best_match_len {
-                best_match = Some(rule);
-                best_match_len = rule.prefix.len();
+            if rule.exact {
+                if rule.prefix == resource_name {
+                    exact_match = Some(rule);
+                }
+            } else if resource_name.starts_with(&rule.prefix)
+                && rule.prefix.len() >= best_prefix_len
+            {
+                prefix_match = Some(rule);
+                best_prefix_len = rule.prefix.len();
             }
         }
 
+        let matched = exact_match.or(prefix_match);
+
         // Check authorization
-        if let Some(rule) = best_match {
+        if let Some(rule) = matched {
             if write {
                 if rule.policy.allows_write() {
                     AuthzResult::allowed()
@@ -1239,6 +1383,25 @@ query_prefix "" { policy = "write" }
             } else {
                 AuthzResult::denied("Permission denied: no matching ACL rule")
             }
+        }
+    }
+
+    /// Append parsed rules of a policy (by id or name) into the accumulated rules.
+    fn append_policy_rules(&self, policy_id: &str, all_rules: &mut ParsedRules) {
+        if let Some(policy) = self.get_policy(policy_id) {
+            let parsed = if let Some(cached) = PARSED_RULES_CACHE.get(&policy.id) {
+                cached
+            } else {
+                let fresh = self.parse_rules(&policy.rules);
+                PARSED_RULES_CACHE.insert(policy.id.clone(), fresh.clone());
+                fresh
+            };
+            all_rules.agent_rules.extend(parsed.agent_rules);
+            all_rules.key_rules.extend(parsed.key_rules);
+            all_rules.node_rules.extend(parsed.node_rules);
+            all_rules.service_rules.extend(parsed.service_rules);
+            all_rules.session_rules.extend(parsed.session_rules);
+            all_rules.query_rules.extend(parsed.query_rules);
         }
     }
 
@@ -1279,8 +1442,10 @@ pub struct BootstrapResponse {
     #[serde(rename = "ID")]
 /// The `id` field.
     pub id: String,
+    #[serde(rename = "AccessorID")]
 /// The `accessor_id` field.
     pub accessor_id: String,
+    #[serde(rename = "SecretID")]
 /// The `secret_id` field.
     pub secret_id: String,
 /// The `description` field.
@@ -1315,8 +1480,10 @@ pub struct LoginRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LoginResponse {
+    #[serde(rename = "AccessorID")]
 /// The `accessor_id` field.
     pub accessor_id: String,
+    #[serde(rename = "SecretID")]
 /// The `secret_id` field.
     pub secret_id: String,
 /// The `description` field.
@@ -1658,12 +1825,56 @@ pub async fn acl_login(
         })
     });
 
+    // Apply binding rules: map auth method's binding rules to policies/roles on the token.
+    let binding_rules = acl_service
+        .list_binding_rules()
+        .into_iter()
+        .filter(|r| r.auth_method == body.auth_method)
+        .collect::<Vec<_>>();
+
+    let mut token_policies: Vec<PolicyLink> = Vec::new();
+    let mut token_roles: Vec<RoleLink> = Vec::new();
+
+    for br in &binding_rules {
+        let bind_name = br.bind_name.clone();
+        match br.bind_type.as_str() {
+            "policy" => {
+                if let Some(policy) = acl_service.get_policy(&bind_name) {
+                    token_policies.push(PolicyLink {
+                        id: policy.id.clone(),
+                        name: policy.name.clone(),
+                    });
+                }
+            }
+            "role" => {
+                if let Some(role) = acl_service.get_role(&bind_name) {
+                    token_roles.push(RoleLink {
+                        id: role.id.clone(),
+                        name: role.name.clone(),
+                    });
+                }
+            }
+            "service" => {
+                // Service identity bind: create a policy granting the service identity.
+                // In Consul this is handled implicitly; here we attach a role-like identity.
+                // For simplicity we resolve to a policy if one named after the service exists.
+                if let Some(policy) = acl_service.get_policy(&bind_name) {
+                    token_policies.push(PolicyLink {
+                        id: policy.id.clone(),
+                        name: policy.name.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
     let token = AclToken {
         accessor_id: accessor_id.clone(),
         secret_id: Some(secret_id.clone()),
         description: format!("Login token via {}", body.auth_method),
-        policies: vec![], // No policies by default; binding rules would add them
-        roles: vec![],
+        policies: token_policies.clone(),
+        roles: token_roles.clone(),
         local: auth_method.token_locality.as_deref() == Some("local"),
         expiration_time: expiration_time.clone(),
         expiration_ttl: None,
@@ -1677,8 +1888,8 @@ pub async fn acl_login(
         accessor_id,
         secret_id,
         description: format!("Login token via {}", body.auth_method),
-        policies: vec![],
-        roles: vec![],
+        policies: token_policies,
+        roles: token_roles,
         local: auth_method.token_locality.as_deref() == Some("local"),
         auth_method: Some(body.auth_method.clone()),
         expiration_time,
@@ -1905,6 +2116,8 @@ pub async fn create_role(
             &body.name,
             body.description.as_deref().unwrap_or(""),
             policies,
+            body.service_identities.clone(),
+            body.node_identities.clone(),
         )
         .await;
 
@@ -1945,7 +2158,14 @@ pub async fn update_role(
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     match acl_service
-        .update_role(&id, Some(&body.name), body.description.as_deref(), policies)
+        .update_role(
+            &id,
+            Some(&body.name),
+            body.description.as_deref(),
+            policies,
+            body.service_identities.clone(),
+            body.node_identities.clone(),
+        )
         .await
     {
         Some(role) => consul_ok(&meta).json(role),
@@ -2361,7 +2581,7 @@ fn synthetic_policy_id(rules: &str) -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TokenUpdateRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "AccessorID")]
 /// The `accessor_id` field.
     pub accessor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2403,7 +2623,7 @@ pub struct PolicyUpdateRequest {
 
 impl AclService {
     /// Update an existing token
-    pub fn update_token(&self, accessor_id: &str, update: TokenUpdateRequest) -> Option<AclToken> {
+    pub async fn update_token(&self, accessor_id: &str, update: TokenUpdateRequest) -> Option<AclToken> {
         let now = chrono::Utc::now().to_rfc3339();
         let (secret_key, mut token) = self.store.find_token_by_accessor(accessor_id)?;
 
@@ -2423,11 +2643,30 @@ impl AclService {
 
         self.store.put_token(&secret_key, &token);
         TOKEN_CACHE.invalidate(&secret_key);
+
+        if let Some(ref raft) = self.raft_node {
+            let token_json = serde_json::to_string(&token).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLTokenSet {
+                    accessor_id: token.accessor_id.clone(),
+                    token_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLTokenSet (update) rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLTokenSet (update) failed: {}", e);
+                }
+                _ => {}
+            }
+        }
         Some(token)
     }
 
     /// Update an existing policy
-    pub fn update_policy(&self, id: &str, update: PolicyUpdateRequest) -> Option<AclPolicy> {
+    pub async fn update_policy(&self, id: &str, update: PolicyUpdateRequest) -> Option<AclPolicy> {
         let now = chrono::Utc::now().to_rfc3339();
         let mut policy = self.store.get_policy(id)?;
 
@@ -2450,11 +2689,30 @@ impl AclService {
         POLICY_CACHE.invalidate(&policy.id);
         POLICY_CACHE.invalidate(&policy.name);
         PARSED_RULES_CACHE.invalidate(&policy.id);
+
+        if let Some(ref raft) = self.raft_node {
+            let policy_json = serde_json::to_string(&policy).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLPolicySet {
+                    id: policy.id.clone(),
+                    policy_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLPolicySet (update) rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLPolicySet (update) failed: {}", e);
+                }
+                _ => {}
+            }
+        }
         Some(policy)
     }
 
     /// Create a binding rule
-    pub fn create_binding_rule(&self, req: BindingRuleRequest) -> BindingRule {
+    pub async fn create_binding_rule(&self, req: BindingRuleRequest) -> BindingRule {
         let rule = BindingRule {
             id: uuid::Uuid::new_v4().to_string(),
             description: req.description.unwrap_or_default(),
@@ -2467,6 +2725,25 @@ impl AclService {
             modify_index: 1,
         };
         self.store.put_binding_rule(&rule);
+
+        if let Some(ref raft) = self.raft_node {
+            let rule_json = serde_json::to_string(&rule).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLBindingRuleSet {
+                    id: rule.id.clone(),
+                    rule_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLBindingRuleSet rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLBindingRuleSet failed: {}", e);
+                }
+                _ => {}
+            }
+        }
         rule
     }
 
@@ -2476,7 +2753,7 @@ impl AclService {
     }
 
     /// Update a binding rule
-    pub fn update_binding_rule(&self, id: &str, req: BindingRuleRequest) -> Option<BindingRule> {
+    pub async fn update_binding_rule(&self, id: &str, req: BindingRuleRequest) -> Option<BindingRule> {
         let mut rule = self.store.get_binding_rule(id)?;
         if let Some(desc) = req.description {
             rule.description = desc;
@@ -2488,12 +2765,48 @@ impl AclService {
         rule.bind_vars = req.bind_vars;
         rule.modify_index += 1;
         self.store.put_binding_rule(&rule);
+
+        if let Some(ref raft) = self.raft_node {
+            let rule_json = serde_json::to_string(&rule).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::ACLBindingRuleSet {
+                    id: rule.id.clone(),
+                    rule_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLBindingRuleSet (update) rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLBindingRuleSet (update) failed: {}", e);
+                }
+                _ => {}
+            }
+        }
         Some(rule)
     }
 
     /// Delete a binding rule
-    pub fn delete_binding_rule(&self, id: &str) -> bool {
-        self.store.remove_binding_rule(id)
+    pub async fn delete_binding_rule(&self, id: &str) -> bool {
+        let removed = self.store.remove_binding_rule(id);
+        if removed && let Some(ref raft) = self.raft_node {
+            match raft
+                .write(ConsulRaftRequest::ACLBindingRuleDelete {
+                    id: id.to_string(),
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ACLBindingRuleDelete rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ACLBindingRuleDelete failed: {}", e);
+                }
+                _ => {}
+            }
+        }
+        removed
     }
 
     /// List binding rules
@@ -2515,7 +2828,7 @@ pub async fn update_token(
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    match acl_service.update_token(&accessor_id, body.into_inner()) {
+    match acl_service.update_token(&accessor_id, body.into_inner()).await {
         Some(token) => consul_ok(&meta).json(token),
         None => HttpResponse::NotFound().consul_error("Token not found"),
     }
@@ -2530,7 +2843,7 @@ pub async fn update_policy(
 ) -> HttpResponse {
     let id = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    match acl_service.update_policy(&id, body.into_inner()) {
+    match acl_service.update_policy(&id, body.into_inner()).await {
         Some(policy) => consul_ok(&meta).json(policy),
         None => HttpResponse::NotFound().consul_error("Policy not found"),
     }
@@ -2566,18 +2879,20 @@ pub async fn get_role_by_name(
 
 /// GET /v1/acl/replication - ACL replication status
 pub async fn acl_replication(
+    acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
+    let raft_enabled = acl_service.is_raft_enabled();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(AclReplicationStatus {
-        enabled: false,
-        running: false,
+        enabled: raft_enabled,
+        running: raft_enabled,
         source_datacenter: dc_config.primary_datacenter.clone(),
         replication_type: "tokens".to_string(),
-        replicated_index: 0,
+        replicated_index: index_provider.current_index(ConsulTable::ACL),
         replicated_role_index: 0,
-        replicated_token_index: 0,
+        replicated_token_index: index_provider.current_index(ConsulTable::ACL),
         last_success: None,
         last_error: None,
         last_error_message: None,
@@ -2599,7 +2914,7 @@ pub async fn create_binding_rule(
     body: web::Json<BindingRuleRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let rule = acl_service.create_binding_rule(body.into_inner());
+    let rule = acl_service.create_binding_rule(body.into_inner()).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
     consul_ok(&meta).json(rule)
 }
@@ -2627,7 +2942,7 @@ pub async fn update_binding_rule(
 ) -> HttpResponse {
     let id = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    match acl_service.update_binding_rule(&id, body.into_inner()) {
+    match acl_service.update_binding_rule(&id, body.into_inner()).await {
         Some(rule) => consul_ok(&meta).json(rule),
         None => HttpResponse::NotFound().consul_error("Binding rule not found"),
     }
@@ -2641,7 +2956,7 @@ pub async fn delete_binding_rule(
 ) -> HttpResponse {
     let id = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    if acl_service.delete_binding_rule(&id) {
+    if acl_service.delete_binding_rule(&id).await {
         consul_ok(&meta).json(true)
     } else {
         HttpResponse::NotFound().consul_error("Binding rule not found")
@@ -3401,7 +3716,13 @@ mod tests {
 
         // Create role
         let role = service
-            .create_role("acl-test-role", "Test role", vec![policy.name.clone()])
+            .create_role(
+                "acl-test-role",
+                "Test role",
+                vec![policy.name.clone()],
+                None,
+                None,
+            )
             .await;
         assert_eq!(role.name, "acl-test-role");
         assert_eq!(role.description, "Test role");
@@ -3426,6 +3747,8 @@ mod tests {
                 &role.id,
                 Some("acl-renamed-role"),
                 Some("Updated desc"),
+                None,
+                None,
                 None,
             )
             .await;
@@ -3585,8 +3908,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_binding_rule_crud_lifecycle() {
+    #[tokio::test]
+    async fn test_binding_rule_crud_lifecycle() {
         let service = AclService::new();
 
         // Create
@@ -3597,7 +3920,7 @@ mod tests {
             bind_type: "service".into(),
             bind_name: "web-${serviceaccount.name}".into(),
             bind_vars: None,
-        });
+        }).await;
         assert!(!rule.id.is_empty(), "Rule ID should be generated");
         assert_eq!(rule.auth_method, "kubernetes");
         assert_eq!(rule.bind_type, "service");
@@ -3628,7 +3951,7 @@ mod tests {
                 bind_name: "admin".into(),
                 bind_vars: None,
             },
-        );
+        ).await;
         assert!(updated.is_some());
         let updated = updated.unwrap();
         assert_eq!(updated.bind_type, "role");
@@ -3637,24 +3960,24 @@ mod tests {
         assert_eq!(updated.modify_index, rule.modify_index + 1);
 
         // Delete
-        assert!(service.delete_binding_rule(&rule.id));
+        assert!(service.delete_binding_rule(&rule.id).await);
         assert!(
             service.get_binding_rule(&rule.id).is_none(),
             "Rule should be deleted"
         );
     }
 
-    #[test]
-    fn test_binding_rule_delete_nonexistent() {
+    #[tokio::test]
+    async fn test_binding_rule_delete_nonexistent() {
         let service = AclService::new();
         assert!(
-            !service.delete_binding_rule("nonexistent-id"),
+            !service.delete_binding_rule("nonexistent-id").await,
             "Deleting nonexistent rule should return false"
         );
     }
 
-    #[test]
-    fn test_binding_rule_update_nonexistent() {
+    #[tokio::test]
+    async fn test_binding_rule_update_nonexistent() {
         let service = AclService::new();
         let result = service.update_binding_rule(
             "nonexistent-id",
@@ -3666,15 +3989,15 @@ mod tests {
                 bind_name: "test".into(),
                 bind_vars: None,
             },
-        );
+        ).await;
         assert!(
             result.is_none(),
             "Updating nonexistent rule should return None"
         );
     }
 
-    #[test]
-    fn test_binding_rule_multiple_rules() {
+    #[tokio::test]
+    async fn test_binding_rule_multiple_rules() {
         let service = AclService::new();
 
         let rule1 = service.create_binding_rule(BindingRuleRequest {
@@ -3684,7 +4007,7 @@ mod tests {
             bind_type: "service".into(),
             bind_name: "web".into(),
             bind_vars: None,
-        });
+        }).await;
         let rule2 = service.create_binding_rule(BindingRuleRequest {
             description: None,
             auth_method: "jwt".into(),
@@ -3692,7 +4015,7 @@ mod tests {
             bind_type: "role".into(),
             bind_name: "admin".into(),
             bind_vars: None,
-        });
+        }).await;
 
         let rules = service.list_binding_rules();
         assert!(rules.len() >= 2, "Should have at least 2 binding rules");
@@ -3700,7 +4023,7 @@ mod tests {
         assert!(rules.iter().any(|r| r.id == rule2.id));
 
         // Delete one, verify other remains
-        service.delete_binding_rule(&rule1.id);
+        service.delete_binding_rule(&rule1.id).await;
         let rules = service.list_binding_rules();
         assert!(
             !rules.iter().any(|r| r.id == rule1.id),
@@ -3709,6 +4032,222 @@ mod tests {
         assert!(
             rules.iter().any(|r| r.id == rule2.id),
             "Other rule should remain"
+        );
+    }
+
+    #[test]
+    fn test_parse_rules_multiline_hcl() {
+        let service = AclService::new();
+        let rules = r#"
+service "web" {
+  policy = "write"
+}
+service_prefix "" {
+  policy = "read"
+}
+key "foo/bar" {
+  policy = "read"
+}
+node_prefix "" {
+  policy = "read"
+}
+"#;
+        let parsed = service.parse_rules(rules);
+        // service "web" exact + service_prefix "" prefix = 2 service rules
+        assert_eq!(parsed.service_rules.len(), 2);
+        assert!(parsed.service_rules.iter().any(|r| r.exact && r.prefix == "web"));
+        assert!(parsed.service_rules.iter().any(|r| !r.exact && r.prefix.is_empty()));
+        // key "foo/bar" exact = 1 key rule
+        assert_eq!(parsed.key_rules.len(), 1);
+        assert_eq!(parsed.key_rules[0].prefix, "foo/bar");
+        assert!(parsed.key_rules[0].exact);
+        // node_prefix "" = 1 node rule
+        assert_eq!(parsed.node_rules.len(), 1);
+        assert!(!parsed.node_rules[0].exact);
+    }
+
+    #[test]
+    fn test_parse_rules_exact_vs_prefix() {
+        let service = AclService::new();
+        let rules = r#"
+service "web" { policy = "write" }
+service_prefix "web" { policy = "read" }
+"#;
+        let parsed = service.parse_rules(rules);
+        assert_eq!(parsed.service_rules.len(), 2);
+        let exact = parsed.service_rules.iter().find(|r| r.exact).unwrap();
+        let prefix = parsed.service_rules.iter().find(|r| !r.exact).unwrap();
+        assert_eq!(exact.prefix, "web");
+        assert_eq!(exact.policy, RulePolicy::Write);
+        assert_eq!(prefix.prefix, "web");
+        assert_eq!(prefix.policy, RulePolicy::Read);
+    }
+
+    #[tokio::test]
+    async fn test_authorize_exact_match_precedence() {
+        let service = AclService::new();
+        let policy = service
+            .create_policy(
+                "exact-test",
+                "test",
+                r#"
+service "web" { policy = "write" }
+service_prefix "web" { policy = "read" }
+"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let token = service
+            .create_token("t", vec![policy.name.clone()], vec![], false, None)
+            .await;
+
+        // Exact match "web" grants write; should win over prefix read.
+        let result = service.authorize(&token, ResourceType::Service, "web", true);
+        assert!(result.allowed, "Exact write match should allow write on 'web'");
+
+        // "web2" matches prefix "web" (read only) → write denied.
+        let result = service.authorize(&token, ResourceType::Service, "web2", true);
+        assert!(
+            !result.allowed,
+            "Prefix read-only should deny write on 'web2'"
+        );
+        // But read should be allowed on "web2".
+        let result = service.authorize(&token, ResourceType::Service, "web2", false);
+        assert!(result.allowed, "Prefix read should allow read on 'web2'");
+    }
+
+    #[tokio::test]
+    async fn test_authorize_role_policy_applied() {
+        let service = AclService::new();
+        let policy = service
+            .create_policy(
+                "role-policy",
+                "grants service read",
+                r#"service_prefix "" { policy = "read" }"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let role = service
+            .create_role(
+                "reader-role",
+                "read all services",
+                vec![policy.name.clone()],
+                None,
+                None,
+            )
+            .await;
+
+        // Token has NO direct policy, only the role.
+        let token = service
+            .create_token("role-token", vec![], vec![role.name.clone()], false, None)
+            .await;
+
+        let result = service.authorize(&token, ResourceType::Service, "anything", false);
+        assert!(
+            result.allowed,
+            "Role policy should grant read on services"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authorize_service_identity() {
+        let service = AclService::new();
+        let role = service
+            .create_role(
+                "svc-identity-role",
+                "web service identity",
+                vec![],
+                Some(vec![ServiceIdentity {
+                    service_name: "web".to_string(),
+                    datacenters: None,
+                }]),
+                None,
+            )
+            .await;
+
+        let token = service
+            .create_token("si-token", vec![], vec![role.name.clone()], false, None)
+            .await;
+
+        // Service identity grants write on the named service.
+        let result = service.authorize(&token, ResourceType::Service, "web", true);
+        assert!(result.allowed, "Service identity grants write on 'web'");
+
+        // Service identity grants read on all services.
+        let result = service.authorize(&token, ResourceType::Service, "other", false);
+        assert!(result.allowed, "Service identity grants read on all services");
+
+        // But write on other services is denied.
+        let result = service.authorize(&token, ResourceType::Service, "other", true);
+        assert!(!result.allowed, "Service identity does not grant write on other services");
+    }
+
+    #[tokio::test]
+    async fn test_authorize_node_identity() {
+        let service = AclService::new();
+        let role = service
+            .create_role(
+                "node-identity-role",
+                "node1 identity",
+                vec![],
+                None,
+                Some(vec![NodeIdentity {
+                    node_name: "node1".to_string(),
+                    datacenter: "dc1".to_string(),
+                }]),
+            )
+            .await;
+
+        let token = service
+            .create_token("ni-token", vec![], vec![role.name.clone()], false, None)
+            .await;
+
+        // Node identity grants write on the named node.
+        let result = service.authorize(&token, ResourceType::Node, "node1", true);
+        assert!(result.allowed, "Node identity grants write on 'node1'");
+
+        // Node identity grants read on all nodes.
+        let result = service.authorize(&token, ResourceType::Node, "node2", false);
+        assert!(result.allowed, "Node identity grants read on all nodes");
+
+        // Node identity also grants read on all services.
+        let result = service.authorize(&token, ResourceType::Service, "web", false);
+        assert!(result.allowed, "Node identity grants read on all services");
+    }
+
+    #[tokio::test]
+    async fn test_create_role_with_identities() {
+        let service = AclService::new();
+        let role = service
+            .create_role(
+                "identity-role",
+                "has identities",
+                vec![],
+                Some(vec![ServiceIdentity {
+                    service_name: "web".to_string(),
+                    datacenters: None,
+                }]),
+                Some(vec![NodeIdentity {
+                    node_name: "node1".to_string(),
+                    datacenter: "dc1".to_string(),
+                }]),
+            )
+            .await;
+
+        assert!(role.service_identities.is_some());
+        assert_eq!(role.service_identities.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            role.service_identities.as_ref().unwrap()[0].service_name,
+            "web"
+        );
+        assert!(role.node_identities.is_some());
+        assert_eq!(
+            role.node_identities.as_ref().unwrap()[0].node_name,
+            "node1"
         );
     }
 }

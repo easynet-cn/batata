@@ -30,6 +30,7 @@ use crate::internal::{
 };
 use crate::model::ConsulDatacenterConfig;
 use crate::naming_store::ConsulNamingStore;
+use crate::peering::{ConsulPeeringService, PeeringImportedService};
 
 // ============================================================================
 // UI Handlers
@@ -355,6 +356,26 @@ async fn internal_rpc_methods() -> HttpResponse {
     HttpResponse::Ok().json(methods)
 }
 
+#[post("/peering/{name}/import")]
+async fn peering_import_services(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    peering_service: web::Data<ConsulPeeringService>,
+    path: web::Path<String>,
+    body: web::Json<Vec<PeeringImportedService>>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    crate::peering::import_peering_services(
+        req,
+        acl_service,
+        peering_service,
+        path,
+        body,
+        index_provider,
+    )
+    .await
+}
+
 /// The `routes` function.
 pub fn routes() -> Scope {
     web::scope("/internal")
@@ -373,4 +394,5 @@ pub fn routes() -> Scope {
         .service(assign_service_virtual_ip)
         .service(acl_authorize)
         .service(internal_rpc_methods)
+        .service(peering_import_services)
 }

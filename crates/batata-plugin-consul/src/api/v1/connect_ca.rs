@@ -408,6 +408,23 @@ async fn get_leaf_cert(
         .await
 }
 
+#[get("/service/{service_id}")]
+async fn get_service_identity(
+    req: HttpRequest,
+    agent: web::Data<crate::agent::ConsulAgentService>,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    dc_config: web::Data<crate::model::ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+    query: web::Query<crate::connect_ca::ServiceIdentityQueryParams>,
+) -> HttpResponse {
+    crate::connect_ca::get_service_identity(
+        req, agent, acl_service, ca_service, dc_config, index_provider, path, query,
+    )
+    .await
+}
+
 #[post("/authorize")]
 async fn connect_authorize(
     req: HttpRequest,
@@ -435,6 +452,26 @@ async fn get_leaf_cert_persistent(
         index_provider,
         path,
         query,
+    )
+    .await
+}
+
+#[get("/service/{service_id}")]
+async fn get_service_identity_persistent(
+    req: HttpRequest,
+    agent: web::Data<crate::agent::ConsulAgentService>,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    dc_config: web::Data<crate::model::ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+    query: web::Query<crate::connect_ca::ServiceIdentityQueryParams>,
+) -> HttpResponse {
+    // Service identity uses the same handler for both memory and persistent
+    // modes because leaf cert generation and CA roots are identical regardless
+    // of the storage backend.
+    crate::connect_ca::get_service_identity(
+        req, agent, acl_service, ca_service, dc_config, index_provider, path, query,
     )
     .await
 }
@@ -473,6 +510,8 @@ pub fn routes() -> Scope {
         .service(get_intention)
         .service(update_intention)
         .service(delete_intention)
+        .service(get_service_identity)
+        .service(get_service_identity_persistent)
         .service(get_ca_roots_persistent)
         .service(get_ca_configuration_persistent)
         .service(set_ca_configuration_persistent)
@@ -518,8 +557,10 @@ pub fn agent_connect_routes() -> Scope {
     web::scope("/connect")
         .service(agent_get_ca_roots)
         .service(get_leaf_cert)
+        .service(get_service_identity)
         .service(connect_authorize)
         .service(agent_get_ca_roots_persistent)
         .service(get_leaf_cert_persistent)
+        .service(get_service_identity_persistent)
         .service(connect_authorize_persistent)
 }

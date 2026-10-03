@@ -465,6 +465,7 @@ pub async fn execute_query(
     query_service: web::Data<ConsulQueryService>,
     naming_store: web::Data<ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
 ) -> HttpResponse {
     let id = path.into_inner();
     let dc = dc_config.resolve_dc(&query_params.dc);
@@ -635,6 +636,32 @@ pub async fn execute_query(
     } else {
         0
     };
+
+    // Sort by estimated RTT from the `near` node. The request `?near=` param
+    // takes precedence over the query definition's `Service.Near` field.
+    let near = query_params
+        .near
+        .as_deref()
+        .or(query.service.near.as_deref());
+    if let Some(near_node) = near
+        && !near_node.is_empty()
+    {
+        let near = if near_node == "_agent" {
+            &dc_config.node_name
+        } else {
+            near_node
+        };
+        nodes.sort_by(|a, b| {
+            let rtt_a = coord_service.estimate_rtt(near, &a.node.node);
+            let rtt_b = coord_service.estimate_rtt(near, &b.node.node);
+            match (rtt_a, rtt_b) {
+                (Some(ra), Some(rb)) => ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+    }
 
     let result = PreparedQueryExecuteResult {
         service: service_name.clone(),

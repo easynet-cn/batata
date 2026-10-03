@@ -14,10 +14,10 @@ use tracing::{error, info};
 use crate::constants::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
 
 use crate::acl::{AclService, ResourceType};
+use crate::agent::ConsulAgentService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::ConsulError;
-use crate::model::ConsulErrorBody;
+use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
@@ -113,6 +113,43 @@ pub struct LeafCert {
     #[serde(rename = "ServiceURI")]
 /// The `service_uri` field.
     pub service_uri: String,
+/// The `valid_after` field.
+    pub valid_after: String,
+/// The `valid_before` field.
+    pub valid_before: String,
+/// The `create_index` field.
+    pub create_index: u64,
+/// The `modify_index` field.
+    pub modify_index: u64,
+}
+
+/// Service identity response for `/v1/connect/service/{service_id}`.
+///
+/// Combines the leaf certificate, CA roots, and SPIFFE identity into a single
+/// response so sidecar proxies can obtain all mTLS material in one call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ServiceIdentity {
+/// The `service_name` field.
+    pub service_name: String,
+    #[serde(rename = "ServiceID")]
+/// The `service_id` field.
+    pub service_id: String,
+    #[serde(rename = "ServiceURI")]
+/// The `service_uri` field — SPIFFE ID (e.g. `spiffe://consul/ns/default/dc/dc1/svc/web`).
+    pub service_uri: String,
+    #[serde(rename = "CertPEM")]
+/// The `cert_pem` field — leaf certificate in PEM format.
+    pub cert_pem: String,
+    #[serde(rename = "PrivateKeyPEM")]
+/// The `private_key_pem` field — private key in PEM format.
+    pub private_key_pem: String,
+/// The `roots` field — list of CA root certificates.
+    pub roots: Vec<CARoot>,
+/// The `trust_domain` field.
+    pub trust_domain: String,
+/// The `datacenter` field.
+    pub datacenter: String,
 /// The `valid_after` field.
     pub valid_after: String,
 /// The `valid_before` field.
@@ -233,12 +270,35 @@ pub struct IntentionRequest {
     pub meta: std::collections::HashMap<String, String>,
 }
 
+/// L7 request context used for evaluating HTTP-based intention permissions.
+///
+/// When `method`/`path` are `None`, the request is treated as L4-only and
+/// only permissions without HTTP match conditions will apply.
+#[derive(Debug, Clone, Default)]
+pub struct L7Request {
+    /// HTTP method (e.g. "GET", "POST"). Case-insensitive matching.
+    pub method: Option<String>,
+    /// HTTP request path (e.g. "/api/v1/health").
+    pub path: Option<String>,
+}
+
+/// Result of an intention check.
+pub struct IntentionCheckResult {
+    /// Whether the connection is allowed.
+    pub allowed: bool,
+    /// Human-readable reason describing which intention (if any) matched.
+    pub reason: String,
+}
+
 /// Intention check response
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionCheckResponse {
 /// The `allowed` field.
     pub allowed: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
+/// The `reason` field.
+    pub reason: String,
 }
 
 /// Intention match query
@@ -271,6 +331,12 @@ pub struct AgentAuthorizeRequest {
     #[serde(default)]
 /// The `client_cert_serial` field.
     pub client_cert_serial: String,
+    /// Optional HTTP method for L7 intention evaluation.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Optional HTTP path for L7 intention evaluation.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// Agent authorize response
@@ -292,6 +358,10 @@ pub struct IntentionQueryParams {
     pub source: Option<String>,
 /// The `destination` field.
     pub destination: Option<String>,
+    /// Optional HTTP method for L7 intention evaluation.
+    pub method: Option<String>,
+    /// Optional HTTP path for L7 intention evaluation.
+    pub path: Option<String>,
 }
 
 /// Query parameters for CA root
@@ -312,6 +382,13 @@ pub struct LeafCertQueryParams {
     pub index: Option<u64>,
     /// Blocking query: max wait time (e.g. "5s", "30s", "5m")
     pub wait: Option<String>,
+}
+
+/// Query parameters for the service identity endpoint
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServiceIdentityQueryParams {
+    /// Namespace (defaults to "default")
+    pub ns: Option<String>,
 }
 
 /// RocksDB key for the CA configuration (stored in CF_CONSUL_CA_ROOTS)
@@ -766,6 +843,28 @@ impl ConsulConnectCAService {
         }
     }
 
+    /// Get the full service identity (leaf cert + CA roots + SPIFFE ID) for a
+    /// registered service. Used by the `/v1/connect/service/{service_id}`
+    /// endpoint so sidecar proxies can fetch all mTLS material in one call.
+    pub fn get_service_identity(&self, service_id: &str, service_name: &str) -> ServiceIdentity {
+        let leaf = self.get_leaf_cert(service_name);
+        let roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
+        ServiceIdentity {
+            service_name: service_name.to_string(),
+            service_id: service_id.to_string(),
+            service_uri: leaf.service_uri,
+            cert_pem: leaf.cert_pem,
+            private_key_pem: leaf.private_key_pem,
+            roots,
+            trust_domain: self.trust_domain.clone(),
+            datacenter: self.datacenter.clone(),
+            valid_after: leaf.valid_after,
+            valid_before: leaf.valid_before,
+            create_index: leaf.create_index,
+            modify_index: leaf.modify_index,
+        }
+    }
+
     /// Generate a leaf certificate signed by the CA for a given service
     fn generate_leaf_cert(&self, service: &str) -> (String, String) {
         use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
@@ -952,26 +1051,53 @@ impl ConsulConnectCAService {
     }
 
 /// The `check_intention` method.
-    pub fn check_intention(&self, source: &str, destination: &str) -> bool {
+    pub fn check_intention(
+        &self,
+        source: &str,
+        destination: &str,
+        l7: Option<&L7Request>,
+    ) -> IntentionCheckResult {
         // Find the highest-precedence matching intention
-        let mut best: Option<(i32, IntentionAction)> = None;
+        let mut best: Option<Intention> = None;
+        let mut best_precedence = i32::MIN;
 
         for entry in self.intentions.iter() {
             let i = entry.value();
             let source_match = i.source_name == "*" || i.source_name == source;
             let dest_match = i.destination_name == "*" || i.destination_name == destination;
 
-            if source_match
-                && dest_match
-                && (best.is_none() || i.precedence > best.as_ref().unwrap().0)
-            {
-                best = Some((i.precedence, i.action.clone()));
+            if source_match && dest_match && i.precedence > best_precedence {
+                best = Some(i.clone());
+                best_precedence = i.precedence;
             }
         }
 
-        // Default: allow if no intention matches
-        best.map(|(_, action)| action == IntentionAction::Allow)
-            .unwrap_or(true)
+        let Some(intention) = best else {
+            // Default: allow if no intention matches
+            return IntentionCheckResult {
+                allowed: true,
+                reason: format!(
+                    "No intention matched (source={}, destination={}); default allow",
+                    source, destination
+                ),
+            };
+        };
+
+        // L7 mode: intention has permissions — evaluate them against the request.
+        if !intention.permissions.is_empty() {
+            return evaluate_intention_permissions(&intention, source, destination, l7);
+        }
+
+        // L4 mode (legacy): use the top-level action.
+        let allowed = intention.action == IntentionAction::Allow;
+        let verb = if allowed { "allows" } else { "denies" };
+        IntentionCheckResult {
+            allowed,
+            reason: format!(
+                "Intention {} (source={}, destination={}) {} connection",
+                intention.id, intention.source_name, intention.destination_name, verb
+            ),
+        }
     }
 
 /// The `match_intentions` method.
@@ -1065,24 +1191,19 @@ impl ConsulConnectCAService {
     }
 
 /// The `authorize` method.
-    pub fn authorize(&self, target: &str, client_cert_uri: &str) -> AgentAuthorizeResponse {
+    pub fn authorize(
+        &self,
+        target: &str,
+        client_cert_uri: &str,
+        l7: Option<&L7Request>,
+    ) -> AgentAuthorizeResponse {
         // Extract source service from SPIFFE URI
         let source = client_cert_uri.rsplit('/').next().unwrap_or("unknown");
 
-        let allowed = self.check_intention(source, target);
+        let result = self.check_intention(source, target, l7);
         AgentAuthorizeResponse {
-            authorized: allowed,
-            reason: if allowed {
-                format!(
-                    "Intention allows service '{}' to connect to '{}'",
-                    source, target
-                )
-            } else {
-                format!(
-                    "Intention denies service '{}' from connecting to '{}'",
-                    source, target
-                )
-            },
+            authorized: result.allowed,
+            reason: result.reason,
         }
     }
 }
@@ -1091,6 +1212,156 @@ impl Default for ConsulConnectCAService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ============================================================================
+// L7 Intention Evaluation
+// ============================================================================
+
+/// Evaluate all permissions of an L7 intention against the request.
+///
+/// Returns an `IntentionCheckResult` describing whether the connection is
+/// allowed and which permission (if any) matched.
+///
+/// Consul semantics:
+/// - Permissions are evaluated in order; the first permission whose HTTP
+///   match conditions are satisfied decides the outcome.
+/// - If no permission matches, the connection is denied (L7 default-deny).
+fn evaluate_intention_permissions(
+    intention: &Intention,
+    source: &str,
+    destination: &str,
+    l7: Option<&L7Request>,
+) -> IntentionCheckResult {
+    for permission in &intention.permissions {
+        if permission_http_matches(permission, l7) {
+            let allowed = permission.action == IntentionAction::Allow;
+            return IntentionCheckResult {
+                allowed,
+                reason: format!(
+                    "Intention {} (source={}, destination={}) permission action={:?} matched",
+                    intention.id, source, destination, permission.action
+                ),
+            };
+        }
+    }
+
+    // No permission matched → deny (L7 default-deny).
+    IntentionCheckResult {
+        allowed: false,
+        reason: format!(
+            "Intention {} (source={}, destination={}) has permissions but none matched the request; deny",
+            intention.id, source, destination
+        ),
+    }
+}
+
+/// Check whether a permission's HTTP match conditions are satisfied by the
+/// request. A permission without HTTP conditions matches all requests.
+fn permission_http_matches(permission: &IntentionPermission, l7: Option<&L7Request>) -> bool {
+    let Some(http) = &permission.http else {
+        return true;
+    };
+    evaluate_http_permission(http, l7)
+}
+
+/// Evaluate an `IntentionHTTPPermission` against the L7 request context.
+///
+/// All defined conditions are ANDed together. If a condition is absent it is
+/// treated as "match any". If no L7 request context is provided, only
+/// permissions without HTTP conditions match (handled by the caller).
+fn evaluate_http_permission(http: &IntentionHTTPPermission, l7: Option<&L7Request>) -> bool {
+    // Method check (case-insensitive).
+    if !http.methods.is_empty() {
+        let req_method = l7.and_then(|r| r.method.as_deref()).unwrap_or("");
+        if !http
+            .methods
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(req_method))
+        {
+            return false;
+        }
+    }
+
+    let req_path = l7.and_then(|r| r.path.as_deref());
+
+    // Path checks: only one of exact/prefix/regex should be set, but we
+    // evaluate whichever is present.
+    if let Some(prefix) = &http.path_prefix {
+        let path = req_path.unwrap_or("");
+        if !path.starts_with(prefix.as_str()) {
+            return false;
+        }
+    }
+
+    if let Some(exact) = &http.path_exact {
+        let path = req_path.unwrap_or("");
+        if path != exact.as_str() {
+            return false;
+        }
+    }
+
+    if let Some(regex) = &http.path_regex {
+        let path = req_path.unwrap_or("");
+        match regex::Regex::new(regex) {
+            Ok(re) => {
+                if !re.is_match(path) {
+                    return false;
+                }
+            }
+            Err(_) => {
+                // Invalid regex should have been rejected at creation time.
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Validate the `permissions` of an intention request.
+///
+/// Checks that:
+/// - Each permission's HTTP `methods` (if any) are valid HTTP methods.
+/// - Each permission's HTTP `path_regex` (if any) compiles successfully.
+///
+/// Returns an error message describing the first validation failure, or
+/// `Ok(())` if all permissions are valid.
+fn validate_intention_permissions(
+    permissions: &[IntentionPermission],
+) -> Result<(), String> {
+    const VALID_METHODS: &[&str] = &[
+        "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
+    ];
+
+    for (idx, perm) in permissions.iter().enumerate() {
+        let Some(http) = &perm.http else {
+            continue;
+        };
+
+        for method in &http.methods {
+            if !VALID_METHODS
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(method))
+            {
+                return Err(format!(
+                    "permission[{}] has invalid HTTP method: {}",
+                    idx, method
+                ));
+            }
+        }
+
+        if let Some(regex) = &http.path_regex {
+            if regex::Regex::new(regex).is_err() {
+                return Err(format!(
+                    "permission[{}] has invalid path_regex: {}",
+                    idx, regex
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Generate a random byte for serial numbers
@@ -1218,6 +1489,46 @@ pub async fn get_leaf_cert(
     consul_ok(&meta).json(ca_service.get_leaf_cert(&service))
 }
 
+/// GET /v1/connect/service/{service_id} - Get service identity (leaf cert + roots + SPIFFE ID)
+///
+/// Looks up the registered service by ID, generates a leaf certificate, and
+/// returns the full identity bundle (SPIFFE ID, cert, private key, CA roots)
+/// so a sidecar proxy can bootstrap mTLS in a single call.
+pub async fn get_service_identity(
+    req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+    query: web::Query<ServiceIdentityQueryParams>,
+) -> HttpResponse {
+    let service_id = path.into_inner();
+    let namespace = dc_config.resolve_ns(&query.ns);
+
+    // ACL: service identity contains private key material — require service:read.
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_id, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
+    }
+
+    // Resolve the service registration by ID to obtain its service name.
+    let Some(data) = agent.naming_store().get_by_service_id(&namespace, &service_id) else {
+        return HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Service not found: {}", service_id)));
+    };
+    let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) else {
+        return HttpResponse::InternalServerError()
+            .consul_error(ConsulError::new("Failed to decode service registration"));
+    };
+    let service_name = reg.name.clone();
+
+    let identity = ca_service.get_service_identity(&service_id, &service_name);
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
+    consul_ok(&meta).json(identity)
+}
+
 /// GET /v1/connect/intentions - List intentions
 pub async fn list_intentions(
     req: HttpRequest,
@@ -1248,7 +1559,12 @@ pub async fn create_intention(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.create_intention(body.into_inner()).await;
+    let req_body = body.into_inner();
+    if let Err(msg) = validate_intention_permissions(&req_body.permissions) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(&msg));
+    }
+
+    let intention = ca_service.create_intention(req_body).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "ID": intention.id }))
 }
@@ -1292,7 +1608,11 @@ pub async fn update_intention(
     }
 
     let id = path.into_inner();
-    match ca_service.update_intention(&id, body.into_inner()).await {
+    let req_body = body.into_inner();
+    if let Err(msg) = validate_intention_permissions(&req_body.permissions) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(&msg));
+    }
+    match ca_service.update_intention(&id, req_body).await {
         Some(_) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1339,9 +1659,24 @@ pub async fn check_intention(
 
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
-    let allowed = ca_service.check_intention(source, destination);
+    let l7 = build_l7_request(query.method.as_deref(), query.path.as_deref());
+    let result = ca_service.check_intention(source, destination, l7.as_ref());
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
-    consul_ok(&meta).json(IntentionCheckResponse { allowed })
+    consul_ok(&meta).json(IntentionCheckResponse {
+        allowed: result.allowed,
+        reason: result.reason,
+    })
+}
+
+/// Build an `L7Request` from optional method/path strings.
+fn build_l7_request(method: Option<&str>, path: Option<&str>) -> Option<L7Request> {
+    if method.is_none() && path.is_none() {
+        return None;
+    }
+    Some(L7Request {
+        method: method.map(|s| s.to_string()),
+        path: path.map(|s| s.to_string()),
+    })
 }
 
 /// GET /v1/connect/intentions/match - Match intentions for service
@@ -1378,7 +1713,8 @@ pub async fn connect_authorize(
     }
 
     let auth_req = body.into_inner();
-    let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
+    let l7 = build_l7_request(auth_req.method.as_deref(), auth_req.path.as_deref());
+    let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri, l7.as_ref());
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(response)
 }
@@ -1598,7 +1934,12 @@ pub async fn create_intention_persistent(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
     }
 
-    let intention = ca_service.create_intention(body.into_inner()).await;
+    let req_body = body.into_inner();
+    if let Err(msg) = validate_intention_permissions(&req_body.permissions) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(&msg));
+    }
+
+    let intention = ca_service.create_intention(req_body).await;
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(serde_json::json!({ "ID": intention.id }))
 }
@@ -1642,7 +1983,11 @@ pub async fn update_intention_persistent(
     }
 
     let id = path.into_inner();
-    match ca_service.update_intention(&id, body.into_inner()).await {
+    let req_body = body.into_inner();
+    if let Err(msg) = validate_intention_permissions(&req_body.permissions) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(&msg));
+    }
+    match ca_service.update_intention(&id, req_body).await {
         Some(_) => {
             let meta =
                 ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
@@ -1689,9 +2034,13 @@ pub async fn check_intention_persistent(
 
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
-    let allowed = ca_service.check_intention(source, destination);
+    let l7 = build_l7_request(query.method.as_deref(), query.path.as_deref());
+    let result = ca_service.check_intention(source, destination, l7.as_ref());
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
-    consul_ok(&meta).json(IntentionCheckResponse { allowed })
+    consul_ok(&meta).json(IntentionCheckResponse {
+        allowed: result.allowed,
+        reason: result.reason,
+    })
 }
 
 /// GET /v1/connect/intentions/match (persistent)
@@ -1728,7 +2077,8 @@ pub async fn connect_authorize_persistent(
     }
 
     let auth_req = body.into_inner();
-    let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
+    let l7 = build_l7_request(auth_req.method.as_deref(), auth_req.path.as_deref());
+    let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri, l7.as_ref());
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
     consul_ok(&meta).json(response)
 }
@@ -1902,9 +2252,9 @@ mod tests {
             .await;
 
         // Specific allow should win over wildcard deny
-        assert!(service.check_intention("web", "api"));
+        assert!(service.check_intention("web", "api", None).allowed);
         // Unknown services should be denied (wildcard deny)
-        assert!(!service.check_intention("unknown", "other"));
+        assert!(!service.check_intention("unknown", "other", None).allowed);
     }
 
     #[tokio::test]
@@ -1981,7 +2331,7 @@ mod tests {
             })
             .await;
 
-        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/web");
+        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/web", None);
         assert!(result.authorized);
     }
 
@@ -2101,7 +2451,7 @@ mod tests {
             })
             .await;
 
-        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/malicious");
+        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/malicious", None);
         assert!(!result.authorized);
         assert!(result.reason.contains("denies"));
     }
@@ -2110,7 +2460,7 @@ mod tests {
     fn test_authorize_no_intentions_allows() {
         let service = ConsulConnectCAService::new();
         // No intentions configured - default allow
-        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/web");
+        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/web", None);
         assert!(result.authorized);
     }
 
@@ -2147,10 +2497,10 @@ mod tests {
             .await;
 
         // Specific rule (precedence 4) should beat wildcard (precedence 1)
-        assert!(service.check_intention("web", "api"));
+        assert!(service.check_intention("web", "api", None).allowed);
 
         // Other services should be denied by wildcard
-        assert!(!service.check_intention("unknown", "api"));
+        assert!(!service.check_intention("unknown", "api", None).allowed);
     }
 
     #[test]
@@ -2252,5 +2602,259 @@ mod tests {
 
         assert_eq!(intention.meta.len(), 2);
         assert_eq!(intention.meta.get("env").unwrap(), "production");
+    }
+
+    // ========================================================================
+    // L7 Intention tests
+    // ========================================================================
+
+    fn l7_req(method: &str, path: &str) -> L7Request {
+        L7Request {
+            method: Some(method.to_string()),
+            path: Some(path.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_l7_intention_allow_method_match() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Deny, // top-level action ignored when permissions present
+                permissions: vec![IntentionPermission {
+                    action: IntentionAction::Allow,
+                    http: Some(IntentionHTTPPermission {
+                        path_exact: None,
+                        path_prefix: None,
+                        path_regex: None,
+                        methods: vec!["GET".to_string()],
+                    }),
+                }],
+                meta: Default::default(),
+            })
+            .await;
+
+        let req = l7_req("GET", "/anything");
+        let result = service.check_intention("web", "api", Some(&req));
+        assert!(result.allowed, "GET should be allowed: {}", result.reason);
+
+        let req = l7_req("POST", "/anything");
+        let result = service.check_intention("web", "api", Some(&req));
+        assert!(!result.allowed, "POST should be denied: {}", result.reason);
+    }
+
+    #[tokio::test]
+    async fn test_l7_intention_path_prefix_match() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Allow,
+                permissions: vec![IntentionPermission {
+                    action: IntentionAction::Allow,
+                    http: Some(IntentionHTTPPermission {
+                        path_exact: None,
+                        path_prefix: Some("/api/".to_string()),
+                        path_regex: None,
+                        methods: vec![],
+                    }),
+                }],
+                meta: Default::default(),
+            })
+            .await;
+
+        let req = l7_req("GET", "/api/v1/users");
+        assert!(
+            service.check_intention("web", "api", Some(&req)).allowed,
+            "path with /api/ prefix should be allowed"
+        );
+
+        let req = l7_req("GET", "/health");
+        assert!(
+            !service.check_intention("web", "api", Some(&req)).allowed,
+            "path without /api/ prefix should be denied (no permission matched)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_l7_intention_path_regex_match() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Allow,
+                permissions: vec![IntentionPermission {
+                    action: IntentionAction::Allow,
+                    http: Some(IntentionHTTPPermission {
+                        path_exact: None,
+                        path_prefix: None,
+                        path_regex: Some(r"^/api/v\d+/users/\d+$".to_string()),
+                        methods: vec![],
+                    }),
+                }],
+                meta: Default::default(),
+            })
+            .await;
+
+        let req = l7_req("GET", "/api/v2/users/42");
+        assert!(
+            service.check_intention("web", "api", Some(&req)).allowed,
+            "regex-matching path should be allowed"
+        );
+
+        let req = l7_req("GET", "/api/v2/users/abc");
+        assert!(
+            !service.check_intention("web", "api", Some(&req)).allowed,
+            "non-matching regex path should be denied"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_l7_intention_no_matching_permission_denies() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Allow, // ignored — permissions present
+                permissions: vec![IntentionPermission {
+                    action: IntentionAction::Allow,
+                    http: Some(IntentionHTTPPermission {
+                        path_exact: Some("/admin".to_string()),
+                        path_prefix: None,
+                        path_regex: None,
+                        methods: vec![],
+                    }),
+                }],
+                meta: Default::default(),
+            })
+            .await;
+
+        // Request to /public does not match the /admin-only permission → deny
+        let req = l7_req("GET", "/public");
+        let result = service.check_intention("web", "api", Some(&req));
+        assert!(!result.allowed, "no matching permission should deny: {}", result.reason);
+        assert!(result.reason.contains("none matched"));
+    }
+
+    #[tokio::test]
+    async fn test_l7_intention_permission_without_http_matches_all() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Deny,
+                permissions: vec![IntentionPermission {
+                    action: IntentionAction::Allow,
+                    http: None, // no HTTP conditions → matches all requests
+                }],
+                meta: Default::default(),
+            })
+            .await;
+
+        // L4 request (no method/path) — permission without HTTP matches
+        assert!(
+            service.check_intention("web", "api", None).allowed,
+            "permission without HTTP conditions should match L4 request"
+        );
+
+        // L7 request — still matches
+        let req = l7_req("DELETE", "/whatever");
+        assert!(
+            service.check_intention("web", "api", Some(&req)).allowed,
+            "permission without HTTP conditions should match any L7 request"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_l4_compatibility_no_permissions() {
+        let service = ConsulConnectCAService::new();
+        service
+            .create_intention(IntentionRequest {
+                description: String::new(),
+                source_ns: String::new(),
+                source_name: "web".to_string(),
+                destination_ns: String::new(),
+                destination_name: "api".to_string(),
+                action: IntentionAction::Allow,
+                permissions: vec![], // L4 mode
+                meta: Default::default(),
+            })
+            .await;
+
+        // Both L4 and L7 requests use the top-level action when no permissions.
+        assert!(service.check_intention("web", "api", None).allowed);
+        let req = l7_req("POST", "/anything");
+        assert!(service.check_intention("web", "api", Some(&req)).allowed);
+    }
+
+    #[test]
+    fn test_validate_intention_permissions_invalid_method() {
+        let permissions = vec![IntentionPermission {
+            action: IntentionAction::Allow,
+            http: Some(IntentionHTTPPermission {
+                path_exact: None,
+                path_prefix: None,
+                path_regex: None,
+                methods: vec!["FETCH".to_string()],
+            }),
+        }];
+        let err = validate_intention_permissions(&permissions).unwrap_err();
+        assert!(err.contains("invalid HTTP method") && err.contains("FETCH"));
+    }
+
+    #[test]
+    fn test_validate_intention_permissions_invalid_regex() {
+        let permissions = vec![IntentionPermission {
+            action: IntentionAction::Allow,
+            http: Some(IntentionHTTPPermission {
+                path_exact: None,
+                path_prefix: None,
+                path_regex: Some("[invalid".to_string()),
+                methods: vec![],
+            }),
+        }];
+        let err = validate_intention_permissions(&permissions).unwrap_err();
+        assert!(err.contains("invalid path_regex"));
+    }
+
+    #[test]
+    fn test_validate_intention_permissions_valid() {
+        let permissions = vec![
+            IntentionPermission {
+                action: IntentionAction::Allow,
+                http: Some(IntentionHTTPPermission {
+                    path_exact: None,
+                    path_prefix: Some("/api/".to_string()),
+                    path_regex: Some(r"^/v\d+/$".to_string()),
+                    methods: vec!["GET".to_string(), "post".to_string()],
+                }),
+            },
+            IntentionPermission {
+                action: IntentionAction::Deny,
+                http: None,
+            },
+        ];
+        assert!(validate_intention_permissions(&permissions).is_ok());
     }
 }

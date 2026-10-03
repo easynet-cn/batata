@@ -120,10 +120,12 @@ async fn agent_force_leave(
 #[put("/reload")]
 async fn agent_reload(
     req: HttpRequest,
+    health_service: web::Data<crate::health::ConsulHealthService>,
+    dc_config: web::Data<crate::model::ConsulDatacenterConfig>,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::agent_reload(req, acl_service, index_provider).await
+    crate::agent::agent_reload(req, health_service, dc_config, acl_service, index_provider).await
 }
 
 #[put("/maintenance")]

@@ -85,10 +85,17 @@ impl ConsulNamingStore {
         format!("{ns}/{service_name}/{service_id}")
     }
 
-    /// Get all entries for a service name within a namespace
+    /// Get all entries for a service name within a namespace.
+    ///
+    /// If `service_name` is empty, returns all entries in the namespace
+    /// (used by the all-services health stream endpoint).
     pub fn get_service_entries(&self, ns: &str, service_name: &str) -> Vec<Bytes> {
         let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
-        let prefix = format!("{ns}/{service_name}/");
+        let prefix = if service_name.is_empty() {
+            format!("{ns}/")
+        } else {
+            format!("{ns}/{service_name}/")
+        };
         self.entries
             .iter()
             .filter(|e| e.key().starts_with(&prefix))
@@ -157,6 +164,18 @@ impl ConsulNamingStore {
             .map(|e| e.value().data.clone())
     }
 
+    /// Get an entry by service_id across all namespaces.
+    ///
+    /// Service IDs are expected to be unique within a datacenter. Used by the
+    /// xDS sync bridge to resolve an Envoy node ID (which equals the proxy
+    /// service ID) to its registration, without knowing the namespace.
+    pub fn get_by_service_id_any_ns(&self, service_id: &str) -> Option<Bytes> {
+        self.entries
+            .iter()
+            .find(|e| e.value().service_id == service_id)
+            .map(|e| e.value().data.clone())
+    }
+
     /// Find the store key for a service_id within a namespace (without removing)
     pub fn find_key_by_service_id(&self, ns: &str, service_id: &str) -> Option<String> {
         let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
@@ -195,6 +214,13 @@ impl ConsulNamingStore {
 
     fn bump_revision(&self) {
         self.revision.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the current revision number (monotonically increasing).
+    ///
+    /// Used by the xDS sync bridge to detect naming store changes.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
     }
 
     /// Parse key into (namespace, service_name, service_id)

@@ -14,7 +14,7 @@ use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, put, web};
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::{
     ConfigEntryDeleteParams, ConfigEntryListParams, ConfigEntryRequest, ConsulConfigEntryService,
-    SUPPORTED_KINDS,
+    SUPPORTED_KINDS, validate_config_entry,
 };
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -51,6 +51,11 @@ async fn apply_config_entry(
             "Unsupported config entry kind: {}",
             entry_req.kind
         )));
+    }
+
+    // Semantic validation per kind
+    if let Err(msg) = validate_config_entry(&entry_req) {
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(msg));
     }
 
     let cas: Option<u64> = req.uri().query().and_then(|q| {

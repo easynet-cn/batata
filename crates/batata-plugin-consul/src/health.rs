@@ -28,6 +28,7 @@ fn check_type_from_consul(s: &str) -> RegistryCheckType {
 
 use crate::acl::{AclService, ResourceType};
 use crate::check_index::ConsulCheckIndex;
+use crate::peering::ConsulPeeringService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
@@ -56,8 +57,11 @@ pub type CheckScheduler = Arc<dyn Fn(&str) + Send + Sync>;
 /// All check operations delegate to the unified registry, which immediately
 /// syncs health status changes to the naming service.
 ///
-/// When a scheduler is set, active checks (HTTP/TCP/gRPC) are automatically
-/// scheduled for periodic execution upon registration.
+/// When a scheduler is set, active checks (HTTP/TCP/gRPC/Script/Docker) are
+/// automatically scheduled for periodic execution upon registration.
+///
+/// Alias checks are registered as TTL checks and their status is mirrored
+/// from the aliased service/node check via `sync_alias_checks()`.
 #[derive(Clone)]
 pub struct ConsulHealthService {
     registry: Arc<InstanceCheckRegistry>,
@@ -66,6 +70,17 @@ pub struct ConsulHealthService {
     node_name: String,
     /// Optional callback for scheduling active health checks in the reactor.
     check_scheduler: Arc<std::sync::RwLock<Option<CheckScheduler>>>,
+    /// Alias check mappings: alias_check_id → (aliased_service_id or aliased_node)
+    alias_map: Arc<dashmap::DashMap<String, AliasTarget>>,
+}
+
+/// Target of an alias check (either a service ID or a node name).
+#[derive(Clone, Debug)]
+pub enum AliasTarget {
+    /// Alias to a service check by service ID.
+    Service(String),
+    /// Alias to a node's checks by node name.
+    Node(String),
 }
 
 impl ConsulHealthService {
@@ -79,6 +94,7 @@ impl ConsulHealthService {
             check_index,
             node_name,
             check_scheduler: Arc::new(std::sync::RwLock::new(None)),
+            alias_map: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -99,6 +115,13 @@ impl ConsulHealthService {
             .unwrap_or_else(|e| e.into_inner()) = Some(scheduler);
     }
 
+    /// Get a reference to the check scheduler lock.
+    ///
+    /// Used by the agent reload endpoint to re-schedule all active checks.
+    pub fn check_scheduler_lock(&self) -> &std::sync::RwLock<Option<CheckScheduler>> {
+        &self.check_scheduler
+    }
+
     /// Get registry reference
     pub fn registry(&self) -> &Arc<InstanceCheckRegistry> {
         &self.registry
@@ -110,6 +133,7 @@ impl ConsulHealthService {
     }
 
     /// Update check status (pass/warn/fail). Immediately syncs to NamingService.
+    /// Also syncs alias checks so they mirror the updated status.
     pub async fn update_check_status_async(
         &self,
         check_id: &str,
@@ -120,14 +144,16 @@ impl ConsulHealthService {
         self.registry
             .ttl_update(check_id, check_status, output)
             .await;
+        // Sync alias checks after any status change
+        self.sync_alias_checks().await;
         Ok(())
     }
 
     /// Register a health check via the unified registry.
     ///
-    /// Script / Docker / Alias registrations are rejected here with the same
-    /// error text Consul emits, so clients don't silently see their check
-    /// downgraded to a TTL check.
+    /// Supports all Consul check types: TTL, HTTP, TCP, gRPC, Script, Docker,
+    /// and Alias. Alias checks are registered as TTL checks whose status is
+    /// mirrored from the aliased service/node via `sync_alias_checks()`.
     pub async fn register_check(&self, registration: CheckRegistration) -> Result<(), String> {
         if let Err(rej) = registration.validate_supported() {
             return Err(rej.message().to_string());
@@ -136,7 +162,22 @@ impl ConsulHealthService {
         let check_id = registration.effective_check_id();
         let check_type_str = registration.check_type();
 
-        let check_type = check_type_from_consul(check_type_str);
+        // Handle alias checks: store the mapping and register as TTL.
+        // The actual status will be mirrored from the aliased check.
+        let mut effective_check_type_str = check_type_str;
+        if check_type_str == "alias" {
+            if let Some(ref svc) = registration.alias_service {
+                self.alias_map
+                    .insert(check_id.clone(), AliasTarget::Service(svc.clone()));
+            } else if let Some(ref node) = registration.alias_node {
+                self.alias_map
+                    .insert(check_id.clone(), AliasTarget::Node(node.clone()));
+            }
+            // Alias checks use TTL mechanism with the configured interval as TTL
+            effective_check_type_str = "ttl";
+        }
+
+        let check_type = check_type_from_consul(effective_check_type_str);
 
         // Parse TTL if present
         let ttl = registration
@@ -192,6 +233,9 @@ impl ConsulHealthService {
             tcp_addr: registration.tcp.clone(),
             grpc_addr: registration.grpc.clone(),
             db_url: None, // Consul doesn't use database health checks
+            script: registration.script.clone(),
+            args: registration.args.clone(),
+            docker_container_id: registration.docker_container_id.clone(),
             interval,
             timeout,
             ttl,
@@ -258,8 +302,82 @@ impl ConsulHealthService {
             return Err(format!("Check not found: {}", check_id));
         }
         self.check_index.remove_check(check_id);
+        self.alias_map.remove(check_id);
         self.registry.deregister_check(check_id);
         Ok(())
+    }
+
+    /// Sync all alias checks: read the aliased check's status and mirror it.
+    ///
+    /// Should be called periodically (e.g., by the plugin's background task)
+    /// or whenever a check status changes. For each alias check, looks up the
+    /// aliased service's checks or node's checks, computes the aggregate
+    /// status (worst of all), and updates the alias check via TTL update.
+    pub async fn sync_alias_checks(&self) {
+        // Collect alias mappings to avoid holding the map lock across await points
+        let mappings: Vec<(String, AliasTarget)> = self
+            .alias_map
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        for (alias_check_id, target) in mappings {
+            let aliased_status = match &target {
+                AliasTarget::Service(service_id) => {
+                    // Get all checks for the aliased service and compute worst status
+                    let checks = self.get_service_checks(service_id).await;
+                    if checks.is_empty() {
+                        // Aliased service has no checks → alias is critical
+                        batata_naming::healthcheck::registry::CheckStatus::Critical
+                    } else {
+                        // Worst status wins (critical > warning > passing)
+                        let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
+                        for c in &checks {
+                            let s = check_status_from_consul(&c.status);
+                            if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Critical) {
+                                worst = batata_naming::healthcheck::registry::CheckStatus::Critical;
+                                break;
+                            } else if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Warning)
+                                && !matches!(worst, batata_naming::healthcheck::registry::CheckStatus::Critical)
+                            {
+                                worst = batata_naming::healthcheck::registry::CheckStatus::Warning;
+                            }
+                        }
+                        worst
+                    }
+                }
+                AliasTarget::Node(node_name) => {
+                    // Get all checks for the node and compute worst status
+                    let all_checks = self.get_all_checks().await;
+                    let node_checks: Vec<&HealthCheck> = all_checks
+                        .iter()
+                        .filter(|c| &c.node == node_name)
+                        .collect();
+                    if node_checks.is_empty() {
+                        batata_naming::healthcheck::registry::CheckStatus::Critical
+                    } else {
+                        let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
+                        for c in &node_checks {
+                            let s = check_status_from_consul(&c.status);
+                            if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Critical) {
+                                worst = batata_naming::healthcheck::registry::CheckStatus::Critical;
+                                break;
+                            } else if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Warning)
+                                && !matches!(worst, batata_naming::healthcheck::registry::CheckStatus::Critical)
+                            {
+                                worst = batata_naming::healthcheck::registry::CheckStatus::Warning;
+                            }
+                        }
+                        worst
+                    }
+                }
+            };
+
+            // Update the alias check's status via TTL
+            self.registry
+                .ttl_update(&alias_check_id, aliased_status, None)
+                .await;
+        }
     }
 
     /// Get all checks for a service (by Consul service_id)
@@ -436,61 +554,204 @@ impl ConsulHealthService {
 // HTTP Handlers
 // ============================================================================
 
-/// GET /v1/health/service/:service
-/// Returns the health information for a service
-#[allow(clippy::too_many_arguments)]
-pub async fn get_service_health(
-    req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
-    health_service: web::Data<ConsulHealthService>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    path: web::Path<String>,
-    query: web::Query<HealthQueryParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
-) -> HttpResponse {
-    let service_name = path.into_inner();
-    let passing_only = query.passing.unwrap_or(false);
-    let namespace = dc_config.resolve_ns(&query.ns);
+/// Resolve a cross-peer health query.
+///
+/// Consul streams remote service catalog/health through the peering
+/// replication channel. Batata's Phase 1 data channel stores imported service
+/// instances in `ConsulPeeringService`. The resolution logic is:
+/// - If the peering does not exist or is not `Active`, return an empty list.
+/// - If the peering is active but the service is not in
+///   `stream_status.imported_services`, return an empty list.
+/// - If the service is imported, convert the stored `PeeringImportedService`
+///   instances into `ServiceHealth` entries and return them (filtered by
+///   `passing_only` when set).
+///
+/// The returned response still carries `X-Consul-Effective-Datacenter` set to
+/// the remote peer's datacenter (when known), matching Consul's header
+/// semantics for cross-peer queries.
+///
+/// Returns a tuple of `(effective_datacenter, results)`.
+fn resolve_cross_peer_health(
+    peering_service: &ConsulPeeringService,
+    peer_name: &str,
+    service_name: &str,
+    _namespace: &str,
+    fallback_dc: &str,
+    passing_only: bool,
+) -> (String, Vec<ServiceHealth>) {
+    let Some(peering) = peering_service.get_peering(peer_name) else {
+        tracing::debug!(
+            peer = peer_name,
+            service = service_name,
+            "cross-peer health query: peering not found"
+        );
+        return (fallback_dc.to_string(), Vec::new());
+    };
 
-    // peer-name and sameness-group are mutually exclusive
-    if query.peer_name.is_some() && query.sameness_group.is_some() {
-        crate::api_metrics::incr_endpoint("health_service", "error");
-        return HttpResponse::BadRequest().consul_error(ConsulError::new(
-            "cannot specify both peer-name and sameness-group",
-        ));
+    // Consul sets the effective datacenter to the remote peer's datacenter for
+    // cross-peer queries; fall back to the local DC when it is unknown.
+    let effective_dc = if peering.remote.datacenter.is_empty() {
+        fallback_dc.to_string()
+    } else {
+        peering.remote.datacenter.clone()
+    };
+
+    if peering.state != crate::peering::PeeringState::Active {
+        tracing::debug!(
+            peer = peer_name,
+            state = %peering.state,
+            service = service_name,
+            "cross-peer health query: peering is not active"
+        );
+        return (effective_dc, Vec::new());
     }
 
-    // Check ACL authorization for service read
-    let authz = acl_service.authorize_request(
-        &req,
-        ResourceType::Service,
-        &service_name,
-        false, // read access only
-    );
-    if !authz.allowed {
-        crate::api_metrics::incr_endpoint("health_service", "error");
-        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
-    }
-    crate::api_metrics::incr_endpoint("health_service", "success");
+    let is_imported = peering
+        .stream_status
+        .imported_services
+        .iter()
+        .any(|s| s == service_name);
 
-    // Cross-peer health query: same-DC peering not yet replicated, return empty
-    if let Some(ref peer) = query.peer_name
-        && !peer.is_empty() {
-            tracing::debug!(
-                "health/service peer-name='{}' — cross-peer queries return empty",
-                peer
-            );
-            let dc = dc_config.resolve_dc(&query.dc);
-            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
-            return consul_ok(&meta)
-                .insert_header(("X-Consul-Effective-Datacenter", dc))
-                .json(Vec::<ServiceHealth>::new());
+    if !is_imported {
+        tracing::debug!(
+            peer = peer_name,
+            service = service_name,
+            "cross-peer health query: service not imported from peer"
+        );
+        return (effective_dc, Vec::new());
+    }
+
+    // Convert imported service instances into ServiceHealth entries.
+    let imported = peering_service.get_imported_service_instances(peer_name, service_name);
+    if imported.is_empty() {
+        tracing::debug!(
+            peer = peer_name,
+            service = service_name,
+            remote_dc = %peering.remote.datacenter,
+            "cross-peer health query: service imported but no replicated instances"
+        );
+        return (effective_dc, Vec::new());
+    }
+
+    let mut results = Vec::with_capacity(imported.len());
+    for inst in &imported {
+        let node_name = if inst.node.is_empty() {
+            peer_name.to_string()
+        } else {
+            inst.node.clone()
+        };
+        let node_address = if inst.node_address.is_empty() {
+            inst.address.clone()
+        } else {
+            inst.node_address.clone()
+        };
+        let node_dc = if inst.datacenter.is_empty() {
+            effective_dc.clone()
+        } else {
+            inst.datacenter.clone()
+        };
+
+        let checks: Vec<crate::model::HealthCheck> = inst
+            .checks
+            .iter()
+            .map(|c| crate::model::HealthCheck {
+                node: node_name.clone(),
+                check_id: c.check_id.clone(),
+                name: c.name.clone(),
+                status: c.status.clone(),
+                notes: String::new(),
+                output: c.output.clone(),
+                service_id: inst.service_id.clone(),
+                service_name: inst.service_name.clone(),
+                service_tags: inst.tags.clone(),
+                check_type: String::new(),
+                exposed_port: 0,
+                interval: None,
+                timeout: None,
+                definition: None,
+                create_index: 1,
+                modify_index: 1,
+            })
+            .collect();
+
+        // When passing_only is set, skip instances whose checks include any
+        // non-passing status.
+        if passing_only && checks.iter().any(|c| c.status != "passing") {
+            continue;
         }
 
+        let service = crate::model::AgentService {
+            id: inst.service_id.clone(),
+            service: inst.service_name.clone(),
+            tags: Some(inst.tags.clone()),
+            port: inst.port as u16,
+            address: inst.address.clone(),
+            meta: if inst.meta.is_empty() {
+                None
+            } else {
+                Some(inst.meta.clone())
+            },
+            enable_tag_override: false,
+            weights: crate::model::Weights::default(),
+            datacenter: Some(node_dc.clone()),
+            kind: None,
+            proxy: None,
+            connect: None,
+            tagged_addresses: None,
+            namespace: None,
+            peer_name: Some(peer_name.to_string()),
+            create_index: None,
+            modify_index: None,
+            socket_path: None,
+        };
+
+        results.push(ServiceHealth {
+            node: crate::model::Node {
+                id: peer_name.to_string(),
+                node: node_name,
+                address: node_address,
+                datacenter: node_dc,
+                tagged_addresses: None,
+                meta: None,
+                create_index: 1,
+                modify_index: 1,
+            },
+            service,
+            checks,
+        });
+    }
+
+    tracing::debug!(
+        peer = peer_name,
+        service = service_name,
+        remote_dc = %peering.remote.datacenter,
+        returned = results.len(),
+        "cross-peer health query: returning imported instances"
+    );
+    (effective_dc, results)
+}
+
+/// Build the `Vec<ServiceHealth>` result set for a given service.
+///
+/// Extracted from [`get_service_health`] so it can be reused by both the
+/// regular blocking-query endpoint and the SSE health-stream endpoint.
+/// Performs ACL check and returns the assembled health entries (no HTTP
+/// response wrapping, no blocking-query wait).
+async fn build_service_health_results(
+    req: &HttpRequest,
+    naming_store: &ConsulNamingStore,
+    health_service: &ConsulHealthService,
+    dc_config: &ConsulDatacenterConfig,
+    service_name: &str,
+    query: &HealthQueryParams,
+    config_entry_service: &crate::config_entry::ConsulConfigEntryService,
+    coord_service: &crate::coordinate::ConsulCoordinateService,
+    namespace: &str,
+) -> Vec<ServiceHealth> {
+    let passing_only = query.passing.unwrap_or(false);
+
     // Get service entries from ConsulNamingStore (Consul-native data)
-    let entries = naming_store.get_service_entries(&namespace, &service_name);
+    let entries = naming_store.get_service_entries(namespace, service_name);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
@@ -506,7 +767,7 @@ pub async fn get_service_health(
 
         // Filter by tag(s) — supports multiple ?tag= params with AND semantics
         // (matches Consul: all specified tags must be present)
-        let tag_filters = crate::consul_meta::parse_multi_param(&req, "tag");
+        let tag_filters = crate::consul_meta::parse_multi_param(req, "tag");
         if !tag_filters.is_empty() {
             let service_tags = reg.tags.as_deref().unwrap_or_default();
             let all_match = tag_filters.iter().all(|t| service_tags.contains(t));
@@ -548,7 +809,7 @@ pub async fn get_service_health(
         // Update service info on service-level checks (NOT on node-level checks)
         for check in &mut checks {
             if !check.service_id.is_empty() {
-                check.service_name = service_name.clone();
+                check.service_name = service_name.to_string();
                 if let Some(tags) = &agent_service.tags {
                     check.service_tags = tags.clone();
                 }
@@ -598,21 +859,16 @@ pub async fn get_service_health(
     };
 
     // Filter by node-meta (supports multiple ?node-meta=key:value params)
-    let node_meta_filters = crate::consul_meta::parse_multi_param(&req, "node-meta");
+    let node_meta_filters = crate::consul_meta::parse_multi_param(req, "node-meta");
     if !node_meta_filters.is_empty() {
         results.retain(|sh| {
             crate::consul_meta::matches_node_meta_filters(sh.node.meta.as_ref(), &node_meta_filters)
         });
     }
 
-    // Handle blocking query wait
-    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
-
-    let dc = dc_config.resolve_dc(&query.dc);
-
     // WAN address translation
     if crate::consul_meta::should_translate_wan(
-        &req,
+        req,
         dc_config.translate_wan_addrs,
         &dc_config.datacenter,
         query.dc.as_deref(),
@@ -627,7 +883,7 @@ pub async fn get_service_health(
 
     // merge-central-config: populate Proxy field with merged central config
     if query.merge_central_config.unwrap_or(false) {
-        let service_defaults = config_entry_service.get_entry("service-defaults", &service_name);
+        let service_defaults = config_entry_service.get_entry("service-defaults", service_name);
         let proxy_defaults = config_entry_service.get_entry("proxy-defaults", "global");
         for sh in &mut results {
             let mut proxy = sh
@@ -647,10 +903,243 @@ pub async fn get_service_health(
         }
     }
 
+    // Sort by estimated RTT from the `near` node (Consul ?near= parameter).
+    // Instances whose node has no coordinate are pushed to the end.
+    if let Some(ref near_node) = query.near
+        && !near_node.is_empty()
+    {
+        let near = if near_node == "_agent" {
+            &dc_config.node_name
+        } else {
+            near_node.as_str()
+        };
+        results.sort_by(|a, b| {
+            let rtt_a = coord_service.estimate_rtt(near, &a.node.node);
+            let rtt_b = coord_service.estimate_rtt(near, &b.node.node);
+            match (rtt_a, rtt_b) {
+                (Some(ra), Some(rb)) => ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+    }
+
+    results
+}
+
+/// GET /v1/health/service/:service
+/// Returns the health information for a service
+#[allow(clippy::too_many_arguments)]
+pub async fn get_service_health(
+    req: HttpRequest,
+    naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<ConsulHealthService>,
+    acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    path: web::Path<String>,
+    query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
+    peering_service: web::Data<ConsulPeeringService>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
+) -> HttpResponse {
+    let service_name = path.into_inner();
+    let passing_only = query.passing.unwrap_or(false);
+    let namespace = dc_config.resolve_ns(&query.ns);
+
+    // peer-name and sameness-group are mutually exclusive
+    if query.peer_name.is_some() && query.sameness_group.is_some() {
+        crate::api_metrics::incr_endpoint("health_service", "error");
+        return HttpResponse::BadRequest().consul_error(ConsulError::new(
+            "cannot specify both peer-name and sameness-group",
+        ));
+    }
+
+    // Check ACL authorization for service read
+    let authz = acl_service.authorize_request(
+        &req,
+        ResourceType::Service,
+        &service_name,
+        false, // read access only
+    );
+    if !authz.allowed {
+        crate::api_metrics::incr_endpoint("health_service", "error");
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
+    }
+    crate::api_metrics::incr_endpoint("health_service", "success");
+
+    // Cross-peer health query: resolve the peering and check whether the service
+    // is imported from the remote peer. Consul streams service health from the
+    // remote side; batata mirrors the imported service list from the peering's
+    // stream_status. If the peering is missing/not active or the service is not
+    // imported, an empty list is returned (matching Consul's behavior).
+    if let Some(ref peer) = query.peer_name
+        && !peer.is_empty()
+    {
+        let local_dc = dc_config.resolve_dc(&query.dc);
+        let (effective_dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            peer,
+            &service_name,
+            &namespace,
+            &local_dc,
+            passing_only,
+        );
+
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        return consul_ok(&meta)
+            .insert_header(("X-Consul-Effective-Datacenter", effective_dc))
+            .json(results);
+    }
+
+    let results = build_service_health_results(
+        &req,
+        &naming_store,
+        &health_service,
+        &dc_config,
+        &service_name,
+        &query,
+        &config_entry_service,
+        &coord_service,
+        &namespace,
+    )
+    .await;
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
+    let dc = dc_config.resolve_dc(&query.dc);
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta)
         .insert_header(("X-Consul-Effective-Datacenter", dc))
         .json(results)
+}
+
+/// Build an SSE stream that pushes service health changes to the client.
+///
+/// Implements Consul's `/v1/health/stream/:service` endpoint. The stream emits
+/// an initial snapshot of the service's health, then pushes a fresh snapshot
+/// whenever the catalog index advances (service registrations, check updates,
+/// etc.). Each SSE event carries the current `X-Consul-Index` so clients can
+/// resume from a known point.
+///
+/// The stream is backed by the existing `ConsulTable::Catalog` change
+/// notification in [`ConsulIndexProvider`], so no separate broadcast channel
+/// is required.
+pub fn stream_service_health(
+    req: HttpRequest,
+    naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<ConsulHealthService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    service_name: String,
+    query: HealthQueryParams,
+    config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> impl futures::Stream<Item = Result<actix_web::web::Bytes, actix_web::Error>> {
+    // Clone everything that needs to live inside the async stream state.
+    // `HttpRequest` is cheap to clone (Rc-based) and keeps the query string.
+    let req_clone = req.clone();
+    let namespace = dc_config.resolve_ns(&query.ns);
+
+    // Resolve the starting index: if the client passed ?index=, start *after*
+    // it so we don't re-send data they already have. Otherwise start at 0 to
+    // force an immediate snapshot.
+    let start_index = query.index.unwrap_or(0);
+
+    let state = (
+        req_clone,
+        naming_store,
+        health_service,
+        dc_config,
+        service_name,
+        query,
+        config_entry_service,
+        coord_service,
+        index_provider,
+        namespace,
+        start_index,
+        true, // first_iteration
+    );
+
+    futures::stream::unfold(state, move |state| async move {
+        let (
+            req,
+            naming_store,
+            health_service,
+            dc_config,
+            service_name,
+            query,
+            config_entry_service,
+            coord_service,
+            index_provider,
+            namespace,
+            mut last_index,
+            first,
+        ) = state;
+
+        if !first {
+            // Wait for the catalog index to advance past what we last sent.
+            // Use a long timeout (10 min) so idle connections stay open; the
+            // loop continues regardless of timeout result.
+            let _ = index_provider
+                .wait_for_change(
+                    ConsulTable::Catalog,
+                    last_index,
+                    Some(Duration::from_secs(600)),
+                )
+                .await;
+        }
+
+        let current_index = index_provider.current_index(ConsulTable::Catalog);
+
+        // Re-query the current health state.
+        let results = build_service_health_results(
+            &req,
+            &naming_store,
+            &health_service,
+            &dc_config,
+            &service_name,
+            &query,
+            &config_entry_service,
+            &coord_service,
+            &namespace,
+        )
+        .await;
+
+        let json = match serde_json::to_string(&results) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::warn!("health stream: failed to serialize results: {}", e);
+                return None;
+            }
+        };
+
+        // Format as SSE: index comment line + data event.
+        // Consul's health stream includes an `X-Consul-Index` comment so
+        // clients can track the last-seen index for resumption.
+        let sse = format!(": X-Consul-Index: {}\ndata: {}\n\n", current_index, json);
+        last_index = current_index;
+
+        Some((
+            Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(sse)),
+            (
+                req,
+                naming_store,
+                health_service,
+                dc_config,
+                service_name,
+                query,
+                config_entry_service,
+                coord_service,
+                index_provider,
+                namespace,
+                last_index,
+                false,
+            ),
+        ))
+    })
 }
 
 /// Apply Consul filter expression to service health results.
@@ -2075,8 +2564,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_check_rejects_script() {
-        let (service, _registry) = create_test_health_service_with_registry();
+    async fn test_register_check_accepts_script() {
+        let (service, registry) = create_test_health_service_with_registry();
         let reg = CheckRegistration {
             name: "script-check".to_string(),
             check_id: Some("svc:script-1".to_string()),
@@ -2084,17 +2573,15 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        let err = service.register_check(reg).await.unwrap_err();
-        assert!(
-            err.contains("Scripts are disabled"),
-            "expected Consul script-disabled error, got: {}",
-            err
-        );
+        service.register_check(reg).await.expect("script check should be accepted");
+        let (config, _) = registry.get_check("svc:script-1").expect("check should be registered");
+        assert_eq!(config.check_type, RegistryCheckType::Script);
+        assert_eq!(config.script.as_deref(), Some("/bin/check.sh"));
     }
 
     #[tokio::test]
-    async fn test_register_check_rejects_args_script() {
-        let (service, _registry) = create_test_health_service_with_registry();
+    async fn test_register_check_accepts_args_script() {
+        let (service, registry) = create_test_health_service_with_registry();
         let reg = CheckRegistration {
             name: "args-check".to_string(),
             check_id: Some("svc:args-1".to_string()),
@@ -2102,18 +2589,18 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        assert!(
-            service
-                .register_check(reg)
-                .await
-                .unwrap_err()
-                .contains("Scripts are disabled")
+        service.register_check(reg).await.expect("args check should be accepted");
+        let (config, _) = registry.get_check("svc:args-1").expect("check should be registered");
+        assert_eq!(config.check_type, RegistryCheckType::Script);
+        assert_eq!(
+            config.args.as_deref(),
+            Some(&["/bin/ping".to_string(), "-c".to_string(), "1".to_string()][..])
         );
     }
 
     #[tokio::test]
-    async fn test_register_check_rejects_docker() {
-        let (service, _registry) = create_test_health_service_with_registry();
+    async fn test_register_check_accepts_docker() {
+        let (service, registry) = create_test_health_service_with_registry();
         let reg = CheckRegistration {
             name: "docker-check".to_string(),
             check_id: Some("svc:docker-1".to_string()),
@@ -2122,30 +2609,109 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        assert!(
-            service
-                .register_check(reg)
-                .await
-                .unwrap_err()
-                .contains("Scripts are disabled")
-        );
+        service.register_check(reg).await.expect("docker check should be accepted");
+        let (config, _) = registry.get_check("svc:docker-1").expect("check should be registered");
+        assert_eq!(config.check_type, RegistryCheckType::Docker);
+        assert_eq!(config.docker_container_id.as_deref(), Some("abc123"));
     }
 
     #[tokio::test]
-    async fn test_register_check_rejects_alias() {
-        let (service, _registry) = create_test_health_service_with_registry();
+    async fn test_register_check_accepts_alias() {
+        let (service, registry) = create_test_health_service_with_registry();
         let reg = CheckRegistration {
             name: "alias-check".to_string(),
             check_id: Some("svc:alias-1".to_string()),
             alias_service: Some("web".to_string()),
             ..Default::default()
         };
-        let err = service.register_check(reg).await.unwrap_err();
-        assert!(
-            err.contains("Alias checks are not yet supported"),
-            "expected alias-unsupported error, got: {}",
-            err
-        );
+        service.register_check(reg).await.expect("alias check should be accepted");
+        // Alias checks are registered internally as TTL checks
+        let (config, _) = registry.get_check("svc:alias-1").expect("check should be registered");
+        assert_eq!(config.check_type, RegistryCheckType::Ttl);
+    }
+
+    #[tokio::test]
+    async fn test_alias_check_syncs_status_from_service() {
+        let (service, registry) = create_test_health_service_with_registry();
+
+        // Register a service check (TCP) that the alias will point to.
+        // Start it passing so the alias mirrors passing after sync.
+        let svc_check = CheckRegistration {
+            name: "web-check".to_string(),
+            check_id: Some("svc:web-1".to_string()),
+            service_id: Some("web".to_string()),
+            service_name: Some("web".to_string()),
+            tcp: Some("127.0.0.1:8080".to_string()),
+            interval: Some("10s".to_string()),
+            status: Some("passing".to_string()),
+            ..Default::default()
+        };
+        service.register_check(svc_check).await.expect("service check should register");
+
+        // Register an alias check pointing to service "web"
+        let alias_reg = CheckRegistration {
+            name: "alias-web".to_string(),
+            check_id: Some("alias:web".to_string()),
+            alias_service: Some("web".to_string()),
+            ..Default::default()
+        };
+        service.register_check(alias_reg).await.expect("alias check should register");
+
+        // Sync alias checks so the alias mirrors the (passing) service check
+        service.sync_alias_checks().await;
+        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        assert_eq!(alias_status.status, CheckStatus::Passing);
+
+        // Update the service check to critical — update_check_status_async
+        // calls sync_alias_checks internally.
+        service
+            .update_check_status_async("svc:web-1", "critical", None)
+            .await
+            .expect("update should succeed");
+
+        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        assert_eq!(alias_status.status, CheckStatus::Critical);
+
+        // Update the service check back to passing
+        service
+            .update_check_status_async("svc:web-1", "passing", None)
+            .await
+            .expect("update should succeed");
+
+        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        assert_eq!(alias_status.status, CheckStatus::Passing);
+    }
+
+    #[tokio::test]
+    async fn test_alias_check_syncs_warning_status() {
+        let (service, registry) = create_test_health_service_with_registry();
+
+        let svc_check = CheckRegistration {
+            name: "warn-check".to_string(),
+            check_id: Some("svc:warn-1".to_string()),
+            service_id: Some("warnsvc".to_string()),
+            service_name: Some("warnsvc".to_string()),
+            tcp: Some("127.0.0.1:8081".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        service.register_check(svc_check).await.expect("service check should register");
+
+        let alias_reg = CheckRegistration {
+            name: "alias-warn".to_string(),
+            check_id: Some("alias:warn".to_string()),
+            alias_service: Some("warnsvc".to_string()),
+            ..Default::default()
+        };
+        service.register_check(alias_reg).await.expect("alias check should register");
+
+        service
+            .update_check_status_async("svc:warn-1", "warning", None)
+            .await
+            .expect("update should succeed");
+
+        let (_, alias_status) = registry.get_check("alias:warn").expect("alias check exists");
+        assert_eq!(alias_status.status, CheckStatus::Warning);
     }
 
     #[tokio::test]
@@ -2183,6 +2749,9 @@ mod tests {
             tcp_addr: None,
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: Some(Duration::from_secs(30)),
@@ -2233,6 +2802,9 @@ mod tests {
             tcp_addr: None,
             grpc_addr: None,
             db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: Some(Duration::from_secs(30)),
@@ -2372,5 +2944,252 @@ mod tests {
             !ids.contains(&"ttl-passive-1".to_string()),
             "TTL check should NOT be scheduled"
         );
+    }
+
+    // ========================================================================
+    // Cross-peer health resolution tests
+    // ========================================================================
+
+    use crate::peering::{Peering, PeeringRemoteInfo, PeeringState, PeeringStreamStatus};
+
+    fn make_peering(
+        name: &str,
+        state: PeeringState,
+        remote_dc: &str,
+        imported: &[&str],
+    ) -> Peering {
+        Peering {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            partition: String::new(),
+            state,
+            peer_id: uuid::Uuid::new_v4().to_string(),
+            peer_server_name: String::new(),
+            peer_server_addresses: Vec::new(),
+            peer_ca_pems: Vec::new(),
+            meta: Default::default(),
+            stream_status: PeeringStreamStatus {
+                imported_services: imported.iter().map(|s| s.to_string()).collect(),
+                exported_services: Vec::new(),
+                last_heartbeat: None,
+                last_receive: None,
+                last_send: None,
+            },
+            create_index: 1,
+            modify_index: 1,
+            remote: PeeringRemoteInfo {
+                partition: "default".to_string(),
+                datacenter: remote_dc.to_string(),
+            },
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn cross_peer_unknown_peering_returns_empty_with_fallback_dc() {
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let (dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            "unknown-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        assert!(results.is_empty());
+        assert_eq!(dc, "dc1"); // falls back to local DC
+    }
+
+    #[test]
+    fn cross_peer_inactive_peering_returns_empty() {
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let peering = make_peering("pending-peer", PeeringState::Pending, "dc-remote", &["web"]);
+        peering_service
+            .peerings_for_test()
+            .insert("pending-peer".to_string(), peering);
+
+        let (dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            "pending-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        assert!(results.is_empty());
+        // effective DC is still the remote DC (peering exists)
+        assert_eq!(dc, "dc-remote");
+    }
+
+    #[test]
+    fn cross_peer_service_not_imported_returns_empty() {
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let peering = make_peering("active-peer", PeeringState::Active, "dc-remote", &["api"]);
+        peering_service
+            .peerings_for_test()
+            .insert("active-peer".to_string(), peering);
+
+        let (_dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            "active-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn cross_peer_imported_service_returns_empty_no_replication() {
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let peering = make_peering("active-peer", PeeringState::Active, "dc-remote", &["web"]);
+        peering_service
+            .peerings_for_test()
+            .insert("active-peer".to_string(), peering);
+
+        let (dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            "active-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        // Service is imported but remote instances are not replicated yet.
+        assert!(results.is_empty());
+        assert_eq!(dc, "dc-remote");
+    }
+
+    #[test]
+    fn cross_peer_imported_service_with_instances_returns_them() {
+        use crate::peering::{PeeringImportedCheck, PeeringImportedService};
+
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let peering = make_peering("active-peer", PeeringState::Active, "dc-remote", &["web"]);
+        peering_service
+            .peerings_for_test()
+            .insert("active-peer".to_string(), peering);
+
+        // Seed imported instances directly.
+        let instances = vec![PeeringImportedService {
+            service_name: "web".to_string(),
+            service_id: "web-1".to_string(),
+            address: "10.0.0.10".to_string(),
+            port: 8080,
+            tags: vec!["v1".to_string()],
+            meta: Default::default(),
+            datacenter: "dc-remote".to_string(),
+            node: "remote-node".to_string(),
+            node_address: "10.0.0.10".to_string(),
+            checks: vec![PeeringImportedCheck {
+                check_id: "check-web-1".to_string(),
+                name: "web check".to_string(),
+                status: "passing".to_string(),
+                output: String::new(),
+            }],
+            imported_at: "2026-01-01T00:00:00Z".to_string(),
+        }];
+        peering_service
+            .imported_instances_for_test()
+            .insert("active-peer".to_string(), instances);
+
+        let (dc, results) = resolve_cross_peer_health(
+            &peering_service,
+            "active-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        assert_eq!(dc, "dc-remote");
+        assert_eq!(results.len(), 1);
+
+        let sh = &results[0];
+        assert_eq!(sh.service.id, "web-1");
+        assert_eq!(sh.service.service, "web");
+        assert_eq!(sh.service.address, "10.0.0.10");
+        assert_eq!(sh.service.port, 8080);
+        assert_eq!(sh.service.peer_name.as_deref(), Some("active-peer"));
+        assert_eq!(sh.service.datacenter.as_deref(), Some("dc-remote"));
+        assert_eq!(sh.node.node, "remote-node");
+        assert_eq!(sh.node.address, "10.0.0.10");
+        assert_eq!(sh.node.datacenter, "dc-remote");
+        assert_eq!(sh.checks.len(), 1);
+        assert_eq!(sh.checks[0].status, "passing");
+    }
+
+    #[test]
+    fn cross_peer_passing_only_filters_critical_instances() {
+        use crate::peering::{PeeringImportedCheck, PeeringImportedService};
+
+        let peering_service = crate::peering::ConsulPeeringService::new();
+        let peering = make_peering("active-peer", PeeringState::Active, "dc-remote", &["web"]);
+        peering_service
+            .peerings_for_test()
+            .insert("active-peer".to_string(), peering);
+
+        let passing = PeeringImportedService {
+            service_name: "web".to_string(),
+            service_id: "web-1".to_string(),
+            address: "10.0.0.10".to_string(),
+            port: 8080,
+            tags: vec![],
+            meta: Default::default(),
+            datacenter: "dc-remote".to_string(),
+            node: "n1".to_string(),
+            node_address: "10.0.0.10".to_string(),
+            checks: vec![PeeringImportedCheck {
+                check_id: "c1".to_string(),
+                name: "c1".to_string(),
+                status: "passing".to_string(),
+                output: String::new(),
+            }],
+            imported_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let critical = PeeringImportedService {
+            service_name: "web".to_string(),
+            service_id: "web-2".to_string(),
+            address: "10.0.0.11".to_string(),
+            port: 8080,
+            tags: vec![],
+            meta: Default::default(),
+            datacenter: "dc-remote".to_string(),
+            node: "n2".to_string(),
+            node_address: "10.0.0.11".to_string(),
+            checks: vec![PeeringImportedCheck {
+                check_id: "c2".to_string(),
+                name: "c2".to_string(),
+                status: "critical".to_string(),
+                output: String::new(),
+            }],
+            imported_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        peering_service
+            .imported_instances_for_test()
+            .insert("active-peer".to_string(), vec![passing, critical]);
+
+        // passing_only=false returns both.
+        let (_, all) = resolve_cross_peer_health(
+            &peering_service,
+            "active-peer",
+            "web",
+            "default",
+            "dc1",
+            false,
+        );
+        assert_eq!(all.len(), 2);
+
+        // passing_only=true returns only the passing instance.
+        let (_, filtered) = resolve_cross_peer_health(
+            &peering_service,
+            "active-peer",
+            "web",
+            "default",
+            "dc1",
+            true,
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].service.id, "web-1");
     }
 }

@@ -362,6 +362,22 @@ impl ConsulCoordinateService {
         }
     }
 
+    /// Estimate the RTT (in seconds) between two nodes using their Vivaldi
+    /// network coordinates.
+    ///
+    /// Returns `None` if either node has no coordinate stored. Nodes without
+    /// coordinates are treated as "infinitely far" for sorting purposes.
+    pub fn estimate_rtt(&self, from_node: &str, to_node: &str) -> Option<f64> {
+        if from_node == to_node {
+            return Some(0.0);
+        }
+        let from_entries = self.get_node(from_node)?;
+        let to_entries = self.get_node(to_node)?;
+        let from_coord = from_entries.first()?.coord.to_vivaldi();
+        let to_coord = to_entries.first()?.coord.to_vivaldi();
+        Some(from_coord.distance_to(&to_coord))
+    }
+
 /// The `update_coordinate` method.
     pub async fn update_coordinate(&self, req: CoordinateUpdateRequest) -> Result<(), String> {
         // Validate coordinate dimensions
@@ -551,6 +567,21 @@ impl ConsulCoordinateServicePersistent {
         } else {
             Some(entries)
         }
+    }
+
+    /// Estimate the RTT (in seconds) between two nodes using their Vivaldi
+    /// network coordinates.
+    ///
+    /// Returns `None` if either node has no coordinate stored.
+    pub fn estimate_rtt(&self, from_node: &str, to_node: &str) -> Option<f64> {
+        if from_node == to_node {
+            return Some(0.0);
+        }
+        let from_entries = self.get_node(from_node)?;
+        let to_entries = self.get_node(to_node)?;
+        let from_coord = from_entries.first()?.coord.to_vivaldi();
+        let to_coord = to_entries.first()?.coord.to_vivaldi();
+        Some(from_coord.distance_to(&to_coord))
     }
 
 /// The `update_coordinate` method.
@@ -1081,5 +1112,55 @@ mod tests {
         for entry in &entries {
             assert_eq!(entry.node, "multi-seg");
         }
+    }
+
+    #[tokio::test]
+    async fn test_estimate_rtt_between_nodes() {
+        let service = ConsulCoordinateService::new();
+
+        // Update two nodes with coordinates far apart
+        service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "node-a".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.0,
+                    error: 0.5,
+                    height: 0.001,
+                    vec: vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+            })
+            .await
+            .unwrap();
+        service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "node-b".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.0,
+                    error: 0.5,
+                    height: 0.001,
+                    vec: vec![10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+            })
+            .await
+            .unwrap();
+
+        // Same node → RTT should be 0
+        let rtt_same = service.estimate_rtt("node-a", "node-a");
+        assert_eq!(rtt_same, Some(0.0));
+
+        // Different nodes → RTT should be positive
+        let rtt = service.estimate_rtt("node-a", "node-b");
+        assert!(rtt.is_some());
+        assert!(rtt.unwrap() > 0.0);
+
+        // RTT should be symmetric
+        let rtt_rev = service.estimate_rtt("node-b", "node-a");
+        assert!((rtt.unwrap() - rtt_rev.unwrap()).abs() < 1e-9);
+
+        // Non-existent node → None
+        assert!(service.estimate_rtt("node-a", "nonexistent").is_none());
+        assert!(service.estimate_rtt("nonexistent", "node-a").is_none());
     }
 }

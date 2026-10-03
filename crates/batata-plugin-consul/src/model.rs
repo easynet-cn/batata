@@ -72,6 +72,8 @@ pub struct ConsulDatacenterConfig {
     pub batata_version: String,
     /// The Consul compatibility HTTP port (default 8500)
     pub consul_port: u16,
+    /// The Consul compatibility gRPC port (default 8502), used by Envoy xDS
+    pub grpc_port: u16,
     /// The Batata main server port (default 8848), used to derive Raft port
     pub main_port: u16,
     /// Persistent node ID (generated once on startup, stable across requests)
@@ -96,6 +98,7 @@ impl ConsulDatacenterConfig {
             consul_version: "1.22.5".to_string(),
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
             consul_port: 8500,
+            grpc_port: 8502,
             main_port: 8848,
             node_id: uuid::Uuid::new_v4().to_string(),
             node_name,
@@ -130,6 +133,12 @@ impl ConsulDatacenterConfig {
 /// The `with_consul_port` method.
     pub fn with_consul_port(mut self, port: u16) -> Self {
         self.consul_port = port;
+        self
+    }
+
+/// The `with_grpc_port` method.
+    pub fn with_grpc_port(mut self, port: u16) -> Self {
+        self.grpc_port = port;
         self
     }
 
@@ -294,11 +303,16 @@ impl ConsulPluginConfig {
             .get_string("batata.persistence.embedded.data_dir")
             .unwrap_or_else(|_| "data".to_string());
 
+        let grpc_port = config
+            .get_int("batata.consul.grpc.port")
+            .unwrap_or_else(|_| consul_port as i64 + 2) as u16;
+
         let mut dc_config = ConsulDatacenterConfig::new(datacenter)
             .with_primary(primary_datacenter)
             .with_consul_version(consul_version)
             .with_batata_version(batata_version)
             .with_consul_port(consul_port)
+            .with_grpc_port(grpc_port)
             .with_main_port(main_port)
             .with_translate_wan_addrs(translate_wan_addrs)
             .with_data_dir(&data_dir);
@@ -1399,15 +1413,10 @@ impl CheckRegistration {
     }
 
     /// Validate that this registration uses a check type batata can execute.
-    /// Script/Docker and Alias checks are rejected instead of being silently
-    /// downgraded to TTL.
+    ///
+    /// All Consul check types are now supported: TTL, HTTP, TCP, gRPC,
+    /// Script/Args, Docker, and Alias.
     pub fn validate_supported(&self) -> Result<(), CheckRegistrationRejection> {
-        if self.is_script() {
-            return Err(CheckRegistrationRejection::ScriptsDisabled);
-        }
-        if self.is_alias() {
-            return Err(CheckRegistrationRejection::AliasUnsupported);
-        }
         Ok(())
     }
 
@@ -1421,6 +1430,12 @@ impl CheckRegistration {
             "tcp"
         } else if self.grpc.is_some() {
             "grpc"
+        } else if self.docker_container_id.is_some() {
+            "docker"
+        } else if self.script.is_some() || self.args.as_ref().is_some_and(|a| !a.is_empty()) {
+            "script"
+        } else if self.alias_service.is_some() || self.alias_node.is_some() {
+            "alias"
         } else {
             "ttl" // default
         }
@@ -1780,6 +1795,9 @@ pub struct HealthQueryParams {
 
     /// Filter expression
     pub filter: Option<String>,
+
+    /// Near node for RTT sorting (`?near`)
+    pub near: Option<String>,
 
     /// Cluster peering name for cross-peer queries
     #[serde(alias = "peer-name")]

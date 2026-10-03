@@ -38,7 +38,7 @@ yaml_serde = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "process"] }
 
 # gRPC
 tonic = { workspace = true }

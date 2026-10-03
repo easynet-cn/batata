@@ -85,6 +85,7 @@ async fn execute_query(
     query_service: web::Data<ConsulQueryService>,
     naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
 ) -> HttpResponse {
     crate::query::execute_query(
         req,
@@ -95,6 +96,7 @@ async fn execute_query(
         query_service,
         naming_store,
         index_provider,
+        coord_service,
     )
     .await
 }

@@ -54,10 +54,11 @@ async fn acl_logout(
 
 #[get("/replication")]
 async fn acl_replication(
+    acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::acl::acl_replication(dc_config, index_provider).await
+    crate::acl::acl_replication(acl_service, dc_config, index_provider).await
 }
 
 // ============================================================================

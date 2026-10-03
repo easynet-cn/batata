@@ -32,6 +32,10 @@ pub enum HealthCheckType {
     Grpc,
     /// MySQL/Database health check
     Mysql,
+    /// External script/command execution (Consul-compatible)
+    Script,
+    /// Execute command inside a Docker container (Consul-compatible)
+    Docker,
 }
 
 impl HealthCheckType {
@@ -44,6 +48,8 @@ impl HealthCheckType {
             "TTL" => Self::Ttl,
             "GRPC" => Self::Grpc,
             "MYSQL" => Self::Mysql,
+            "SCRIPT" => Self::Script,
+            "DOCKER" => Self::Docker,
             _ => Self::None,
         }
     }
@@ -57,6 +63,8 @@ impl HealthCheckType {
             Self::Ttl => "TTL",
             Self::Grpc => "GRPC",
             Self::Mysql => "MYSQL",
+            Self::Script => "SCRIPT",
+            Self::Docker => "DOCKER",
         }
     }
 }

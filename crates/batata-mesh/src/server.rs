@@ -439,6 +439,16 @@ impl XdsServer {
             has_default_snapshot: cache_stats.has_default,
         }
     }
+
+    /// Return the node IDs of all currently connected xDS clients.
+    ///
+    /// Used by sync bridges to build per-node (per-proxy) snapshots.
+    pub fn connected_nodes(&self) -> Vec<String> {
+        self.active_streams
+            .iter()
+            .map(|e| e.key().clone())
+            .collect()
+    }
 }
 
 /// Server statistics

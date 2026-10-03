@@ -51,6 +51,7 @@ async fn get_service(
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
     config_entry_service: web::Data<crate::config_entry::ConsulConfigEntryService>,
+    coord_service: web::Data<crate::coordinate::ConsulCoordinateService>,
 ) -> HttpResponse {
     crate::catalog::get_service(
         req,
@@ -61,6 +62,7 @@ async fn get_service(
         query,
         index_provider,
         config_entry_service,
+        coord_service,
     )
     .await
 }

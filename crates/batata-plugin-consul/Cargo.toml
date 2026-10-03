@@ -13,6 +13,7 @@ batata-naming = { workspace = true }
 batata-consistency = { workspace = true }
 batata-plugin = { workspace = true }
 batata-core = { workspace = true }
+batata-mesh = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }
@@ -30,6 +31,10 @@ base64 = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 futures = { workspace = true }
+
+# gRPC / xDS
+tonic = { workspace = true }
+prost = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
@@ -74,6 +79,9 @@ hostname = { workspace = true }
 
 # X.509 certificate generation
 rcgen = { workspace = true }
+
+# Regular expressions for L7 intention path matching
+regex = { workspace = true }
 
 # Temp directory for tests
 tempfile = { workspace = true }

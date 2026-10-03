@@ -9,11 +9,165 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::agent::ConsulAgentService;
 use crate::config_entry::ConsulConfigEntryService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::ConsulError;
-use crate::model::ConsulErrorBody;
+use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
+
+// ============================================================================
+// Envoy Bootstrap Models (for /v1/connect/proxy/:service_id)
+// ============================================================================
+
+/// Envoy v3 bootstrap configuration returned by `/v1/connect/proxy/:service_id`.
+///
+/// Provides the sidecar proxy with its node identity, admin endpoint, and
+/// xDS (ADS) configuration pointing back at the local Consul agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyBootstrapConfig {
+/// The `node` field.
+    pub node: EnvoyNode,
+/// The `admin` field.
+    pub admin: EnvoyAdmin,
+/// The `dynamic_resources` field.
+    pub dynamic_resources: EnvoyDynamicResources,
+/// The `static_resources` field.
+    pub static_resources: EnvoyStaticResources,
+}
+
+/// Envoy node identity presented to the xDS management server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyNode {
+/// The `id` field — proxy service ID.
+    pub id: String,
+/// The `cluster` field — datacenter name.
+    pub cluster: String,
+/// The `metadata` field — Consul-specific node metadata.
+    pub metadata: HashMap<String, String>,
+}
+
+/// Envoy admin endpoint configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyAdmin {
+/// The `access_log_path` field.
+    pub access_log_path: String,
+/// The `address` field.
+    pub address: EnvoySocketAddress,
+}
+
+/// Socket address used in admin and cluster endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoySocketAddress {
+/// The `socket_address` field.
+    pub socket_address: EnvoySocketAddressInner,
+}
+
+/// Inner socket address with address and port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoySocketAddressInner {
+/// The `address` field.
+    pub address: String,
+/// The `port_value` field.
+    pub port_value: u16,
+}
+
+/// Dynamic xDS resources (LDS + CDS via aggregated discovery service).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyDynamicResources {
+/// The `lds_config` field.
+    pub lds_config: EnvoyAdsConfig,
+/// The `cds_config` field.
+    pub cds_config: EnvoyAdsConfig,
+/// The `ads_config` field.
+    pub ads_config: EnvoyAdsApiConfigSource,
+}
+
+/// Minimal ADS config pointing at the aggregated discovery service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyAdsConfig {
+/// The `ads` field — empty object to enable ADS.
+    pub ads: serde_json::Value,
+/// The `resource_api_version` field.
+    pub resource_api_version: String,
+}
+
+/// API config source for the aggregated discovery service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyAdsApiConfigSource {
+/// The `api_type` field.
+    pub api_type: String,
+/// The `transport_api_version` field.
+    pub transport_api_version: String,
+/// The `grpc_services` field.
+    pub grpc_services: Vec<EnvoyGrpcService>,
+}
+
+/// gRPC service definition pointing at the local agent cluster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyGrpcService {
+/// The `envoy_grpc` field.
+    pub envoy_grpc: EnvoyGrpcServiceInner,
+}
+
+/// Inner gRPC service with cluster name reference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyGrpcServiceInner {
+/// The `cluster_name` field.
+    pub cluster_name: String,
+}
+
+/// Static resources containing the local_agent xDS cluster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyStaticResources {
+/// The `clusters` field.
+    pub clusters: Vec<EnvoyCluster>,
+}
+
+/// Envoy cluster definition for the local agent xDS server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyCluster {
+/// The `name` field.
+    pub name: String,
+/// The `connect_timeout` field.
+    pub connect_timeout: String,
+/// The `type` field.
+    #[serde(rename = "type")]
+    pub cluster_type: String,
+/// The `typed_extension_protocol_options` field.
+    pub typed_extension_protocol_options: serde_json::Value,
+/// The `load_assignment` field.
+    pub load_assignment: EnvoyLoadAssignment,
+}
+
+/// Load assignment for the local agent cluster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyLoadAssignment {
+/// The `cluster_name` field.
+    pub cluster_name: String,
+/// The `endpoints` field.
+    pub endpoints: Vec<EnvoyLocalityLbEndpoints>,
+}
+
+/// Locality load balancer endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyLocalityLbEndpoints {
+/// The `lb_endpoints` field.
+    pub lb_endpoints: Vec<EnvoyLbEndpoint>,
+}
+
+/// A single load balancer endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyLbEndpoint {
+/// The `endpoint` field.
+    pub endpoint: EnvoyEndpoint,
+}
+
+/// Endpoint address wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvoyEndpoint {
+/// The `address` field.
+    pub address: EnvoySocketAddress,
+}
 
 // ============================================================================
 // Discovery Chain Models
@@ -363,6 +517,8 @@ pub struct ConsulConnectService {
     imported_services: Arc<DashMap<String, ImportedService>>,
     /// Optional config entry service for building discovery chains from config entries
     config_entry_service: Option<Arc<ConsulConfigEntryService>>,
+    /// Optional peering service for merging peering-imported services
+    peering_service: Option<Arc<crate::peering::ConsulPeeringService>>,
     /// Datacenter name
     datacenter: String,
 }
@@ -379,6 +535,7 @@ impl ConsulConnectService {
             exported_services: Arc::new(DashMap::new()),
             imported_services: Arc::new(DashMap::new()),
             config_entry_service: None,
+            peering_service: None,
             datacenter,
         }
     }
@@ -389,18 +546,31 @@ impl ConsulConnectService {
         self
     }
 
+    /// Set the peering service so imported services are derived from active
+    /// peerings as the single source of truth.
+    pub fn with_peering_service(
+        mut self,
+        service: Arc<crate::peering::ConsulPeeringService>,
+    ) -> Self {
+        self.peering_service = Some(service);
+        self
+    }
+
     /// Get the compiled discovery chain for a service.
     /// Builds the chain from config entries (service-router, service-splitter, service-resolver)
     /// if available, otherwise returns a default chain with a single resolver node.
+    ///
+    /// Compilation handles:
+    /// - Service subsets from service-resolver (each subset becomes a DiscoveryTarget)
+    /// - DefaultSubset routing (resolver points to the default subset target)
+    /// - Failover targets (each becomes a resolver node + DiscoveryTarget)
+    /// - Mesh gateway mode (from service-resolver or proxy-defaults)
+    /// - SNI generation (local DC vs cross-DC/mesh gateway)
+    /// - Connect timeout and protocol merging (service-resolver/service-defaults -> proxy-defaults)
     pub fn get_discovery_chain(&self, service_name: &str) -> DiscoveryChainResponse {
-        let target_id = format!(
-            "{}.default.default.{}.internal",
-            service_name, self.datacenter
-        );
-        let resolver_key = format!(
-            "resolver:{}.default.default.{}",
-            service_name, self.datacenter
-        );
+        let default_ns = "default".to_string();
+        let default_partition = "default".to_string();
+        let trust_domain = "consul";
 
         // Look up config entries if the config entry service is available
         let router_entry = self
@@ -415,37 +585,176 @@ impl ConsulConnectService {
             .config_entry_service
             .as_ref()
             .and_then(|s| s.get_entry("service-resolver", service_name));
-
-        // Determine connect timeout from resolver config entry or use default
-        let connect_timeout = resolver_entry
-            .as_ref()
-            .and_then(|e| e.extra.get("ConnectTimeout"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("5s")
-            .to_string();
-
-        // Determine protocol from service-defaults config entry or use default
-        let protocol = self
+        let proxy_defaults_entry = self
             .config_entry_service
             .as_ref()
-            .and_then(|s| s.get_entry("service-defaults", service_name))
-            .and_then(|e| {
-                e.extra
-                    .get("Protocol")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "tcp".to_string());
+            .and_then(|s| s.get_entry("proxy-defaults", "global"));
+        let service_defaults_entry = self
+            .config_entry_service
+            .as_ref()
+            .and_then(|s| s.get_entry("service-defaults", service_name));
+
+        // Resolve mesh gateway mode: service-resolver > proxy-defaults > "none"
+        let mesh_gateway_mode = Self::resolve_mesh_gateway_mode(
+            resolver_entry.as_ref(),
+            proxy_defaults_entry.as_ref(),
+        );
+
+        // Resolve connect timeout: service-resolver > proxy-defaults > "5s"
+        let connect_timeout = Self::resolve_connect_timeout(
+            resolver_entry.as_ref(),
+            proxy_defaults_entry.as_ref(),
+        );
+
+        // Resolve protocol: service-defaults > proxy-defaults > "tcp"
+        let protocol = Self::resolve_protocol(
+            service_defaults_entry.as_ref(),
+            proxy_defaults_entry.as_ref(),
+        );
 
         let mut nodes = HashMap::new();
+        let mut targets: HashMap<String, DiscoveryTarget> = HashMap::new();
+
+        // ---- Build the default target ----
+        let default_target_id = format!(
+            "{}.{}.{}.{}",
+            service_name, default_ns, default_partition, self.datacenter
+        );
+        let default_target = Self::build_target(
+            &default_target_id,
+            service_name,
+            "",
+            &default_ns,
+            &default_partition,
+            &self.datacenter,
+            &self.datacenter,
+            &mesh_gateway_mode,
+            &connect_timeout,
+            trust_domain,
+            DiscoveryTargetSubset::default(),
+        );
+        targets.insert(default_target_id.clone(), default_target);
+
+        // ---- Determine the resolver's primary target (respect DefaultSubset) ----
+        let default_subset = resolver_entry
+            .as_ref()
+            .and_then(|e| e.extra.get("DefaultSubset"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let primary_target_id = if !default_subset.is_empty() {
+            format!(
+                "{}.{}.{}.{}.{}",
+                service_name, default_subset, default_ns, default_partition, self.datacenter
+            )
+        } else {
+            default_target_id.clone()
+        };
+
+        // ---- Build subset targets from service-resolver ----
+        if let Some(ref resolver) = resolver_entry
+            && let Some(subsets) = resolver.extra.get("Subsets").and_then(|v| v.as_object())
+        {
+            for (subset_name, subset_val) in subsets {
+                let subset_target_id = format!(
+                    "{}.{}.{}.{}.{}",
+                    service_name, subset_name, default_ns, default_partition, self.datacenter
+                );
+                let filter = subset_val
+                    .get("Filter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let only_passing = subset_val
+                    .get("OnlyPassing")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let subset_target = Self::build_target(
+                    &subset_target_id,
+                    service_name,
+                    subset_name,
+                    &default_ns,
+                    &default_partition,
+                    &self.datacenter,
+                    &self.datacenter,
+                    &mesh_gateway_mode,
+                    &connect_timeout,
+                    trust_domain,
+                    DiscoveryTargetSubset { filter, only_passing },
+                );
+                targets.insert(subset_target_id, subset_target);
+            }
+        }
+
+        // ---- Compile failover targets ----
+        let failover_targets: Vec<String> = resolver_entry
+            .as_ref()
+            .and_then(|e| e.extra.get("Failover"))
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("Targets"))
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut failover_resolver_names = Vec::new();
+        for failover_target_str in &failover_targets {
+            let (fo_service, fo_ns, fo_partition, fo_dc) =
+                Self::parse_failover_target(
+                    failover_target_str,
+                    &default_ns,
+                    &default_partition,
+                    &self.datacenter,
+                );
+            let fo_target_id = format!(
+                "{}.{}.{}.{}",
+                fo_service, fo_ns, fo_partition, fo_dc
+            );
+            let fo_resolver_name = format!("resolver:{}", fo_target_id);
+            let fo_target = Self::build_target(
+                &fo_target_id,
+                &fo_service,
+                "",
+                &fo_ns,
+                &fo_partition,
+                &fo_dc,
+                &self.datacenter,
+                &mesh_gateway_mode,
+                &connect_timeout,
+                trust_domain,
+                DiscoveryTargetSubset::default(),
+            );
+            targets.insert(fo_target_id.clone(), fo_target);
+
+            // Failover resolver nodes do NOT carry their own failover config
+            // to avoid infinite recursion loops.
+            nodes.insert(
+                fo_resolver_name.clone(),
+                DiscoveryGraphNode {
+                    node_type: DiscoveryGraphNodeType::Resolver,
+                    name: fo_resolver_name.clone(),
+                    routes: Vec::new(),
+                    splits: Vec::new(),
+                    resolver: Some(DiscoveryResolver {
+                        default: false,
+                        connect_timeout: connect_timeout.clone(),
+                        target: fo_target_id,
+                        failover: None,
+                    }),
+                },
+            );
+            failover_resolver_names.push(fo_resolver_name);
+        }
+
+        // ---- Build router / splitter nodes ----
+        let resolver_key = format!("resolver:{}", default_target_id);
         let mut start_node = resolver_key.clone();
 
-        // If a service-router config entry exists, add a router node
         if let Some(ref router) = router_entry {
-            let router_name = format!(
-                "router:{}.default.default.{}",
-                service_name, self.datacenter
-            );
+            let router_name = format!("router:{}", default_target_id);
             let routes = Self::extract_routes_from_entry(router, service_name, &self.datacenter);
             nodes.insert(
                 router_name.clone(),
@@ -460,12 +769,8 @@ impl ConsulConnectService {
             start_node = router_name;
         }
 
-        // If a service-splitter config entry exists, add a splitter node
         if let Some(ref splitter) = splitter_entry {
-            let splitter_name = format!(
-                "splitter:{}.default.default.{}",
-                service_name, self.datacenter
-            );
+            let splitter_name = format!("splitter:{}", default_target_id);
             let splits = Self::extract_splits_from_entry(splitter, service_name, &self.datacenter);
             nodes.insert(
                 splitter_name.clone(),
@@ -482,7 +787,7 @@ impl ConsulConnectService {
             }
         }
 
-        // Always add the resolver node
+        // ---- Build the primary resolver node ----
         let resolver_node = DiscoveryGraphNode {
             node_type: DiscoveryGraphNodeType::Resolver,
             name: resolver_key.clone(),
@@ -491,52 +796,240 @@ impl ConsulConnectService {
             resolver: Some(DiscoveryResolver {
                 default: resolver_entry.is_none(),
                 connect_timeout: connect_timeout.clone(),
-                target: target_id.clone(),
-                failover: resolver_entry
-                    .as_ref()
-                    .and_then(|e| e.extra.get("Failover"))
-                    .and_then(|v| v.as_object())
-                    .and_then(|obj| {
-                        obj.get("Targets")
-                            .and_then(|t| t.as_array())
-                            .map(|arr| DiscoveryFailover {
-                                targets: arr
-                                    .iter()
-                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                    .collect(),
-                            })
-                    }),
+                target: primary_target_id,
+                failover: if failover_resolver_names.is_empty() {
+                    None
+                } else {
+                    Some(DiscoveryFailover {
+                        targets: failover_resolver_names,
+                    })
+                },
             }),
         };
-        nodes.insert(resolver_key.clone(), resolver_node);
-
-        let target = DiscoveryTarget {
-            id: target_id.clone(),
-            service: service_name.to_string(),
-            service_subset: String::new(),
-            namespace: "default".to_string(),
-            partition: "default".to_string(),
-            datacenter: self.datacenter.clone(),
-            mesh_gateway: MeshGatewayConfig::default(),
-            subset: DiscoveryTargetSubset::default(),
-            connect_timeout,
-            sni: format!("{}.default.{}.internal", service_name, self.datacenter),
-            name: format!("{}.default.default.{}", service_name, self.datacenter),
-        };
-
-        let mut targets = HashMap::new();
-        targets.insert(target_id, target);
+        nodes.insert(resolver_key, resolver_node);
 
         DiscoveryChainResponse {
             chain: CompiledDiscoveryChain {
                 service_name: service_name.to_string(),
-                namespace: "default".to_string(),
+                namespace: default_ns.clone(),
                 datacenter: self.datacenter.clone(),
                 customization_hash: String::new(),
                 protocol,
                 start_node,
                 nodes,
                 targets,
+            },
+        }
+    }
+
+    /// Build a DiscoveryTarget with correct SNI based on DC and mesh gateway mode.
+    /// `local_dc` is the datacenter of the compiling agent, used to decide
+    /// whether the target is cross-DC.
+    fn build_target(
+        id: &str,
+        service: &str,
+        service_subset: &str,
+        namespace: &str,
+        partition: &str,
+        datacenter: &str,
+        local_dc: &str,
+        mesh_gateway_mode: &str,
+        connect_timeout: &str,
+        trust_domain: &str,
+        subset: DiscoveryTargetSubset,
+    ) -> DiscoveryTarget {
+        // SNI differs for cross-DC / mesh-gateway targets
+        let sni = if mesh_gateway_mode == "none" && local_dc == datacenter {
+            format!("{}.{}.{}.internal", service, namespace, datacenter)
+        } else {
+            format!(
+                "{}.{}.{}.{}.alt.consul",
+                service, namespace, datacenter, trust_domain
+            )
+        };
+        DiscoveryTarget {
+            id: id.to_string(),
+            service: service.to_string(),
+            service_subset: service_subset.to_string(),
+            namespace: namespace.to_string(),
+            partition: partition.to_string(),
+            datacenter: datacenter.to_string(),
+            mesh_gateway: MeshGatewayConfig {
+                mode: mesh_gateway_mode.to_string(),
+            },
+            subset,
+            connect_timeout: connect_timeout.to_string(),
+            sni,
+            name: format!("{}.{}.{}", service, namespace, datacenter),
+        }
+    }
+
+    /// Parse a failover target string into (service, namespace, partition, datacenter).
+    /// Supported formats: `service`, `service.namespace`, `service.namespace.datacenter`.
+    /// Partition always defaults to "default" (Consul OSS).
+    /// When the datacenter segment is omitted, `default_dc` is used.
+    fn parse_failover_target(
+        target: &str,
+        default_ns: &str,
+        default_partition: &str,
+        default_dc: &str,
+    ) -> (String, String, String, String) {
+        let parts: Vec<&str> = target.split('.').collect();
+        let service = parts.first().copied().unwrap_or(target).to_string();
+        let namespace = parts.get(1).copied().unwrap_or(default_ns).to_string();
+        let datacenter = parts.get(2).copied().unwrap_or(default_dc).to_string();
+        (service, namespace, default_partition.to_string(), datacenter)
+    }
+
+    /// Resolve mesh gateway mode: service-resolver > proxy-defaults > "none".
+    fn resolve_mesh_gateway_mode(
+        resolver_entry: Option<&crate::config_entry::ConfigEntry>,
+        proxy_defaults_entry: Option<&crate::config_entry::ConfigEntry>,
+    ) -> String {
+        if let Some(mode) = resolver_entry
+            .and_then(|e| e.extra.get("MeshGateway"))
+            .and_then(|m| m.get("Mode"))
+            .and_then(|v| v.as_str())
+        {
+            return mode.to_string();
+        }
+        if let Some(mode) = proxy_defaults_entry
+            .and_then(|e| e.extra.get("MeshGateway"))
+            .and_then(|m| m.get("Mode"))
+            .and_then(|v| v.as_str())
+        {
+            return mode.to_string();
+        }
+        "none".to_string()
+    }
+
+    /// Resolve connect timeout: service-resolver > proxy-defaults > "5s".
+    fn resolve_connect_timeout(
+        resolver_entry: Option<&crate::config_entry::ConfigEntry>,
+        proxy_defaults_entry: Option<&crate::config_entry::ConfigEntry>,
+    ) -> String {
+        if let Some(ct) = resolver_entry
+            .and_then(|e| e.extra.get("ConnectTimeout"))
+            .and_then(|v| v.as_str())
+        {
+            return ct.to_string();
+        }
+        if let Some(ct) = proxy_defaults_entry
+            .and_then(|e| e.extra.get("ConnectTimeout"))
+            .and_then(|v| v.as_str())
+        {
+            return ct.to_string();
+        }
+        "5s".to_string()
+    }
+
+    /// Resolve protocol: service-defaults > proxy-defaults > "tcp".
+    fn resolve_protocol(
+        service_defaults_entry: Option<&crate::config_entry::ConfigEntry>,
+        proxy_defaults_entry: Option<&crate::config_entry::ConfigEntry>,
+    ) -> String {
+        if let Some(p) = service_defaults_entry
+            .and_then(|e| e.extra.get("Protocol"))
+            .and_then(|v| v.as_str())
+        {
+            return p.to_string();
+        }
+        if let Some(p) = proxy_defaults_entry
+            .and_then(|e| e.extra.get("Protocol"))
+            .and_then(|v| v.as_str())
+        {
+            return p.to_string();
+        }
+        "tcp".to_string()
+    }
+
+    /// Build an Envoy v3 bootstrap configuration for the given proxy service.
+    ///
+    /// The returned config gives a sidecar proxy its node identity, admin
+    /// endpoint, and an ADS (aggregated xDS) configuration that points Envoy
+    /// at the local agent's gRPC port for LDS/CDS.
+    pub fn build_envoy_bootstrap(
+        &self,
+        service_id: &str,
+        service_name: &str,
+        namespace: &str,
+        admin_port: u16,
+        grpc_port: u16,
+        node_name: &str,
+    ) -> EnvoyBootstrapConfig {
+        let mut metadata = HashMap::new();
+        metadata.insert("CONSUL_DC".to_string(), self.datacenter.clone());
+        metadata.insert("CONSUL_NODE_NAME".to_string(), node_name.to_string());
+        metadata.insert("CONSUL_SERVICE_NAME".to_string(), service_name.to_string());
+        metadata.insert("CONSUL_SERVICE_ID".to_string(), service_id.to_string());
+        metadata.insert("CONSUL_NAMESPACE".to_string(), namespace.to_string());
+        metadata.insert("CONSUL_PARTITION".to_string(), "default".to_string());
+        metadata.insert("CONSUL_PROXY_ID".to_string(), service_id.to_string());
+        metadata.insert("CONSUL_PROXY_SERVICE_NAME".to_string(), service_name.to_string());
+
+        EnvoyBootstrapConfig {
+            node: EnvoyNode {
+                id: service_id.to_string(),
+                cluster: self.datacenter.clone(),
+                metadata,
+            },
+            admin: EnvoyAdmin {
+                access_log_path: "/dev/null".to_string(),
+                address: EnvoySocketAddress {
+                    socket_address: EnvoySocketAddressInner {
+                        address: "127.0.0.1".to_string(),
+                        port_value: admin_port,
+                    },
+                },
+            },
+            dynamic_resources: EnvoyDynamicResources {
+                lds_config: EnvoyAdsConfig {
+                    ads: serde_json::json!({}),
+                    resource_api_version: "V3".to_string(),
+                },
+                cds_config: EnvoyAdsConfig {
+                    ads: serde_json::json!({}),
+                    resource_api_version: "V3".to_string(),
+                },
+                ads_config: EnvoyAdsApiConfigSource {
+                    api_type: "GRPC".to_string(),
+                    transport_api_version: "V3".to_string(),
+                    grpc_services: vec![EnvoyGrpcService {
+                        envoy_grpc: EnvoyGrpcServiceInner {
+                            cluster_name: "local_agent".to_string(),
+                        },
+                    }],
+                },
+            },
+            static_resources: EnvoyStaticResources {
+                clusters: vec![EnvoyCluster {
+                    name: "local_agent".to_string(),
+                    connect_timeout: "1s".to_string(),
+                    cluster_type: "STRICT_DNS".to_string(),
+                    typed_extension_protocol_options: serde_json::json!({
+                        "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+                            "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+                            "explicit_http_config": {
+                                "http2_protocol_options": {}
+                            }
+                        }
+                    }),
+                    load_assignment: EnvoyLoadAssignment {
+                        cluster_name: "local_agent".to_string(),
+                        endpoints: vec![EnvoyLocalityLbEndpoints {
+                            lb_endpoints: vec![EnvoyLbEndpoint {
+                                endpoint: EnvoyEndpoint {
+                                    address: EnvoySocketAddress {
+                                        socket_address: EnvoySocketAddressInner {
+                                            address: "127.0.0.1".to_string(),
+                                            port_value: grpc_port,
+                                        },
+                                    },
+                                },
+                            }],
+                        }],
+                    },
+                }],
             },
         }
     }
@@ -701,11 +1194,32 @@ impl ConsulConnectService {
 
 /// The `list_imported_services` method.
     pub fn list_imported_services(&self) -> Vec<ImportedService> {
+        use std::collections::BTreeSet;
+
+        // Start with services explicitly added via add_imported_service.
         let mut services: Vec<ImportedService> = self
             .imported_services
             .iter()
             .map(|r| r.value().clone())
             .collect();
+
+        // Merge in services imported through active peerings (single source of
+        // truth for peering-derived imports). Deduplicate by (service, peer).
+        if let Some(ref peering) = self.peering_service {
+            let seen: BTreeSet<(String, String)> = services
+                .iter()
+                .map(|s| (s.service.clone(), s.source_peer.clone()))
+                .collect();
+            for (svc, peer) in peering.list_all_imported_service_names() {
+                if !seen.contains(&(svc.clone(), peer.clone())) {
+                    services.push(ImportedService {
+                        service: svc,
+                        source_peer: peer,
+                    });
+                }
+            }
+        }
+
         services.sort_by(|a, b| a.service.cmp(&b.service));
         services
     }
@@ -752,6 +1266,70 @@ pub async fn get_discovery_chain(
     let service_name = path.into_inner();
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta).json(connect_service.get_discovery_chain(&service_name))
+}
+
+/// Query parameters for the proxy config endpoint
+#[derive(Debug, Deserialize, Default)]
+pub struct ProxyConfigQueryParams {
+/// The `ns` field — namespace (defaults to "default").
+    pub ns: Option<String>,
+}
+
+/// GET /v1/connect/proxy/{service_id} - Envoy bootstrap config for a proxy service
+///
+/// Returns the Envoy v3 bootstrap configuration (node identity, admin endpoint,
+/// ADS xDS config) for the registered proxy service identified by `service_id`.
+pub async fn get_proxy_config(
+    req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
+    acl_service: web::Data<AclService>,
+    connect_service: web::Data<ConsulConnectService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+    query: web::Query<ProxyConfigQueryParams>,
+) -> HttpResponse {
+    let service_id = path.into_inner();
+    let namespace = dc_config.resolve_ns(&query.ns);
+
+    // ACL: proxy config carries service identity — require service:read.
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_id, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().consul_error(ConsulError::new(authz.reason));
+    }
+
+    // Resolve the service registration by ID.
+    let Some(data) = agent.naming_store().get_by_service_id(&namespace, &service_id) else {
+        return HttpResponse::NotFound()
+            .consul_error(ConsulError::new(format!("Service not found: {}", service_id)));
+    };
+    let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) else {
+        return HttpResponse::InternalServerError()
+            .consul_error(ConsulError::new("Failed to decode service registration"));
+    };
+    let service_name = reg.name.clone();
+
+    // Extract the Envoy admin bind port from proxy.config, default 19000.
+    let admin_port = reg
+        .proxy
+        .as_ref()
+        .and_then(|p| p.get("Config"))
+        .and_then(|c| c.get("envoy_admin_bind_port"))
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u16)
+        .unwrap_or(19000);
+
+    let bootstrap = connect_service.build_envoy_bootstrap(
+        &service_id,
+        &service_name,
+        &namespace,
+        admin_port,
+        dc_config.grpc_port,
+        &dc_config.node_name,
+    );
+
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(bootstrap)
 }
 
 /// GET /v1/exported-services - List exported services
@@ -1048,5 +1626,244 @@ mod tests {
         let exported = service.list_exported_services();
         assert_eq!(exported[0].consumers.partitions.len(), 2);
         assert_eq!(exported[0].consumers.peers.len(), 1);
+    }
+
+    #[test]
+    fn test_imported_services_merged_from_peering() {
+        use crate::peering::{Peering, PeeringRemoteInfo, PeeringState, PeeringStreamStatus};
+        use std::sync::Arc;
+
+        let peering = Arc::new(crate::peering::ConsulPeeringService::new());
+        // Seed an active peering with imported services.
+        peering.peerings_for_test().insert(
+            "peer-east".to_string(),
+            Peering {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "peer-east".to_string(),
+                partition: String::new(),
+                state: PeeringState::Active,
+                peer_id: uuid::Uuid::new_v4().to_string(),
+                peer_server_name: String::new(),
+                peer_server_addresses: Vec::new(),
+                peer_ca_pems: Vec::new(),
+                meta: Default::default(),
+                stream_status: PeeringStreamStatus {
+                    imported_services: vec!["db".to_string(), "cache".to_string()],
+                    ..Default::default()
+                },
+                create_index: 1,
+                modify_index: 1,
+                remote: PeeringRemoteInfo::default(),
+                deleted_at: None,
+            },
+        );
+
+        let service = ConsulConnectService::new().with_peering_service(peering);
+
+        // Also add a manual imported service.
+        service.add_imported_service(ImportedService {
+            service: "api".to_string(),
+            source_peer: "peer-west".to_string(),
+        });
+
+        let imported = service.list_imported_services();
+        let names: Vec<&str> = imported.iter().map(|i| i.service.as_str()).collect();
+        // Sorted: api, cache, db
+        assert_eq!(names, vec!["api", "cache", "db"]);
+
+        let db_entry = imported.iter().find(|i| i.service == "db").unwrap();
+        assert_eq!(db_entry.source_peer, "peer-east");
+    }
+
+    // ========================================================================
+    // Discovery chain compilation helper tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_failover_target_service_only() {
+        let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
+            "web", "default", "default", "dc1",
+        );
+        assert_eq!(svc, "web");
+        assert_eq!(ns, "default");
+        assert_eq!(part, "default");
+        assert_eq!(dc, "dc1"); // defaults to local DC
+    }
+
+    #[test]
+    fn test_parse_failover_target_with_namespace() {
+        let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
+            "web.team-a", "default", "default", "dc1",
+        );
+        assert_eq!(svc, "web");
+        assert_eq!(ns, "team-a");
+        assert_eq!(part, "default");
+        assert_eq!(dc, "dc1");
+    }
+
+    #[test]
+    fn test_parse_failover_target_with_namespace_and_dc() {
+        let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
+            "web.team-a.dc2", "default", "default", "dc1",
+        );
+        assert_eq!(svc, "web");
+        assert_eq!(ns, "team-a");
+        assert_eq!(part, "default");
+        assert_eq!(dc, "dc2");
+    }
+
+    #[test]
+    fn test_resolve_mesh_gateway_mode_default_none() {
+        let mode = ConsulConnectService::resolve_mesh_gateway_mode(None, None);
+        assert_eq!(mode, "none");
+    }
+
+    #[test]
+    fn test_resolve_mesh_gateway_mode_from_proxy_defaults() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "MeshGateway".to_string(),
+            serde_json::json!({"Mode": "local"}),
+        );
+        let proxy_defaults = crate::config_entry::ConfigEntry {
+            kind: "proxy-defaults".to_string(),
+            name: "global".to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra,
+            create_index: 1,
+            modify_index: 1,
+        };
+        let mode = ConsulConnectService::resolve_mesh_gateway_mode(None, Some(&proxy_defaults));
+        assert_eq!(mode, "local");
+    }
+
+    #[test]
+    fn test_resolve_mesh_gateway_mode_resolver_overrides_proxy_defaults() {
+        let mut resolver_extra = HashMap::new();
+        resolver_extra.insert(
+            "MeshGateway".to_string(),
+            serde_json::json!({"Mode": "remote"}),
+        );
+        let resolver = crate::config_entry::ConfigEntry {
+            kind: "service-resolver".to_string(),
+            name: "web".to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra: resolver_extra,
+            create_index: 1,
+            modify_index: 1,
+        };
+
+        let mut proxy_extra = HashMap::new();
+        proxy_extra.insert(
+            "MeshGateway".to_string(),
+            serde_json::json!({"Mode": "local"}),
+        );
+        let proxy_defaults = crate::config_entry::ConfigEntry {
+            kind: "proxy-defaults".to_string(),
+            name: "global".to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra: proxy_extra,
+            create_index: 1,
+            modify_index: 1,
+        };
+
+        let mode =
+            ConsulConnectService::resolve_mesh_gateway_mode(Some(&resolver), Some(&proxy_defaults));
+        assert_eq!(mode, "remote"); // resolver takes precedence
+    }
+
+    #[test]
+    fn test_resolve_connect_timeout_default() {
+        let ct = ConsulConnectService::resolve_connect_timeout(None, None);
+        assert_eq!(ct, "5s");
+    }
+
+    #[test]
+    fn test_resolve_connect_timeout_from_resolver() {
+        let mut extra = HashMap::new();
+        extra.insert("ConnectTimeout".to_string(), serde_json::json!("10s"));
+        let resolver = crate::config_entry::ConfigEntry {
+            kind: "service-resolver".to_string(),
+            name: "web".to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra,
+            create_index: 1,
+            modify_index: 1,
+        };
+        let ct = ConsulConnectService::resolve_connect_timeout(Some(&resolver), None);
+        assert_eq!(ct, "10s");
+    }
+
+    #[test]
+    fn test_resolve_protocol_default() {
+        let p = ConsulConnectService::resolve_protocol(None, None);
+        assert_eq!(p, "tcp");
+    }
+
+    #[test]
+    fn test_resolve_protocol_from_service_defaults() {
+        let mut extra = HashMap::new();
+        extra.insert("Protocol".to_string(), serde_json::json!("http"));
+        let sd = crate::config_entry::ConfigEntry {
+            kind: "service-defaults".to_string(),
+            name: "web".to_string(),
+            namespace: None,
+            partition: None,
+            meta: None,
+            extra,
+            create_index: 1,
+            modify_index: 1,
+        };
+        let p = ConsulConnectService::resolve_protocol(Some(&sd), None);
+        assert_eq!(p, "http");
+    }
+
+    #[test]
+    fn test_build_target_sni_local_no_mesh_gateway() {
+        let target = ConsulConnectService::build_target(
+            "web.default.default.dc1",
+            "web",
+            "",
+            "default",
+            "default",
+            "dc1",
+            "dc1", // local_dc == datacenter => local
+            "none",
+            "5s",
+            "consul",
+            DiscoveryTargetSubset::default(),
+        );
+        // Local DC + no mesh gateway => .internal SNI
+        assert_eq!(target.sni, "web.default.dc1.internal");
+        assert_eq!(target.mesh_gateway.mode, "none");
+    }
+
+    #[test]
+    fn test_build_target_sni_cross_dc_mesh_gateway() {
+        let target = ConsulConnectService::build_target(
+            "web.default.default.dc2",
+            "web",
+            "",
+            "default",
+            "default",
+            "dc2",
+            "dc1", // local_dc != datacenter => cross-DC
+            "local",
+            "5s",
+            "consul",
+            DiscoveryTargetSubset::default(),
+        );
+        // Cross-DC or mesh gateway => .alt.consul SNI
+        assert!(target.sni.ends_with(".alt.consul"));
+        assert!(target.sni.contains("dc2"));
+        assert_eq!(target.mesh_gateway.mode, "local");
     }
 }

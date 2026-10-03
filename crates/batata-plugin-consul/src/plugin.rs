@@ -36,6 +36,7 @@ use crate::query::ConsulQueryService;
 use crate::raft::ConsulRaftWriter;
 use crate::session::ConsulSessionService;
 use crate::snapshot::ConsulSnapshotService;
+use crate::xds_sync::{ConsulSyncBridge, create_xds_server};
 
 /// Bridge from the Consul Raft plugin handler's apply-back hook to the
 /// in-memory `ConsulNamingStore`. Keeps follower-side query state
@@ -202,6 +203,7 @@ impl ConsulPlugin {
         let session = ConsulSessionService::new().with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::new();
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
+        let peering = Arc::new(ConsulPeeringService::new());
 
         ConsulPluginInner {
             naming_store: naming_store.clone(),
@@ -233,9 +235,9 @@ impl ConsulPlugin {
             },
             session,
             query: ConsulQueryService::new(),
-            peering: Arc::new(ConsulPeeringService::new()),
+            peering: peering.clone(),
             config_entry: ConsulConfigEntryService::new(),
-            connect: ConsulConnectService::new(),
+            connect: ConsulConnectService::new().with_peering_service(peering.clone()),
             connect_ca: ConsulConnectCAService::new(),
             coordinate: ConsulCoordinateService::new()
                 .with_node_name(self.dc_config.node_name.clone()),
@@ -288,6 +290,13 @@ impl ConsulPlugin {
             }
         }
 
+        let peering = Arc::new(ConsulPeeringService::with_raft(
+            db.clone(),
+            consul_raft.clone(),
+            self.dc_config.datacenter.clone(),
+            self.dc_config.consul_port,
+        ));
+
         ConsulPluginInner {
             naming_store: naming_store.clone(),
             agent: ConsulAgentService::with_raft(
@@ -309,14 +318,9 @@ impl ConsulPlugin {
             session,
             event: ConsulEventService::new(index_provider.clone()),
             query: ConsulQueryService::with_raft(db.clone(), consul_raft.clone()),
-            peering: Arc::new(ConsulPeeringService::with_raft(
-                db.clone(),
-                consul_raft.clone(),
-                self.dc_config.datacenter.clone(),
-                self.dc_config.consul_port,
-            )),
+            peering: peering.clone(),
             config_entry: ConsulConfigEntryService::with_raft(db.clone(), consul_raft.clone()),
-            connect: ConsulConnectService::new(),
+            connect: ConsulConnectService::new().with_peering_service(peering.clone()),
             connect_ca: ConsulConnectCAService::with_raft(db.clone(), consul_raft.clone()),
             coordinate: ConsulCoordinateService::with_raft(
                 db.clone(),
@@ -763,6 +767,20 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             tracing::info!("Consul active health check reactor started");
         }
 
+        // Periodic alias check sync — mirrors aliased service/node check
+        // status into alias checks. Runs every 5s so active checks (whose
+        // status changes via update_check_result, not TTL update) are also
+        // reflected in their alias checks.
+        let health_for_alias = inner.health.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.tick().await; // skip initial firing
+            loop {
+                interval.tick().await;
+                health_for_alias.sync_alias_checks().await;
+            }
+        });
+
         // Session TTL cleanup — leader-only, routes destroys through Raft.
         //
         // Before this fix every node independently swept its own RocksDB,
@@ -782,6 +800,89 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 // status and routes each destroy through Raft. It's a
                 // no-op on followers.
                 let _ = session_svc.cleanup_expired_via_raft(&kv_svc).await;
+            }
+        });
+
+        // Peering stream heartbeat maintenance.
+        //
+        // Refreshes `stream_status.last_heartbeat` for every active peering so
+        // that stream status reflects a live connection during Phase 1 (no
+        // real gRPC stream). Runs every 30s; cheap in-memory updates only.
+        let peering_svc = inner.peering.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.tick().await; // skip initial firing
+            loop {
+                interval.tick().await;
+                for peering in peering_svc.list_peerings() {
+                    if peering.state == crate::peering::PeeringState::Active {
+                        peering_svc.update_stream_heartbeat(&peering.name);
+                    }
+                }
+            }
+        });
+
+        // Peering stream replication (Phase 2: pull mode).
+        //
+        // Periodically polls each active peering's remote server address to
+        // fetch service catalog + health data and import it locally. Runs every
+        // 30s; failures are logged and do not interrupt the loop.
+        let peering_svc_repl = inner.peering.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.tick().await; // skip initial firing
+            loop {
+                interval.tick().await;
+                let peers: Vec<String> = peering_svc_repl
+                    .list_peerings()
+                    .into_iter()
+                    .filter(|p| {
+                        p.state == crate::peering::PeeringState::Active
+                            && !p.peer_server_addresses.is_empty()
+                    })
+                    .map(|p| p.name)
+                    .collect();
+                for name in peers {
+                    if let Err(e) = peering_svc_repl.replicate_from_peer(&name).await {
+                        tracing::warn!(
+                            peer = %name,
+                            "peering replication failed: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        });
+
+        // Connect xDS gRPC server (Envoy ADS).
+        //
+        // Publishes Consul services as xDS Cluster (CDS) and
+        // ClusterLoadAssignment (EDS) resources on `dc_config.grpc_port`.
+        // Envoy sidecars bootstrapped via `/v1/connect/proxy/:service_id`
+        // connect here to discover backend services.
+        let xds_server = create_xds_server();
+        let bridge = Arc::new(ConsulSyncBridge::new(
+            inner.naming_store.clone(),
+            xds_server.clone(),
+        ));
+        let _shutdown_tx = bridge.start();
+
+        let grpc_port = self.dc_config.grpc_port;
+        let xds_server_clone = xds_server.clone();
+        let (_grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let addr = match format!("0.0.0.0:{}", grpc_port).parse() {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("Invalid xDS gRPC address: {}", e);
+                    return;
+                }
+            };
+            tracing::info!(port = grpc_port, "Starting Consul Connect xDS gRPC server");
+            if let Err(e) =
+                batata_mesh::start_xds_grpc_server(xds_server_clone, addr, grpc_shutdown_rx).await
+            {
+                tracing::error!(error = %e, "Consul Connect xDS gRPC server failed");
             }
         });
 
