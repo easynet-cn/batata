@@ -195,4 +195,17 @@ public final class ApolloIntegrationHelper {
         byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
         return Base64.getEncoder().encodeToString(raw);
     }
+
+    /** Lock a namespace via the admin endpoint (not exposed by the OpenAPI client). */
+    public static void lockNamespace(String appId, String cluster, String ns, String lockedBy) {
+        Map<String, String> h = new HashMap<>();
+        h.put("Authorization", token());
+        HttpResult r = request("POST",
+                "/apps/" + appId + "/clusters/" + cluster + "/namespaces/" + ns
+                        + "/lock?lockedBy=" + lockedBy,
+                null, h);
+        if (r.status >= 400) {
+            throw new IllegalStateException("lockNamespace failed: " + r.status + " " + r.body);
+        }
+    }
 }

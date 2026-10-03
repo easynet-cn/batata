@@ -272,18 +272,24 @@ impl ReleaseService {
         Ok(now_effective.into())
     }
 
-    /// Port of upstream `rollbackTo`: abandon every active release between the
-    /// target and the current one (both inclusive bounds kept distinct).
+    /// Port of upstream `rollbackTo`: `release_id` is the target release to
+    /// rollback TO (matching Apollo SDK `rollbackRelease(env, releaseId, op)`).
+    /// When `to_release_id` is provided it is treated as the current release to
+    /// rollback FROM; otherwise every active release newer than the target is
+    /// abandoned.
     pub async fn rollback_by_id(&self, release_id: i64, to_release_id: Option<i64>, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
-        let current = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?
+        let target = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?
             .ok_or_else(|| anyhow::anyhow!("Release not found: {}", release_id))?;
-        let to_id = to_release_id.unwrap_or(release_id);
-        let target = <dyn ReleasePersistence>::get_by_id(&self.persistence, to_id).await?
-            .ok_or_else(|| anyhow::anyhow!("Release not found: {}", to_id))?;
-        if current.id == target.id {
-            return Err(anyhow::anyhow!("Cannot rollback to itself"));
+        let actives = ReleasePersistence::list_active(&self.persistence, &target.app_id, &target.cluster_name, &target.namespace_name).await?;
+        // If a specific "from" release was given, validate it exists and is
+        // newer than the target; otherwise abandon everything above target.
+        if let Some(from_id) = to_release_id {
+            let from = <dyn ReleasePersistence>::get_by_id(&self.persistence, from_id).await?
+                .ok_or_else(|| anyhow::anyhow!("Release not found: {}", from_id))?;
+            if from.id <= target.id {
+                return Err(anyhow::anyhow!("Cannot rollback from {} to {}", from_id, release_id));
+            }
         }
-        let actives = ReleasePersistence::list_active(&self.persistence, &current.app_id, &current.cluster_name, &current.namespace_name).await?;
         // Abandon every active release newer than the target (target stays).
         let mut abandoned_any = false;
         let mut last_abandoned: Option<StoredRelease> = None;
@@ -296,13 +302,13 @@ impl ReleaseService {
             last_abandoned = Some(r.clone());
         }
         if !abandoned_any {
-            return Err(anyhow::anyhow!("No releases between {} and {} to abandon", to_id, release_id));
+            return Err(anyhow::anyhow!("No releases newer than {} to abandon", release_id));
         }
         let _ = last_abandoned;
 
-        Self::notify_publish(self, &current.app_id, &current.cluster_name, &current.namespace_name).await;
-        self.record_history(&current.app_id, &current.cluster_name, &current.namespace_name, &current.namespace_name, target.id, current.id, 1, operator, "").await;
-        self.rollback_child_namespace(&current.app_id, &current.cluster_name, &current.namespace_name, operator, 6).await?;
+        Self::notify_publish(self, &target.app_id, &target.cluster_name, &target.namespace_name).await;
+        self.record_history(&target.app_id, &target.cluster_name, &target.namespace_name, &target.namespace_name, target.id, last_abandoned.as_ref().map(|r| r.id).unwrap_or(0), 1, operator, "").await;
+        self.rollback_child_namespace(&target.app_id, &target.cluster_name, &target.namespace_name, operator, 6).await?;
         Ok(target.into())
     }
 

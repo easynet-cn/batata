@@ -131,4 +131,35 @@ public class ApolloConfigReleaseTest extends ApolloTestBase {
                 testAppId, DEFAULT_ENV, DEFAULT_CLUSTER, testNamespaceName);
         assertNull(release, "Release should be null when no release has been published");
     }
+
+    @Test
+    @Order(7)
+    void testRollbackRelease() {
+        createConfigItem(testAppId, testNamespaceName, "rb.key", "v1");
+        releaseNamespace(testAppId, testNamespaceName);
+
+        OpenReleaseDTO firstRelease = openApiClient.getLatestActiveRelease(
+                testAppId, DEFAULT_ENV, DEFAULT_CLUSTER, testNamespaceName);
+        assertNotNull(firstRelease, "First release should not be null");
+        long firstReleaseId = firstRelease.getId();
+        assertEquals("v1", firstRelease.getConfigurations().get("rb.key"));
+
+        updateConfigItem(testAppId, testNamespaceName, "rb.key", "v2");
+        releaseNamespace(testAppId, testNamespaceName);
+
+        OpenReleaseDTO secondRelease = openApiClient.getLatestActiveRelease(
+                testAppId, DEFAULT_ENV, DEFAULT_CLUSTER, testNamespaceName);
+        assertNotNull(secondRelease, "Second release should not be null");
+        assertEquals("v2", secondRelease.getConfigurations().get("rb.key"),
+                "Latest release should contain v2 before rollback");
+
+        // Rollback to the first release (Apollo SDK passes the target release id).
+        openApiClient.rollbackRelease(DEFAULT_ENV, firstReleaseId, OPERATOR);
+
+        OpenReleaseDTO afterRollback = openApiClient.getLatestActiveRelease(
+                testAppId, DEFAULT_ENV, DEFAULT_CLUSTER, testNamespaceName);
+        assertNotNull(afterRollback, "Release should not be null after rollback");
+        assertEquals("v1", afterRollback.getConfigurations().get("rb.key"),
+                "After rollback the active configuration should revert to v1");
+    }
 }

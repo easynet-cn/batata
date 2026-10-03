@@ -1015,6 +1015,7 @@ async fn get_namespace_lock(data: web::Data<Arc<dyn ApolloPersistenceService>>, 
             "appId": lock.app_id,
             "clusterName": lock.cluster_name,
             "namespaceName": lock.namespace_name,
+            "isLocked": true,
             "lockedBy": lock.locked_by.clone(),
         })),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {

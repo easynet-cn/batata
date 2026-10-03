@@ -2754,6 +2754,7 @@ async fn openapi_get_namespace_lock(
     match NamespaceLockPersistence::get(data.get_ref(), &app_id, &cluster, &ns).await {
         Ok(Some(lock)) => HttpResponse::Ok().json(serde_json::json!({
             "namespaceName": ns,
+            "isLocked": true,
             "lockedBy": lock.data_change_created_by,
             "clusterName": cluster,
             "appId": app_id,
