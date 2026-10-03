@@ -162,6 +162,13 @@ impl ReleaseService {
         Ok((active_releases, count))
     }
 
+    /// All releases (including abandoned) for a namespace, newest first.
+    /// Upstream `/releases/all` used by the release history page.
+    pub async fn find_all_releases(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ReleaseDTO>, anyhow::Error> {
+        let stored_list = <dyn ReleasePersistence>::list_all_by_namespace(&self.persistence, app_id, cluster_name, namespace_name).await?;
+        Ok(stored_list.into_iter().map(|s| s.into()).collect())
+    }
+
     /// Returns the requested value.
     pub async fn get_by_id(&self, release_id: i64) -> Result<Option<ReleaseDTO>, anyhow::Error> {
         let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?;

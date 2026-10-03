@@ -8,7 +8,7 @@ use batata_plugin_apollo::persistence::traits::{
     ApolloPersistenceService, AppNamespacePersistence, AuditPersistence, ConsumerPersistence,
     ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence, ItemPersistence,
     NamespacePersistence, PermissionPersistence, ReleaseHistoryPersistence, ReleasePersistence,
-    RolePersistence, ServerConfigPersistence,
+    RolePersistence, ServerConfigPersistence, UserTokenPersistence,
 };
 
 /// Generic persistence contract test. Runs against any `Arc<dyn ApolloPersistenceService>`
@@ -291,6 +291,49 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
             .await
             .unwrap()
             .is_none()
+    );
+
+    // ---- UserToken ----
+    let expires = chrono::Utc::now() + chrono::Duration::days(30);
+    let ut = UserTokenPersistence::create_user_token(
+        &p,
+        "apollo",
+        "test-token",
+        "prefix1234567890123456789012345678",
+        "hashabcdef",
+        None,
+        expires,
+        "tester",
+    )
+    .await
+    .unwrap();
+    assert!(ut.id > 0);
+    assert_eq!(ut.user_id, "apollo");
+    assert_eq!(ut.name, "test-token");
+    assert_eq!(ut.token_prefix, "prefix1234567890123456789012345678");
+    assert!(!ut.is_deleted);
+    // lookup by prefix returns the row
+    let looked_up = UserTokenPersistence::get_user_token_by_prefix(
+        &p,
+        "prefix1234567890123456789012345678",
+    )
+    .await
+    .unwrap();
+    assert!(looked_up.is_some());
+    assert_eq!(looked_up.unwrap().id, ut.id);
+    // list by user returns the token
+    let user_tokens = UserTokenPersistence::list_user_tokens(&p, "apollo")
+        .await
+        .unwrap();
+    assert!(user_tokens.iter().any(|t| t.id == ut.id));
+    // soft-delete removes it from list and get-by-prefix
+    UserTokenPersistence::delete_user_token(&p, ut.id).await.unwrap();
+    assert!(
+        UserTokenPersistence::list_user_tokens(&p, "apollo")
+            .await
+            .unwrap()
+            .iter()
+            .all(|t| t.id != ut.id)
     );
 
     // ---- InstanceConfig ----

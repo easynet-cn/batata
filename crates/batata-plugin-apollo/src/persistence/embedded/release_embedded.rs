@@ -273,4 +273,30 @@ impl ReleasePersistence for ReleaseEmbedded {
         }
         Ok(None)
     }
+
+    async fn list_all_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        let cf = self.cf()?;
+        let prefix = Self::prefix_by_namespace(app_id, cluster_name, namespace_name);
+        let mut results = Vec::new();
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let release: StoredRelease = bincode::deserialize(&value)?;
+            if !release.is_deleted {
+                results.push(release);
+            }
+        }
+        // Newest id first.
+        results.sort_by(|a, b| b.id.cmp(&a.id));
+        Ok(results)
+    }
 }

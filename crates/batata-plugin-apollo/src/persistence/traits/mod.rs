@@ -207,6 +207,14 @@ impl<T: ApolloPersistenceService + ?Sized> ReleasePersistence for Arc<T> {
     ) -> anyhow::Result<Vec<crate::persistence::shared::StoredRelease>> {
         ReleasePersistence::list_active(&**self, app_id, cluster_name, namespace_name).await
     }
+    async fn list_all_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<crate::persistence::shared::StoredRelease>> {
+        ReleasePersistence::list_all_by_namespace(&**self, app_id, cluster_name, namespace_name).await
+    }
 }
 
 #[async_trait]

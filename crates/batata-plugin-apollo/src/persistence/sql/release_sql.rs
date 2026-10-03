@@ -184,4 +184,21 @@ impl ReleasePersistence for ReleaseSqlPersistence {
         // list_by_namespace already filters abandoned/deleted.
         ReleasePersistence::list_by_namespace(self, app_id, cluster_name, namespace_name).await
     }
+
+    async fn list_all_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        let results = apollo_release::Entity::find()
+            .filter(apollo_release::Column::AppId.eq(app_id))
+            .filter(apollo_release::Column::ClusterName.eq(cluster_name))
+            .filter(apollo_release::Column::NamespaceName.eq(namespace_name))
+            .filter(apollo_release::Column::IsDeleted.eq(false))
+            .order_by_desc(apollo_release::Column::Id)
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().map(|m| m.into()).collect())
+    }
 }

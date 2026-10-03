@@ -6,7 +6,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, NamespacePersistence};
-use crate::service::{AppService, NamespaceService, ItemService, ItemSetService, ReleaseService, ClusterService, InstanceService, AccessKeyService, GrayReleaseRuleService, AppNamespaceService, CommitService, ConsumerService, AuditService, FavoriteService, SearchService};
+use crate::service::{AppService, NamespaceService, ItemService, ItemSetService, ReleaseService, ClusterService, InstanceService, AccessKeyService, GrayReleaseRuleService, AppNamespaceService, CommitService, ConsumerService, ConsumerTokenService, AuditService, FavoriteService, SearchService, UserTokenService};
 use crate::api::dto::{AppDTO, NamespaceDTO, ItemDTO, ErrorResponse, ClusterDTO, GrayReleaseRuleDTO, AppNamespaceDTO, CommitDTO, ItemChangeSets, ConfigImportDTO, ConfigExportDTO};
 
 #[derive(Debug, Deserialize)]
@@ -829,12 +829,89 @@ async fn delete_access_key(
     }
 }
 
+/// Frontend uses `/apps/{app_id}/envs/{env}/accesskeys` path.
+async fn create_access_key_with_env(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let (app_id, _env) = path.into_inner();
+    let operator = body.get("createdBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = AccessKeyService::new(data.get_ref().clone());
+    match service.create(&app_id, operator).await {
+        Ok(key) => HttpResponse::Ok().json(key),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn list_access_keys_with_env(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (app_id, _env) = path.into_inner();
+    let service = AccessKeyService::new(data.get_ref().clone());
+    match service.list_by_app(&app_id).await {
+        Ok(keys) => HttpResponse::Ok().json(keys),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_access_key_with_env(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, _env, id) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = AccessKeyService::new(data.get_ref().clone());
+    match service.delete(&app_id, id, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
+}
+
 async fn get_release_history(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     path: web::Path<(String, String, String, String)>,
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50);
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.find_release_history(&app_id, &cluster_name, &namespace_name, page, size).await {
+        Ok((list, total)) => {
+            let resp = serde_json::json!({
+                "content": list,
+                "total": total,
+                "page": page,
+                "size": size,
+            });
+            HttpResponse::Ok().json(resp)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// Frontend uses `/apps/{app_id}/envs/{env}/.../releases/histories` path order.
+async fn get_release_history_frontend(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, _env, cluster_name, namespace_name) = path.into_inner();
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50);
     let service = ReleaseService::new(data.get_ref().clone());
@@ -1525,6 +1602,281 @@ async fn list_audit_by_entity_openapi(
     }
 }
 
+// ===== Audit log additional endpoints =====
+async fn openapi_audit_properties(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        "APP", "CLUSTER", "NAMESPACE", "ITEM", "RELEASE", "COMMIT"
+    ]))
+}
+
+async fn openapi_audit_logs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
+    let service = AuditService::new(data.get_ref().clone());
+    match service.list(page, size).await {
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits, "total": total, "page": page, "size": size,
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_audit_logs_op_name(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
+    let service = AuditService::new(data.get_ref().clone());
+    match service.list(page, size).await {
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits, "total": total, "page": page, "size": size,
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_audit_trace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _query: web::Query<Value>,
+) -> impl Responder {
+    let service = AuditService::new(data.get_ref().clone());
+    match service.list(0, 100).await {
+        Ok((audits, _)) => HttpResponse::Ok().json(audits),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_audit_logs_field(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
+    let service = AuditService::new(data.get_ref().clone());
+    match service.list(page, size).await {
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits, "total": total, "page": page, "size": size,
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_audit_logs_search(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
+    let service = AuditService::new(data.get_ref().clone());
+    match service.list(page, size).await {
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits, "total": total, "page": page, "size": size,
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+// ===== Consumer extension endpoints =====
+async fn openapi_get_consumer_by_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let app_id = query.get("appId").and_then(|v| v.as_str()).unwrap_or("");
+    let service = ConsumerService::new(data.get_ref().clone());
+    match service.get_by_app(app_id).await {
+        Ok(Some(c)) => HttpResponse::Ok().json(c),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: format!("Consumer not found: {}", app_id) }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_consumer_tokens_by_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let app_id = query.get("appId").and_then(|v| v.as_str()).unwrap_or("");
+    let consumer_service = ConsumerService::new(data.get_ref().clone());
+    match consumer_service.get_by_app(app_id).await {
+        Ok(Some(c)) => {
+            let token_service = ConsumerTokenService::new(data.get_ref().clone());
+            match token_service.list_by_consumer(c.id.unwrap_or(0)).await {
+                Ok(tokens) => HttpResponse::Ok().json(tokens),
+                Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+            }
+        }
+        Ok(None) => HttpResponse::Ok().json(serde_json::json!([])),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_assign_consumer_role(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<String>,
+    _body: web::Json<Value>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+}
+
+// ===== User token endpoints =====
+async fn openapi_list_user_tokens(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.list("apollo").await {
+        Ok(tokens) => HttpResponse::Ok().json(tokens),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_create_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.create("apollo", description, "apollo", None).await {
+        Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
+            "token": token,
+            "model": model,
+        })),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+async fn openapi_revoke_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+) -> impl Responder {
+    let id = path.into_inner();
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.revoke(id).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+async fn openapi_rotate_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+) -> impl Responder {
+    let id = path.into_inner();
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.revoke(id).await {
+        Ok(_) => match service.create("apollo", "rotated", "apollo", None).await {
+            Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
+                "token": token,
+                "model": model,
+            })),
+            Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        },
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+async fn openapi_delete_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+) -> impl Responder {
+    let id = path.into_inner();
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.revoke(id).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+async fn openapi_user_token_capabilities(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "tokenSupported": true,
+        "tokenRotationSupported": true,
+    }))
+}
+
+async fn openapi_list_admin_user_tokens(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.list("apollo").await {
+        Ok(tokens) => HttpResponse::Ok().json(tokens),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+async fn openapi_create_admin_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let user_id = body.get("userId").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.create(user_id, description, "apollo", None).await {
+        Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
+            "token": token,
+            "model": model,
+        })),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+async fn openapi_revoke_admin_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+) -> impl Responder {
+    let (_username, id) = path.into_inner();
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.revoke(id).await {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+async fn openapi_delete_admin_user_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+) -> impl Responder {
+    let (_username, id) = path.into_inner();
+    let service = UserTokenService::new(data.get_ref().clone());
+    match service.revoke(id).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+    }
+}
+
+// ===== Server config endpoints =====
+async fn openapi_server_portal_db_config(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({}))
+}
+
+async fn openapi_server_env_config_db_config(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<String>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({}))
+}
+
+async fn openapi_server_portal_db_config_find_all(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "content": [], "total": 0 }))
+}
+
+async fn openapi_server_env_config_db_config_find_all(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<String>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "content": [], "total": 0 }))
+}
+
 // PMISC-019: GET /openapi/v1/favorites - favorites list
 async fn list_favorites_openapi(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
@@ -1806,6 +2158,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         .route(web::delete().to(delete_namespace)),
     )
     .service(
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/associated-public-namespace").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(openapi_associated_public_namespace)),
+    )
+    .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(create_item))
         .route(web::get().to(find_items_by_namespace))
@@ -1823,6 +2179,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(openapi_revert_items))
     )
     .service(
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items/synchronize").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_items_synchronize_env))
+    )
+    .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/items/{key}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_item))
         .route(web::put().to(update_item))
@@ -1838,6 +2198,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         .route(web::get().to(get_latest_release)),
     )
     .service(
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/active").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(find_active_releases)),
+    )
+    .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/{release_id}/rollback").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::post().to(rollback_release)),
     )
@@ -1850,12 +2214,20 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(compare_releases)),
     )
     .service(
+        web::resource("/openapi/v1/envs/{env}/releases/comparison").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(compare_releases)),
+    )
+    .service(
         web::resource("/openapi/v1/envs/{env}/releases/{release_id}/rollback").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::put().to(rollback_release_by_id)),
     )
     .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/history").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(get_release_history)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/histories").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(get_release_history_frontend)),
     )
     .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/instances").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
@@ -1870,6 +2242,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{ns_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::delete().to(openapi_delete_appnamespace)),
+    )
+    .service(
+        web::resource("/openapi/v1/envs/{env}/appnamespaces/{public_namespace_name}/instances").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_appnamespace_instances)),
     )
     .service(
         // PORT-026: public namespaces not yet linked to this cluster
@@ -1903,15 +2279,27 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::delete().to(delete_access_key)),
     )
     .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(create_access_key_with_env))
+            .route(web::get().to(list_access_keys_with_env)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/accesskeys/{id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::delete().to(delete_access_key_with_env)),
+    )
+    .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
         .route(web::get().to(list_branches))
         .route(web::post().to(create_branch)),
     )
     .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
-        .route(web::get().to(get_branch_rule))
-        .route(web::put().to(update_branch_rule))
         .route(web::delete().to(delete_branch)),
+    )
+    .service(
+        web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/rules").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+        .route(web::get().to(get_branch_rule))
+        .route(web::put().to(update_branch_rule)),
     )
     .service(
         web::resource("/openapi/v1/envs/{env}/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/merge").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
@@ -1936,8 +2324,20 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(list_consumers_openapi)),
     )
     .service(
+        web::resource("/openapi/v1/consumers/by-appId").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_get_consumer_by_app)),
+    )
+    .service(
         web::resource("/openapi/v1/consumers/{app_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(get_consumer_openapi)),
+    )
+    .service(
+        web::resource("/openapi/v1/consumers/{token}/assign-role").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_assign_consumer_role)),
+    )
+    .service(
+        web::resource("/openapi/v1/consumer-tokens/by-appId").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_consumer_tokens_by_app)),
     )
     // PMISC-015: Config export/import
     .service(
@@ -1946,6 +2346,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     )
     .service(
         web::resource("/openapi/v1/configs/import").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(import_configs_openapi)),
+    )
+    .service(
+        web::resource("/openapi/v1/import").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::post().to(import_configs_openapi)),
     )
     // PMISC-018: Audit log query
@@ -1961,6 +2365,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/openapi/v1/favorites").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(list_favorites_openapi)),
+    )
+    .service(
+        web::resource("/openapi/v1/favorites/{favorite_id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::delete().to(openapi_delete_favorite)),
     )
     // PMISC-020: Global search
     .service(
@@ -2032,6 +2440,11 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/openapi/v1/apps/{app_id}/appnamespaces/{namespace_name}/usage").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_appnamespace_usage)),
     )
+    // namespace usage with env/cluster context
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/usage").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_namespace_usage)),
+    )
     // PMISC-007: current user is super admin (single-tenant: always true)
     .service(
         web::resource("/openapi/v1/permissions/root").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
@@ -2046,6 +2459,78 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/openapi/v1/apps/{app_id}/roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_roles)),
+    )
+    // permission-init
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/{namespace_name}/permission-init").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_permission_init)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/permission-init").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_permission_init_cluster)),
+    )
+    // namespace-level permissions
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/{namespace_name}/permissions/{permission_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_permissions_namespace)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/namespaces/{namespace_name}/permissions/{permission_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_permissions_namespace_env)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/permissions/{permission_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_permissions_cluster)),
+    )
+    // role-users
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/role-users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_role_users)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/{namespace_name}/role-users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_role_users)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/namespaces/{namespace_name}/role-users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_role_users_env)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/role-users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_role_users_cluster)),
+    )
+    // namespace-level roles (GET/POST/DELETE)
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/namespaces/{namespace_name}/roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_namespace_roles_get))
+            .route(web::post().to(openapi_namespace_roles_post))
+            .route(web::delete().to(openapi_namespace_roles_delete)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/namespaces/{namespace_name}/roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_namespace_roles_env_get))
+            .route(web::post().to(openapi_namespace_roles_env_post))
+            .route(web::delete().to(openapi_namespace_roles_env_delete)),
+    )
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_cluster_roles_get))
+            .route(web::post().to(openapi_cluster_roles_post))
+            .route(web::delete().to(openapi_cluster_roles_delete)),
+    )
+    // system roles
+    .service(
+        web::resource("/openapi/v1/system/roles/create-application").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_system_roles_create_application))
+            .route(web::post().to(openapi_system_roles_create_application_post)),
+    )
+    .service(
+        web::resource("/openapi/v1/system/roles/create-application/role-users").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_system_role_users)),
+    )
+    .service(
+        web::resource("/openapi/v1/system/role/manage-app-master").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_system_role_manage_app_master)),
     )
     // PMISC-010: organization list (single-tenant: default list)
     .service(
@@ -2064,6 +2549,10 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(openapi_create_user)),
     )
     .service(
+        web::resource("/openapi/v1/users/enabled").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::put().to(openapi_change_user_enabled)),
+    )
+    .service(
         web::resource("/openapi/v1/users/{username}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::put().to(openapi_update_user))
             .route(web::delete().to(openapi_delete_user)),
@@ -2072,6 +2561,92 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/openapi/v1/system-info").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
             .route(web::get().to(openapi_system_info)),
+    )
+    .service(
+        web::resource("/openapi/v1/system-info/health").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_system_info_health)),
+    )
+    // Portal page settings
+    .service(
+        web::resource("/openapi/v1/page-settings").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_page_settings)),
+    )
+    // ===== Audit log extension endpoints =====
+    .service(
+        web::resource("/openapi/v1/apollo/audit/properties").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_properties)),
+    )
+    .service(
+        web::resource("/openapi/v1/logs").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_logs)),
+    )
+    .service(
+        web::resource("/openapi/v1/logs/opName").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_logs_op_name)),
+    )
+    .service(
+        web::resource("/openapi/v1/trace").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_trace)),
+    )
+    .service(
+        web::resource("/openapi/v1/logs/dataInfluences/field").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_logs_field)),
+    )
+    .service(
+        web::resource("/openapi/v1/logs/by-name-or-type-or-operator").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_audit_logs_search)),
+    )
+    // ===== User token endpoints =====
+    .service(
+        web::resource("/openapi/v1/user-tokens").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_list_user_tokens))
+            .route(web::post().to(openapi_create_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/capabilities").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_user_token_capabilities)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/{id}/revoke").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::put().to(openapi_revoke_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/{id}/rotate").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::put().to(openapi_rotate_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/user-tokens/{id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::delete().to(openapi_delete_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/users/{username}/tokens").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_list_admin_user_tokens))
+            .route(web::post().to(openapi_create_admin_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/users/{username}/tokens/{id}/revoke").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::put().to(openapi_revoke_admin_user_token)),
+    )
+    .service(
+        web::resource("/openapi/v1/users/{username}/tokens/{id}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::delete().to(openapi_delete_admin_user_token)),
+    )
+    // ===== Server config endpoints =====
+    .service(
+        web::resource("/openapi/v1/server/portal-db/config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_portal_db_config)),
+    )
+    .service(
+        web::resource("/openapi/v1/server/portal-db/config/find-all").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_portal_db_config_find_all)),
+    )
+    .service(
+        web::resource("/openapi/v1/server/envs/{env}/config-db/config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_env_config_db_config)),
+    )
+    .service(
+        web::resource("/openapi/v1/server/envs/{env}/config-db/config/find-all").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_env_config_db_config_find_all)),
     );
 }
 
@@ -2807,6 +3382,154 @@ async fn openapi_appnamespace_usage(
     })
 }
 
+/// GET .../namespaces/{namespace_name}/associated-public-namespace
+async fn openapi_associated_public_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    use crate::persistence::traits::{NamespacePersistence, ReleasePersistence};
+    let (_env, _app_id, cluster_name, namespace_name) = path.into_inner();
+
+    let public_ns = crate::service::AppNamespaceService::new(data.get_ref().clone())
+        .list_public()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| p.name == namespace_name);
+    let Some(owner) = public_ns else {
+        return HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("public namespace not found. namespace:{}", namespace_name),
+        });
+    };
+    let owner_app = owner.app_id.clone();
+
+    let ns_json = |ns: Option<crate::persistence::shared::StoredNamespace>| -> serde_json::Value {
+        match ns {
+            Some(n) => serde_json::json!({
+                "id": n.id, "appId": n.app_id, "clusterName": n.cluster_name,
+                "namespaceName": n.namespace_name, "format": n.format, "isPublic": n.is_public,
+            }),
+            None => serde_json::Value::Null,
+        }
+    };
+
+    if cluster_name == "default" {
+        let ns = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+        return HttpResponse::Ok().json(ns_json(ns));
+    }
+
+    let custom = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+    let published = match custom.as_ref() {
+        Some(_) => ReleasePersistence::get_latest(data.get_ref(), &owner_app, &cluster_name, &namespace_name)
+            .await
+            .ok()
+            .flatten()
+            .is_some(),
+        None => false,
+    };
+
+    if published {
+        return HttpResponse::Ok().json(ns_json(custom));
+    }
+    let fallback = data.get_ref().get_by_app_cluster(&owner_app, "default", &namespace_name).await.unwrap_or(None);
+    HttpResponse::Ok().json(ns_json(fallback))
+}
+
+/// POST .../items/synchronize
+async fn openapi_items_synchronize_env(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    body: web::Json<crate::api::dto::NamespaceSyncModel>,
+) -> impl Responder {
+    let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
+    let model = body.into_inner();
+    let operator = "apollo";
+    let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
+    match service
+        .synchronize(&app_id, &cluster_name, &namespace_name, &model.sync_to_namespaces, &model.sync_items, operator)
+        .await
+    {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+    }
+}
+
+/// GET /envs/{env}/appnamespaces/{public_namespace_name}/instances
+async fn openapi_appnamespace_instances(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    q: web::Query<InstancePageQuery>,
+) -> impl Responder {
+    let (_env, namespace_name) = path.into_inner();
+    // Find the owning app of this public namespace, then list instances.
+    let public_ns = AppNamespaceService::new(data.get_ref().clone())
+        .list_public()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| p.name == namespace_name);
+    let Some(owner) = public_ns else {
+        return HttpResponse::Ok().json(serde_json::json!({
+            "content": [],
+            "page": q.page,
+            "size": q.size,
+            "total": 0,
+        }));
+    };
+    let service = InstanceService::new(data.get_ref().clone());
+    let page = q.page.max(1) as u64;
+    let size = if q.size == 0 { 20 } else { q.size } as u64;
+    match service
+        .list_open_instances(&owner.app_id, "default", &namespace_name, q.instance_app_id.as_deref(), page, size)
+        .await
+    {
+        Ok(dto) => HttpResponse::Ok().json(dto),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+    }
+}
+
+/// GET /apps/{app_id}/envs/{env}/clusters/{cluster_name}/namespaces/{namespace_name}/usage
+async fn openapi_namespace_usage(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (app_id, _env, cluster_name, namespace_name) = path.into_inner();
+    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref()).await.unwrap_or_default();
+    let mut used_by = Vec::new();
+    for ns in all_ns {
+        if ns.namespace_name == namespace_name && !ns.is_deleted {
+            if !used_by.contains(&ns.app_id) {
+                used_by.push(ns.app_id.clone());
+            }
+        }
+    }
+    HttpResponse::Ok().json(serde_json::json!({
+        "appId": app_id,
+        "clusterName": cluster_name,
+        "namespaceName": namespace_name,
+        "usedBy": used_by,
+    }))
+}
+
+/// DELETE /favorites/{favorite_id}
+async fn openapi_delete_favorite(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let id = path.into_inner();
+    let user_id = query.get("userId").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let service = FavoriteService::new(data.get_ref().clone());
+    match service.delete(id, user_id).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
+}
+
 // ===========================================================================
 // PMISC-007~013 / 016: single-tenant degraded permission / user / system
 // ===========================================================================
@@ -2855,6 +3578,218 @@ async fn openapi_roles(
     HttpResponse::Ok().json(serde_json::json!({
         "roleName": role_name,
         "users": [],
+    }))
+}
+
+/// POST .../permission-init — initialize permissions for a namespace.
+/// Single-tenant: no-op, always succeeds.
+async fn openapi_permission_init(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+}
+
+async fn openapi_permission_init_cluster(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+}
+
+/// GET namespace-level permission check.
+async fn openapi_permissions_namespace(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    let (app_id, namespace_name, permission_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "hasPermission": true,
+        "permissionType": permission_type,
+        "appId": app_id,
+        "targetId": namespace_name,
+    }))
+}
+
+async fn openapi_permissions_namespace_env(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (app_id, _env, namespace_name, permission_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "hasPermission": true,
+        "permissionType": permission_type,
+        "appId": app_id,
+        "targetId": namespace_name,
+    }))
+}
+
+async fn openapi_permissions_cluster(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (app_id, _env, cluster_name, permission_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "hasPermission": true,
+        "permissionType": permission_type,
+        "appId": app_id,
+        "targetId": cluster_name,
+    }))
+}
+
+/// GET role-users — returns the fixed admin as the role member.
+async fn openapi_role_users(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        { "userId": "apollo", "name": "Apollo" }
+    ]))
+}
+
+async fn openapi_role_users_env(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        { "userId": "apollo", "name": "Apollo" }
+    ]))
+}
+
+async fn openapi_role_users_cluster(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        { "userId": "apollo", "name": "Apollo" }
+    ]))
+}
+
+/// GET/POST/DELETE namespace-level roles.
+async fn openapi_namespace_roles_get(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    let (_app_id, _namespace_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_namespace_roles_post(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    _body: web::Json<Value>,
+) -> impl Responder {
+    let (_app_id, _namespace_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_namespace_roles_delete(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
+async fn openapi_namespace_roles_env_get(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (_app_id, _env, _namespace_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_namespace_roles_env_post(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    _body: web::Json<Value>,
+) -> impl Responder {
+    let (_app_id, _env, _namespace_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_namespace_roles_env_delete(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
+async fn openapi_cluster_roles_get(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (_app_id, _env, _cluster_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_cluster_roles_post(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    _body: web::Json<Value>,
+) -> impl Responder {
+    let (_app_id, _env, _cluster_name, role_type) = path.into_inner();
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": role_type.to_uppercase(),
+        "users": [],
+    }))
+}
+
+async fn openapi_cluster_roles_delete(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
+/// System roles: create-application.
+async fn openapi_system_roles_create_application(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": "CreateApplication",
+        "users": [{ "userId": "apollo", "name": "Apollo" }],
+    }))
+}
+
+async fn openapi_system_roles_create_application_post(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    _body: web::Json<Value>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": "CreateApplication",
+        "users": [],
+    }))
+}
+
+async fn openapi_system_role_users(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        { "userId": "apollo", "name": "Apollo" }
+    ]))
+}
+
+async fn openapi_system_role_manage_app_master(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "roleName": "ManageAppMaster",
+        "users": [{ "userId": "apollo", "name": "Apollo" }],
     }))
 }
 
@@ -2964,4 +3899,61 @@ async fn openapi_system_info(
         "apolloVersion": version,
         "gitCommitId": commit,
     }))
+}
+
+/// Portal page settings (single-tenant defaults).
+async fn openapi_page_settings(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "prefix": "/",
+        "supportCustomTitle": true,
+    }))
+}
+
+/// System health check.
+async fn openapi_system_info_health(
+    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "UP" }))
+}
+
+/// Enable/disable a user (PUT /users/enabled).
+async fn openapi_change_user_enabled(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    use crate::persistence::traits::UserPersistence;
+    let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    match UserPersistence::get_user(data.get_ref(), username).await {
+        Ok(Some(mut user)) => {
+            user.enabled = enabled;
+            let dto = crate::api::dto::UserDTO {
+                id: Some(user.id),
+                username: user.username.clone(),
+                password: String::new(),
+                email: Some(user.email.clone()),
+                enabled: user.enabled,
+                data_change_created_by: None,
+                data_change_created_time: None,
+            };
+            match UserPersistence::update_user(data.get_ref(), username, dto).await {
+                Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
+                Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+                    status: 400,
+                    message: e.to_string(),
+                }),
+            }
+        }
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("User not found: {}", username),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
 }

@@ -9,12 +9,13 @@ use crate::service::{
     AppNamespaceService, NamespaceLockService, InstanceConfigService,
     AuditService, ConsumerService, ConsumerTokenService,
     PermissionService, RoleService, FavoriteService, SearchService,
-    AccessKeyService,
+    AccessKeyService, NamespaceBranchService,
 };
 use crate::api::dto::{
     AppDTO, NamespaceDTO, ItemDTO, ItemChangeSets, ErrorResponse, ClusterDTO,
     CommitDTO, GrayReleaseRuleDTO, ServerConfigDTO, AppNamespaceDTO,
     ConsumerDTO, RoleDTO, FavoriteDTO, ConfigImportDTO, NamespaceGrayReleaseDTO,
+    UserDTO,
 };
 
 async fn list_apps(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
@@ -392,6 +393,479 @@ async fn delete_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceServi
             message: e.to_string(),
         }),
     }
+}
+
+// ---- NamespaceBranch (gray release branch) admin endpoints ----
+
+async fn create_branch_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = NamespaceBranchService::new(data.get_ref().clone());
+    match service
+        .create_branch(&app_id, &cluster_name, &namespace_name, operator)
+        .await
+    {
+        Ok(branch_ns) => HttpResponse::Ok().json(branch_ns),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn get_branch_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let service = NamespaceBranchService::new(data.get_ref().clone());
+    match service.find_branch(&app_id, &cluster_name, &namespace_name).await {
+        Ok(Some(ns)) => HttpResponse::Ok().json(ns),
+        Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn get_branch_rules_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
+    let service = GrayReleaseRuleService::new(data.get_ref().clone());
+    match service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+        Ok(Some(rule)) => HttpResponse::Ok().json(rule),
+        Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn update_branch_rules_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    body: web::Json<GrayReleaseRuleDTO>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
+    let service = GrayReleaseRuleService::new(data.get_ref().clone());
+    match service.update(&app_id, &cluster_name, &namespace_name, &branch_name, body.into_inner()).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+async fn delete_branch_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name, _branch_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = NamespaceBranchService::new(data.get_ref().clone());
+    match service
+        .delete_branch(&app_id, &cluster_name, &namespace_name, operator, false)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
+}
+
+// ---- FR-2: Release variant endpoints ----
+
+/// GET /releases/{releaseId} — upstream ReleaseController.findOne.
+async fn get_release_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    release_id: web::Path<i64>,
+) -> impl Responder {
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.get_by_id(release_id.into_inner()).await {
+        Ok(Some(release)) => HttpResponse::Ok().json(release),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: "Release not found".to_string(),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET .../releases/all — all releases (incl. abandoned) for a namespace.
+async fn get_all_releases(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.find_all_releases(&app_id, &cluster_name, &namespace_name).await {
+        Ok(all) => {
+            let total = all.len();
+            let content: Vec<_> = all.into_iter().skip(page * size).take(size).collect();
+            HttpResponse::Ok().json(serde_json::json!({
+                "content": content,
+                "total": total,
+                "page": page,
+                "size": size,
+            }))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET .../releases/active — the current effective (non-abandoned) release.
+async fn get_active_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.get_latest_active(&app_id, &cluster_name, &namespace_name).await {
+        Ok(Some(release)) => HttpResponse::Ok().json(release),
+        Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET .../releases/latest — the latest release (same as active in batata).
+async fn get_latest_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.get_latest_active(&app_id, &cluster_name, &namespace_name).await {
+        Ok(Some(release)) => HttpResponse::Ok().json(release),
+        Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// POST .../gray-del-releases — upstream gray release deletion (rollback gray).
+/// Marks the gray release abandoned and clears the active gray rule.
+async fn gray_del_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let release_id = query.get("releaseId").and_then(|v| v.as_i64());
+
+    let service = NamespaceBranchService::new(data.get_ref().clone());
+    match service
+        .delete_branch(&app_id, &cluster_name, &namespace_name, operator, true)
+        .await
+    {
+        Ok(_) => {
+            let _ = release_id;
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+// ---- FR-3: ReleaseHistory endpoints ----
+
+/// GET .../releases/histories — release history for a namespace.
+async fn get_release_histories(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.find_release_history(&app_id, &cluster_name, &namespace_name, page, size).await {
+        Ok((histories, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": histories,
+            "total": total,
+            "page": page,
+            "size": size,
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET /releases/histories/by_release_id_and_operation — filter by release id + operation.
+async fn get_release_history_by_release_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let release_id = query.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
+    let operation = query.get("operation").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+    let service = ReleaseService::new(data.get_ref().clone());
+    // Fetch a large page and filter in memory (release history is per-namespace small).
+    match service.find_release_history("", "", "", 0, 1000).await {
+        Ok((all, _)) => {
+            let filtered: Vec<_> = all
+                .into_iter()
+                .filter(|h| h.release_id == release_id)
+                .filter(|h| operation.map_or(true, |op| h.operation == op))
+                .collect();
+            let total = filtered.len();
+            let content: Vec<_> = filtered.into_iter().skip(page * size).take(size).collect();
+            HttpResponse::Ok().json(serde_json::json!({
+                "content": content,
+                "total": total,
+                "page": page,
+                "size": size,
+            }))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET /releases/histories/by_previous_release_id_and_operation — filter by previous release id.
+async fn get_release_history_by_previous_release_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let previous_release_id = query.get("previousReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
+    let operation = query.get("operation").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+    let service = ReleaseService::new(data.get_ref().clone());
+    match service.find_release_history("", "", "", 0, 1000).await {
+        Ok((all, _)) => {
+            let filtered: Vec<_> = all
+                .into_iter()
+                .filter(|h| h.previous_release_id == previous_release_id)
+                .filter(|h| operation.map_or(true, |op| h.operation == op))
+                .collect();
+            let total = filtered.len();
+            let content: Vec<_> = filtered.into_iter().skip(page * size).take(size).collect();
+            HttpResponse::Ok().json(serde_json::json!({
+                "content": content,
+                "total": total,
+                "page": page,
+                "size": size,
+            }))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+// ---- FR-4: Item by ID endpoints ----
+
+/// GET /items/{itemId} — upstream ItemController.findOne by id.
+async fn get_item_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    item_id: web::Path<i64>,
+) -> impl Responder {
+    let service = ItemService::new(data.get_ref().clone());
+    match service.get_by_id(item_id.into_inner()).await {
+        Ok(Some(item)) => HttpResponse::Ok().json(item),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: "Item not found".to_string(),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// DELETE /items/{itemId} — upstream ItemController.delete by id.
+async fn delete_item_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    item_id: web::Path<i64>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let op = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let service = ItemService::new(data.get_ref().clone());
+    match service.delete(item_id.into_inner(), op).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// POST .../comment_items — upstream batch item update with a release comment.
+/// Body: { createItems, updateItems, deleteItems, comment, operator }
+async fn comment_items(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let (app_id, cluster_name, namespace_name) = path.into_inner();
+    let comment = body.get("comment").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let _operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+
+    let change_sets = ItemChangeSets {
+        create_items: body
+            .get("createItems")
+            .and_then(|v| serde_json::from_value::<Vec<ItemDTO>>(v.clone()).ok())
+            .unwrap_or_default(),
+        update_items: body
+            .get("updateItems")
+            .and_then(|v| serde_json::from_value::<Vec<ItemDTO>>(v.clone()).ok())
+            .unwrap_or_default(),
+        delete_items: body
+            .get("deleteItems")
+            .and_then(|v| serde_json::from_value::<Vec<ItemDTO>>(v.clone()).ok())
+            .unwrap_or_default(),
+    };
+
+    let service = ItemSetService::new(data.get_ref().clone());
+    match service
+        .update_set(&app_id, &cluster_name, &namespace_name, change_sets)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "comment": comment })),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+// ---- FR-5: Namespace by ID & App Unique ----
+
+/// GET /namespaces/{namespaceId} — upstream NamespaceController.findOne by id.
+async fn get_namespace_by_id(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    namespace_id: web::Path<i64>,
+) -> impl Responder {
+    use crate::persistence::traits::NamespacePersistence;
+    match NamespacePersistence::get(data.get_ref(), namespace_id.into_inner()).await {
+        Ok(Some(ns)) => HttpResponse::Ok().json(NamespaceDTO {
+            app_id: ns.app_id,
+            cluster_name: ns.cluster_name,
+            namespace_name: ns.namespace_name,
+            format: Some(ns.format),
+            is_public: Some(ns.is_public),
+            comment: ns.comment,
+            data_change_created_by: Some(ns.data_change_created_by),
+            data_change_created_time: Some(ns.data_change_created_time.to_string()),
+            data_change_last_modified_by: ns.data_change_last_modified_by,
+            data_change_last_time: ns.data_change_last_time.map(|t| t.to_string()),
+        }),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: "Namespace not found".to_string(),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// GET /apps/{appId}/unique — upstream AppController.isAppIdUnique.
+async fn check_app_unique(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
+    use crate::persistence::traits::AppPersistence;
+    match AppPersistence::get(data.get_ref(), app_id.as_str()).await {
+        Ok(Some(_)) => HttpResponse::Ok().json(false),
+        Ok(None) => HttpResponse::Ok().json(true),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+// ---- FR-6: AppNamespace association queries ----
+
+/// GET /appnamespaces/{publicNamespaceName}/namespaces — list all namespaces
+/// (across apps) associated with a public namespace.
+async fn list_associated_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    public_namespace_name: web::Path<String>,
+) -> impl Responder {
+    use crate::persistence::traits::NamespacePersistence;
+    let name = public_namespace_name.into_inner();
+    let all = match NamespacePersistence::list_all(data.get_ref()).await {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    };
+    let associated: Vec<_> = all
+        .into_iter()
+        .filter(|ns| !ns.is_deleted && ns.namespace_name == name)
+        .map(|ns| serde_json::json!({
+            "id": ns.id,
+            "appId": ns.app_id,
+            "clusterName": ns.cluster_name,
+            "namespaceName": ns.namespace_name,
+            "isPublic": ns.is_public,
+            "format": ns.format,
+        }))
+        .collect();
+    HttpResponse::Ok().json(associated)
+}
+
+/// GET /appnamespaces/{publicNamespaceName}/associated-namespaces/count
+async fn count_associated_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    public_namespace_name: web::Path<String>,
+) -> impl Responder {
+    use crate::persistence::traits::NamespacePersistence;
+    let name = public_namespace_name.into_inner();
+    let all = match NamespacePersistence::list_all(data.get_ref()).await {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    };
+    let count = all
+        .into_iter()
+        .filter(|ns| !ns.is_deleted && ns.namespace_name == name)
+        .count();
+    HttpResponse::Ok().json(serde_json::json!({ "count": count }))
 }
 
 async fn list_server_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
@@ -1472,6 +1946,140 @@ async fn disable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, 
     }
 }
 
+// ---- FR-8: Portal auxiliary endpoints ----
+
+/// GET /system-info — upstream SystemInfoController.
+async fn system_info(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
+    let _ = data;
+    HttpResponse::Ok().json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "gitCommit": "unknown",
+        "buildTime": "unknown",
+    }))
+}
+
+/// GET /system-info/health
+async fn system_health() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "UP" }))
+}
+
+/// GET /organizations — upstream OrganizationController.
+async fn list_organizations() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!([
+        { "orgId": "DEFAULT", "orgName": "Default Organization" }
+    ]))
+}
+
+/// GET /page-settings — upstream PageSettingController.
+async fn page_settings() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "wikiAddress": "",
+        "createAppFeatureEnabled": true,
+    }))
+}
+
+/// GET /prefix-path — upstream returns the configured context path prefix.
+async fn prefix_path() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "prefixPath": "" }))
+}
+
+/// POST /users — upstream UserController.createOrUpdate.
+async fn create_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<UserDTO>,
+) -> impl Responder {
+    use crate::persistence::traits::UserPersistence;
+    let dto = body.into_inner();
+    match UserPersistence::create_user(data.get_ref(), dto).await {
+        Ok(user) => HttpResponse::Ok().json(user),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// PUT /users/enabled — upstream UserController.enableUser / disableUser.
+async fn update_user_enabled(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    use crate::persistence::traits::UserPersistence;
+    let username = query.get("username").and_then(|v| v.as_str()).unwrap_or("");
+    let enabled = query.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    match UserPersistence::get_user(data.get_ref(), username).await {
+        Ok(Some(mut user)) => {
+            user.enabled = enabled;
+            let dto = UserDTO {
+                id: Some(user.id),
+                username: user.username.clone(),
+                password: String::new(),
+                email: Some(user.email.clone()),
+                enabled: user.enabled,
+                data_change_created_by: None,
+                data_change_created_time: None,
+            };
+            match UserPersistence::update_user(data.get_ref(), username, dto).await {
+                Ok(u) => HttpResponse::Ok().json(u),
+                Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+                    status: 400,
+                    message: e.to_string(),
+                }),
+            }
+        }
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("User not found: {}", username),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// POST /apps/{appId}/initPermission — upstream PermissionController.initAppPermission.
+async fn init_app_permission(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let app_id = app_id.into_inner();
+    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let permission_service = PermissionService::new(data.get_ref().clone());
+    // Upstream creates AppMaster + CreateCluster + CreateNamespace per app.
+    let target_id = format!("App+{}", app_id);
+    let types = [1, 2, 3];
+    for pt in types {
+        let _ = permission_service.create(pt, &target_id, operator).await;
+    }
+    HttpResponse::Ok().json(serde_json::json!({ "appId": app_id }))
+}
+
+/// GET /apps/{appId}/permissions/{permissionType} — upstream PermissionController.
+async fn get_app_permissions(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (app_id, permission_type) = path.into_inner();
+    let pt = permission_type.parse::<i32>().unwrap_or(0);
+    let service = PermissionService::new(data.get_ref().clone());
+    let target_id = format!("App+{}", app_id);
+    match service.list_by_target(&target_id).await {
+        Ok(perms) => {
+            let filtered: Vec<_> = perms.into_iter().filter(|p| p.permission_type == pt).collect();
+            HttpResponse::Ok().json(filtered)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
+}
+
 /// Performs the `configure_admin_routes` operation.
 pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(
@@ -1535,6 +2143,50 @@ pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
             .route(web::post().to(publish_release))
             .route(web::get().to(list_releases))
     )
+    // FR-2: Release variant endpoints — register static paths before {release_id}.
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/all").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_all_releases))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/active").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_active_release))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/latest").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_latest_release))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/releases/histories").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_release_histories))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/gray-del-releases").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(gray_del_release))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/comment_items").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(comment_items))
+    )
+    // FR-3: Release history global filter endpoints
+    .service(
+        web::resource("/releases/histories/by_release_id_and_operation").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_release_history_by_release_id))
+    )
+    .service(
+        web::resource("/releases/histories/by_previous_release_id_and_operation").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_release_history_by_previous_release_id))
+    )
+    .service(
+        web::resource("/releases/{release_id}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_release_by_id))
+    )
+    // FR-4: Item by ID endpoints
+    .service(
+        web::resource("/items/{item_id}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_item_by_id))
+            .route(web::delete().to(delete_item_by_id))
+    )
     .service(
         web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/gray-release-rules").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
             .route(web::get().to(list_gray_release_rules))
@@ -1545,6 +2197,21 @@ pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
             .route(web::get().to(get_gray_release_rule))
             .route(web::put().to(update_gray_release_rule))
             .route(web::delete().to(delete_gray_release_rule))
+    )
+    // FR-1: NamespaceBranch (gray release branch) admin endpoints
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(create_branch_admin))
+            .route(web::get().to(get_branch_admin))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}/rules").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_branch_rules_admin))
+            .route(web::put().to(update_branch_rules_admin))
+    )
+    .service(
+        web::resource("/apps/{app_id}/clusters/{cluster_name}/namespaces/{namespace_name}/branches/{branch_name}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::delete().to(delete_branch_admin))
     )
     .service(
         web::resource("/serverconfigs").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
@@ -1748,5 +2415,60 @@ pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
     .service(
         web::resource("/apps/{app_id}/accesskeys/{id}/disable").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
             .route(web::put().to(disable_access_key))
+    )
+    // FR-5: Namespace by ID & App unique check
+    .service(
+        web::resource("/namespaces/{namespace_id}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_namespace_by_id))
+    )
+    .service(
+        web::resource("/apps/{app_id}/unique").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(check_app_unique))
+    )
+    // FR-6: AppNamespace association queries
+    .service(
+        web::resource("/appnamespaces/{public_namespace_name}/namespaces").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(list_associated_namespaces))
+    )
+    .service(
+        web::resource("/appnamespaces/{public_namespace_name}/associated-namespaces/count").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(count_associated_namespaces))
+    )
+    // FR-8: Portal auxiliary endpoints
+    .service(
+        web::resource("/system-info").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(system_info))
+    )
+    .service(
+        web::resource("/system-info/health").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(system_health))
+    )
+    .service(
+        web::resource("/organizations").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(list_organizations))
+    )
+    .service(
+        web::resource("/page-settings").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(page_settings))
+    )
+    .service(
+        web::resource("/prefix-path").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(prefix_path))
+    )
+    .service(
+        web::resource("/users").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(create_user))
+    )
+    .service(
+        web::resource("/users/enabled").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::put().to(update_user_enabled))
+    )
+    .service(
+        web::resource("/apps/{app_id}/initPermission").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(init_app_permission))
+    )
+    .service(
+        web::resource("/apps/{app_id}/permissions/{permission_type}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::get().to(get_app_permissions))
     );
 }

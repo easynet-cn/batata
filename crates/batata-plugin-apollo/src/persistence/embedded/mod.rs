@@ -463,6 +463,15 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
     ) -> anyhow::Result<Vec<StoredRelease>> {
         self.release.list_active(app_id, cluster_name, namespace_name).await
     }
+
+    async fn list_all_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        self.release.list_all_by_namespace(app_id, cluster_name, namespace_name).await
+    }
 }
 
 #[async_trait]

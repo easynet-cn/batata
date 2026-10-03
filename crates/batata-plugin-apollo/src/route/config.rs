@@ -658,6 +658,123 @@ async fn list_all_services(
     HttpResponse::Ok().json(all)
 }
 
+// FR-7: Configservice supplementary endpoints
+
+/// GET /services/meta — upstream returns the config service instances
+/// (the meta service is collocated with configservice in Apollo).
+async fn get_meta_service(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    req: HttpRequest,
+) -> impl Responder {
+    let dtos = discover(&data, "apollo-configservice", &req).await;
+    HttpResponse::Ok().json(dtos)
+}
+
+/// GET /notifications — v1 long-poll for older Apollo clients.
+/// Query: appId, cluster, namespaceName (comma-separated), notificationId.
+/// Returns a Map<namespaceName, notificationId> for changed namespaces.
+async fn get_notification_v1(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+    req: HttpRequest,
+) -> impl Responder {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+        return resp;
+    }
+    let app_id = query.get("appId").and_then(|v| v.as_str()).unwrap_or("");
+    let cluster = query
+        .get("cluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let data_center = query.get("dataCenter").and_then(|v| v.as_str());
+    let namespace_names = query
+        .get("namespaceName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+
+    if namespace_names.is_empty() {
+        return HttpResponse::NotModified().finish();
+    }
+
+    // Build v2-style entries from v1 query (single notificationId for all).
+    let client_id = query.get("notificationId").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let entries: Vec<(String, i64)> = namespace_names
+        .iter()
+        .map(|ns| (ns.clone(), client_id))
+        .collect();
+
+    let public_namespaces = AppNamespaceService::new(data.get_ref().clone())
+        .list_public()
+        .await
+        .unwrap_or_default();
+    let mut ns_keys: Vec<(String, Vec<String>)> = Vec::with_capacity(entries.len());
+    let mut all_keys: Vec<String> = Vec::new();
+    for (ns, _) in &entries {
+        let mut keys = assemble_watch_keys(app_id, cluster, ns, data_center);
+        if let Some(pns) = public_namespaces
+            .iter()
+            .find(|p| p.name == *ns && p.app_id != app_id)
+        {
+            keys.extend(assemble_watch_keys(&pns.app_id, cluster, ns, data_center));
+        }
+        all_keys.extend(keys.iter().cloned());
+        ns_keys.push((ns.clone(), keys));
+    }
+
+    let hub = crate::service::notification_hub::hub();
+    let message_service =
+        crate::service::release_message_service::ReleaseMessageService::new(data.get_ref().clone());
+
+    let notify = hub.register(&all_keys);
+
+    match compute_changed_v1(&message_service, &ns_keys, &entries).await {
+        Ok(changed) if !changed.is_empty() => {
+            return HttpResponse::Ok().json(changed);
+        }
+        _ => {}
+    }
+
+    let _woken = tokio::time::timeout(LONG_POLLING_TIMEOUT, notify.notified()).await;
+
+    match compute_changed_v1(&message_service, &ns_keys, &entries).await {
+        Ok(changed) if !changed.is_empty() => HttpResponse::Ok().json(changed),
+        _ => HttpResponse::NotModified().finish(),
+    }
+}
+
+/// v1 variant of compute_changed: returns Map<namespaceName, notificationId>.
+async fn compute_changed_v1(
+    message_service: &crate::service::release_message_service::ReleaseMessageService,
+    ns_keys: &[(String, Vec<String>)],
+    entries: &[(String, i64)],
+) -> anyhow::Result<HashMap<String, i64>> {
+    let latest_map = message_service
+        .find_latest_by_keys(
+            &ns_keys
+                .iter()
+                .flat_map(|(_, keys)| keys.iter().cloned())
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+    let mut result = HashMap::new();
+    for ((ns, keys), (_, client_id)) in ns_keys.iter().zip(entries.iter()) {
+        let mut latest_id: i64 = -1;
+        for key in keys {
+            if let Some(msg) = latest_map.get(key) {
+                latest_id = latest_id.max(msg.id);
+            }
+        }
+        if latest_id > *client_id {
+            result.insert(ns.clone(), latest_id);
+        }
+    }
+    Ok(result)
+}
+
 /// Performs the `configure_config_routes` operation.
 pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(
@@ -685,12 +802,20 @@ pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
             .route(web::get().to(get_admin_service)),
     )
     .service(
+        web::resource("/services/meta")
+            .route(web::get().to(get_meta_service)),
+    )
+    .service(
         web::resource("/")
             .route(web::get().to(list_all_services)),
     )
     .service(
         web::resource("/notifications/v2")
             .route(web::get().to(get_notification_v2)),
+    )
+    .service(
+        web::resource("/notifications")
+            .route(web::get().to(get_notification_v1)),
     )
     .service(
         web::resource("/instances")

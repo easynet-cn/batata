@@ -39,4 +39,12 @@ pub trait ReleasePersistence: Send + Sync {
         cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<Vec<StoredRelease>>;
+    /// All (including abandoned, excluding deleted) releases for one namespace,
+    /// newest id first — upstream `/releases/all` used by release history page.
+    async fn list_all_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>>;
 }
