@@ -54,6 +54,36 @@ public class NacosBatchOperationsTest {
         }
     }
 
+    private static void waitForConfigsPresent(String prefix, int count) {
+        TestSupport.waitFor(() -> {
+            try {
+                for (int i = 0; i < count; i++) {
+                    if (configService.getConfig(prefix + "-" + i, DEFAULT_GROUP, 3000) == null) {
+                        return false;
+                    }
+                }
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
+    }
+
+    private static void waitForConfigsDeleted(String prefix, int count) {
+        TestSupport.waitFor(() -> {
+            try {
+                for (int i = 0; i < count; i++) {
+                    if (configService.getConfig(prefix + "-" + i, DEFAULT_GROUP, 3000) != null) {
+                        return false;
+                    }
+                }
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
+    }
+
     // ==================== Batch Instance Registration Tests ====================
 
     /**
@@ -84,7 +114,7 @@ public class NacosBatchOperationsTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, instanceCount);
 
         // Verify all instances are registered
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -126,7 +156,7 @@ public class NacosBatchOperationsTest {
         for (int i = 0; i < instanceCount; i++) {
             namingService.registerInstance(serviceName, "10.0.2." + (i + 1), 9090 + i);
         }
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, instanceCount);
 
         // Verify all registered
         List<Instance> beforeDeregister = namingService.getAllInstances(serviceName);
@@ -137,7 +167,7 @@ public class NacosBatchOperationsTest {
         for (int i = 0; i < instanceCount; i++) {
             namingService.deregisterInstance(serviceName, "10.0.2." + (i + 1), 9090 + i);
         }
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
 
         // Verify all removed
         List<Instance> afterDeregister = namingService.getAllInstances(serviceName);
@@ -169,7 +199,7 @@ public class NacosBatchOperationsTest {
 
         // Use batchRegisterInstance for atomic batch registration
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instancesToRegister);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Verify all instances registered
         List<Instance> registered = namingService.getAllInstances(serviceName);
@@ -214,14 +244,14 @@ public class NacosBatchOperationsTest {
 
         // Register via batch API
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         List<Instance> beforeDeregister = namingService.getAllInstances(serviceName);
         assertEquals(3, beforeDeregister.size(), "Should have 3 instances before batch deregister");
 
         // Batch deregister
         namingService.batchDeregisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(3000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
 
         // Verify all removed (use subscribe=false for direct query)
         List<Instance> afterDeregister = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -250,7 +280,7 @@ public class NacosBatchOperationsTest {
             assertTrue(published, "Config publish should succeed for " + dataId);
         }
 
-        Thread.sleep(1000);
+        waitForConfigsPresent(prefix, configCount);
 
         // Verify all configs exist via SDK
         for (int i = 0; i < configCount; i++) {
@@ -285,7 +315,7 @@ public class NacosBatchOperationsTest {
             boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "to.be.deleted=" + i);
             assertTrue(published, "Config " + dataId + " should be published");
         }
-        Thread.sleep(500);
+        waitForConfigsPresent(prefix, configCount);
 
         // Delete all via SDK
         for (int i = 0; i < configCount; i++) {
@@ -294,7 +324,7 @@ public class NacosBatchOperationsTest {
             assertTrue(deleted, "Config " + dataId + " should be deleted");
         }
 
-        Thread.sleep(500);
+        waitForConfigsDeleted(prefix, configCount);
 
         // Verify all gone via SDK
         for (int i = 0; i < configCount; i++) {
@@ -329,7 +359,7 @@ public class NacosBatchOperationsTest {
             }
         }
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 4);
 
         // Verify total instance count
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -368,7 +398,7 @@ public class NacosBatchOperationsTest {
             boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "roundtrip.value=" + i);
             assertTrue(published, "SDK publish should succeed for " + dataId);
         }
-        Thread.sleep(1000);
+        waitForConfigsPresent(prefix, configCount);
 
         // Step 2: Verify via SDK
         for (int i = 0; i < configCount; i++) {
@@ -385,7 +415,7 @@ public class NacosBatchOperationsTest {
             boolean deleted = configService.removeConfig(dataId, DEFAULT_GROUP);
             assertTrue(deleted, "Config should be deleted for " + dataId);
         }
-        Thread.sleep(500);
+        waitForConfigsDeleted(prefix, configCount);
 
         // Step 4: Verify deletion via SDK
         for (int i = 0; i < configCount; i++) {

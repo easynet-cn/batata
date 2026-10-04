@@ -118,7 +118,14 @@ func TestAgentServiceMaintenance(t *testing.T) {
 	assert.NoError(t, err, "Disable maintenance should succeed")
 
 	// Verify maintenance is disabled
-	time.Sleep(200 * time.Millisecond)
+	requireEventually(t, "maintenance disabled", 10*time.Second, func() bool {
+		h, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		c, ok := h[checkID]
+		return !ok || c.Status != api.HealthCritical
+	}, "Service should not be in maintenance mode after disable")
 	health, err = client.Agent().Checks()
 	require.NoError(t, err)
 	chk, ok = health[checkID]
@@ -138,7 +145,18 @@ func TestAgentNodeMaintenance(t *testing.T) {
 		t.Skip("Node maintenance not available")
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "node maintenance enabled", 10*time.Second, func() bool {
+		s, err := client.Agent().Self()
+		if err != nil {
+			return false
+		}
+		cfg, ok := s["Config"]
+		if !ok {
+			return false
+		}
+		mm, _ := cfg["MaintenanceMode"].(bool)
+		return mm
+	}, "Node should be in maintenance mode")
 
 	// Verify node is in maintenance
 	self, err := client.Agent().Self()
@@ -237,7 +255,14 @@ func TestAgentServiceWithCheck(t *testing.T) {
 	defer client.Agent().ServiceDeregister(serviceID)
 
 	// Verify check exists
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service check registered", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks["service:"+serviceID]
+		return ok
+	}, "Service check should be registered")
 	checks, err := client.Agent().Checks()
 	require.NoError(t, err)
 
@@ -275,7 +300,15 @@ func TestAgentServiceWithMultipleChecks(t *testing.T) {
 	assert.NoError(t, err, "Service registration with multiple checks should succeed")
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service checks registered", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok1 := checks[serviceID+"-check1"]
+		_, ok2 := checks[serviceID+"-check2"]
+		return ok1 && ok2
+	}, "Both service checks should be registered")
 
 	// Verify both checks exist
 	checks, err := client.Agent().Checks()

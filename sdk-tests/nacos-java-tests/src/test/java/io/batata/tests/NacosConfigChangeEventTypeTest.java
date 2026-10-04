@@ -77,8 +77,6 @@ public class NacosConfigChangeEventTypeTest {
             }
         });
 
-        Thread.sleep(1000);
-
         // Publish new config - should trigger ADDED event
         String content = "ccet.add.key=first-value";
         configService.publishConfig(dataId, DEFAULT_GROUP, content);
@@ -117,7 +115,7 @@ public class NacosConfigChangeEventTypeTest {
         // Publish initial config
         String initialContent = "ccet.modify.key=initial-value";
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(2000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         configService.addListener(dataId, DEFAULT_GROUP, new AbstractConfigChangeListener() {
             @Override
@@ -132,8 +130,6 @@ public class NacosConfigChangeEventTypeTest {
                 }
             }
         });
-
-        Thread.sleep(1000);
 
         // Modify config
         String modifiedContent = "ccet.modify.key=modified-value";
@@ -188,12 +184,9 @@ public class NacosConfigChangeEventTypeTest {
             }
         });
 
-        Thread.sleep(500);
-
         // Publish config
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccet.delete.key=to-be-removed");
         addLatch.await(20, TimeUnit.SECONDS);
-        Thread.sleep(2000);
 
         // Delete config
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -230,7 +223,7 @@ public class NacosConfigChangeEventTypeTest {
         // Publish initial config with multiple properties
         String initialContent = "key1=value1\nkey2=value2\nkey3=value3";
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent, "properties");
-        Thread.sleep(2000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         configService.addListener(dataId, DEFAULT_GROUP, new AbstractConfigChangeListener() {
             @Override
@@ -244,8 +237,6 @@ public class NacosConfigChangeEventTypeTest {
                 }
             }
         });
-
-        Thread.sleep(1000);
 
         // Modify: change key1, add key4, remove key3
         String modifiedContent = "key1=new-value1\nkey2=value2\nkey4=value4";
@@ -301,7 +292,7 @@ public class NacosConfigChangeEventTypeTest {
         // Publish initial config
         String initialContent = "ccet.sign.key=initial";
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(2000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Use getConfigAndSignListener (atomically fetches content + registers listener)
         AbstractConfigChangeListener listener = new AbstractConfigChangeListener() {
@@ -314,8 +305,6 @@ public class NacosConfigChangeEventTypeTest {
 
         String content = configService.getConfigAndSignListener(dataId, DEFAULT_GROUP, 5000, listener);
         assertEquals(initialContent, content, "getConfigAndSignListener should return current content");
-
-        Thread.sleep(1000);
 
         // Update should trigger listener with MODIFIED change
         String updatedContent = "ccet.sign.key=updated";
@@ -354,7 +343,7 @@ public class NacosConfigChangeEventTypeTest {
         // Publish initial config
         String initialContent = "ccet.once=initial";
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(2000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Use getConfigAndSignListener to atomically fetch + register listener
         // This ensures CacheData has the correct MD5, avoiding initial mismatch notification
@@ -369,13 +358,13 @@ public class NacosConfigChangeEventTypeTest {
         String content = configService.getConfigAndSignListener(dataId, DEFAULT_GROUP, 5000, listener);
         assertEquals(initialContent, content, "Should get initial content");
 
-        Thread.sleep(1000);
-
         // Single update
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccet.once=updated");
 
         latch.await(20, TimeUnit.SECONDS);
-        Thread.sleep(3000); // Wait extra time to ensure no duplicate triggers
+        // Wait briefly and confirm no duplicate trigger arrived
+        assertFalse(TestSupport.waitFor(() -> triggerCount.get() >= 2, 3000),
+                "Listener should be triggered exactly once for a single config change");
 
         assertEquals(1, triggerCount.get(),
                 "Listener should be triggered exactly once for a single config change");
@@ -399,7 +388,7 @@ public class NacosConfigChangeEventTypeTest {
         // Publish initial config
         String initialContent = "ccet.sync=initial";
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(2000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Create a new config service with ENABLE_REMOTE_SYNC_CONFIG
         String serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
@@ -424,8 +413,6 @@ public class NacosConfigChangeEventTypeTest {
                     latch.countDown();
                 }
             });
-
-            Thread.sleep(1000);
 
             // Update config
             String updatedContent = "ccet.sync=updated";

@@ -35,7 +35,8 @@ func TestAgentServiceSidecarProxy(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, serviceName+"-sidecar-proxy", 10*time.Second)
 
 	// Verify both services registered
 	services, err := agent.Services()
@@ -82,7 +83,8 @@ func TestAgentServiceExplicitProxy(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(proxyName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, proxyName, 10*time.Second)
 
 	// Verify proxy
 	services, err := agent.Services()
@@ -118,7 +120,7 @@ func TestAgentServiceConnectNative(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -163,7 +165,7 @@ func TestAgentServiceMultiPort(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -194,7 +196,7 @@ func TestAgentServiceSocket(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -339,7 +341,7 @@ func TestAgentMeshGateway(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -368,7 +370,7 @@ func TestAgentTerminatingGateway(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -397,7 +399,7 @@ func TestAgentIngressGateway(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -487,7 +489,14 @@ func TestAgentCheckHTTP(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.CheckDeregister(checkID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "http check registered and critical", 10*time.Second, func() bool {
+		checks, err := agent.Checks()
+		if err != nil {
+			return false
+		}
+		chk, ok := checks[checkID]
+		return ok && chk.Status == api.HealthCritical
+	}, "HTTP check %s should be registered and critical", checkID)
 
 	checks, err := agent.Checks()
 	require.NoError(t, err)
@@ -519,7 +528,14 @@ func TestAgentCheckTCP(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.CheckDeregister(checkID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "tcp check registered and critical", 10*time.Second, func() bool {
+		checks, err := agent.Checks()
+		if err != nil {
+			return false
+		}
+		chk, ok := checks[checkID]
+		return ok && chk.Status == api.HealthCritical
+	}, "TCP check %s should be registered and critical", checkID)
 
 	checks, err := agent.Checks()
 	require.NoError(t, err)
@@ -551,7 +567,14 @@ func TestAgentCheckGRPC(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.CheckDeregister(checkID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "grpc check registered and critical", 10*time.Second, func() bool {
+		checks, err := agent.Checks()
+		if err != nil {
+			return false
+		}
+		chk, ok := checks[checkID]
+		return ok && chk.Status == api.HealthCritical
+	}, "gRPC check %s should be registered and critical", checkID)
 
 	checks, err := agent.Checks()
 	require.NoError(t, err)
@@ -583,7 +606,14 @@ func TestAgentCheckDeregisterCritical(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service check registered", 10*time.Second, func() bool {
+		healthChecks, err := agent.Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := healthChecks["service:"+serviceID]
+		return ok
+	}, "Health check for service %s should exist", serviceID)
 
 	// Get health checks to verify deregister setting
 	// (Check field removed from AgentService in SDK v1.33+)

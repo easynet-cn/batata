@@ -68,7 +68,7 @@ public class NacosConfigHistoryTest {
         for (int i = 1; i <= versionCount; i++) {
             boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "version=" + i);
             assertTrue(published, "Config version " + i + " should be published successfully");
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
         }
 
         // List history via maintainer client
@@ -101,7 +101,7 @@ public class NacosConfigHistoryTest {
         // Create config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Config should be published successfully");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Get history list first to get nid
         Page<ConfigHistoryBasicInfo> historyPage = maintainerService.listConfigHistory(
@@ -138,7 +138,7 @@ public class NacosConfigHistoryTest {
         // Publish initial version
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "version=1");
         assertTrue(published, "Initial config should be published successfully");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Get initial history count
         Page<ConfigHistoryBasicInfo> page1 = maintainerService.listConfigHistory(
@@ -150,7 +150,7 @@ public class NacosConfigHistoryTest {
         // Publish more versions
         for (int i = 2; i <= 4; i++) {
             configService.publishConfig(dataId, DEFAULT_GROUP, "version=" + i);
-            Thread.sleep(500);
+            TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, "version=" + i);
         }
 
         // Get updated history count
@@ -180,10 +180,10 @@ public class NacosConfigHistoryTest {
         // Create two versions
         boolean pub1 = configService.publishConfig(dataId, DEFAULT_GROUP, content1);
         assertTrue(pub1, "First version should be published successfully");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
         boolean pub2 = configService.publishConfig(dataId, DEFAULT_GROUP, content2);
         assertTrue(pub2, "Second version should be published successfully");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Get history list to find the record ID
         Page<ConfigHistoryBasicInfo> historyPage = maintainerService.listConfigHistory(
@@ -221,7 +221,7 @@ public class NacosConfigHistoryTest {
             boolean published = configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "content=" + i);
             assertTrue(published, "Config " + prefix + "-" + i + " should be published successfully");
         }
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, prefix + "-0", DEFAULT_GROUP);
 
         // List all configs in namespace (empty namespace = public) via maintainer client
         List<ConfigBasicInfo> configList = maintainerService.getConfigListByNamespace(DEFAULT_NAMESPACE);
@@ -255,7 +255,7 @@ public class NacosConfigHistoryTest {
         // Publish config in default namespace
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "default-ns-content");
         assertTrue(published, "Config in default namespace should be published");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Query history in a different (non-existent) namespace - should have no records for this dataId
         Page<ConfigHistoryBasicInfo> isolatedPage = maintainerService.listConfigHistory(

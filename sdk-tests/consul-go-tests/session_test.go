@@ -274,11 +274,16 @@ func TestSessionDestroyReleasesLocks(t *testing.T) {
 	_, err = client.Session().Destroy(sessionID, nil)
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for lock release to propagate (key preserved, Session cleared)
+	requireEventually(t, "lock released after session destroy", 10*time.Second, func() bool {
+		p, _, err := client.KV().Get(key, nil)
+		if err == nil && p != nil && p.Session == "" {
+			pair = p
+			return true
+		}
+		return false
+	}, "Key must still exist and lock must be released after session destroy with release behavior")
 
-	// Key should still exist but lock should be released
-	pair, _, err = client.KV().Get(key, nil)
-	require.NoError(t, err)
 	require.NotNil(t, pair,
 		"Key must still exist after session destroy with release behavior")
 	assert.Empty(t, pair.Session,
@@ -313,7 +318,11 @@ func TestSessionDestroyDeletesKeys(t *testing.T) {
 	_, err = client.Session().Destroy(sessionID, nil)
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for key deletion to propagate
+	requireEventually(t, "key deleted after session destroy", 10*time.Second, func() bool {
+		p, _, err := client.KV().Get(key, nil)
+		return err == nil && p == nil
+	}, "Key must be deleted after session destroy with delete behavior")
 
 	// Key should be deleted
 	pair, _, err := client.KV().Get(key, nil)
@@ -476,7 +485,9 @@ func TestSessionInvalidatedOnCheckCritical(t *testing.T) {
 	require.NoError(t, err, "Service registration should succeed")
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for service registration to propagate on the agent
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second),
+		"Service should be registered before creating session")
 
 	// Step 2: Create a session linked to this service check
 	sessionID, _, err := client.Session().Create(&api.SessionEntry{
@@ -514,7 +525,8 @@ func TestSessionInvalidatedOnCheckCritical(t *testing.T) {
 	require.NoError(t, err, "FailTTL should succeed")
 
 	// Wait for session invalidation to propagate
-	time.Sleep(2 * time.Second)
+	require.True(t, waitForSessionAbsent(t, client, sessionID, 10*time.Second),
+		"Session must be automatically destroyed when linked check becomes Critical")
 
 	// Step 5: Verify session was automatically invalidated
 	info, _, err = client.Session().Info(sessionID, nil)
@@ -585,7 +597,9 @@ func TestSessionInvalidatedOnCheckCriticalDeleteBehavior(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for service registration to propagate on the agent
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second),
+		"Service should be registered before creating session")
 
 	// Create session with DELETE behavior linked to service check
 	sessionID, _, err := client.Session().Create(&api.SessionEntry{
@@ -613,7 +627,9 @@ func TestSessionInvalidatedOnCheckCriticalDeleteBehavior(t *testing.T) {
 	err = client.Agent().FailTTL(checkID, "check failed")
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	// Wait for session invalidation to propagate
+	require.True(t, waitForSessionAbsent(t, client, sessionID, 10*time.Second),
+		"Session with delete behavior must be invalidated on check Critical")
 
 	// Session should be invalidated
 	info, _, err := client.Session().Info(sessionID, nil)

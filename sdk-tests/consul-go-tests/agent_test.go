@@ -57,7 +57,7 @@ func TestAgentServiceRegister(t *testing.T) {
 	assert.NoError(t, err, "Service registration should succeed")
 
 	// Wait for registration
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service should be registered on agent")
 
 	// Verify
 	services, err := client.Agent().Services()
@@ -90,7 +90,7 @@ func TestAgentServiceDeregister(t *testing.T) {
 		Port: 8080,
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service should be registered on agent")
 
 	// Verify registered
 	services, err := client.Agent().Services()
@@ -101,7 +101,7 @@ func TestAgentServiceDeregister(t *testing.T) {
 	err = client.Agent().ServiceDeregister(serviceID)
 	assert.NoError(t, err, "Service deregistration should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentServiceAbsent(t, client, serviceID, 5*time.Second), "service should be deregistered from agent")
 
 	// Verify deregistered
 	services, err = client.Agent().Services()
@@ -123,7 +123,10 @@ func TestAgentListServices(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	time.Sleep(1 * time.Second)
+	for i := 0; i < 3; i++ {
+		serviceID := fmt.Sprintf("%s-%d", prefix, i)
+		require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service %s should be registered", serviceID)
+	}
 
 	// List services
 	services, err := client.Agent().Services()
@@ -162,7 +165,7 @@ func TestAgentServiceDetail(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service should be registered on agent")
 
 	// Get service detail
 	service, _, err := client.Agent().Service(serviceID, nil)
@@ -201,7 +204,14 @@ func TestAgentCheckRegister(t *testing.T) {
 	})
 	assert.NoError(t, err, "Check registration should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check visible", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered")
 
 	// Verify check exists
 	checks, err := client.Agent().Checks()
@@ -227,13 +237,27 @@ func TestAgentCheckDeregister(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check visible", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered")
 
 	// Deregister
 	err = client.Agent().CheckDeregister(checkID)
 	assert.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check absent", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return !ok
+	}, "Check should be deregistered")
 
 	// Verify deregistered
 	checks, err := client.Agent().Checks()
@@ -257,7 +281,14 @@ func TestAgentPassTTL(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check visible", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered")
 
 	// Pass TTL
 	err = client.Agent().PassTTL(checkID, "All good")
@@ -288,7 +319,14 @@ func TestAgentFailTTL(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check visible", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered")
 
 	// Fail TTL
 	err = client.Agent().FailTTL(checkID, "Something went wrong")
@@ -392,7 +430,7 @@ func TestAgentServiceRoundTrip(t *testing.T) {
 
 	err := client.Agent().ServiceRegister(reg)
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service should be registered on agent")
 	defer client.Agent().ServiceDeregister(serviceID)
 
 	// Verify via Agent().Services() (map of all services)
@@ -435,7 +473,14 @@ func TestAgentCheckStatusTransitionsStrict(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer client.Agent().CheckDeregister(checkID)
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "check visible", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered")
 
 	// Pass
 	err = client.Agent().PassTTL(checkID, "healthy")

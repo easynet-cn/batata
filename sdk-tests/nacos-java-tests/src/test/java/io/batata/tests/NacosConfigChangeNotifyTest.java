@@ -63,7 +63,6 @@ public class NacosConfigChangeNotifyTest {
         });
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // First publish should trigger listener
         String content = "ccn.add.key=first-value";
@@ -103,10 +102,9 @@ public class NacosConfigChangeNotifyTest {
 
         // Publish initial config
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccn.modify=initial");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Modify config
         String modifiedContent = "ccn.modify=updated";
@@ -131,6 +129,7 @@ public class NacosConfigChangeNotifyTest {
     @Order(3)
     void testListenerOnConfigDelete() throws NacosException, InterruptedException {
         String dataId = "ccn-delete-" + UUID.randomUUID().toString().substring(0, 8);
+        String createdContent = "ccn.delete=to-be-removed";
         CountDownLatch createLatch = new CountDownLatch(1);
         CountDownLatch deleteLatch = new CountDownLatch(1);
         AtomicReference<String> lastContent = new AtomicReference<>("initial");
@@ -147,12 +146,11 @@ public class NacosConfigChangeNotifyTest {
         });
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Create config
-        configService.publishConfig(dataId, DEFAULT_GROUP, "ccn.delete=to-be-removed");
+        configService.publishConfig(dataId, DEFAULT_GROUP, createdContent);
         createLatch.await(10, TimeUnit.SECONDS);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> createdContent.equals(lastContent.get()), 2000);
 
         // Delete config
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -193,8 +191,6 @@ public class NacosConfigChangeNotifyTest {
             configService.addListener(dataId, DEFAULT_GROUP, listener);
         }
 
-        Thread.sleep(500);
-
         // Publish config
         String expectedContent = "ccn.multi=all-listeners-should-fire";
         configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
@@ -228,11 +224,10 @@ public class NacosConfigChangeNotifyTest {
         });
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Trigger once
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccn.removed=first");
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> callCount.get() >= 1, 3000);
 
         int countAfterFirst = callCount.get();
         assertTrue(countAfterFirst >= 1,
@@ -240,11 +235,11 @@ public class NacosConfigChangeNotifyTest {
 
         // Remove listener
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Publish again - should NOT trigger
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccn.removed=second");
-        Thread.sleep(3000);
+        assertFalse(TestSupport.waitFor(() -> callCount.get() != countAfterFirst, 3000),
+                "Removed listener should not receive further notifications");
 
         int countAfterSecond = callCount.get();
         assertEquals(countAfterFirst, countAfterSecond,
@@ -273,7 +268,6 @@ public class NacosConfigChangeNotifyTest {
         });
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Rapid config changes
         for (int i = 0; i < changeCount; i++) {
@@ -316,14 +310,15 @@ public class NacosConfigChangeNotifyTest {
         });
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
-        // Publish multiple changes
+        // Publish multiple changes, waiting for each notification before the next
         String finalContent = null;
         for (int i = 0; i < changeCount; i++) {
+            final int expectedChange = i;
             finalContent = "ccn.latest.change=" + i;
             configService.publishConfig(dataId, DEFAULT_GROUP, finalContent);
-            Thread.sleep(5000);
+            TestSupport.waitFor(() -> lastReceived.get() != null
+                    && lastReceived.get().contains("change=" + expectedChange), 5000);
         }
 
         boolean received = latch.await(60, TimeUnit.SECONDS);

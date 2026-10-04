@@ -208,7 +208,7 @@ public class NacosConfigServiceTest {
 
         // Publish initial
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Get and sign listener
         Listener listener = new Listener() {

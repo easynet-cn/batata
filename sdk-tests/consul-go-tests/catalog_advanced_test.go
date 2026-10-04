@@ -83,7 +83,7 @@ func TestCatalogServicesNodeMetaFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Query catalog with node meta filter
 	catalog := client.Catalog()
@@ -118,7 +118,10 @@ func TestCatalogServicesFilterExpression(t *testing.T) {
 		defer agent.ServiceDeregister(reg.ID)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(prefix, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	// Filter with expression
 	catalog := client.Catalog()
@@ -165,7 +168,10 @@ func TestCatalogServiceSingleTag(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(reg2.ID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(serviceName, "", nil)
+		return err == nil && len(services) >= 2
+	}, "Should register 2 service instances")
 
 	// Query by single tag
 	catalog := client.Catalog()
@@ -194,7 +200,7 @@ func TestCatalogServiceMultipleTags(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Query by multiple tags (AND logic)
 	catalog := client.Catalog()
@@ -220,7 +226,7 @@ func TestCatalogServiceCached(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	catalog := client.Catalog()
 
@@ -260,7 +266,7 @@ func TestCatalogConnect(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Query Connect services
 	catalog := client.Catalog()
@@ -296,7 +302,7 @@ func TestCatalogConnectNative(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Query with filter for native services
 	catalog := client.Catalog()
@@ -338,7 +344,7 @@ func TestCatalogNode(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get node details
 	catalog := client.Catalog()
@@ -376,7 +382,10 @@ func TestCatalogNodeServiceList(t *testing.T) {
 		defer agent.ServiceDeregister(reg.ID)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(prefix, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	// Get node service list
 	catalog := client.Catalog()
@@ -420,7 +429,10 @@ func TestCatalogNodeServiceListFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(reg2.ID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(serviceName, "", nil)
+		return err == nil && len(services) >= 2
+	}, "Should register 2 service instances")
 
 	// Filter services on node
 	catalog := client.Catalog()
@@ -457,7 +469,7 @@ func TestCatalogGatewayServicesTerminating(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, gatewayName, 10*time.Second), "gateway should appear in catalog")
 
 	// Query gateway services
 	catalog := client.Catalog()
@@ -488,7 +500,7 @@ func TestCatalogGatewayServicesIngress(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, gatewayName, 10*time.Second), "gateway should appear in catalog")
 
 	// Query gateway services
 	catalog := client.Catalog()
@@ -531,7 +543,10 @@ func TestCatalogRegistration(t *testing.T) {
 	_, err = catalog.Register(reg, nil)
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "catalog registration visible", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(serviceName, "", nil)
+		return err == nil && len(services) >= 1
+	}, "Catalog-registered service should appear")
 
 	// Verify registration
 	services, _, err := catalog.Service(serviceName, "", nil)
@@ -566,7 +581,7 @@ func TestCatalogEnableTagOverride(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get service and verify
 	catalog := client.Catalog()

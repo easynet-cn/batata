@@ -75,13 +75,14 @@ public class NacosConfigBetaTest {
         // Publish normal config first
         boolean published = maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         assertTrue(published, "Normal config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish beta config
         boolean betaPublished = maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent,
                 null, null, null, null, null, betaIps);
         assertTrue(betaPublished, "Beta config publish should succeed");
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Query beta config
         ConfigGrayInfo grayInfo = maintainerService.queryBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -110,12 +111,12 @@ public class NacosConfigBetaTest {
 
         // Publish normal and beta config
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent,
                 null, null, null, null, null, "127.0.0.1");
-        Thread.sleep(500);
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Verify beta exists before deletion
         ConfigGrayInfo beforeDelete = maintainerService.queryBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -159,14 +160,14 @@ public class NacosConfigBetaTest {
 
         // Publish normal config
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish beta config with a different IP (not the test client)
         boolean betaPublished = maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent,
                 null, null, null, null, null, "10.0.0.1");
         assertTrue(betaPublished, "Beta publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Get normal config - should return normal content, not beta
         ConfigDetailInfo normalConfig = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -204,13 +205,13 @@ public class NacosConfigBetaTest {
 
         // Publish normal config
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish initial beta config
         maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent1,
                 null, null, null, null, null, betaIps1);
-        Thread.sleep(500);
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Verify initial beta
         ConfigGrayInfo query1 = maintainerService.queryBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -224,7 +225,7 @@ public class NacosConfigBetaTest {
         maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent2,
                 null, null, null, null, null, betaIps2);
-        Thread.sleep(500);
+        TestSupport.waitForBetaContent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, betaContent2);
 
         // Verify updated beta
         ConfigGrayInfo query2 = maintainerService.queryBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);

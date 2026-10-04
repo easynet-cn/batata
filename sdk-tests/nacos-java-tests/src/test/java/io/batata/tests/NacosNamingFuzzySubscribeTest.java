@@ -291,7 +291,7 @@ public class NacosNamingFuzzySubscribeTest {
 
         // Pre-register a service
         namingService.registerInstance(serviceName, "192.168.100.6", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         CountDownLatch addLatch = new CountDownLatch(1);
         CountDownLatch deleteLatch = new CountDownLatch(1);
@@ -426,7 +426,8 @@ public class NacosNamingFuzzySubscribeTest {
         // Pre-register services
         namingService.registerInstance(service1, "192.168.100.9", 8080);
         namingService.registerInstance(service2, "192.168.100.10", 8080);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, service1, DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService, service2, DEFAULT_GROUP, 1);
 
         FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
             @Override
@@ -474,7 +475,7 @@ public class NacosNamingFuzzySubscribeTest {
 
         // Pre-register a service
         namingService.registerInstance(existingService, "192.168.108.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, existingService, DEFAULT_GROUP, 1);
 
         AtomicReference<String> initSyncType = new AtomicReference<>();
         AtomicReference<String> changeSyncType = new AtomicReference<>();
@@ -706,7 +707,6 @@ public class NacosNamingFuzzySubscribeTest {
 
         // Register service in OTHER namespace
         nsNamingService.registerInstance(serviceName, "192.168.111.1", 8080);
-        Thread.sleep(1000);
 
         // Default namespace watcher should NOT receive the event
         boolean received = defaultNsLatch.await(5, TimeUnit.SECONDS);

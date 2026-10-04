@@ -54,6 +54,17 @@ public class NacosInstanceValidationTest {
         }
     }
 
+    private static void waitForConnected(String serviceName) {
+        TestSupport.waitFor(() -> {
+            try {
+                namingService.getAllInstances(serviceName);
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 5_000);
+    }
+
     // ==================== P1: Invalid Cluster Name Validation ====================
 
     /**
@@ -77,7 +88,7 @@ public class NacosInstanceValidationTest {
 
         try {
             namingService.registerInstance(serviceName, instance);
-            Thread.sleep(1000);
+            waitForConnected(serviceName);
 
             // If registration doesn't throw, check if the server actually accepted it
             List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -115,7 +126,7 @@ public class NacosInstanceValidationTest {
 
         try {
             namingService.registerInstance(serviceName, instance);
-            Thread.sleep(1000);
+            waitForConnected(serviceName);
 
             List<Instance> instances = namingService.getAllInstances(serviceName);
             if (!instances.isEmpty()) {
@@ -147,7 +158,7 @@ public class NacosInstanceValidationTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertTrue(instances.size() >= 1, "Should register at least one instance with valid cluster names");
@@ -190,7 +201,7 @@ public class NacosInstanceValidationTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify instance is registered
         List<Instance> beforeTimeout = namingService.getAllInstances(serviceName);
@@ -241,7 +252,7 @@ public class NacosInstanceValidationTest {
         };
 
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Register instance to trigger notification
         namingService.registerInstance(serviceName, "192.168.73.1", 8080);
@@ -270,7 +281,7 @@ public class NacosInstanceValidationTest {
 
         // Register instance first
         namingService.registerInstance(serviceName, "192.168.74.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         int listenerCount = 3;
         CountDownLatch latch = new CountDownLatch(listenerCount);
@@ -336,7 +347,7 @@ public class NacosInstanceValidationTest {
             }
         };
         namingService.subscribe(serviceName, Arrays.asList("cluster-x"), listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Register in the subscribed cluster
         Instance instance = new Instance();
@@ -377,7 +388,7 @@ public class NacosInstanceValidationTest {
             }
         };
         namingService.subscribe(serviceName, Arrays.asList("cluster-x"), listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Register in cluster-y (different cluster)
         Instance instance = new Instance();
@@ -409,11 +420,11 @@ public class NacosInstanceValidationTest {
 
         List<String> clusters = Arrays.asList("cluster-z");
         namingService.subscribe(serviceName, clusters, listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Unsubscribe
         namingService.unsubscribe(serviceName, clusters, listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Register in the cluster
         Instance instance = new Instance();
@@ -459,7 +470,7 @@ public class NacosInstanceValidationTest {
         };
 
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        waitForConnected(serviceName);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.78.1", 8080);
@@ -494,7 +505,7 @@ public class NacosInstanceValidationTest {
         healthyInst.setHealthy(true);
         healthyInst.setWeight(1.0);
         namingService.registerInstance(serviceName, healthyInst);
-        Thread.sleep(3000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Use getAllInstances with subscribe=false to bypass cache
         List<Instance> healthyList = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -535,7 +546,7 @@ public class NacosInstanceValidationTest {
         inst2.setClusterName("cluster-2");
         namingService.registerInstance(serviceName, inst2);
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select from cluster-1 only (non-subscribe to avoid cache issues)
         List<Instance> cluster1Instances = namingService.selectInstances(serviceName,
@@ -575,7 +586,7 @@ public class NacosInstanceValidationTest {
         inst2.setClusterName("other-cluster");
         namingService.registerInstance(serviceName, inst2);
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select one from specific cluster
         Instance selected = namingService.selectOneHealthyInstance(serviceName,
@@ -606,7 +617,7 @@ public class NacosInstanceValidationTest {
         inst.setWeight(1.0);
         namingService.registerInstance(serviceName, inst);
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty(), "Should have instances");
@@ -644,7 +655,7 @@ public class NacosInstanceValidationTest {
         zeroWeightInst.setWeight(0.0);
         namingService.registerInstance(serviceName, zeroWeightInst);
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // All instances
         List<Instance> allInstances = namingService.getAllInstances(serviceName);

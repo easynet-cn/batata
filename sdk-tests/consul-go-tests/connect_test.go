@@ -257,7 +257,10 @@ func TestConnectIntentionCheck(t *testing.T) {
 	_, err = connect.IntentionUpdate(intention, nil)
 	require.NoError(t, err)
 
-	time.Sleep(100 * time.Millisecond)
+	requireEventually(t, "intention update to deny", 10*time.Second, func() bool {
+		i, _, err := connect.IntentionGet(id, nil)
+		return err == nil && i != nil && i.Action == api.IntentionActionDeny
+	}, "Intention should be updated to deny")
 
 	// Check again - should be denied
 	allowed, _, err = connect.IntentionCheck(&api.IntentionCheck{
@@ -640,7 +643,7 @@ func TestAgentConnectCALeafWithRegisteredService(t *testing.T) {
 	require.NoError(t, err, "Service registration should succeed")
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
 
 	// Verify service is registered
 	services, err := agent.Services()

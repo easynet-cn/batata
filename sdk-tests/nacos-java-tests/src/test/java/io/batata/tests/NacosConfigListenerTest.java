@@ -78,7 +78,6 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, DEFAULT_GROUP, listener);
 
         // Publish config
-        Thread.sleep(500);
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
         assertTrue(published, "Config should be published successfully");
 
@@ -116,7 +115,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Publish first config and wait for listener to fire
         configService.publishConfig(dataId, DEFAULT_GROUP, "first=value");
@@ -128,12 +126,13 @@ public class NacosConfigListenerTest {
 
         // Remove listener
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Publish second config - should not trigger listener
         configService.publishConfig(dataId, DEFAULT_GROUP, "second=value");
-        Thread.sleep(3000);
 
+        // Wait briefly and confirm no further notification arrived
+        assertFalse(TestSupport.waitFor(() -> callCount.get() != countAfterFirst, 3000),
+                "Listener call count should not increase after removal");
         int countAfterSecond = callCount.get();
         assertEquals(countAfterFirst, countAfterSecond,
                 "Listener call count should not increase after removal; was " + countAfterFirst + " now " + countAfterSecond);
@@ -173,8 +172,6 @@ public class NacosConfigListenerTest {
             listeners.add(listener);
             configService.addListener(dataId, DEFAULT_GROUP, listener);
         }
-
-        Thread.sleep(500);
 
         // Publish config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
@@ -227,7 +224,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
         assertTrue(published, "Config should be published successfully");
@@ -272,13 +268,13 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
-        // Publish multiple updates with enough delay for each to be detected
+        // Publish multiple updates, waiting for each notification before the next
         for (int i = 0; i < updateCount; i++) {
+            final int expectedCount = i + 1;
             boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "update=" + i);
             assertTrue(published, "Config update " + i + " should be published successfully");
-            Thread.sleep(1500);
+            TestSupport.waitFor(() -> receivedConfigs.size() >= expectedCount, 5000);
         }
 
         boolean allReceived = latch.await(30, TimeUnit.SECONDS);
@@ -329,7 +325,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Create config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, configContent);
@@ -337,10 +332,7 @@ public class NacosConfigListenerTest {
 
         boolean createReceived = createLatch.await(10, TimeUnit.SECONDS);
         assertTrue(createReceived, "Listener should receive the create notification");
-        assertEquals(configContent, lastConfig.get(),
-                "Listener should receive the exact published content on create");
-
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> configContent.equals(lastConfig.get()), 2000);
 
         // Delete config
         boolean deleted = configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -394,7 +386,6 @@ public class NacosConfigListenerTest {
 
         try {
             nsConfigService.addListener(dataId, DEFAULT_GROUP, listener);
-            Thread.sleep(500);
 
             boolean published = nsConfigService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
             assertTrue(published, "Config should be published in namespace successfully");
@@ -442,7 +433,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, group, listener);
-        Thread.sleep(500);
 
         boolean published = configService.publishConfig(dataId, group, expectedContent);
         assertTrue(published, "Config should be published to custom group successfully");
@@ -497,8 +487,6 @@ public class NacosConfigListenerTest {
 
                     configService.addListener(dataId, DEFAULT_GROUP, listener);
                     listeners.add(listener);
-
-                    Thread.sleep(100);
 
                     // Remove half the listeners
                     if (index % 2 == 0) {
@@ -556,7 +544,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Rapid config changes
         for (int i = 0; i < changeCount; i++) {
@@ -565,8 +552,8 @@ public class NacosConfigListenerTest {
             Thread.sleep(500); // Delay between changes to allow each to be detected
         }
 
-        // Wait for notifications to settle
-        Thread.sleep(5000);
+        // Wait until at least one notification arrives
+        TestSupport.waitFor(() -> receiveCount.get() >= 1, 5000);
 
         int received = receiveCount.get();
         assertTrue(received >= 1,
@@ -608,7 +595,6 @@ public class NacosConfigListenerTest {
 
         // Add listener for non-existent config - should not throw
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Verify config does not exist yet
         String current = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
@@ -657,15 +643,14 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         configService.addListener(dataId, DEFAULT_GROUP, listener);
 
-        Thread.sleep(500);
-
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
         assertTrue(published, "Config should be published successfully");
 
         latch.await(10, TimeUnit.SECONDS);
-        Thread.sleep(3000);
 
-        // Duplicate adds of the same listener instance should result in only one callback
+        // Wait briefly and confirm no duplicate callback arrived
+        assertFalse(TestSupport.waitFor(() -> callCount.get() >= 2, 3000),
+                "Adding the same listener instance multiple times should only trigger one callback");
         assertEquals(1, callCount.get(),
                 "Adding the same listener instance multiple times should only trigger one callback, got " + callCount.get());
 
@@ -698,7 +683,6 @@ public class NacosConfigListenerTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
 
         // Create large config (~100KB)
         StringBuilder largeContent = new StringBuilder();

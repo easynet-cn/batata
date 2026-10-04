@@ -183,7 +183,7 @@ func TestWatchService(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 
 	params := map[string]interface{}{
 		"type":    "service",
@@ -523,8 +523,10 @@ func TestWatchCancel(t *testing.T) {
 		plan.RunWithClientAndHclog(client, nil)
 	}()
 
-	// Let it run briefly
-	time.Sleep(500 * time.Millisecond)
+	// Wait for handler to be called at least once
+	requireEventually(t, "watch handler called", 10*time.Second, func() bool {
+		return callCount > 0
+	}, "Handler should have been called at least once before cancel")
 
 	// Stop the plan
 	plan.Stop()
@@ -714,7 +716,9 @@ func TestWatchHandlerPanic(t *testing.T) {
 		plan.RunWithClientAndHclog(client, nil)
 	}()
 
-	time.Sleep(1 * time.Second)
+	requireEventually(t, "watch handler called", 10*time.Second, func() bool {
+		return callCount > 0
+	}, "Handler should have been called at least once")
 	plan.Stop()
 
 	assert.Greater(t, callCount, 0, "Handler should have been called at least once")
@@ -748,7 +752,8 @@ func TestWatchServiceWithTag(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName + "-2")
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName+"-1", 10*time.Second), "service %s should be registered", serviceName+"-1")
+	require.True(t, waitForAgentService(t, client, serviceName+"-2", 10*time.Second), "service %s should be registered", serviceName+"-2")
 
 	params := map[string]interface{}{
 		"type":    "service",
@@ -806,7 +811,7 @@ func TestWatchServicePassingOnly(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 
 	params := map[string]interface{}{
 		"type":        "service",
@@ -1005,7 +1010,14 @@ func TestWatchChecksByService(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 
 	agent.PassTTL("service:"+serviceName, "healthy")
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "ttl check passing", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["service:"+serviceName]
+		return ok && check.Status == api.HealthPassing
+	}, "TTL check should be passing")
 
 	params := map[string]interface{}{
 		"type":    "checks",
@@ -1071,7 +1083,9 @@ func TestWatchPlanIsStopped(t *testing.T) {
 	assert.False(t, plan.IsStopped(), "Plan should not be stopped while running")
 
 	plan.Stop()
-	time.Sleep(200 * time.Millisecond)
+	requireEventually(t, "plan stopped", 10*time.Second, func() bool {
+		return plan.IsStopped()
+	}, "Plan should be stopped after Stop()")
 	assert.True(t, plan.IsStopped(), "Plan should be stopped after Stop()")
 }
 

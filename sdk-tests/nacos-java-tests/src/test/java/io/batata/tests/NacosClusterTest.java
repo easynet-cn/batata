@@ -121,8 +121,14 @@ public class NacosClusterTest {
         boolean published = configNode1.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Node 1 should publish config successfully");
 
-        // Wait for Raft replication
-        Thread.sleep(3000);
+        // Wait for Raft replication (poll Node 2)
+        TestSupport.waitFor(() -> {
+            try {
+                return content.equals(configNode2.getConfig(dataId, DEFAULT_GROUP, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Read from Node 2
         String contentNode2 = configNode2.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -151,7 +157,13 @@ public class NacosClusterTest {
         boolean published = configNode3.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Follower should publish config (forwarded to leader)");
 
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return content.equals(configNode1.getConfig(dataId, DEFAULT_GROUP, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Read from Node 1
         String contentNode1 = configNode1.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -177,11 +189,23 @@ public class NacosClusterTest {
 
         // Create initial config on Node 1
         configNode1.publishConfig(dataId, DEFAULT_GROUP, "version=1");
-        Thread.sleep(2000);
+        TestSupport.waitFor(() -> {
+            try {
+                return "version=1".equals(configNode2.getConfig(dataId, DEFAULT_GROUP, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Update on Node 2
         configNode2.publishConfig(dataId, DEFAULT_GROUP, "version=2");
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return "version=2".equals(configNode3.getConfig(dataId, DEFAULT_GROUP, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify update on Node 3
         String content = configNode3.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -202,7 +226,13 @@ public class NacosClusterTest {
 
         // Create config
         configNode1.publishConfig(dataId, DEFAULT_GROUP, "to-be-deleted");
-        Thread.sleep(2000);
+        TestSupport.waitFor(() -> {
+            try {
+                return configNode2.getConfig(dataId, DEFAULT_GROUP, 1000) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify exists on Node 2
         String before = configNode2.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -212,7 +242,13 @@ public class NacosClusterTest {
         boolean removed = configNode3.removeConfig(dataId, DEFAULT_GROUP);
         assertTrue(removed, "Node 3 should delete config successfully");
 
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return configNode1.getConfig(dataId, DEFAULT_GROUP, 1000) == null;
+            } catch (NacosException e) {
+                return true;
+            }
+        }, 10_000);
 
         // Verify gone on Node 1
         String after = configNode1.getConfig(dataId, DEFAULT_GROUP, 3000);
@@ -237,8 +273,15 @@ public class NacosClusterTest {
         inst.setWeight(1.0);
         namingNode1.registerInstance(serviceName, inst);
 
-        // Wait for Distro sync
-        Thread.sleep(3000);
+        // Wait for Distro sync (poll Node 2)
+        TestSupport.waitFor(() -> {
+            try {
+                return namingNode2.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> "10.0.1.1".equals(i.getIp()));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Query from Node 2
         List<Instance> node2Instances = namingNode2.getAllInstances(serviceName);
@@ -271,8 +314,18 @@ public class NacosClusterTest {
         namingNode2.registerInstance(serviceName, "10.0.2.2", 8080);
         namingNode3.registerInstance(serviceName, "10.0.2.3", 8080);
 
-        // Wait for Distro sync
-        Thread.sleep(5000);
+        // Wait for Distro sync (poll Node 1 sees all 3 registered IPs)
+        TestSupport.waitFor(() -> {
+            try {
+                Set<String> ips = new HashSet<>();
+                for (Instance i : namingNode1.getAllInstances(serviceName)) {
+                    ips.add(i.getIp());
+                }
+                return ips.contains("10.0.2.1") && ips.contains("10.0.2.2") && ips.contains("10.0.2.3");
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // All nodes should see all 3 instances
         for (int nodeIdx = 1; nodeIdx <= 3; nodeIdx++) {
@@ -308,7 +361,14 @@ public class NacosClusterTest {
 
         // Register on Node 1
         namingNode1.registerInstance(serviceName, "10.0.3.1", 8080);
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingNode3.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> "10.0.3.1".equals(i.getIp()));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify visible on Node 3
         List<Instance> before = namingNode3.getAllInstances(serviceName);
@@ -316,7 +376,13 @@ public class NacosClusterTest {
 
         // Deregister on Node 1
         namingNode1.deregisterInstance(serviceName, "10.0.3.1", 8080);
-        Thread.sleep(5000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingNode3.selectInstances(serviceName, new ArrayList<>(), true, false).isEmpty();
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify gone on Node 3 using non-subscribe mode to bypass SDK cache
         List<Instance> after = namingNode3.selectInstances(serviceName,
@@ -338,7 +404,14 @@ public class NacosClusterTest {
         configNode1.publishConfig(dataId, DEFAULT_GROUP, "concurrent=true");
         namingNode3.registerInstance(serviceName, "10.0.4.1", 8080);
 
-        Thread.sleep(5000);
+        // Wait for cross-node replication (poll Node 2 sees the config)
+        TestSupport.waitFor(() -> {
+            try {
+                return "concurrent=true".equals(configNode2.getConfig(dataId, DEFAULT_GROUP, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Node 2 should see both
         String config = configNode2.getConfig(dataId, DEFAULT_GROUP, 5000);

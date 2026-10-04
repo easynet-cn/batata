@@ -26,7 +26,7 @@ func TestHealthService(t *testing.T) {
 		Meta:    map[string]string{"version": "2.0"},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Query health
@@ -89,7 +89,7 @@ func TestHealthServicePassingFilter(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Query with passing=false — should include critical
@@ -108,7 +108,14 @@ func TestHealthServicePassingFilter(t *testing.T) {
 	checkID := "service:" + serviceName
 	err = client.Agent().PassTTL(checkID, "healthy")
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	requireEventually(t, "ttl check passing", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks[checkID]
+		return ok && check.Status == api.HealthPassing
+	}, "TTL check should be passing")
 
 	// Query with passing=true — now should include
 	passingEntries, _, err = client.Health().Service(serviceName, "", true, nil)
@@ -132,14 +139,21 @@ func TestHealthServicePassingExcludesWarning(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Set check to warning
 	checkID := "service:" + serviceName
 	err = client.Agent().WarnTTL(checkID, "degraded performance")
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	requireEventually(t, "ttl check warning", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks[checkID]
+		return ok && check.Status == api.HealthWarning
+	}, "TTL check should be warning")
 
 	// Query with passing=true — warning service MUST be excluded
 	// (Consul's HealthFilterIncludeOnlyPassing excludes both warning AND critical)
@@ -165,7 +179,7 @@ func TestHealthServiceWithTag(t *testing.T) {
 		Tags: []string{"primary", "v2"},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Query with matching tag
@@ -202,7 +216,7 @@ func TestHealthChecks(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Query checks
@@ -292,7 +306,7 @@ func TestHealthServiceBlockingQuery(t *testing.T) {
 		Port: 8080,
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Get baseline index

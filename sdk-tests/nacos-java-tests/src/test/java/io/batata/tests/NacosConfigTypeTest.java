@@ -67,7 +67,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.PROPERTIES.getType());
         assertTrue(success, "Should publish properties config");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -96,7 +96,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.PROPERTIES.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("path=/usr/local/bin"));
@@ -123,7 +123,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.PROPERTIES.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -155,7 +155,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.YAML.getType());
         assertTrue(success, "Should publish YAML config");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -190,7 +190,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.YAML.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("servers:"));
@@ -223,7 +223,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.YAML.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("application:"));
@@ -258,7 +258,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.JSON.getType());
         assertTrue(success, "Should publish JSON config");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -289,7 +289,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.JSON.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("\"servers\""));
@@ -318,7 +318,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.JSON.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("\"message\""));
@@ -352,7 +352,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.XML.getType());
         assertTrue(success, "Should publish XML config");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -387,7 +387,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.XML.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("id=\"1\""));
@@ -416,7 +416,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.TEXT.getType());
         assertTrue(success, "Should publish text config");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved);
@@ -444,7 +444,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.TEXT.getType());
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(retrieved.contains("中文内容"));
@@ -472,7 +472,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(success);
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(content, retrieved);
@@ -499,7 +499,7 @@ public class NacosConfigTypeTest {
         boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content, ConfigType.PROPERTIES.getType());
         assertTrue(success);
 
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 10000);
         assertNotNull(retrieved);
@@ -532,7 +532,9 @@ public class NacosConfigTypeTest {
         configService.publishConfig(prefix + ".json", DEFAULT_GROUP,
                 "{\"key\": \"value\"}", ConfigType.JSON.getType());
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, prefix + ".properties", DEFAULT_GROUP);
+        TestSupport.waitForConfigPresent(configService, prefix + ".yaml", DEFAULT_GROUP);
+        TestSupport.waitForConfigPresent(configService, prefix + ".json", DEFAULT_GROUP);
 
         // Verify all formats
         String props = configService.getConfig(prefix + ".properties", DEFAULT_GROUP, 5000);
@@ -561,14 +563,14 @@ public class NacosConfigTypeTest {
 
         // Initial: Properties
         configService.publishConfig(dataId, DEFAULT_GROUP, "key=value", ConfigType.PROPERTIES.getType());
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String initial = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(initial.contains("key=value"));
 
         // Update: JSON format
         configService.publishConfig(dataId, DEFAULT_GROUP, "{\"key\": \"value\"}", ConfigType.JSON.getType());
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String updated = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertTrue(updated.contains("\"key\""));

@@ -76,7 +76,7 @@ func TestHealthChecksAggregatedStatus(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get health checks
 	health := client.Health()
@@ -99,7 +99,15 @@ func TestHealthChecksAggregatedStatus(t *testing.T) {
 	// Set one check to warning
 	err = agent.UpdateTTL(serviceName+"-check1", "simulated warning", "warning")
 	if err == nil {
-		time.Sleep(500 * time.Millisecond)
+		requireEventually(t, "check warning propagated", 10*time.Second, func() bool {
+			checks, _, _ := health.Checks(serviceName, nil)
+			for _, c := range checks {
+				if c.CheckID == serviceName+"-check1" {
+					return c.Status == api.HealthWarning
+				}
+			}
+			return false
+		}, "Check should reach warning state")
 
 		checks, _, _ := health.Checks(serviceName, nil)
 		for _, check := range checks {
@@ -132,7 +140,7 @@ func TestHealthServiceMultipleTags(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -167,7 +175,7 @@ func TestHealthServiceNodeMetaFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -205,7 +213,7 @@ func TestHealthServiceFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -247,7 +255,7 @@ func TestHealthConnect(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -282,7 +290,7 @@ func TestHealthConnectFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -318,7 +326,7 @@ func TestHealthIngress(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, gatewayName, 10*time.Second), "gateway should appear in catalog")
 
 	health := client.Health()
 
@@ -389,7 +397,7 @@ func TestHealthStateWarning(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -399,7 +407,15 @@ func TestHealthStateWarning(t *testing.T) {
 		t.Logf("TTL update not available: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "warning check propagated", 10*time.Second, func() bool {
+		checks, _, _ := health.State("warning", nil)
+		for _, c := range checks {
+			if c.CheckID == serviceName+"-check" {
+				return c.Status == api.HealthWarning
+			}
+		}
+		return false
+	}, "Warning check should appear")
 
 	checks, _, err := health.State("warning", nil)
 	require.NoError(t, err)
@@ -428,7 +444,7 @@ func TestHealthStateCritical(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Update check to critical
 	err = agent.UpdateTTL(serviceName+"-check", "test critical", "critical")
@@ -436,7 +452,15 @@ func TestHealthStateCritical(t *testing.T) {
 		t.Logf("TTL update not available: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "critical check propagated", 10*time.Second, func() bool {
+		criticalChecks, _, _ := client.Health().State("critical", nil)
+		for _, c := range criticalChecks {
+			if c.CheckID == serviceName+"-check" {
+				return c.Status == api.HealthCritical
+			}
+		}
+		return false
+	}, "Critical check should appear")
 
 	health := client.Health()
 	checks, _, err := health.State("critical", nil)
@@ -506,7 +530,7 @@ func TestHealthChecksNodeMetaFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 
@@ -553,7 +577,7 @@ func TestHealthChecksFilter(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	health := client.Health()
 

@@ -169,7 +169,8 @@ public class NacosNamespaceTest {
 
             assertTrue(configService1.publishConfig(dataId, DEFAULT_GROUP, content1));
             assertTrue(configService2.publishConfig(dataId, DEFAULT_GROUP, content2));
-            Thread.sleep(500);
+            TestSupport.waitForConfigContent(configService1, dataId, DEFAULT_GROUP, content1);
+            TestSupport.waitForConfigContent(configService2, dataId, DEFAULT_GROUP, content2);
 
             String retrieved1 = configService1.getConfig(dataId, DEFAULT_GROUP, 5000);
             String retrieved2 = configService2.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -211,7 +212,8 @@ public class NacosNamespaceTest {
 
             namingService1.registerInstance(serviceName, ip1, port);
             namingService2.registerInstance(serviceName, ip2, port);
-            Thread.sleep(1500);
+            TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 1);
+            TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
             List<Instance> instances1 = namingService1.getAllInstances(serviceName);
             List<Instance> instances2 = namingService2.getAllInstances(serviceName);
@@ -251,7 +253,7 @@ public class NacosNamespaceTest {
             String content = "secret.data=confidential";
 
             assertTrue(configService1.publishConfig(dataId, DEFAULT_GROUP, content));
-            Thread.sleep(500);
+            TestSupport.waitForConfigContent(configService1, dataId, DEFAULT_GROUP, content);
 
             String ns1Content = configService1.getConfig(dataId, DEFAULT_GROUP, 5000);
             assertEquals(content, ns1Content, "Config should exist in namespace 1");
@@ -321,7 +323,18 @@ public class NacosNamespaceTest {
                 boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "config.index=" + i);
                 assertTrue(published, "Should publish config " + i);
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    for (int i = 0; i < configCount; i++) {
+                        if (!("config.index=" + i).equals(configService.getConfig(dataIds.get(i), DEFAULT_GROUP, 1000))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             for (int i = 0; i < configCount; i++) {
                 String retrieved = configService.getConfig(dataIds.get(i), DEFAULT_GROUP, 5000);
@@ -374,7 +387,19 @@ public class NacosNamespaceTest {
                 createdNamespaces.add(namespaceId);
                 maintainerService.createNamespace(namespaceId, "List Test NS " + i, "For listing test");
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    List<Namespace> nsList = maintainerService.getNamespaceList();
+                    for (String nsId : createdNamespaces) {
+                        if (nsList.stream().noneMatch(ns -> nsId.equals(ns.getNamespace()))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
+            }, 10_000);
 
             List<Namespace> namespaces = maintainerService.getNamespaceList();
             assertNotNull(namespaces, "Namespace list should not be null");
@@ -409,7 +434,7 @@ public class NacosNamespaceTest {
         ConfigService configService = createConfigService(namespaceId);
         try {
             configService.publishConfig("pre-delete-config", DEFAULT_GROUP, "will.be.deleted=true");
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(configService, "pre-delete-config", DEFAULT_GROUP);
             configService.removeConfig("pre-delete-config", DEFAULT_GROUP);
         } finally {
             configService.shutDown();
@@ -419,7 +444,14 @@ public class NacosNamespaceTest {
         Boolean deleted = maintainerService.deleteNamespace(namespaceId);
         assertTrue(deleted, "Namespace deletion should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getNamespaceList().stream()
+                        .noneMatch(ns -> namespaceId.equals(ns.getNamespace()));
+            } catch (Exception e) {
+                return false;
+            }
+        }, 10_000);
         List<Namespace> after = maintainerService.getNamespaceList();
         assertFalse(after.stream().anyMatch(ns -> namespaceId.equals(ns.getNamespace())),
                 "Namespace should not exist after deletion");
@@ -524,20 +556,20 @@ public class NacosNamespaceTest {
 
             String initialContent = "version=1.0";
             assertTrue(configService.publishConfig(dataId, group, initialContent));
-            Thread.sleep(300);
+            TestSupport.waitForConfigContent(configService, dataId, group, initialContent);
 
             String retrieved = configService.getConfig(dataId, group, 5000);
             assertEquals(initialContent, retrieved, "Initial content should match");
 
             String updatedContent = "version=2.0";
             assertTrue(configService.publishConfig(dataId, group, updatedContent));
-            Thread.sleep(300);
+            TestSupport.waitForConfigContent(configService, dataId, group, updatedContent);
 
             String afterUpdate = configService.getConfig(dataId, group, 5000);
             assertEquals(updatedContent, afterUpdate, "Updated content should match");
 
             assertTrue(configService.removeConfig(dataId, group));
-            Thread.sleep(300);
+            TestSupport.waitForConfigDeleted(configService, dataId, group);
 
             String afterDelete = configService.getConfig(dataId, group, 3000);
             assertNull(afterDelete, "Config should be deleted");
@@ -582,7 +614,7 @@ public class NacosNamespaceTest {
 
             namingService.registerInstance(serviceName, group, instance1);
             namingService.registerInstance(serviceName, group, instance2);
-            Thread.sleep(1500);
+            TestSupport.waitForInstances(namingService, serviceName, group, 2);
 
             List<Instance> allInstances = namingService.getAllInstances(serviceName, group);
             assertEquals(2, allInstances.size(), "Should have 2 instances");
@@ -598,7 +630,7 @@ public class NacosNamespaceTest {
                     "Both zones should be present");
 
             namingService.deregisterInstance(serviceName, group, instance1);
-            Thread.sleep(1000);
+            TestSupport.waitForInstances(namingService, serviceName, group, 1);
 
             List<Instance> afterDeregister = namingService.getAllInstances(serviceName, group);
             assertEquals(1, afterDeregister.size(), "Should have 1 instance after deregister");
@@ -635,7 +667,18 @@ public class NacosNamespaceTest {
                 contents.put(dataId, content);
                 assertTrue(sourceConfig.publishConfig(dataId, DEFAULT_GROUP, content));
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    for (String dataId : dataIds) {
+                        if (!contents.get(dataId).equals(sourceConfig.getConfig(dataId, DEFAULT_GROUP, 1000))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             for (String dataId : dataIds) {
                 String retrieved = sourceConfig.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -647,7 +690,18 @@ public class NacosNamespaceTest {
                 assertNotNull(content);
                 assertTrue(targetConfig.publishConfig(dataId, DEFAULT_GROUP, content));
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    for (String dataId : dataIds) {
+                        if (!contents.get(dataId).equals(targetConfig.getConfig(dataId, DEFAULT_GROUP, 1000))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             for (String dataId : dataIds) {
                 String retrieved = targetConfig.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -657,7 +711,18 @@ public class NacosNamespaceTest {
             for (String dataId : dataIds) {
                 assertTrue(sourceConfig.removeConfig(dataId, DEFAULT_GROUP));
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    for (String dataId : dataIds) {
+                        if (sourceConfig.getConfig(dataId, DEFAULT_GROUP, 1000) != null) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             for (String dataId : dataIds) {
                 assertNull(sourceConfig.getConfig(dataId, DEFAULT_GROUP, 3000));

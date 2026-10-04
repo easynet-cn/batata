@@ -53,6 +53,35 @@ public class NacosNamingMaintainerServiceTest {
         if (namingService != null) namingService.shutDown();
     }
 
+    private static void waitForServicesPresent(String prefix, List<String> serviceNames) {
+        TestSupport.waitFor(() -> {
+            try {
+                Page<ServiceView> page = maintainerService.listServices(
+                        DEFAULT_NAMESPACE, DEFAULT_GROUP, prefix, false, 1, 50);
+                if (page == null || page.getPageItems() == null) return false;
+                Set<String> found = new HashSet<>();
+                for (ServiceView v : page.getPageItems()) found.add(v.getName());
+                for (String n : serviceNames) {
+                    if (!found.contains(n)) return false;
+                }
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
+    }
+
+    private static void waitForServiceDetailPresent(String serviceName) {
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(
+                        DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
+    }
+
     // ==================== P1: Service Listing ====================
 
     /**
@@ -73,7 +102,7 @@ public class NacosNamingMaintainerServiceTest {
             serviceNames.add(serviceName);
             maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true, 0.5f);
         }
-        Thread.sleep(1500);
+        waitForServicesPresent(prefix, serviceNames);
 
         // List services with pagination
         Page<ServiceView> page = maintainerService.listServices(DEFAULT_NAMESPACE, DEFAULT_GROUP, prefix,
@@ -113,11 +142,11 @@ public class NacosNamingMaintainerServiceTest {
         String serviceName = "nmms-detail-list-" + UUID.randomUUID().toString().substring(0, 8);
 
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true, 0.7f);
-        Thread.sleep(1000);
+        waitForServiceDetailPresent(serviceName);
 
         // Register an instance to have non-empty service
         namingService.registerInstance(serviceName, "10.0.100.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // List services with detail
         Page<ServiceDetailInfo> detailPage = maintainerService.listServicesWithDetail(
@@ -134,7 +163,7 @@ public class NacosNamingMaintainerServiceTest {
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "10.0.100.1", 8080);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
         try {
             maintainerService.removeService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
         } catch (Exception ignored) {
@@ -166,7 +195,7 @@ public class NacosNamingMaintainerServiceTest {
             inst.setMetadata(meta);
             namingService.registerInstance(serviceName, inst);
         }
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Build service and instance list for batch update
         com.alibaba.nacos.api.naming.pojo.Service service = new com.alibaba.nacos.api.naming.pojo.Service();
@@ -188,7 +217,17 @@ public class NacosNamingMaintainerServiceTest {
         newMeta.put("batch-updated", "true");
 
         maintainerService.batchUpdateInstanceMetadata(service, instList, newMeta);
-        Thread.sleep(2000);
+        TestSupport.waitFor(() -> {
+            try {
+                List<Instance> all = namingService.getAllInstances(serviceName);
+                if (all.size() < 3) return false;
+                return all.stream().allMatch(i ->
+                        "2.0".equals(i.getMetadata().get("version"))
+                                && "true".equals(i.getMetadata().get("batch-updated")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify all instances have updated metadata
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -231,7 +270,7 @@ public class NacosNamingMaintainerServiceTest {
             inst.setMetadata(meta);
             namingService.registerInstance(serviceName, inst);
         }
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Batch delete the "temp-key" metadata
         com.alibaba.nacos.api.naming.pojo.Service service = new com.alibaba.nacos.api.naming.pojo.Service();
@@ -252,7 +291,17 @@ public class NacosNamingMaintainerServiceTest {
         keysToDelete.put("temp-key", "to-be-removed");
 
         maintainerService.batchDeleteInstanceMetadata(service, instList, keysToDelete);
-        Thread.sleep(2000);
+        TestSupport.waitFor(() -> {
+            try {
+                List<Instance> all = namingService.getAllInstances(serviceName);
+                if (all.size() < 2) return false;
+                return all.stream().allMatch(i ->
+                        i.getMetadata().get("temp-key") == null
+                                && i.getMetadata().get("version") != null);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify temp-key was removed but other metadata remains
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -283,13 +332,22 @@ public class NacosNamingMaintainerServiceTest {
 
         // Register an instance
         namingService.registerInstance(serviceName, "10.0.210.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Subscribe to the service via SDK
         namingService.subscribe(serviceName, event -> {
             // Listener just to create a subscription
         });
-        Thread.sleep(2000);
+
+        TestSupport.waitFor(() -> {
+            try {
+                Page<?> subscribers = maintainerService.getSubscribers(
+                        DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, 1, 10, false);
+                return subscribers != null && subscribers.getTotalCount() >= 1;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Query subscribers via MaintainerService
         Page<?> subscribers = maintainerService.getSubscribers(
@@ -326,7 +384,7 @@ public class NacosNamingMaintainerServiceTest {
         instance.setEnabled(true);
 
         maintainerService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify via MaintainerService list
         List<Instance> instances = maintainerService.listInstances(serviceName, clusterName, false);
@@ -388,7 +446,7 @@ public class NacosNamingMaintainerServiceTest {
         instance.setMetadata(meta);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Partial update - only change weight and add new metadata
         com.alibaba.nacos.api.naming.pojo.Service service = new com.alibaba.nacos.api.naming.pojo.Service();
@@ -406,7 +464,17 @@ public class NacosNamingMaintainerServiceTest {
         partialInstance.setMetadata(partialMeta);
 
         maintainerService.partialUpdateInstance(service, partialInstance);
-        Thread.sleep(1500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName).stream().anyMatch(i ->
+                        "2.0".equals(i.getMetadata().get("version"))
+                                && "ci".equals(i.getMetadata().get("deployed-by"))
+                                && "test".equals(i.getMetadata().get("env"))
+                                && "us-east".equals(i.getMetadata().get("region")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify partial update - version should be updated, env and region should remain
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -439,11 +507,11 @@ public class NacosNamingMaintainerServiceTest {
         // Create two services
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, emptyService, true, 0.5f);
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, nonEmptyService, true, 0.5f);
-        Thread.sleep(500);
+        waitForServicesPresent(prefix, Arrays.asList(emptyService, nonEmptyService));
 
         // Register instance only in non-empty service
         namingService.registerInstance(nonEmptyService, "10.0.240.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, nonEmptyService, DEFAULT_GROUP, 1);
 
         // List with ignoreEmptyService=true
         Page<ServiceView> filteredPage = maintainerService.listServices(
@@ -461,7 +529,7 @@ public class NacosNamingMaintainerServiceTest {
 
         // Cleanup
         namingService.deregisterInstance(nonEmptyService, "10.0.240.1", 8080);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, nonEmptyService, DEFAULT_GROUP, 0);
         try {
             maintainerService.removeService(DEFAULT_NAMESPACE, DEFAULT_GROUP, emptyService);
         } catch (Exception ignored) {
@@ -487,7 +555,7 @@ public class NacosNamingMaintainerServiceTest {
         // Register healthy instances
         namingService.registerInstance(serviceName, "10.0.250.1", 8080);
         namingService.registerInstance(serviceName, "10.0.250.2", 8081);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // List all instances (healthyOnly=false)
         List<Instance> all = maintainerService.listInstances(serviceName, null, false);

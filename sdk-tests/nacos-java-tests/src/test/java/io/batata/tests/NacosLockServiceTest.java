@@ -168,8 +168,20 @@ public class NacosLockServiceTest {
         Boolean acquired2Early = lockService2.lock(lockInstance2);
         assertFalse(acquired2Early, "Second client should fail while lock is held");
 
-        // Wait for TTL to expire plus buffer
-        Thread.sleep(ttlMs + 2000);
+        // Wait for the TTL to expire by polling: client 2 should be able to acquire
+        // (acquire-and-release in the poll so the later assertion can re-acquire).
+        TestSupport.waitFor(() -> {
+            try {
+                LockInstance probe = new LockInstance(lockKey, 30000L, LOCK_TYPE);
+                boolean ok = Boolean.TRUE.equals(lockService2.lock(probe));
+                if (ok) {
+                    lockService2.unLock(probe);
+                }
+                return ok;
+            } catch (Exception e) {
+                return false;
+            }
+        }, ttlMs + 5000);
 
         // After TTL expiry, client 2 should succeed
         LockInstance lockInstance2Retry = new LockInstance(lockKey, 30000L, LOCK_TYPE);

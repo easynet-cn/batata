@@ -142,7 +142,7 @@ public class NacosConfigGrayAdvancedTest {
         // Publish normal config first
         boolean published = maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         assertTrue(published, "Normal config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish percentage gray config (50%)
         HttpResponse<String> response = publishGrayConfig(dataId, grayContent, "&percentage=50");
@@ -176,7 +176,8 @@ public class NacosConfigGrayAdvancedTest {
         // Setup normal configs
         maintainerService.publishConfig(dataId0, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         maintainerService.publishConfig(dataId100, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId0, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        TestSupport.waitForConfigPresent(maintainerService, dataId100, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // 0% — no clients should get gray config
         HttpResponse<String> resp0 = publishGrayConfig(dataId0, grayContent, "&percentage=0");
@@ -184,7 +185,7 @@ public class NacosConfigGrayAdvancedTest {
                 "0% gray publish should succeed. Body: " + resp0.body());
 
         // Verify 0% gray config exists but SDK still gets normal content
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId0, DEFAULT_GROUP, normalContent);
         String sdkContent0 = configService.getConfig(dataId0, DEFAULT_GROUP, 3000);
         assertEquals(normalContent, sdkContent0,
                 "SDK should receive normal content when gray percentage is 0%");
@@ -195,7 +196,7 @@ public class NacosConfigGrayAdvancedTest {
                 "100% gray publish should succeed. Body: " + resp100.body());
 
         // Verify 100% gray config: SDK should get gray content
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId100, DEFAULT_GROUP, grayContent);
         String sdkContent100 = configService.getConfig(dataId100, DEFAULT_GROUP, 3000);
         assertEquals(grayContent, sdkContent100,
                 "SDK should receive gray content when gray percentage is 100%");
@@ -216,7 +217,7 @@ public class NacosConfigGrayAdvancedTest {
         String grayContent = "gray=value";
 
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // 150% — should be rejected
         HttpResponse<String> response = publishGrayConfig(dataId, grayContent, "&percentage=150");
@@ -244,7 +245,7 @@ public class NacosConfigGrayAdvancedTest {
         // Publish normal config first
         boolean published = maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         assertTrue(published, "Normal config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish IP range gray config (local network CIDR)
         String cidrRange = URLEncoder.encode("10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", StandardCharsets.UTF_8);
@@ -276,7 +277,7 @@ public class NacosConfigGrayAdvancedTest {
         String grayContent = "gray=value";
 
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Single host CIDR: 127.0.0.1/32
         String cidr = URLEncoder.encode("127.0.0.1/32", StandardCharsets.UTF_8);
@@ -285,7 +286,7 @@ public class NacosConfigGrayAdvancedTest {
                 "Single-host CIDR gray publish should succeed. Body: " + response.body());
 
         // Verify SDK gets gray content since client IP (127.0.0.1) matches the CIDR
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, grayContent);
         String sdkContent = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
         assertEquals(grayContent, sdkContent,
                 "SDK should receive gray content when client IP matches single-host CIDR");
@@ -305,7 +306,7 @@ public class NacosConfigGrayAdvancedTest {
         String grayContent = "gray=value";
 
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // No betaIps, tag, percentage, or ipRange — should be rejected
         HttpResponse<String> response = publishGrayConfig(dataId, grayContent, "");
@@ -333,14 +334,14 @@ public class NacosConfigGrayAdvancedTest {
         // Publish normal config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, normalContent);
         assertTrue(published, "Normal config publish should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Publish beta config targeting 127.0.0.1 (test client's IP)
         boolean betaPublished = maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, grayContent,
                 null, null, null, null, null, "127.0.0.1");
         assertTrue(betaPublished, "Beta config targeting localhost should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, grayContent);
 
         // SDK get should return gray content (since client connects from 127.0.0.1)
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
@@ -350,7 +351,7 @@ public class NacosConfigGrayAdvancedTest {
 
         // Cleanup
         maintainerService.stopBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, normalContent);
         maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 }

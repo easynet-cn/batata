@@ -138,7 +138,7 @@ func TestDiscoveryChain(t *testing.T) {
 	}
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get discovery chain
 	chain, _, err := discoveryChain.Get(serviceName, nil, nil)
@@ -178,7 +178,7 @@ func TestDiscoveryChainWithOptions(t *testing.T) {
 	}
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get with options
 	opts := &api.DiscoveryChainOptions{
@@ -343,7 +343,7 @@ func TestConnectProxyConfig(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 5*time.Second), "service should be registered on agent")
 
 	// Get services to check proxy config
 	services, err := agent.Services()
@@ -421,7 +421,18 @@ func TestFilterExpression(t *testing.T) {
 		defer agent.ServiceDeregister(svc.name)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := catalog.Services(nil)
+		if err != nil {
+			return false
+		}
+		for _, svc := range []string{"filter-svc-1", "filter-svc-2", "filter-svc-3"} {
+			if _, ok := services[svc]; !ok {
+				return false
+			}
+		}
+		return true
+	}, "Should register all services")
 
 	// Filter by metadata
 	opts := &api.QueryOptions{

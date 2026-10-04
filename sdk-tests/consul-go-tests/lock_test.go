@@ -172,8 +172,14 @@ func TestLockContend(t *testing.T) {
 		t.Fatal("No contender acquired the lock")
 	}
 
-	// Allow time for others to potentially acquire
-	time.Sleep(2 * time.Second)
+	// Wait for lock to be released before cleanup
+	requireEventually(t, "lock released", 10*time.Second, func() bool {
+		pair, _, err := client.KV().Get(key, nil)
+		if err != nil {
+			return false
+		}
+		return pair == nil || pair.Session == ""
+	}, "Lock should be released before cleanup")
 
 	// Cleanup
 	_, err := client.KV().Delete(key, nil)

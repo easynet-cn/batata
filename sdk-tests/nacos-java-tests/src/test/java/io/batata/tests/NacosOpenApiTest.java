@@ -64,7 +64,7 @@ public class NacosOpenApiTest {
         // Publish via SDK
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Config publish via SDK should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Get detail via maintainer client
         ConfigDetailInfo configDetail = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -99,7 +99,19 @@ public class NacosOpenApiTest {
         boolean pub2 = configService.publishConfig(dataId2, DEFAULT_GROUP, "fuzzy.b=true");
         assertTrue(pub1, "Publishing first fuzzy config should succeed");
         assertTrue(pub2, "Publishing second fuzzy config should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                Page<ConfigBasicInfo> r = maintainerService.searchConfigs(prefix, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+                if (r == null || r.getPageItems() == null) {
+                    return false;
+                }
+                boolean f1 = r.getPageItems().stream().anyMatch(c -> dataId1.equals(c.getDataId()));
+                boolean f2 = r.getPageItems().stream().anyMatch(c -> dataId2.equals(c.getDataId()));
+                return f1 && f2;
+            } catch (Exception e) {
+                return false;
+            }
+        }, 10_000);
 
         // Fuzzy search using searchConfigs (blur mode)
         Page<ConfigBasicInfo> searchResult = maintainerService.searchConfigs(
@@ -132,7 +144,15 @@ public class NacosOpenApiTest {
 
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Config publish should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                Page<ConfigBasicInfo> r = maintainerService.listConfigs(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+                return r != null && r.getPageItems() != null
+                        && r.getPageItems().stream().anyMatch(c -> dataId.equals(c.getDataId()));
+            } catch (Exception e) {
+                return false;
+            }
+        }, 10_000);
 
         // Accurate search using listConfigs
         Page<ConfigBasicInfo> searchResult = maintainerService.listConfigs(
@@ -167,7 +187,7 @@ public class NacosOpenApiTest {
 
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Publishing config with Chinese content should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Get config via maintainer client and verify Chinese content is preserved
         ConfigDetailInfo configDetail = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -199,7 +219,7 @@ public class NacosOpenApiTest {
         boolean published = maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, content);
         assertTrue(published, "Maintainer client publish should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Get via maintainer client
         ConfigDetailInfo configDetail = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -216,7 +236,7 @@ public class NacosOpenApiTest {
         boolean deleted = maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
         assertTrue(deleted, "Maintainer client delete should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigDeleted(configService, dataId, DEFAULT_GROUP);
 
         // Verify deleted via SDK
         String afterDelete = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
@@ -238,7 +258,7 @@ public class NacosOpenApiTest {
         boolean published = configService.publishConfig(dataId, null, content);
         assertTrue(published, "Publish with null group should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, null, content);
 
         // Get with null group
         String retrieved = configService.getConfig(dataId, null, 5000);

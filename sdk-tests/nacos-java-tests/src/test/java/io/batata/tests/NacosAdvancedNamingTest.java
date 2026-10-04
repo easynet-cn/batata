@@ -74,7 +74,7 @@ public class NacosAdvancedNamingTest {
 
         // Batch register
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 5);
 
         // Verify all registered
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -105,7 +105,7 @@ public class NacosAdvancedNamingTest {
 
         // Batch register with group
         namingService.batchRegisterInstance(serviceName, groupName, instances);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, groupName, 3);
 
         // Verify in correct group
         List<Instance> allInstances = namingService.getAllInstances(serviceName, groupName);
@@ -146,7 +146,7 @@ public class NacosAdvancedNamingTest {
         }
 
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 4);
 
         // Verify all instances registered
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -193,7 +193,7 @@ public class NacosAdvancedNamingTest {
         }
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 4);
 
         // Verify registered
         List<Instance> before = namingService.getAllInstances(serviceName);
@@ -201,7 +201,7 @@ public class NacosAdvancedNamingTest {
 
         // Batch deregister
         namingService.batchDeregisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
 
         // Verify deregistered
         List<Instance> after = namingService.getAllInstances(serviceName);
@@ -226,7 +226,7 @@ public class NacosAdvancedNamingTest {
         }
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 5);
 
         // Deregister only 3
         List<Instance> toDeregister = new ArrayList<>();
@@ -238,7 +238,7 @@ public class NacosAdvancedNamingTest {
         }
 
         namingService.batchDeregisterInstance(serviceName, DEFAULT_GROUP, toDeregister);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Verify 2 remaining
         List<Instance> remaining = namingService.getAllInstances(serviceName);
@@ -272,7 +272,7 @@ public class NacosAdvancedNamingTest {
         };
 
         namingService.subscribe(serviceName, clusters, listener);
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register instance in production cluster
         Instance instance = new Instance();
@@ -309,11 +309,11 @@ public class NacosAdvancedNamingTest {
         namingService.subscribe(serviceName, listener);
         namingService.subscribe(serviceName, listener);
 
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.106.1", 8080);
-        Thread.sleep(2000);
+        TestSupport.waitFor(() -> notifyCount.get() >= 1, 10_000);
 
         // Should not receive duplicate notifications (SDK deduplicates same listener)
         assertTrue(notifyCount.get() >= 1, "Should receive at least one notification");
@@ -341,17 +341,17 @@ public class NacosAdvancedNamingTest {
 
         // Subscribe
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register first instance (should notify)
         namingService.registerInstance(serviceName, "192.168.107.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> notifyCount.get() >= 1, 10_000);
 
         int countAfterFirst = notifyCount.get();
 
         // Unsubscribe
         namingService.unsubscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForUnsubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register second instance (should not notify)
         namingService.registerInstance(serviceName, "192.168.107.2", 8080);
@@ -394,7 +394,13 @@ public class NacosAdvancedNamingTest {
             namingService.registerInstance(serviceName, "192.168.108." + (i + 1), 8080);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getServicesOfServer(1, 100).getCount() >= 5;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Test pagination
         ListView<String> page1 = namingService.getServicesOfServer(1, 2);
@@ -432,7 +438,13 @@ public class NacosAdvancedNamingTest {
             namingService.registerInstance(serviceName, groupName, "192.168.109." + (i + 1), 8080);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getServicesOfServer(1, 10, groupName).getCount() >= 3;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Get services in group
         ListView<String> services = namingService.getServicesOfServer(1, 10, groupName);
@@ -465,7 +477,13 @@ public class NacosAdvancedNamingTest {
         namingService.subscribe(serviceName1, listener);
         namingService.subscribe(serviceName2, listener);
 
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getSubscribeServices().size() >= 2;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Get subscribed services
         List<ServiceInfo> subscribed = namingService.getSubscribeServices();
@@ -500,7 +518,7 @@ public class NacosAdvancedNamingTest {
         ));
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -528,12 +546,19 @@ public class NacosAdvancedNamingTest {
         instance.setMetadata(Map.of("version", "1.0.0"));
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update metadata
         instance.setMetadata(Map.of("version", "2.0.0", "updated", "true"));
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> "2.0.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -561,7 +586,7 @@ public class NacosAdvancedNamingTest {
         ephemeral.setEphemeral(true);
 
         namingService.registerInstance(serviceName, ephemeral);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -585,7 +610,7 @@ public class NacosAdvancedNamingTest {
         instance.setWeight(5.0);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -594,7 +619,15 @@ public class NacosAdvancedNamingTest {
         // Update weight
         instance.setWeight(10.0);
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService
+                        .getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false)
+                        .stream().anyMatch(i -> Math.abs(i.getWeight() - 10.0) < 0.01);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Use subscribe=false to force server query instead of using cache
         instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);

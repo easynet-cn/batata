@@ -157,9 +157,7 @@ public class NacosConnectionTest {
         // Naming service health check
         String serviceName = "nct003-health-svc-" + UUID.randomUUID();
         namingService.registerInstance(serviceName, "192.168.100.1", 8080);
-        Thread.sleep(500);
-
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
         assertFalse(instances.isEmpty(), "Naming service connection should be healthy");
 
         // Cleanup
@@ -195,9 +193,7 @@ public class NacosConnectionTest {
 
             // Naming service operation
             testNamingService.registerInstance(serviceName, "192.168.100.2", 8080);
-            Thread.sleep(500);
-
-            List<Instance> instances = testNamingService.getAllInstances(serviceName);
+            List<Instance> instances = TestSupport.waitForInstances(testNamingService, serviceName, DEFAULT_GROUP, 1);
             assertFalse(instances.isEmpty(), "Naming service should connect to server");
 
             System.out.println("Successfully connected to server: " + serverAddr);
@@ -730,7 +726,7 @@ public class NacosConnectionTest {
         };
         namingService.subscribe(serviceName, namingListener);
 
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Trigger config events
         configService.publishConfig(dataId, DEFAULT_GROUP, "event.test=1");

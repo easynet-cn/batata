@@ -320,7 +320,7 @@ public class NacosConfigFuzzyWatchTest {
 
         // Pre-publish the config before watching
         configService.publishConfig(dataId, DEFAULT_GROUP, "to.be.deleted=true");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         CountDownLatch addLatch = new CountDownLatch(1);
         CountDownLatch deleteLatch = new CountDownLatch(1);
@@ -380,7 +380,8 @@ public class NacosConfigFuzzyWatchTest {
         // Pre-publish configs
         configService.publishConfig(dataId1, DEFAULT_GROUP, "key1.value=true");
         configService.publishConfig(dataId2, DEFAULT_GROUP, "key2.value=true");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId1, DEFAULT_GROUP);
+        TestSupport.waitForConfigPresent(configService, dataId2, DEFAULT_GROUP);
 
         FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
             @Override
@@ -472,7 +473,7 @@ public class NacosConfigFuzzyWatchTest {
 
         // Pre-publish the config before watching
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         CountDownLatch addLatch = new CountDownLatch(1);
         CountDownLatch changedLatch = new CountDownLatch(1);
@@ -535,7 +536,7 @@ public class NacosConfigFuzzyWatchTest {
 
         // Pre-publish a config
         configService.publishConfig(existingDataId, DEFAULT_GROUP, "sync.type.existing=true");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, existingDataId, DEFAULT_GROUP);
 
         AtomicReference<String> initSyncType = new AtomicReference<>();
         AtomicReference<String> changeSyncType = new AtomicReference<>();
@@ -806,7 +807,8 @@ public class NacosConfigFuzzyWatchTest {
         // Publish configs in custom group
         configService.publishConfig(dataId1, group, "grpkeys.a=true");
         configService.publishConfig(dataId2, group, "grpkeys.b=true");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId1, group);
+        TestSupport.waitForConfigPresent(configService, dataId2, group);
 
         FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
             @Override

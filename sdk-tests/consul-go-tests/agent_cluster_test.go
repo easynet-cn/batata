@@ -79,7 +79,8 @@ func TestAgentServicesWithFilter(t *testing.T) {
 		Tags: []string{"filtered"},
 	})
 	require.NoError(t, err, "Service registration should succeed")
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second),
+		"Service should be registered before filtering")
 
 	// Filter for our specific service by name
 	filter := "Service == \"" + serviceName + "\""
@@ -115,12 +116,30 @@ func TestAgentChecksWithFilter(t *testing.T) {
 		},
 	})
 	require.NoError(t, err, "Check registration should succeed")
-	time.Sleep(500 * time.Millisecond)
+
+	// Wait for check registration to propagate on the agent
+	requireEventually(t, "check registered", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		_, ok := checks[checkID]
+		return ok
+	}, "Check should be registered before passing TTL")
 
 	// Pass the TTL so the check is in passing state
 	err = client.Agent().PassTTL(checkID, "healthy")
 	require.NoError(t, err, "PassTTL should succeed")
-	time.Sleep(500 * time.Millisecond)
+
+	// Wait for check status to propagate to passing
+	requireEventually(t, "check passing", 5*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		c, ok := checks[checkID]
+		return ok && c.Status == api.HealthPassing
+	}, "Check should be passing after PassTTL")
 
 	// Filter for passing checks
 	checks, err := client.Agent().ChecksWithFilter("Status == passing")
@@ -196,7 +215,9 @@ func TestAgentServiceRegisterOpts(t *testing.T) {
 		t.Skipf("ServiceRegisterOpts may not be supported: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for service registration to propagate on the agent
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second),
+		"Service should be registered via ServiceRegisterOpts")
 
 	// Verify the service was registered
 	services, err := client.Agent().Services()

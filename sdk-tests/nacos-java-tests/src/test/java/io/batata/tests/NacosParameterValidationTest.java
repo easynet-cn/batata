@@ -57,7 +57,7 @@ public class NacosParameterValidationTest {
     @Test
     @Order(1)
     void testGetConfigWithNullDataId() {
-        assertThrows(Exception.class, () -> {
+        assertThrows(NacosException.class, () -> {
             configService.getConfig(null, DEFAULT_GROUP, 5000);
         }, "getConfig with null dataId should throw exception");
     }
@@ -68,7 +68,7 @@ public class NacosParameterValidationTest {
     @Test
     @Order(2)
     void testGetConfigWithEmptyDataId() {
-        assertThrows(Exception.class, () -> {
+        assertThrows(NacosException.class, () -> {
             configService.getConfig("", DEFAULT_GROUP, 5000);
         }, "getConfig with empty dataId should throw exception");
     }
@@ -79,7 +79,7 @@ public class NacosParameterValidationTest {
     @Test
     @Order(3)
     void testPublishConfigWithNullDataId() {
-        assertThrows(Exception.class, () -> {
+        assertThrows(NacosException.class, () -> {
             configService.publishConfig(null, DEFAULT_GROUP, "content");
         }, "publishConfig with null dataId should throw exception");
     }
@@ -90,7 +90,7 @@ public class NacosParameterValidationTest {
     @Test
     @Order(4)
     void testPublishConfigWithNullContent() {
-        assertThrows(Exception.class, () -> {
+        assertThrows(NacosException.class, () -> {
             configService.publishConfig("test-null-content", DEFAULT_GROUP, null);
         }, "publishConfig with null content should throw exception");
     }
@@ -106,8 +106,7 @@ public class NacosParameterValidationTest {
 
         boolean result = configService.publishConfig(dataId, DEFAULT_GROUP, specialContent);
         assertTrue(result, "Should publish config with special characters");
-
-        Thread.sleep(1000);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, specialContent);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved, "Should retrieve config with special characters");
@@ -128,8 +127,7 @@ public class NacosParameterValidationTest {
 
         boolean result = configService.publishConfig(dataId, DEFAULT_GROUP, unicodeContent);
         assertTrue(result, "Should publish config with Unicode characters");
-
-        Thread.sleep(1000);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, unicodeContent);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(retrieved, "Should retrieve config with Unicode characters");
@@ -145,7 +143,7 @@ public class NacosParameterValidationTest {
     @Test
     @Order(7)
     void testRemoveConfigWithNullDataId() {
-        assertThrows(Exception.class, () -> {
+        assertThrows(NacosException.class, () -> {
             configService.removeConfig(null, DEFAULT_GROUP);
         }, "removeConfig with null dataId should throw exception");
     }
@@ -208,14 +206,14 @@ public class NacosParameterValidationTest {
 
         // Register single instance
         namingService.registerInstance(serviceName, ip, port);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> before = namingService.getAllInstances(serviceName);
         assertEquals(1, before.size(), "Should have one instance before deregister");
 
         // Deregister the only instance
         namingService.deregisterInstance(serviceName, ip, port);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
 
         List<Instance> after = namingService.getAllInstances(serviceName);
         assertTrue(after.isEmpty(), "Should have no instances after deregistering the last one");
@@ -246,7 +244,7 @@ public class NacosParameterValidationTest {
 
         // Register with rich metadata
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Retrieve and verify all metadata
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -284,7 +282,7 @@ public class NacosParameterValidationTest {
         boolean published = configService.publishConfig(dataId, null, content);
         assertTrue(published, "Publish with null group should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, null, content);
 
         String retrieved = configService.getConfig(dataId, null, 5000);
         assertEquals(content, retrieved, "Should get config published with null group");
@@ -307,7 +305,7 @@ public class NacosParameterValidationTest {
         boolean published = configService.publishConfig(dataId, null, content);
         assertTrue(published, "Publish with null group should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, content);
 
         // Should be retrievable from DEFAULT_GROUP
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -329,12 +327,12 @@ public class NacosParameterValidationTest {
         String dataId = "pv-null-group-rm-" + UUID.randomUUID().toString().substring(0, 8);
 
         configService.publishConfig(dataId, null, "to.remove=true");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, null, "to.remove=true");
 
         boolean removed = configService.removeConfig(dataId, null);
         assertTrue(removed, "Remove with null group should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigDeleted(configService, dataId, DEFAULT_GROUP);
 
         String afterRemove = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
         assertNull(afterRemove, "Config should be null after removal with null group");
@@ -384,7 +382,7 @@ public class NacosParameterValidationTest {
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Publish new config should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, content);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(content, retrieved);
@@ -406,12 +404,12 @@ public class NacosParameterValidationTest {
         String updatedContent = "update.test=updated";
 
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, initialContent);
 
         boolean updated = configService.publishConfig(dataId, DEFAULT_GROUP, updatedContent);
         assertTrue(updated, "Update existing config should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, updatedContent);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(updatedContent, retrieved, "Should reflect updated content");

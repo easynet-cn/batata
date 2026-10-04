@@ -102,7 +102,8 @@ public class NacosMultiTenantConfigTest {
             assertTrue(configNs2.publishConfig(dataId, DEFAULT_GROUP, contentNs2),
                     "Publish to namespace 2 should succeed");
 
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(configNs1, dataId, DEFAULT_GROUP);
+            TestSupport.waitForConfigPresent(configNs2, dataId, DEFAULT_GROUP);
 
             // Verify each namespace has its own content
             String retrieved1 = configNs1.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -162,11 +163,9 @@ public class NacosMultiTenantConfigTest {
                 }
             };
             configA.addListener(dataId, DEFAULT_GROUP, listenerA);
-            Thread.sleep(500);
 
             // Publish in namespace B - listener in A should NOT fire
             configB.publishConfig(dataId, DEFAULT_GROUP, "namespace=B");
-            Thread.sleep(2000);
 
             boolean firedFromB = latchA.await(3, TimeUnit.SECONDS);
             assertFalse(firedFromB,
@@ -189,7 +188,6 @@ public class NacosMultiTenantConfigTest {
                     latchA2.countDown();
                 }
             });
-            Thread.sleep(500);
 
             configA.publishConfig(dataId, DEFAULT_GROUP, "namespace=A");
             boolean firedFromA = latchA2.await(15, TimeUnit.SECONDS);
@@ -230,7 +228,7 @@ public class NacosMultiTenantConfigTest {
 
             // Publish in namespace A
             assertTrue(configA.publishConfig(dataId, DEFAULT_GROUP, content));
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(configA, dataId, DEFAULT_GROUP);
 
             // Verify exists in A
             assertEquals(content, configA.getConfig(dataId, DEFAULT_GROUP, 5000));
@@ -244,7 +242,7 @@ public class NacosMultiTenantConfigTest {
             boolean deletedFromB = configB.removeConfig(dataId, DEFAULT_GROUP);
             // The delete may return true (no error) or false, but it should NOT affect namespace A
 
-            Thread.sleep(500);
+            TestSupport.waitForConfigContent(configA, dataId, DEFAULT_GROUP, content);
 
             // Verify config in namespace A is still intact
             String stillInA = configA.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -284,7 +282,8 @@ public class NacosMultiTenantConfigTest {
 
             assertTrue(defaultService.publishConfig(dataId, DEFAULT_GROUP, defaultContent));
             assertTrue(customService.publishConfig(dataId, DEFAULT_GROUP, customContent));
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(defaultService, dataId, DEFAULT_GROUP);
+            TestSupport.waitForConfigPresent(customService, dataId, DEFAULT_GROUP);
 
             // Verify default namespace content
             String retrievedDefault = defaultService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -339,7 +338,8 @@ public class NacosMultiTenantConfigTest {
             // Publish same dataId in different groups
             assertTrue(configService.publishConfig(dataId, groupA, contentA));
             assertTrue(configService.publishConfig(dataId, groupB, contentB));
-            Thread.sleep(500);
+            TestSupport.waitForConfigPresent(configService, dataId, groupA);
+            TestSupport.waitForConfigPresent(configService, dataId, groupB);
 
             // Verify group isolation
             String retrievedA = configService.getConfig(dataId, groupA, 5000);
@@ -352,7 +352,7 @@ public class NacosMultiTenantConfigTest {
 
             // Delete from one group should not affect the other
             configService.removeConfig(dataId, groupA);
-            Thread.sleep(500);
+            TestSupport.waitForConfigDeleted(configService, dataId, groupA);
 
             assertNull(configService.getConfig(dataId, groupA, 3000),
                     "Group A config should be deleted");
@@ -389,7 +389,8 @@ public class NacosMultiTenantConfigTest {
             // Publish initial content in both namespaces
             configA.publishConfig(dataId, DEFAULT_GROUP, "initial=A");
             configB.publishConfig(dataId, DEFAULT_GROUP, "initial=B");
-            Thread.sleep(2000);
+            TestSupport.waitForConfigPresent(configA, dataId, DEFAULT_GROUP);
+            TestSupport.waitForConfigPresent(configB, dataId, DEFAULT_GROUP);
 
             // Register listeners using getConfigAndSignListener to avoid initial MD5 mismatch
             CountDownLatch latchA = new CountDownLatch(1);
@@ -420,8 +421,6 @@ public class NacosMultiTenantConfigTest {
                 }
             });
             assertEquals("initial=B", contentB, "Should get initial content for namespace B");
-
-            Thread.sleep(1000);
 
             // Update ONLY in namespace A
             configA.publishConfig(dataId, DEFAULT_GROUP, "updated=A");
@@ -473,13 +472,19 @@ public class NacosMultiTenantConfigTest {
                 configA.publishConfig(dataId, DEFAULT_GROUP, "ns=A,idx=" + i);
                 configB.publishConfig(dataId, DEFAULT_GROUP, "ns=B,idx=" + i);
             }
-            Thread.sleep(500);
+            for (int i = 0; i < configCount; i++) {
+                String dataId = prefix + "-" + i;
+                TestSupport.waitForConfigPresent(configA, dataId, DEFAULT_GROUP);
+                TestSupport.waitForConfigPresent(configB, dataId, DEFAULT_GROUP);
+            }
 
             // Delete all from namespace A
             for (int i = 0; i < configCount; i++) {
                 configA.removeConfig(prefix + "-" + i, DEFAULT_GROUP);
             }
-            Thread.sleep(500);
+            for (int i = 0; i < configCount; i++) {
+                TestSupport.waitForConfigDeleted(configA, prefix + "-" + i, DEFAULT_GROUP);
+            }
 
             // Verify namespace A is empty
             for (int i = 0; i < configCount; i++) {

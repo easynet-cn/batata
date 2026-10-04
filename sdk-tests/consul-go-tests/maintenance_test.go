@@ -24,7 +24,18 @@ func TestMaintenanceEnableNode(t *testing.T) {
 		t.Skip("Node maintenance not available")
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "node maintenance check visible", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		for _, check := range checks {
+			if check.Name == "_node_maintenance" && check.Status == api.HealthCritical {
+				return true
+			}
+		}
+		return false
+	}, "Node maintenance check should appear with critical status")
 
 	// Verify maintenance check exists
 	checks, err := client.Agent().Checks()
@@ -60,13 +71,35 @@ func TestMaintenanceDisableNode(t *testing.T) {
 		t.Skip("Node maintenance not available")
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "node maintenance enabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		for _, check := range checks {
+			if check.Name == "_node_maintenance" && check.Status == api.HealthCritical {
+				return true
+			}
+		}
+		return false
+	}, "Node maintenance check should appear")
 
 	// Now disable maintenance
 	err = client.Agent().DisableNodeMaintenance()
 	assert.NoError(t, err, "Disable node maintenance should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "node maintenance disabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		for _, check := range checks {
+			if check.Name == "_node_maintenance" {
+				return false
+			}
+		}
+		return true
+	}, "Node maintenance check should be removed")
 
 	// Verify maintenance check is removed
 	checks, err := client.Agent().Checks()
@@ -95,13 +128,20 @@ func TestMaintenanceEnableService(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Enable service maintenance
 	err = client.Agent().EnableServiceMaintenance(serviceID, "Testing service maintenance enable")
 	assert.NoError(t, err, "Enable service maintenance should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service maintenance enabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceID]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	// Verify maintenance check exists
 	checks, err := client.Agent().Checks()
@@ -136,19 +176,33 @@ func TestMaintenanceDisableService(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Enable maintenance first
 	err = client.Agent().EnableServiceMaintenance(serviceID, "Temporary maintenance")
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service maintenance enabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceID]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	// Disable service maintenance
 	err = client.Agent().DisableServiceMaintenance(serviceID)
 	assert.NoError(t, err, "Disable service maintenance should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service maintenance disabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceID]
+		return !ok || check.Status != api.HealthCritical
+	}, "Service maintenance check should be removed")
 
 	// Verify maintenance check is removed
 	checks, err := client.Agent().Checks()
@@ -176,7 +230,7 @@ func TestMaintenanceWithReason(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Test with different reasons
 	testReasons := []string{
@@ -191,7 +245,14 @@ func TestMaintenanceWithReason(t *testing.T) {
 		err = client.Agent().EnableServiceMaintenance(serviceID, reason)
 		assert.NoError(t, err, "Enable maintenance with reason should succeed")
 
-		time.Sleep(300 * time.Millisecond)
+		requireEventually(t, "maintenance enabled with reason", 10*time.Second, func() bool {
+			checks, err := client.Agent().Checks()
+			if err != nil {
+				return false
+			}
+			check, ok := checks["_service_maintenance:"+serviceID]
+			return ok && check.Status == api.HealthCritical
+		}, "Service maintenance check should be critical")
 
 		// Check the reason is stored
 		checks, err := client.Agent().Checks()
@@ -206,7 +267,14 @@ func TestMaintenanceWithReason(t *testing.T) {
 
 		// Disable for next iteration
 		client.Agent().DisableServiceMaintenance(serviceID)
-		time.Sleep(200 * time.Millisecond)
+		requireEventually(t, "maintenance disabled for next iteration", 10*time.Second, func() bool {
+			checks, err := client.Agent().Checks()
+			if err != nil {
+				return false
+			}
+			check, ok := checks["_service_maintenance:"+serviceID]
+			return !ok || check.Status != api.HealthCritical
+		}, "Service maintenance check should be removed")
 	}
 }
 
@@ -232,7 +300,14 @@ func TestMaintenanceCheckStatus(t *testing.T) {
 	checkID := "service:" + serviceID
 	client.Agent().PassTTL(checkID, "Service is healthy")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "ttl check passing", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks[checkID]
+		return ok && check.Status == api.HealthPassing
+	}, "TTL check should be passing")
 
 	// Verify service is passing
 	healthEntries, _, err := client.Health().Service("maintenance-status-test", "", true, nil)
@@ -244,7 +319,18 @@ func TestMaintenanceCheckStatus(t *testing.T) {
 	err = client.Agent().EnableServiceMaintenance(serviceID, "Checking status impact")
 	assert.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "maintenance check critical", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		for _, check := range checks {
+			if check.ServiceID == serviceID && check.Status == api.HealthCritical {
+				return true
+			}
+		}
+		return false
+	}, "Should have at least one critical check for service in maintenance")
 
 	// Check all checks for service
 	checks, err := client.Agent().Checks()
@@ -288,14 +374,32 @@ func TestMaintenanceListServices(t *testing.T) {
 		defer client.Agent().ServiceDeregister(id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, err := client.Agent().Services()
+		if err != nil {
+			return false
+		}
+		for _, id := range serviceIDs {
+			if _, ok := services[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}, "All services should be registered")
 
 	// Put first service in maintenance
 	err := client.Agent().EnableServiceMaintenance(serviceIDs[0], "In maintenance")
 	require.NoError(t, err)
 	defer client.Agent().DisableServiceMaintenance(serviceIDs[0])
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service maintenance enabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceIDs[0]]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	// List services
 	services, err := client.Agent().Services()
@@ -342,7 +446,14 @@ func TestMaintenanceHealthImpact(t *testing.T) {
 
 	// Update to passing
 	client.Agent().PassTTL("service:"+serviceID, "healthy")
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "ttl check passing", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["service:"+serviceID]
+		return ok && check.Status == api.HealthPassing
+	}, "TTL check should be passing")
 
 	// Query passing services
 	passingBefore, _, err := client.Health().Service(serviceName, "", true, nil)
@@ -354,7 +465,14 @@ func TestMaintenanceHealthImpact(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().DisableServiceMaintenance(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "maintenance check critical", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceID]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	// Query passing services again - should not include maintenance service
 	passingAfter, _, err := client.Health().Service(serviceName, "", true, nil)
@@ -410,14 +528,29 @@ func TestMaintenanceDiscoveryImpact(t *testing.T) {
 	client.Agent().PassTTL("service:"+healthyID, "healthy")
 	client.Agent().PassTTL("service:"+maintenanceID, "healthy")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "ttl checks passing", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		c1, ok1 := checks["service:"+healthyID]
+		c2, ok2 := checks["service:"+maintenanceID]
+		return ok1 && ok2 && c1.Status == api.HealthPassing && c2.Status == api.HealthPassing
+	}, "Both TTL checks should be passing")
 
 	// Put one service in maintenance
 	err = client.Agent().EnableServiceMaintenance(maintenanceID, "Scheduled maintenance")
 	require.NoError(t, err)
 	defer client.Agent().DisableServiceMaintenance(maintenanceID)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "maintenance check critical", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+maintenanceID]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	// Discovery should only find healthy service when filtering for passing
 	healthyEntries, _, err := client.Health().Service(serviceName, "", true, nil)
@@ -450,13 +583,24 @@ func TestMaintenancePersistence(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Enable maintenance
 	err = client.Agent().EnableServiceMaintenance(serviceID, "Testing persistence")
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "maintenance check critical", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		for _, check := range checks {
+			if check.ServiceID == serviceID && check.Status == api.HealthCritical {
+				return true
+			}
+		}
+		return false
+	}, "Service should be in maintenance")
 
 	// Check maintenance state
 	checks1, err := client.Agent().Checks()
@@ -510,7 +654,18 @@ func TestMaintenanceMultipleServices(t *testing.T) {
 		defer client.Agent().ServiceDeregister(serviceIDs[i])
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, err := client.Agent().Services()
+		if err != nil {
+			return false
+		}
+		for _, id := range serviceIDs {
+			if _, ok := services[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}, "All services should be registered")
 
 	// Put some services in maintenance
 	maintenanceIDs := serviceIDs[:3] // First 3 services in maintenance
@@ -520,7 +675,19 @@ func TestMaintenanceMultipleServices(t *testing.T) {
 		defer client.Agent().DisableServiceMaintenance(id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "maintenance checks enabled", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		count := 0
+		for _, id := range maintenanceIDs {
+			if check, ok := checks["_service_maintenance:"+id]; ok && check.Status == api.HealthCritical {
+				count++
+			}
+		}
+		return count == len(maintenanceIDs)
+	}, "All maintenance services should have critical checks")
 
 	// Verify maintenance status
 	checks, err := client.Agent().Checks()
@@ -559,7 +726,7 @@ func TestMaintenanceToggle(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Toggle maintenance multiple times
 	toggleCount := 5
@@ -568,7 +735,18 @@ func TestMaintenanceToggle(t *testing.T) {
 		err = client.Agent().EnableServiceMaintenance(serviceID, "Toggle test iteration")
 		assert.NoError(t, err, "Enable iteration %d should succeed", i)
 
-		time.Sleep(200 * time.Millisecond)
+		requireEventually(t, "maintenance enabled", 10*time.Second, func() bool {
+			checks, err := client.Agent().Checks()
+			if err != nil {
+				return false
+			}
+			for _, check := range checks {
+				if check.ServiceID == serviceID && check.Status == api.HealthCritical {
+					return true
+				}
+			}
+			return false
+		}, "Service should be in maintenance at iteration %d", i)
 
 		// Verify in maintenance
 		checks, err := client.Agent().Checks()
@@ -586,7 +764,18 @@ func TestMaintenanceToggle(t *testing.T) {
 		err = client.Agent().DisableServiceMaintenance(serviceID)
 		assert.NoError(t, err, "Disable iteration %d should succeed", i)
 
-		time.Sleep(200 * time.Millisecond)
+		requireEventually(t, "maintenance disabled", 10*time.Second, func() bool {
+			checks, err := client.Agent().Checks()
+			if err != nil {
+				return false
+			}
+			for _, check := range checks {
+				if check.ServiceID == serviceID && check.Status == api.HealthCritical && check.Name == "_service_maintenance" {
+					return false
+				}
+			}
+			return true
+		}, "Service should not be in maintenance at iteration %d", i)
 
 		// Verify not in maintenance
 		checks, err = client.Agent().Checks()
@@ -627,7 +816,18 @@ func TestMaintenanceConcurrent(t *testing.T) {
 		defer client.Agent().ServiceDeregister(serviceIDs[i])
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, err := client.Agent().Services()
+		if err != nil {
+			return false
+		}
+		for _, id := range serviceIDs {
+			if _, ok := services[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}, "All services should be registered")
 
 	// Concurrent enable maintenance
 	var wg sync.WaitGroup
@@ -656,7 +856,22 @@ func TestMaintenanceConcurrent(t *testing.T) {
 
 	assert.Equal(t, 0, errorCount, "All concurrent enable operations should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "all services in maintenance", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		count := 0
+		for _, id := range serviceIDs {
+			for _, check := range checks {
+				if check.ServiceID == id && check.Status == api.HealthCritical {
+					count++
+					break
+				}
+			}
+		}
+		return count == serviceCount
+	}, "All services should be in maintenance")
 
 	// Verify all services are in maintenance
 	checks, err := client.Agent().Checks()
@@ -715,7 +930,7 @@ func TestMaintenanceWithACL(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceID)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 10*time.Second), "service %s should be registered", serviceID)
 
 	// Try to create an ACL token with limited permissions
 	token := &api.ACLToken{
@@ -758,7 +973,14 @@ func TestMaintenanceWithACL(t *testing.T) {
 	err = client.Agent().EnableServiceMaintenance(serviceID, "ACL test with default client")
 	assert.NoError(t, err, "Maintenance should work with default client")
 
-	time.Sleep(300 * time.Millisecond)
+	requireEventually(t, "maintenance enabled with default client", 10*time.Second, func() bool {
+		checks, err := client.Agent().Checks()
+		if err != nil {
+			return false
+		}
+		check, ok := checks["_service_maintenance:"+serviceID]
+		return ok && check.Status == api.HealthCritical
+	}, "Service maintenance check should be critical")
 
 	err = client.Agent().DisableServiceMaintenance(serviceID)
 	assert.NoError(t, err, "Disable maintenance should work with default client")

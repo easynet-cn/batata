@@ -414,7 +414,7 @@ public class NacosAuthRbacTest {
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             boolean published = adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.read=allowed");
             assertTrue(published, "Admin should be able to publish config");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfig, dataId, "DEFAULT_GROUP", "rbac.read=allowed");
 
             // Read config as read-only user
             ConfigService readOnlyConfig = createConfigService(readUser, TEST_PASSWORD);
@@ -505,7 +505,7 @@ public class NacosAuthRbacTest {
             // Publish config as admin
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.readonly=blocked");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfig, dataId, "DEFAULT_GROUP", "rbac.readonly=blocked");
 
             // Try to read as write-only user
             ConfigService writeOnlyConfig = createConfigService(writeUser, TEST_PASSWORD);
@@ -544,7 +544,7 @@ public class NacosAuthRbacTest {
             // Register instance as admin
             NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
             adminNaming.registerInstance(serviceName, "192.168.1.1", 8080);
-            Thread.sleep(1000);
+            TestSupport.waitForInstances(adminNaming, serviceName, "DEFAULT_GROUP", 1);
 
             // Read instances as read-only user
             NamingService readOnlyNaming = createNamingService(readUser, TEST_PASSWORD);
@@ -610,10 +610,10 @@ public class NacosAuthRbacTest {
             NamingService writeNaming = createNamingService(writeUser, TEST_PASSWORD);
             // Should not throw - write permission is sufficient
             writeNaming.registerInstance(serviceName, "192.168.1.1", 8080);
-            Thread.sleep(1000);
 
             // Verify the instance was registered by querying as admin
             NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
+            TestSupport.waitForInstances(adminNaming, serviceName, "DEFAULT_GROUP", 1);
             var instances = adminNaming.getAllInstances(serviceName);
             assertNotNull(instances, "Admin should be able to query instances");
             assertEquals(1, instances.size(), "Should have 1 registered instance");
@@ -643,7 +643,7 @@ public class NacosAuthRbacTest {
             // Register as admin
             NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
             adminNaming.registerInstance(serviceName, "192.168.1.1", 8080);
-            Thread.sleep(1000);
+            TestSupport.waitForInstances(adminNaming, serviceName, "DEFAULT_GROUP", 1);
 
             // Try to read as write-only user
             NamingService writeOnlyNaming = createNamingService(writeUser, TEST_PASSWORD);
@@ -685,7 +685,7 @@ public class NacosAuthRbacTest {
             // Write should succeed
             boolean writeResult = rwConfig.publishConfig(dataId, "DEFAULT_GROUP", configContent);
             assertTrue(writeResult, "User with rw permission should be able to write config");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(rwConfig, dataId, "DEFAULT_GROUP", configContent);
 
             // Read should succeed
             String content = rwConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
@@ -772,7 +772,13 @@ public class NacosAuthRbacTest {
         try {
             // Create namespace via SDK
             maintainerService.createNamespace(isolatedNs, isolatedNs, "Test isolated namespace");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return maintainerService.getNamespace(isolatedNs) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Create user with permission only on the isolated namespace
             String nsResource = isolatedNs + ":DEFAULT_GROUP:*";
@@ -783,13 +789,13 @@ public class NacosAuthRbacTest {
                     System.getProperty("nacos.password", "nacos"), isolatedNs);
             boolean published = adminConfigIsolated.publishConfig(isolatedDataId, "DEFAULT_GROUP", "isolated.data=secret");
             assertTrue(published, "Admin should publish config in isolated namespace");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfigIsolated, isolatedDataId, "DEFAULT_GROUP", "isolated.data=secret");
 
             // As admin: publish config in public namespace
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             boolean publishedPublic = adminConfig.publishConfig(publicDataId, "DEFAULT_GROUP", "public.data=visible");
             assertTrue(publishedPublic, "Admin should publish config in public namespace");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfig, publicDataId, "DEFAULT_GROUP", "public.data=visible");
 
             // As ns-user: should be able to read "isolated-cfg" in the isolated namespace
             ConfigService nsConfig = createConfigServiceWithNamespace(nsUser, TEST_PASSWORD, isolatedNs);
@@ -858,7 +864,13 @@ public class NacosAuthRbacTest {
         try {
             // Create namespace via SDK
             maintainerService.createNamespace(namingNs, namingNs, "Test naming namespace");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return maintainerService.getNamespace(namingNs) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Create user with permission only on the naming namespace
             String nsResource = namingNs + ":DEFAULT_GROUP:*";
@@ -868,13 +880,13 @@ public class NacosAuthRbacTest {
             NamingService adminNaming = createNamingServiceWithNamespace("nacos",
                     System.getProperty("nacos.password", "nacos"), namingNs);
             adminNaming.registerInstance(serviceName, "10.0.0.1", 8080);
-            Thread.sleep(1000);
+            TestSupport.waitForInstances(adminNaming, serviceName, "DEFAULT_GROUP", 1);
 
             // As admin: register instance in public namespace
             NamingService adminNamingPublic = createNamingService("nacos",
                     System.getProperty("nacos.password", "nacos"));
             adminNamingPublic.registerInstance(serviceName, "10.0.0.2", 8080);
-            Thread.sleep(1000);
+            TestSupport.waitForInstances(adminNamingPublic, serviceName, "DEFAULT_GROUP", 1);
 
             // As restricted user: should be able to list instances in the naming namespace
             NamingService nsNaming = createNamingServiceWithNamespace(nsUser, TEST_PASSWORD, namingNs);
@@ -942,7 +954,7 @@ public class NacosAuthRbacTest {
             String dataId = "rtype-test-" + UUID.randomUUID().toString().substring(0, 8);
             boolean published = cfgService.publishConfig(dataId, "DEFAULT_GROUP", "rtype=config");
             assertTrue(published, "User with config:rw should be able to publish config");
-            Thread.sleep(500);
+            TestSupport.waitForConfigContent(cfgService, dataId, "DEFAULT_GROUP", "rtype=config");
 
             String content = cfgService.getConfig(dataId, "DEFAULT_GROUP", 5000);
             assertEquals("rtype=config", content, "User with config:rw should read config");
@@ -989,7 +1001,14 @@ public class NacosAuthRbacTest {
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(allowedDataId, "DEFAULT_GROUP", "allowed=true");
             adminConfig.publishConfig(deniedDataId, "DEFAULT_GROUP", "denied=true");
-            Thread.sleep(1000);
+            TestSupport.waitFor(() -> {
+                try {
+                    return "allowed=true".equals(adminConfig.getConfig(allowedDataId, "DEFAULT_GROUP", 1000))
+                            && "denied=true".equals(adminConfig.getConfig(deniedDataId, "DEFAULT_GROUP", 1000));
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // User should be able to read the allowed config
             ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
@@ -1042,7 +1061,14 @@ public class NacosAuthRbacTest {
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(matchingDataId, "DEFAULT_GROUP", "matching=true");
             adminConfig.publishConfig(nonMatchingDataId, "DEFAULT_GROUP", "nonmatching=true");
-            Thread.sleep(1000);
+            TestSupport.waitFor(() -> {
+                try {
+                    return "matching=true".equals(adminConfig.getConfig(matchingDataId, "DEFAULT_GROUP", 1000))
+                            && "nonmatching=true".equals(adminConfig.getConfig(nonMatchingDataId, "DEFAULT_GROUP", 1000));
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
 
@@ -1093,7 +1119,14 @@ public class NacosAuthRbacTest {
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(dataId, customGroup, "custom.group=true");
             adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "default.group=true");
-            Thread.sleep(1000);
+            TestSupport.waitFor(() -> {
+                try {
+                    return "custom.group=true".equals(adminConfig.getConfig(dataId, customGroup, 1000))
+                            && "default.group=true".equals(adminConfig.getConfig(dataId, "DEFAULT_GROUP", 1000));
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
 
@@ -1161,7 +1194,7 @@ public class NacosAuthRbacTest {
             // Admin publishes config
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "multi.role=test");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfig, dataId, "DEFAULT_GROUP", "multi.role=test");
 
             // User can read config (from configRole)
             ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
@@ -1184,10 +1217,10 @@ public class NacosAuthRbacTest {
             // User can write naming (from namingRole)
             NamingService userNaming = createNamingService(user, TEST_PASSWORD);
             userNaming.registerInstance(serviceName, "10.0.0.1", 8080);
-            Thread.sleep(1000);
 
             // Verify via admin
             NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
+            TestSupport.waitForInstances(adminNaming, serviceName, "DEFAULT_GROUP", 1);
             var instances = adminNaming.getAllInstances(serviceName);
             assertNotNull(instances);
             assertFalse(instances.isEmpty(), "Instance should be registered via naming:w permission");
@@ -1230,7 +1263,7 @@ public class NacosAuthRbacTest {
         // Publish config as admin first
         ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
         adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "unauth.test=value");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(adminConfig, dataId, "DEFAULT_GROUP", "unauth.test=value");
 
         // Try to read without auth - should fail
         boolean accessDenied = false;
@@ -1286,7 +1319,7 @@ public class NacosAuthRbacTest {
             // Admin publishes config
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "revoke.test=value");
-            Thread.sleep(1000);
+            TestSupport.waitForConfigContent(adminConfig, dataId, "DEFAULT_GROUP", "revoke.test=value");
 
             // User can read config
             ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
@@ -1300,11 +1333,16 @@ public class NacosAuthRbacTest {
                     + "&resource=" + URLEncoder.encode(resource, "UTF-8")
                     + "&action=rw");
             httpDelete("/nacos/v3/auth/role?role=" + role + "&username=" + user);
-            // Wait for cache invalidation to propagate
-            Thread.sleep(3000);
-
-            // User should no longer be able to read config
+            // Poll until permission revocation takes effect
             ConfigService userConfig2 = createConfigService(user, TEST_PASSWORD);
+            TestSupport.waitFor(() -> {
+                try {
+                    String revokedContent = userConfig2.getConfig(dataId, "DEFAULT_GROUP", 1000);
+                    return revokedContent == null || revokedContent.isEmpty();
+                } catch (NacosException e) {
+                    return true;
+                }
+            }, 15_000);
             boolean denied = false;
             try {
                 String revokedContent = userConfig2.getConfig(dataId, "DEFAULT_GROUP", 5000);

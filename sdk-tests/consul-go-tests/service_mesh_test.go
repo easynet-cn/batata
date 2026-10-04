@@ -75,7 +75,8 @@ func TestServiceMeshBasicSetup(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, serviceName+"-sidecar-proxy", 10*time.Second)
 
 	// Verify service is registered
 	services, err := agent.Services()
@@ -123,7 +124,8 @@ func TestServiceMeshSidecarProxy(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, serviceName+"-sidecar-proxy", 10*time.Second)
 
 	// Verify both services are registered
 	services, err := agent.Services()
@@ -184,7 +186,8 @@ func TestServiceMeshUpstreams(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, serviceName+"-sidecar-proxy", 10*time.Second)
 
 	// Verify services are registered
 	services, err := agent.Services()
@@ -233,7 +236,8 @@ func TestServiceMeshLocalBindAddress(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, serviceName, 10*time.Second)
+	waitForAgentService(t, client, serviceName+"-sidecar-proxy", 10*time.Second)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -323,7 +327,7 @@ func TestServiceMeshMeshGateway(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(gatewayName)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	// Verify gateway is registered
 	services, err := agent.Services()
@@ -382,7 +386,8 @@ func TestServiceMeshTerminatingGateway(t *testing.T) {
 	}
 	defer configEntries.Delete(api.TerminatingGateway, gatewayName, nil)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForConfigEntry(t, client, api.TerminatingGateway, gatewayName, 10*time.Second)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	// Verify gateway
 	services, err := agent.Services()
@@ -450,7 +455,8 @@ func TestServiceMeshIngressGateway(t *testing.T) {
 	}
 	defer configEntries.Delete(api.IngressGateway, gatewayName, nil)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForConfigEntry(t, client, api.IngressGateway, gatewayName, 10*time.Second)
+	waitForAgentService(t, client, gatewayName, 10*time.Second)
 
 	// Verify gateway
 	services, err := agent.Services()

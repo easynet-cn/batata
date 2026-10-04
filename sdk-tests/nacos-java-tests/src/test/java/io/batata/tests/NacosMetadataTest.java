@@ -71,7 +71,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have registered instance");
@@ -105,7 +105,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update metadata
         Map<String, String> newMetadata = new HashMap<>();
@@ -114,7 +114,14 @@ public class NacosMetadataTest {
         instance.setMetadata(newMetadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName, DEFAULT_GROUP).stream()
+                        .anyMatch(i -> "2.0.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have registered instance after update");
@@ -144,7 +151,7 @@ public class NacosMetadataTest {
         instance.setMetadata(new HashMap<>());
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty());
@@ -177,7 +184,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         Instance found = instances.get(0);
@@ -209,7 +216,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         Instance found = instances.get(0);
@@ -246,7 +253,7 @@ public class NacosMetadataTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertEquals(3, allInstances.size(), "Should have 3 registered instances");
@@ -301,7 +308,7 @@ public class NacosMetadataTest {
         green.setMetadata(greenMetadata);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, green);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
 
@@ -341,11 +348,11 @@ public class NacosMetadataTest {
 
         // First registration
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Re-register with same metadata
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertEquals(1, instances.size(), "Should have one instance");
@@ -378,7 +385,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         Instance found = instances.get(0);
@@ -411,7 +418,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         Instance found = instances.get(0);
@@ -444,7 +451,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         int threadCount = 5;
         CountDownLatch latch = new CountDownLatch(threadCount);
@@ -476,7 +483,7 @@ public class NacosMetadataTest {
         boolean completed = latch.await(30, TimeUnit.SECONDS);
         assertTrue(completed, "All threads should complete");
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Instance should still exist after concurrent updates");
@@ -518,7 +525,7 @@ public class NacosMetadataTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertEquals(3, instances.size());
@@ -561,7 +568,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty());
@@ -599,7 +606,7 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.selectInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList(clusterName), true);
@@ -633,12 +640,21 @@ public class NacosMetadataTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Clear metadata by setting empty map
         instance.setMetadata(new HashMap<>());
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName, DEFAULT_GROUP).stream()
+                        .anyMatch(i -> i.getIp().equals("192.168.20.62")
+                                && i.getPort() == 8080
+                                && i.getMetadata().isEmpty());
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Instance should still exist after clearing metadata");

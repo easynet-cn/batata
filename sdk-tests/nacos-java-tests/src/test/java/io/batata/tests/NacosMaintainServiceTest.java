@@ -79,7 +79,7 @@ public class NacosMaintainServiceTest {
         instance.setMetadata(initialMeta);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update metadata via MaintainerService (V3 admin API)
         Instance updateInstance = new Instance();
@@ -94,7 +94,14 @@ public class NacosMaintainServiceTest {
         updateInstance.setMetadata(updatedMeta);
 
         maintainerService.updateInstance(serviceName, updateInstance);
-        Thread.sleep(1500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> "2.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify metadata was updated via SDK
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -128,7 +135,7 @@ public class NacosMaintainServiceTest {
         instance.setEphemeral(true);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify instance is returned when selecting healthy
         List<Instance> beforeDisable = namingService.selectInstances(serviceName, true);
@@ -143,7 +150,14 @@ public class NacosMaintainServiceTest {
         disableInstance.setEphemeral(true);
 
         maintainerService.updateInstance(serviceName, disableInstance);
-        Thread.sleep(1500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.selectInstances(serviceName, true).stream()
+                        .noneMatch(i -> "192.168.51.1".equals(i.getIp()) && i.getPort() == 8080);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // After disable, the instance should not appear in healthy selection
         List<Instance> afterDisable = namingService.selectInstances(serviceName, true);
@@ -172,7 +186,7 @@ public class NacosMaintainServiceTest {
         instance.setEphemeral(true);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update weight via MaintainerService
         Instance updateInstance = new Instance();
@@ -182,7 +196,15 @@ public class NacosMaintainServiceTest {
         updateInstance.setEphemeral(true);
 
         maintainerService.updateInstance(serviceName, updateInstance);
-        Thread.sleep(1500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> i.getIp().equals("192.168.52.1")
+                                && Math.abs(i.getWeight() - 5.0) < 0.01);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify weight was updated
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -207,7 +229,13 @@ public class NacosMaintainServiceTest {
 
         // Create service with protectThreshold
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true, 0.8f);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Query service detail
         ServiceDetailInfo detail = maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
@@ -229,14 +257,28 @@ public class NacosMaintainServiceTest {
 
         // Create service
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true, 0.5f);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Update protectThreshold and metadata
         Map<String, String> metadata = new HashMap<>();
         metadata.put("updated", "true");
         maintainerService.updateService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true,
                 metadata, 0.9f, new NoneSelector());
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                ServiceDetailInfo detail = maintainerService.getServiceDetail(
+                        DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
+                return detail != null && Math.abs(detail.getProtectThreshold() - 0.9f) < 0.01;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify update
         ServiceDetailInfo detail = maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
@@ -259,11 +301,23 @@ public class NacosMaintainServiceTest {
 
         // Create service
         maintainerService.createService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName, true, 0.5f);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Delete service
         maintainerService.removeService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName) == null;
+            } catch (NacosException e) {
+                return true;
+            }
+        }, 10_000);
 
         // Verify deleted - should throw or return empty
         try {
@@ -287,7 +341,7 @@ public class NacosMaintainServiceTest {
 
         // Register an instance (implicitly creates service)
         namingService.registerInstance(serviceName, "192.168.53.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Try to delete service with active instances - should fail
         try {
@@ -301,7 +355,7 @@ public class NacosMaintainServiceTest {
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.53.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
         try {
             maintainerService.removeService(DEFAULT_NAMESPACE, DEFAULT_GROUP, serviceName);
         } catch (Exception ignored) {
@@ -318,7 +372,13 @@ public class NacosMaintainServiceTest {
         String group = "MAINTAIN_GROUP";
 
         maintainerService.createService(DEFAULT_NAMESPACE, group, serviceName, true, 0.5f);
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getServiceDetail(DEFAULT_NAMESPACE, group, serviceName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Query in specific group
         ServiceDetailInfo detail = maintainerService.getServiceDetail(DEFAULT_NAMESPACE, group, serviceName);
@@ -348,7 +408,7 @@ public class NacosMaintainServiceTest {
         instance.setMetadata(meta);
 
         namingService.registerInstance(serviceName, group, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, group, 1);
 
         // Update metadata via MaintainerService
         Instance updateInstance = new Instance();
@@ -361,7 +421,16 @@ public class NacosMaintainServiceTest {
         updateInstance.setMetadata(updatedMeta);
 
         maintainerService.updateInstance(group, serviceName, updateInstance);
-        Thread.sleep(1500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName, group).stream()
+                        .anyMatch(i -> i.getIp().equals("192.168.54.1")
+                                && Math.abs(i.getWeight() - 2.0) < 0.01
+                                && "2.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, group);
         assertFalse(instances.isEmpty(), "Should have at least 1 instance");
@@ -393,7 +462,7 @@ public class NacosMaintainServiceTest {
         instance.setMetadata(meta);
 
         maintainerService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify via SDK
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -406,7 +475,7 @@ public class NacosMaintainServiceTest {
 
         // Deregister via MaintainerService
         maintainerService.deregisterInstance(serviceName, "192.168.55.1", 9090);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
 
         // Verify deregistered
         List<Instance> afterDeregister = namingService.getAllInstances(serviceName);
@@ -427,7 +496,7 @@ public class NacosMaintainServiceTest {
         namingService.registerInstance(serviceName, "192.168.60.1", 8080);
         namingService.registerInstance(serviceName, "192.168.60.2", 8081);
         namingService.registerInstance(serviceName, "192.168.60.3", 8082);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // List instances via MaintainerService
         List<Instance> instances = maintainerService.listInstances(serviceName, null, false);
@@ -467,7 +536,7 @@ public class NacosMaintainServiceTest {
         instance.setMetadata(meta);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Get instance detail via MaintainerService
         Instance detail = maintainerService.getInstanceDetail(serviceName, "192.168.61.1", 8080);

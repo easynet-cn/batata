@@ -90,7 +90,13 @@ public class NacosAiAgentSpecTest {
             String result = aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zipBytes);
             assertNotNull(result, "Upload should return a result");
 
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Get agentspec detail
             AgentSpec detail = aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName);
@@ -115,7 +121,13 @@ public class NacosAiAgentSpecTest {
             byte[] zipBytes = buildAgentSpecZip(specName, "Lifecycle test");
             String uploadResult = aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zipBytes);
             assertNotNull(uploadResult);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecAdminDetail(DEFAULT_NAMESPACE, specName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Get the draft version from metadata
             AgentSpecMeta meta = aiService.agentSpec().getAgentSpecAdminDetail(DEFAULT_NAMESPACE, specName);
@@ -132,7 +144,14 @@ public class NacosAiAgentSpecTest {
             boolean published = aiService.agentSpec().publish(
                     DEFAULT_NAMESPACE, specName, editingVersion, true);
             assertTrue(published, "Publish should succeed");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecVersionDetail(
+                            DEFAULT_NAMESPACE, specName, editingVersion) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Verify version detail
             AgentSpec versionDetail = aiService.agentSpec().getAgentSpecVersionDetail(
@@ -162,7 +181,16 @@ public class NacosAiAgentSpecTest {
                 byte[] zip = buildAgentSpecZip(name, "List test " + i);
                 aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zip);
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<AgentSpecBasicInfo> page = aiService.agentSpec().listAgentSpecs(
+                            DEFAULT_NAMESPACE, prefix, "blur", 1, 100);
+                    return page != null && page.getPageItems() != null
+                            && page.getPageItems().size() >= 3;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<AgentSpecBasicInfo> page = aiService.agentSpec().listAgentSpecs(
                     DEFAULT_NAMESPACE, prefix, "blur", 1, 100);
@@ -189,7 +217,13 @@ public class NacosAiAgentSpecTest {
         try {
             byte[] zip = buildAgentSpecZip(specName, "Tags test");
             aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zip);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             boolean updated = aiService.agentSpec().updateBizTags(
                     DEFAULT_NAMESPACE, specName, "[\"agent\",\"test\"]");
@@ -210,7 +244,13 @@ public class NacosAiAgentSpecTest {
         try {
             byte[] zip = buildAgentSpecZip(specName, "Scope test");
             aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zip);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             boolean updated = aiService.agentSpec().updateScope(DEFAULT_NAMESPACE, specName, "PRIVATE");
             assertTrue(updated, "Update scope should succeed");
@@ -229,7 +269,13 @@ public class NacosAiAgentSpecTest {
 
         byte[] zip = buildAgentSpecZip(specName, "To be deleted");
         aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zip);
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         boolean deleted = aiService.agentSpec().deleteAgentSpec(DEFAULT_NAMESPACE, specName);
         assertTrue(deleted, "AgentSpec deletion should succeed");
@@ -254,7 +300,13 @@ public class NacosAiAgentSpecTest {
             // First upload
             byte[] zip1 = buildAgentSpecZip(specName, "Original");
             aiService.agentSpec().uploadAgentSpecFromZip(DEFAULT_NAMESPACE, zip1);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.agentSpec().getAgentSpecDetail(DEFAULT_NAMESPACE, specName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Second upload with overwrite=true
             byte[] zip2 = buildAgentSpecZip(specName, "Overwritten");

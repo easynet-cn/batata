@@ -29,7 +29,7 @@ func TestPreparedQueryCreate(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Create prepared query
 	def := &api.PreparedQueryDefinition{
@@ -67,7 +67,7 @@ func TestPreparedQueryGet(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "get-query-" + serviceName,
@@ -131,7 +131,7 @@ func TestPreparedQueryUpdate(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "update-query-" + serviceName,
@@ -185,7 +185,7 @@ func TestPreparedQueryDelete(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "delete-query-" + serviceName,
@@ -233,7 +233,7 @@ func TestPreparedQueryExecute(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "exec-query-" + serviceName,
@@ -285,7 +285,7 @@ func TestPreparedQueryExecuteByName(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: queryName,
@@ -330,7 +330,7 @@ func TestPreparedQueryWithFailover(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "failover-query-" + serviceName,
@@ -382,7 +382,10 @@ func TestPreparedQueryWithTags(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName + "-2")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(serviceName, "", nil)
+		return err == nil && len(services) >= 2
+	}, "Should register 2 service instances")
 
 	// Query with tag filter
 	def := &api.PreparedQueryDefinition{
@@ -430,7 +433,7 @@ func TestPreparedQueryWithNear(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "near-query-" + serviceName,
@@ -477,7 +480,7 @@ func TestPreparedQueryDNS(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "dns-query-" + serviceName,
@@ -526,7 +529,7 @@ func TestPreparedQueryTemplate(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Create template query
 	def := &api.PreparedQueryDefinition{
@@ -581,7 +584,8 @@ func TestPreparedQueryWithSession(t *testing.T) {
 	}
 	defer session.Destroy(sessionID, nil)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
+	require.NotNil(t, waitForSession(t, client, sessionID, 10*time.Second), "session should be visible")
 
 	def := &api.PreparedQueryDefinition{
 		Name:    "session-query-" + serviceName,
@@ -648,7 +652,10 @@ func TestPreparedQueryConcurrentExecute(t *testing.T) {
 		defer agent.ServiceDeregister(id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service(serviceName, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	def := &api.PreparedQueryDefinition{
 		Name: "concurrent-query-" + serviceName,

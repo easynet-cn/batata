@@ -72,6 +72,17 @@ public class NacosMultiTenantNamingTest {
         maintainerService.shutdown();
     }
 
+    private static void waitForConnected(NamingService service, String serviceName) {
+        TestSupport.waitFor(() -> {
+            try {
+                service.getAllInstances(serviceName);
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 5_000);
+    }
+
     // ==================== P0: Same IP/Port Cross-Namespace Isolation ====================
 
     /**
@@ -89,7 +100,8 @@ public class NacosMultiTenantNamingTest {
         // Register same IP:port in both namespaces
         namingService1.registerInstance(serviceName, ip, port);
         namingService2.registerInstance(serviceName, ip, port);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
         // Both namespaces should have 1 instance each
         List<Instance> instances1 = namingService1.getAllInstances(serviceName);
@@ -121,7 +133,8 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.registerInstance(serviceName, "10.0.1.1", 8080);
         namingService2.registerInstance(serviceName, "10.0.2.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances1 = namingService1.getAllInstances(serviceName);
         List<Instance> instances2 = namingService2.getAllInstances(serviceName);
@@ -153,7 +166,8 @@ public class NacosMultiTenantNamingTest {
         // Register in NS1/GROUP_A and NS2/GROUP_B
         namingService1.registerInstance(serviceName, group1, "10.0.3.1", 8080);
         namingService2.registerInstance(serviceName, group2, "10.0.3.2", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, group1, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, group2, 1);
 
         // NS1/GROUP_A should only see its own instance
         List<Instance> ns1g1 = namingService1.getAllInstances(serviceName, group1);
@@ -190,7 +204,8 @@ public class NacosMultiTenantNamingTest {
         // Register same IP:port in same group but different namespaces
         namingService1.registerInstance(serviceName, group, ip, port);
         namingService2.registerInstance(serviceName, group, ip, port);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, group, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, group, 1);
 
         // Both should have 1 instance each (isolated by namespace)
         List<Instance> instances1 = namingService1.getAllInstances(serviceName, group);
@@ -217,7 +232,7 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.registerInstance(serviceName, group, "10.0.5.1", 8080);
         namingService1.registerInstance(serviceName, group, "10.0.5.2", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, group, 2);
 
         // NS1 should see 2 instances
         List<Instance> ns1Instances = namingService1.getAllInstances(serviceName, group);
@@ -264,7 +279,8 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.subscribe(serviceName, listener1);
         namingService2.subscribe(serviceName, listener2);
-        Thread.sleep(500);
+        waitForConnected(namingService1, serviceName);
+        waitForConnected(namingService2, serviceName);
 
         // Register in NS1 only
         namingService1.registerInstance(serviceName, "10.0.6.1", 8080);
@@ -325,7 +341,8 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.subscribe(serviceName, listener1);
         namingService2.subscribe(serviceName, listener2);
-        Thread.sleep(500);
+        waitForConnected(namingService1, serviceName);
+        waitForConnected(namingService2, serviceName);
 
         // Register different IPs in each namespace
         namingService1.registerInstance(serviceName, "10.0.7.1", 8080);
@@ -378,7 +395,7 @@ public class NacosMultiTenantNamingTest {
         };
 
         namingService1.subscribe(serviceName, group, listener);
-        Thread.sleep(500);
+        waitForConnected(namingService1, serviceName);
 
         namingService1.registerInstance(serviceName, group, "10.0.8.1", 8080);
 
@@ -408,10 +425,10 @@ public class NacosMultiTenantNamingTest {
         EventListener listener = event -> latch.countDown();
 
         namingService1.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        waitForConnected(namingService1, serviceName);
 
         namingService1.unsubscribe(serviceName, listener);
-        Thread.sleep(500);
+        waitForConnected(namingService1, serviceName);
 
         // Register should NOT trigger notification
         namingService1.registerInstance(serviceName, "10.0.9.1", 8080);
@@ -436,7 +453,8 @@ public class NacosMultiTenantNamingTest {
         // Register services in NS1
         namingService1.registerInstance(prefix + "-svc-1", "10.0.10.1", 8080);
         namingService1.registerInstance(prefix + "-svc-2", "10.0.10.2", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, prefix + "-svc-1", DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService1, prefix + "-svc-2", DEFAULT_GROUP, 1);
 
         // Get service list from NS1
         var ns1Services = namingService1.getServicesOfServer(1, 100);
@@ -452,7 +470,7 @@ public class NacosMultiTenantNamingTest {
     }
 
     /**
-     * MT-011: Test getServicesOfServer with group in namespace
+     * MT-011: Test getServicesWithGroupInNamespace
      *
      * Aligned with Nacos MultiTenantNamingITCase.multipleTenantGroupGetServicesOfServer()
      */
@@ -463,7 +481,7 @@ public class NacosMultiTenantNamingTest {
         String group = "LIST_GROUP";
 
         namingService1.registerInstance(serviceName, group, "10.0.11.1", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, group, 1);
 
         var services = namingService1.getServicesOfServer(1, 100, group);
         assertTrue(services.getCount() >= 1, "Should find service in group");
@@ -484,7 +502,8 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.registerInstance(serviceName, "10.0.12.1", 8080);
         namingService2.registerInstance(serviceName, "10.0.12.2", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
         // selectOneHealthyInstance in NS1 should return NS1's instance
         Instance selected1 = namingService1.selectOneHealthyInstance(serviceName);
@@ -514,7 +533,8 @@ public class NacosMultiTenantNamingTest {
         namingService1.registerInstance(serviceName, "10.0.13.1", 8080);
         namingService1.registerInstance(serviceName, "10.0.13.2", 8080);
         namingService2.registerInstance(serviceName, "10.0.13.3", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 2);
+        TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> ns1Healthy = namingService1.selectInstances(serviceName, true);
         assertEquals(2, ns1Healthy.size(), "NS1 should have 2 healthy instances");
@@ -540,11 +560,12 @@ public class NacosMultiTenantNamingTest {
 
         namingService1.registerInstance(serviceName, "10.0.14.1", 8080);
         namingService2.registerInstance(serviceName, "10.0.14.2", 8080);
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 1);
+        TestSupport.waitForInstances(namingService2, serviceName, DEFAULT_GROUP, 1);
 
         // Deregister from NS1
         namingService1.deregisterInstance(serviceName, "10.0.14.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService1, serviceName, DEFAULT_GROUP, 0);
 
         // NS1 should have no instances
         List<Instance> ns1After = namingService1.getAllInstances(serviceName);

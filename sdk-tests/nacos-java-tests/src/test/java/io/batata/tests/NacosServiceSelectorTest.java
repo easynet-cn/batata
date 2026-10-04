@@ -49,6 +49,23 @@ public class NacosServiceSelectorTest {
         }
     }
 
+    // Poll until at least `expected` instances are visible (or 10s elapse).
+    // Reduces flakiness compared to a fixed Thread.sleep on slow CI machines.
+    private static List<Instance> waitForInstances(String serviceName, int expected) throws NacosException {
+        long deadline = System.currentTimeMillis() + 10_000;
+        List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        while (instances.size() < expected && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        }
+        return instances;
+    }
+
     // ==================== Basic Selection Tests ====================
 
     /**
@@ -69,7 +86,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 3);
 
         // Select one healthy instance
         Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
@@ -103,7 +120,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 5);
 
         // Select multiple times
         Set<String> selectedIps = new HashSet<>();
@@ -152,7 +169,7 @@ public class NacosServiceSelectorTest {
         lowWeight.setWeight(1.0);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, lowWeight);
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 2);
 
         // Count selections
         Map<String, Integer> selectionCount = new HashMap<>();
@@ -199,7 +216,7 @@ public class NacosServiceSelectorTest {
         normalWeight.setWeight(1.0);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, normalWeight);
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 2);
 
         int zeroSelected = 0;
         int normalSelected = 0;
@@ -240,7 +257,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, instanceCount);
 
         Map<String, Integer> distribution = new HashMap<>();
         int totalSelections = 200;
@@ -301,7 +318,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 4);
 
         // Select from cluster-a only
         List<Instance> clusterAInstances = namingService.selectInstances(
@@ -344,7 +361,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 3);
 
         // Select one from target cluster
         Instance selected = namingService.selectOneHealthyInstance(
@@ -393,7 +410,7 @@ public class NacosServiceSelectorTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 3);
 
         // Select healthy only
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
@@ -425,7 +442,8 @@ public class NacosServiceSelectorTest {
         healthy.setPort(8080);
         healthy.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, healthy);
-        Thread.sleep(3000);
+
+        waitForInstances(serviceName, 1);
 
         Instance unhealthy = new Instance();
         unhealthy.setIp("192.168.39.2");
@@ -433,7 +451,7 @@ public class NacosServiceSelectorTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(3000);
+        waitForInstances(serviceName, 2);
 
         // Use getAllInstances with subscribe=false to bypass cache and get all instances directly
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -466,6 +484,9 @@ public class NacosServiceSelectorTest {
         Exception thrown = assertThrows(Exception.class, () -> {
             namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
         }, "selectOneHealthyInstance on empty service should throw an exception");
+        assertTrue(thrown instanceof NacosException || thrown instanceof IllegalStateException,
+                "Exception should be NacosException or IllegalStateException, got: "
+                        + thrown.getClass().getName());
         assertNotNull(thrown.getMessage(), "Exception should have a message");
         System.out.println("Expected exception for empty service: " + thrown.getClass().getSimpleName() + ": " + thrown.getMessage());
     }
@@ -487,7 +508,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 3);
 
         // Try to select healthy - should return empty list
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
@@ -520,7 +541,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 5);
 
         int threadCount = 20;
         CountDownLatch latch = new CountDownLatch(threadCount);
@@ -578,7 +599,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(500);
+        waitForInstances(serviceName, 3);
 
         // Concurrent selection and registration
         CountDownLatch latch = new CountDownLatch(10);
@@ -669,7 +690,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 4);
 
         // Get all and filter by metadata
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
@@ -728,7 +749,7 @@ public class NacosServiceSelectorTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        waitForInstances(serviceName, 6);
 
         // Combined filter: healthy + cluster + metadata
         List<Instance> filtered = namingService.selectInstances(

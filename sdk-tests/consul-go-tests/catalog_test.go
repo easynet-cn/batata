@@ -24,7 +24,7 @@ func TestCatalogServices(t *testing.T) {
 		Tags: []string{"web", "v2"},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// List all services from catalog
@@ -63,7 +63,7 @@ func TestCatalogServiceNodes(t *testing.T) {
 		Meta:    map[string]string{"env": "test"},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Get service nodes
@@ -117,7 +117,7 @@ func TestCatalogServiceWithTag(t *testing.T) {
 		Tags: []string{"web", "v2"},
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Query with matching tag
@@ -145,7 +145,7 @@ func TestCatalogServiceTagsNeverNull(t *testing.T) {
 		Port: 8080,
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Get from catalog
@@ -215,7 +215,18 @@ func TestCatalogRegisterDeregister(t *testing.T) {
 	}, nil)
 	require.NoError(t, err, "Catalog register should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "catalog registration visible", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service("catalog-registered", "", nil)
+		if err != nil {
+			return false
+		}
+		for _, svc := range services {
+			if svc.ServiceID == serviceID {
+				return true
+			}
+		}
+		return false
+	}, "Catalog-registered service should appear")
 
 	// Verify registered with field validation
 	services, _, err := client.Catalog().Service("catalog-registered", "", nil)
@@ -231,7 +242,18 @@ func TestCatalogRegisterDeregister(t *testing.T) {
 	}, nil)
 	require.NoError(t, err, "Catalog deregister should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "catalog deregistration visible", 10*time.Second, func() bool {
+		services, _, err := client.Catalog().Service("catalog-registered", "", nil)
+		if err != nil {
+			return false
+		}
+		for _, svc := range services {
+			if svc.ServiceID == serviceID {
+				return false
+			}
+		}
+		return true
+	}, "Catalog-deregistered service should disappear")
 
 	// Verify deregistered
 	services, _, err = client.Catalog().Service("catalog-registered", "", nil)
@@ -283,7 +305,7 @@ func TestCatalogBlockingQuery(t *testing.T) {
 		Port: 8080,
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Get baseline index
@@ -324,7 +346,7 @@ func TestCatalogServicesEmptyTags(t *testing.T) {
 		Port: 8080,
 	})
 	require.NoError(t, err)
-	time.Sleep(1 * time.Second)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 	defer client.Agent().ServiceDeregister(serviceName)
 
 	// Get from catalog services list (map[service][]tags format)

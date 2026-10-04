@@ -126,7 +126,13 @@ public class NacosCoreMaintainerServiceTest {
         // Create namespace
         Boolean created = maintainerService.createNamespace(nsId, nsName, nsDesc);
         assertTrue(created, "Namespace creation should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getNamespace(nsId) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Get namespace
         Namespace ns = maintainerService.getNamespace(nsId);
@@ -139,7 +145,14 @@ public class NacosCoreMaintainerServiceTest {
         String updatedDesc = "Updated description";
         Boolean updated = maintainerService.updateNamespace(nsId, updatedName, updatedDesc);
         assertTrue(updated, "Namespace update should succeed");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                Namespace ns = maintainerService.getNamespace(nsId);
+                return ns != null && updatedName.equals(ns.getNamespaceShowName());
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify update
         Namespace updatedNs = maintainerService.getNamespace(nsId);
@@ -149,7 +162,13 @@ public class NacosCoreMaintainerServiceTest {
         // Delete namespace
         Boolean deleted = maintainerService.deleteNamespace(nsId);
         assertTrue(deleted, "Namespace deletion should succeed");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getNamespace(nsId) == null;
+            } catch (NacosException e) {
+                return true; // not found == deleted
+            }
+        }, 10_000);
 
         // Verify deleted
         try {
@@ -177,7 +196,13 @@ public class NacosCoreMaintainerServiceTest {
 
         // Create and check
         maintainerService.createNamespace(nsId, "Check Namespace", "Test existence check");
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return Boolean.TRUE.equals(maintainerService.checkNamespaceIdExist(nsId));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         Boolean existsAfter = maintainerService.checkNamespaceIdExist(nsId);
         assertTrue(existsAfter, "Namespace should exist after creation");
@@ -198,7 +223,8 @@ public class NacosCoreMaintainerServiceTest {
         // Create with auto-generated ID (empty string)
         Boolean created = maintainerService.createNamespace(nsName, nsDesc);
         assertTrue(created, "Namespace creation with auto ID should succeed");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> maintainerService.getNamespaceList().stream()
+                .anyMatch(ns -> nsName.equals(ns.getNamespaceShowName())), 10_000);
 
         // Find it in the namespace list
         List<Namespace> namespaces = maintainerService.getNamespaceList();
@@ -290,12 +316,18 @@ public class NacosCoreMaintainerServiceTest {
 
         // Create namespace
         maintainerService.createNamespace(nsId, "Isolation NS", "For isolation test");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getNamespace(nsId) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Publish config in the new namespace
         boolean published = maintainerService.publishConfig(dataId, "DEFAULT_GROUP", nsId, content);
         assertTrue(published, "Config publish in custom namespace should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, "DEFAULT_GROUP", nsId);
 
         // Verify config exists in custom namespace
         var configInNs = maintainerService.getConfig(dataId, "DEFAULT_GROUP", nsId);
@@ -332,7 +364,13 @@ public class NacosCoreMaintainerServiceTest {
         // Create namespace first time
         Boolean created = maintainerService.createNamespace(nsId, "Duplicate Test", "First creation");
         assertTrue(created, "First namespace creation should succeed");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return Boolean.TRUE.equals(maintainerService.checkNamespaceIdExist(nsId));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Try creating again with same ID
         try {

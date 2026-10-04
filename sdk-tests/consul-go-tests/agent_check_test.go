@@ -256,7 +256,7 @@ func TestAgentDeregisterCriticalServiceAfter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceID, 5*time.Second), "service should be registered on agent")
 
 	// Verify service is registered
 	services, err := agent.Services()

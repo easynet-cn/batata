@@ -360,7 +360,11 @@ func TestKVDeleteTree(t *testing.T) {
 	_, err = client.KV().DeleteTree(prefix, nil)
 	require.NoError(t, err, "DeleteTree should succeed")
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for deletion to propagate
+	requireEventually(t, "keys deleted after DeleteTree", 10*time.Second, func() bool {
+		p, _, err := client.KV().List(prefix, nil)
+		return err == nil && len(p) == 0
+	}, "All keys must be deleted after DeleteTree")
 
 	// Verify ALL deleted
 	pairs, _, err = client.KV().List(prefix, nil)

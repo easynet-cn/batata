@@ -373,7 +373,7 @@ func TestServiceWeights(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 
 	// Verify weights
 	services, err := agent.Services()
@@ -420,7 +420,7 @@ func TestServiceTaggedAddresses(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 
 	services, err := agent.Services()
 	require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestServiceLocality(t *testing.T) {
 	require.NoError(t, err, "Service registration with locality should succeed")
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForAgentService(t, client, serviceName, 10*time.Second), "service %s should be registered", serviceName)
 
 	services, err := agent.Services()
 	require.NoError(t, err, "Getting services should succeed")

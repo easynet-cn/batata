@@ -73,7 +73,7 @@ public class NacosClusterManagementTest {
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have registered instance");
@@ -108,7 +108,7 @@ public class NacosClusterManagementTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Get all instances
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
@@ -153,7 +153,7 @@ public class NacosClusterManagementTest {
         instanceB.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instanceB);
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Verify all instances are registered first (no cluster filter)
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
@@ -204,7 +204,7 @@ public class NacosClusterManagementTest {
         unhealthyA.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthyA);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select only healthy instances from cluster-a
         List<Instance> healthyInstances = namingService.selectInstances(
@@ -239,7 +239,7 @@ public class NacosClusterManagementTest {
         instance.setClusterName("default");
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Subscribe to get service info
         CountDownLatch eventLatch = new CountDownLatch(1);
@@ -278,7 +278,7 @@ public class NacosClusterManagementTest {
         instance.setClusterName("primary");
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Subscribe with cluster filter
         namingService.subscribe(serviceName, DEFAULT_GROUP, Arrays.asList("primary"), event -> {
@@ -326,7 +326,7 @@ public class NacosClusterManagementTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         List<Instance> instances = namingService.getAllInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("weighted"));
@@ -365,13 +365,20 @@ public class NacosClusterManagementTest {
         instance.setWeight(50.0);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update weight
         instance.setWeight(100.0);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName, DEFAULT_GROUP).stream()
+                        .anyMatch(i -> 100.0 == i.getWeight());
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have instance");
@@ -400,7 +407,7 @@ public class NacosClusterManagementTest {
         instance.setEphemeral(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have ephemeral instance");
@@ -432,7 +439,7 @@ public class NacosClusterManagementTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have ephemeral instance");
@@ -472,7 +479,7 @@ public class NacosClusterManagementTest {
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have instance with metadata");
@@ -507,7 +514,7 @@ public class NacosClusterManagementTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Update metadata
         metadata.put("version", "v2.0.0");
@@ -515,7 +522,14 @@ public class NacosClusterManagementTest {
         instance.setMetadata(metadata);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName, DEFAULT_GROUP).stream()
+                        .anyMatch(i -> "v2.0.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have updated instance");
@@ -571,7 +585,7 @@ public class NacosClusterManagementTest {
         assertTrue(errors.isEmpty(),
                 "No errors should occur during concurrent registration, got " + errors.size());
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, threadCount);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertEquals(threadCount, instances.size(),
@@ -602,7 +616,7 @@ public class NacosClusterManagementTest {
         instance.setPort(8080);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
 
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         CountDownLatch latch = new CountDownLatch(subscriberCount);
         List<com.alibaba.nacos.api.naming.listener.EventListener> listeners = new ArrayList<>();
@@ -644,7 +658,14 @@ public class NacosClusterManagementTest {
             Thread.sleep(1000);
         }
 
-        Thread.sleep(5000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getServicesOfServer(1, 10000, DEFAULT_GROUP).getData().stream()
+                        .anyMatch(name -> name.startsWith(prefix));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 15_000);
 
         // Get service list with pagination - use large enough page size to cover all services
         // Other tests may have registered many services, so we need a page large enough

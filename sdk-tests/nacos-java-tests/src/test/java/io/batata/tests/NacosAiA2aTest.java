@@ -109,7 +109,15 @@ public class NacosAiA2aTest {
                 names.add(name);
                 aiService.a2a().registerAgent(buildAgentCard(name, "1.0.0"));
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<AgentCardVersionInfo> page = aiService.a2a().listAgentCards(1, 100);
+                    return page != null && page.getPageItems() != null
+                            && page.getPageItems().size() >= 3;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<AgentCardVersionInfo> page = aiService.a2a().listAgentCards(1, 100);
             assertNotNull(page, "Agent list should not be null");
@@ -135,7 +143,15 @@ public class NacosAiA2aTest {
         try {
             aiService.a2a().registerAgent(buildAgentCard(name1, "1.0.0"));
             aiService.a2a().registerAgent(buildAgentCard(name2, "1.0.0"));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<AgentCardVersionInfo> result = aiService.a2a().searchAgentCardsByName(prefix, 1, 100);
+                    return result != null && result.getPageItems() != null
+                            && result.getPageItems().size() >= 2;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<AgentCardVersionInfo> result = aiService.a2a().searchAgentCardsByName(prefix, 1, 100);
             assertNotNull(result, "Search result should not be null");
@@ -157,7 +173,13 @@ public class NacosAiA2aTest {
 
         try {
             aiService.a2a().registerAgent(buildAgentCard(agentName, "1.0.0"));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.a2a().getAgentCard(agentName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Update with new version
             AgentCard updatedCard = buildAgentCard(agentName, "2.0.0");
@@ -183,7 +205,13 @@ public class NacosAiA2aTest {
     void testDeleteAgent() throws Exception {
         String agentName = "a2a-delete-" + UUID.randomUUID().toString().substring(0, 8);
         aiService.a2a().registerAgent(buildAgentCard(agentName, "1.0.0"));
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return aiService.a2a().getAgentCard(agentName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         boolean deleted = aiService.a2a().deleteAgent(agentName);
         assertTrue(deleted, "Agent deletion should succeed");
@@ -207,13 +235,25 @@ public class NacosAiA2aTest {
         try {
             // Register v1
             aiService.a2a().registerAgent(buildAgentCard(agentName, "1.0.0"));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.a2a().getAgentCard(agentName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Update to v2
             AgentCard v2 = buildAgentCard(agentName, "2.0.0");
             v2.setDescription("Version 2");
             aiService.a2a().updateAgentCard(v2, "", true);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.a2a().listAllVersionOfAgent(agentName).size() >= 2;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // List all versions
             List<AgentVersionDetail> versions = aiService.a2a().listAllVersionOfAgent(agentName);

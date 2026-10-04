@@ -58,7 +58,13 @@ public class NacosAiPromptTest {
             boolean published = aiService.prompt().publishPrompt(
                     promptKey, version, template, "Initial publish");
             assertTrue(published, "Prompt publish should succeed");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.prompt().getPromptMeta(promptKey) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Get prompt metadata
             PromptMetaInfo meta = aiService.prompt().getPromptMeta(promptKey);
@@ -87,12 +93,26 @@ public class NacosAiPromptTest {
             // Publish v1
             aiService.prompt().publishPrompt(promptKey, "1.0.0",
                     "V1: Hello, {{name}}!", "Version 1");
-            Thread.sleep(300);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.prompt().getPromptMeta(promptKey) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Publish v2
             aiService.prompt().publishPrompt(promptKey, "2.0.0",
                     "V2: Greetings, {{name}}! {{greeting}}", "Version 2");
-            Thread.sleep(300);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<PromptVersionSummary> versions = aiService.prompt().listPromptVersions(promptKey, 1, 100);
+                    return versions != null && versions.getPageItems() != null
+                            && versions.getPageItems().size() >= 2;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // List versions
             Page<PromptVersionSummary> versions = aiService.prompt().listPromptVersions(
@@ -132,7 +152,15 @@ public class NacosAiPromptTest {
                 aiService.prompt().publishPrompt(key, "1.0.0",
                         "Template " + i + ": {{var}}", "Publish " + i);
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<PromptMetaSummary> page = aiService.prompt().listPrompts(prefix, 1, 100);
+                    return page != null && page.getPageItems() != null
+                            && page.getPageItems().size() >= 3;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<PromptMetaSummary> page = aiService.prompt().listPrompts(
                     prefix, 1, 100);
@@ -158,10 +186,24 @@ public class NacosAiPromptTest {
             // Publish two versions
             aiService.prompt().publishPrompt(promptKey, "1.0.0",
                     "Stable: {{msg}}", "Stable version");
-            Thread.sleep(300);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.prompt().getPromptMeta(promptKey) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
             aiService.prompt().publishPrompt(promptKey, "2.0.0",
                     "Beta: {{msg}}", "Beta version");
-            Thread.sleep(300);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<PromptVersionSummary> versions = aiService.prompt().listPromptVersions(promptKey, 1, 100);
+                    return versions != null && versions.getPageItems() != null
+                            && versions.getPageItems().size() >= 2;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Bind label "stable" to v1
             boolean bound = aiService.prompt().bindLabel(
@@ -197,7 +239,13 @@ public class NacosAiPromptTest {
                     DEFAULT_NAMESPACE, promptKey, "1.0.0",
                     "Hello {{name}}", "Initial",
                     "Original description", "tag1,tag2");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.prompt().getPromptMeta(promptKey) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Update metadata
             boolean updated = aiService.prompt().updatePromptMetadata(
@@ -224,7 +272,13 @@ public class NacosAiPromptTest {
 
         aiService.prompt().publishPrompt(promptKey, "1.0.0",
                 "Delete me: {{var}}", "To be deleted");
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return aiService.prompt().getPromptMeta(promptKey) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         boolean deleted = aiService.prompt().deletePrompt(promptKey);
         assertTrue(deleted, "Prompt deletion should succeed");
@@ -256,7 +310,13 @@ public class NacosAiPromptTest {
                     "With variables", "Prompt with variable definitions",
                     null, variables);
             assertTrue(published, "Prompt publish with variables should succeed");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.prompt().getPromptMeta(promptKey) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             PromptVersionInfo detail = aiService.prompt().queryPromptDetail(
                     DEFAULT_NAMESPACE, promptKey, "1.0.0", null);

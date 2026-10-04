@@ -39,7 +39,10 @@ func TestCatalogFilterByTag(t *testing.T) {
 		defer agent.ServiceDeregister(serviceName + "-" + string(rune('a'+i)))
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := catalog.Service(serviceName, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	// Filter by tag
 	services, _, err := catalog.Service(serviceName, "primary", nil)
@@ -83,7 +86,10 @@ func TestCatalogFilterByMultipleTags(t *testing.T) {
 		defer agent.ServiceDeregister(serviceName + "-" + string(rune('a'+i)))
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := catalog.Service(serviceName, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	// Filter by v1 tag
 	v1Services, _, err := catalog.Service(serviceName, "v1", nil)
@@ -124,7 +130,10 @@ func TestCatalogFilterExpression(t *testing.T) {
 		defer agent.ServiceDeregister(serviceName + "-" + string(rune('a'+i)))
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := catalog.Service(serviceName, "", nil)
+		return err == nil && len(services) >= 3
+	}, "Should register 3 service instances")
 
 	// Filter by metadata
 	opts := &api.QueryOptions{
@@ -188,7 +197,10 @@ func TestCatalogServicePagination(t *testing.T) {
 		defer agent.ServiceDeregister(serviceName + "-" + string(rune('0'+i)))
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		services, _, err := catalog.Service(serviceName, "", nil)
+		return err == nil && len(services) >= 10
+	}, "Should register 10 service instances")
 
 	// Get all services
 	allServices, _, err := catalog.Service(serviceName, "", nil)
@@ -233,7 +245,7 @@ func TestCatalogConsistentRead(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Consistent read
 	opts := &api.QueryOptions{
@@ -267,7 +279,7 @@ func TestCatalogStaleRead(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Stale read
 	opts := &api.QueryOptions{
@@ -312,7 +324,7 @@ func TestCatalogNodeServicesDetailed(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get services on node
 	nodeServices, _, err := catalog.Node(nodeName, nil)
@@ -408,7 +420,7 @@ func TestCatalogConnectServices(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 	defer agent.ServiceDeregister(serviceName + "-sidecar-proxy")
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get Connect services
 	services, _, err := catalog.Connect(serviceName, "", nil)
@@ -480,7 +492,7 @@ func TestCatalogDeregister(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Verify registration
 	services, _, err := catalog.Service(serviceName, "", nil)
@@ -489,7 +501,10 @@ func TestCatalogDeregister(t *testing.T) {
 
 	// Deregister
 	agent.ServiceDeregister(serviceName)
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service deregistered", 10*time.Second, func() bool {
+		svcs, _, err := catalog.Service(serviceName, "", nil)
+		return err == nil && len(svcs) == 0
+	}, "Service should be deregistered")
 
 	// Verify deregistration
 	services, _, err = catalog.Service(serviceName, "", nil)
@@ -528,7 +543,10 @@ func TestCatalogHealthyServices(t *testing.T) {
 	// Pass the check
 	agent.PassTTL("service:"+serviceName, "healthy")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "service registered with health", 10*time.Second, func() bool {
+		entries, _, err := health.Service(serviceName, "", false, nil)
+		return err == nil && len(entries) >= 1
+	}, "Service should be registered with health")
 
 	// Get healthy services via health endpoint
 	services, _, err := health.Service(serviceName, "", true, nil)
@@ -579,7 +597,10 @@ func TestCatalogServiceWithHealth(t *testing.T) {
 		}
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered with health", 10*time.Second, func() bool {
+		entries, _, err := health.Service(serviceName, "", false, nil)
+		return err == nil && len(entries) >= 2
+	}, "Should register 2 service instances")
 
 	// Get all with health
 	all, _, _ := health.Service(serviceName, "", false, nil)

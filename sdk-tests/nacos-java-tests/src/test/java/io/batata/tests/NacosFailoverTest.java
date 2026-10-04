@@ -79,6 +79,16 @@ public class NacosFailoverTest {
         }
     }
 
+    private static void waitForConfigEquals(String dataId, String group, String expected) {
+        TestSupport.waitFor(() -> {
+            try {
+                return expected.equals(configService.getConfig(dataId, group, 1000));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
+    }
+
     // ==================== Config Cache Tests ====================
 
     /**
@@ -94,7 +104,7 @@ public class NacosFailoverTest {
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Config should be published");
 
-        Thread.sleep(1000);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, content);
 
         // First fetch - should cache
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -118,7 +128,7 @@ public class NacosFailoverTest {
         String content = "snapshot.test=value";
 
         configService.publishConfig(dataId, DEFAULT_GROUP, content);
-        Thread.sleep(1000);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, content);
 
         // Fetch to trigger snapshot
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -140,7 +150,7 @@ public class NacosFailoverTest {
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, content);
 
         // Verify snapshot by re-fetching
         String reFetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -173,7 +183,15 @@ public class NacosFailoverTest {
             }
         });
 
-        Thread.sleep(500);
+        // Ensure client is connected/subscribed before publishing
+        TestSupport.waitFor(() -> {
+            try {
+                configService.getConfig(dataId, DEFAULT_GROUP, 1000);
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 5_000);
 
         // Publish config
         String content = "listener.cache=test";
@@ -217,7 +235,7 @@ public class NacosFailoverTest {
         String content = "md5.test=value";
 
         configService.publishConfig(dataId, DEFAULT_GROUP, content);
-        Thread.sleep(500);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, content);
 
         // Fetch multiple times - should get consistent results
         String fetch1 = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -255,7 +273,7 @@ public class NacosFailoverTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // First query - should cache
         List<Instance> instances1 = namingService.getAllInstances(serviceName);
@@ -293,7 +311,7 @@ public class NacosFailoverTest {
         instance.setMetadata(Map.of("version", "1.0.0"));
         namingService.registerInstance(serviceName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Query to populate cache
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -305,7 +323,15 @@ public class NacosFailoverTest {
         instance.setMetadata(Map.of("version", "2.0.0"));
         namingService.registerInstance(serviceName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> i.getIp().equals("192.168.201.1")
+                                && "2.0.0".equals(i.getMetadata().get("version")));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Query again with subscribe=false to bypass local cache
         instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -338,7 +364,15 @@ public class NacosFailoverTest {
             }
         });
 
-        Thread.sleep(500);
+        // Ensure subscription is established before registering
+        TestSupport.waitFor(() -> {
+            try {
+                namingService.getAllInstances(serviceName);
+                return true;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 5_000);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.202.1", 8080);
@@ -370,7 +404,7 @@ public class NacosFailoverTest {
 
         // Register instance to create cache
         namingService.registerInstance(serviceName, "192.168.203.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Query to populate cache
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -397,7 +431,7 @@ public class NacosFailoverTest {
         // Publish and fetch to create cache
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
         assertTrue(published, "Config should be published for fallback test");
-        Thread.sleep(1000);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, content);
 
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(content, fetched, "Should fetch the published fallback content");
@@ -424,7 +458,7 @@ public class NacosFailoverTest {
             namingService.registerInstance(serviceName, "192.168.204." + (i + 1), 8080);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Query to populate cache
         List<Instance> initial = namingService.getAllInstances(serviceName);
@@ -432,7 +466,7 @@ public class NacosFailoverTest {
 
         // Add more instances
         namingService.registerInstance(serviceName, "192.168.204.3", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Query again - should get updated list
         List<Instance> updated = namingService.getAllInstances(serviceName);
@@ -464,13 +498,13 @@ public class NacosFailoverTest {
         // Create config cache
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, configContent);
         assertTrue(published, "Config should be published for directory test");
-        Thread.sleep(500);
+        waitForConfigEquals(dataId, DEFAULT_GROUP, configContent);
         String fetchedConfig = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(configContent, fetchedConfig, "Should fetch config for cache creation");
 
         // Create naming cache
         namingService.registerInstance(serviceName, "192.168.205.1", 8080);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty(), "Should have instances for cache creation");
 
@@ -498,7 +532,7 @@ public class NacosFailoverTest {
             namingService.registerInstance(serviceName, "192.168.206." + (i + 1), 8080);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 5);
 
         // Concurrent queries
         int threadCount = 10;

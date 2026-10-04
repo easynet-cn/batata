@@ -70,7 +70,7 @@ public class NacosInstanceSelectionTest {
         unhealthy.setWeight(1.0);
         namingService.registerInstance(serviceName, unhealthy);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // selectInstances should return only healthy by default
         List<Instance> instances = namingService.selectInstances(serviceName, true);
@@ -100,7 +100,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, groupName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, groupName, 1);
 
         // Query with full name
         List<Instance> instances = namingService.selectInstances(serviceName, groupName, true);
@@ -125,7 +125,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Query without subscription (subscribe=false)
         List<Instance> instances = namingService.selectInstances(serviceName, true, false);
@@ -160,7 +160,7 @@ public class NacosInstanceSelectionTest {
         instanceB.setHealthy(true);
         namingService.registerInstance(serviceName, instanceB);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Query only cluster-A
         List<String> clusters = Arrays.asList("cluster-A");
@@ -197,7 +197,7 @@ public class NacosInstanceSelectionTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Query clusters A and B
         List<String> clusters = Arrays.asList("cluster-A", "cluster-B");
@@ -230,7 +230,7 @@ public class NacosInstanceSelectionTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, unhealthy);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Query all instances (healthy=false means include all)
         List<Instance> allInstances = namingService.selectInstances(serviceName, false);
@@ -265,7 +265,7 @@ public class NacosInstanceSelectionTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Select one healthy instance
         Instance selected = namingService.selectOneHealthyInstance(serviceName);
@@ -293,7 +293,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, groupName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, groupName, 1);
 
         // Select from specific group
         Instance selected = namingService.selectOneHealthyInstance(serviceName, groupName);
@@ -317,7 +317,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Select without subscription
         Instance selected = namingService.selectOneHealthyInstance(serviceName, false);
@@ -351,7 +351,7 @@ public class NacosInstanceSelectionTest {
         instanceB.setHealthy(true);
         namingService.registerInstance(serviceName, instanceB);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select from cluster-A only
         List<String> clusters = Arrays.asList("cluster-A");
@@ -387,7 +387,7 @@ public class NacosInstanceSelectionTest {
         lowWeight.setWeight(1.0);
         namingService.registerInstance(serviceName, lowWeight);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select multiple times and check distribution
         Map<String, Integer> selectionCount = new HashMap<>();
@@ -426,7 +426,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, groupName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, groupName, 1);
 
         // Query with all parameters
         List<String> clusters = Arrays.asList("production");
@@ -453,7 +453,7 @@ public class NacosInstanceSelectionTest {
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, groupName, instance);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, groupName, 1);
 
         // Select with all parameters
         List<String> clusters = Arrays.asList("default");
@@ -491,7 +491,7 @@ public class NacosInstanceSelectionTest {
         instC.setClusterName("cluster-Z");
         namingService.registerInstance(serviceName, instC);
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Empty cluster list should return ALL instances
         List<Instance> all = namingService.selectInstances(serviceName, new ArrayList<>(), true, false);
@@ -541,7 +541,7 @@ public class NacosInstanceSelectionTest {
         instC.setClusterName("gamma");
         namingService.registerInstance(serviceName, instC);
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Query with multiple clusters (alpha + gamma) should return their union
         List<String> clusters = Arrays.asList("alpha", "gamma");
@@ -587,7 +587,7 @@ public class NacosInstanceSelectionTest {
         instExplicit.setClusterName("custom-cluster");
         namingService.registerInstance(serviceName, instExplicit);
 
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Query for "DEFAULT" cluster should return the instance without explicit cluster
         List<String> defaultCluster = Arrays.asList("DEFAULT");

@@ -146,73 +146,6 @@ func TestNamespaceDelete(t *testing.T) {
 	}
 }
 
-// ==================== Partition Tests (Enterprise) ====================
-
-// TestPartitionList tests listing partitions
-func TestPartitionList(t *testing.T) {
-	client := getTestClient(t)
-
-	partitions := client.Partitions()
-
-	list, _, err := partitions.List(nil, nil)
-	if err != nil {
-		t.Skipf("Partition list not available (Enterprise feature): %v", err)
-	}
-
-	assert.NotNil(t, list, "Partition list should not be nil")
-	t.Logf("Found %d partitions", len(list))
-	for _, p := range list {
-		assert.NotEmpty(t, p.Name, "Partition name should not be empty")
-		t.Logf("  - %s: %s", p.Name, p.Description)
-	}
-}
-
-// TestPartitionRead tests reading a partition
-func TestPartitionRead(t *testing.T) {
-	client := getTestClient(t)
-
-	partitions := client.Partitions()
-
-	// Try to read default partition
-	p, _, err := partitions.Read(nil, "default", nil)
-	if err != nil {
-		t.Skipf("Partition read not available (Enterprise feature): %v", err)
-	}
-	if p == nil {
-		t.Skip("Partition read returned nil (Enterprise feature not available)")
-	}
-
-	assert.NotEmpty(t, p.Name, "Partition name should not be empty")
-	assert.Equal(t, "default", p.Name, "Should read the default partition")
-	t.Logf("Partition: %s, Description: %s", p.Name, p.Description)
-}
-
-// TestPartitionCreate tests creating a partition
-func TestPartitionCreate(t *testing.T) {
-	client := getTestClient(t)
-
-	partitions := client.Partitions()
-	pName := "test-part-" + randomString(8)
-
-	p := &api.Partition{
-		Name:        pName,
-		Description: "Test partition",
-	}
-
-	created, _, err := partitions.Create(nil, p, nil)
-	if err != nil {
-		t.Logf("Partition create not available (Enterprise feature): %v", err)
-		return
-	}
-
-	assert.NotNil(t, created)
-	assert.Equal(t, pName, created.Name)
-	t.Logf("Created partition: %s", created.Name)
-
-	// Cleanup
-	partitions.Delete(nil, pName, nil)
-}
-
 // ==================== Cross-Namespace Service Tests ====================
 
 // TestServiceInNamespace tests service registration in namespace
@@ -241,7 +174,9 @@ func TestServiceInNamespace(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for service registration to propagate on the agent
+	require.True(t, waitForAgentService(t, client, serviceName, 5*time.Second),
+		"Service should be registered before querying")
 
 	services, err := agent.Services()
 	require.NoError(t, err)

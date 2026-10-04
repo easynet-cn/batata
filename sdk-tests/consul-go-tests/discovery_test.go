@@ -28,7 +28,7 @@ func TestDiscoveryBasicLookup(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Basic lookup via Health API (common discovery pattern)
 	entries, _, err := client.Health().Service(serviceName, "", false, nil)
@@ -77,7 +77,10 @@ func TestDiscoveryWithTags(t *testing.T) {
 		defer client.Agent().ServiceDeregister(svc.id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 3
+	}, "Should register 3 service instances")
 
 	// Discover by tag "primary"
 	primaryEntries, _, err := client.Health().Service(serviceName, "primary", false, nil)
@@ -136,7 +139,10 @@ func TestDiscoveryHealthyOnly(t *testing.T) {
 	client.Agent().PassTTL("service:"+healthyID, "healthy")
 	client.Agent().FailTTL("service:"+unhealthyID, "unhealthy")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered with health", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 2
+	}, "Should register 2 service instances")
 
 	// Discover all services (passing=false)
 	allEntries, _, err := client.Health().Service(serviceName, "", false, nil)
@@ -174,7 +180,7 @@ func TestDiscoveryWithDatacenter(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get available datacenters
 	datacenters, err := client.Catalog().Datacenters()
@@ -222,7 +228,10 @@ func TestDiscoveryNearestNode(t *testing.T) {
 		defer client.Agent().ServiceDeregister(id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 3
+	}, "Should register 3 service instances")
 
 	// Discover with near parameter (_agent = nearest to querying agent)
 	opts := &api.QueryOptions{
@@ -275,7 +284,10 @@ func TestDiscoveryWithFilter(t *testing.T) {
 		defer client.Agent().ServiceDeregister(svc.id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 3
+	}, "Should register 3 service instances")
 
 	// Filter by metadata using filter expression
 	opts := &api.QueryOptions{
@@ -324,7 +336,10 @@ func TestDiscoveryPagination(t *testing.T) {
 		defer client.Agent().ServiceDeregister(id)
 	}
 
-	time.Sleep(1 * time.Second)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == serviceCount
+	}, "Should register %d service instances", serviceCount)
 
 	// Discover all services
 	allEntries, meta, err := client.Health().Service(serviceName, "", false, nil)
@@ -351,7 +366,7 @@ func TestDiscoveryConsistencyModes(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Default consistency (leader read)
 	defaultEntries, defaultMeta, err := client.Health().Service(serviceName, "", false, nil)
@@ -384,7 +399,7 @@ func TestDiscoveryStaleReads(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Stale read (may read from any server, eventually consistent)
 	staleOpts := &api.QueryOptions{
@@ -421,7 +436,7 @@ func TestDiscoveryCacheBehavior(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// First query to populate cache
 	entries1, meta1, err := client.Health().Service(serviceName, "", false, nil)
@@ -457,7 +472,7 @@ func TestDiscoveryBlocking(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Get initial state
 	initialEntries, initialMeta, err := client.Health().Service(serviceName, "", false, nil)
@@ -557,7 +572,10 @@ func TestDiscoveryServiceMeta(t *testing.T) {
 		defer client.Agent().ServiceDeregister(svc.id)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 3
+	}, "Should register 3 service instances")
 
 	// Discover all and verify metadata
 	entries, _, err := client.Health().Service(serviceName, "", false, nil)
@@ -600,7 +618,7 @@ func TestDiscoveryNodeMeta(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(serviceName)
 
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, serviceName, 10*time.Second), "service should appear in catalog")
 
 	// Discover services and examine node metadata
 	entries, _, err := client.Health().Service(serviceName, "", false, nil)
@@ -662,7 +680,15 @@ func TestDiscoveryMultipleServices(t *testing.T) {
 		defer client.Agent().ServiceDeregister(name)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "all services registered", 10*time.Second, func() bool {
+		for _, name := range serviceNames {
+			entries, _, err := client.Health().Service(name, "", false, nil)
+			if err != nil || len(entries) == 0 {
+				return false
+			}
+		}
+		return true
+	}, "Should register all services")
 
 	// Discover all services concurrently
 	var wg sync.WaitGroup
@@ -745,7 +771,10 @@ func TestDiscoveryFailover(t *testing.T) {
 	client.Agent().PassTTL("service:"+primaryID, "healthy")
 	client.Agent().PassTTL("service:"+backupID, "healthy")
 
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "services registered with health", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", false, nil)
+		return err == nil && len(entries) == 2
+	}, "Should register 2 service instances")
 
 	// Discover healthy services - both should be available
 	healthyEntries, _, err := client.Health().Service(serviceName, "", true, nil)
@@ -755,7 +784,10 @@ func TestDiscoveryFailover(t *testing.T) {
 
 	// Simulate primary failure
 	client.Agent().FailTTL("service:"+primaryID, "simulated failure")
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "primary health failed", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", true, nil)
+		return err == nil && len(entries) == 1
+	}, "Only backup should be healthy after primary failure")
 
 	// Discover again - only backup should be healthy
 	failoverEntries, _, err := client.Health().Service(serviceName, "", true, nil)
@@ -774,7 +806,10 @@ func TestDiscoveryFailover(t *testing.T) {
 
 	// Recover primary
 	client.Agent().PassTTL("service:"+primaryID, "recovered")
-	time.Sleep(500 * time.Millisecond)
+	requireEventually(t, "primary recovered", 10*time.Second, func() bool {
+		entries, _, err := client.Health().Service(serviceName, "", true, nil)
+		return err == nil && len(entries) == 2
+	}, "Both services should be healthy after recovery")
 
 	// Both should be healthy again
 	recoveredEntries, _, err := client.Health().Service(serviceName, "", true, nil)

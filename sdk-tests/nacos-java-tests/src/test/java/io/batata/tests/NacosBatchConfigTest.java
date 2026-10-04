@@ -66,7 +66,9 @@ public class NacosBatchConfigTest {
             assertTrue(success, "Should publish config " + dataId);
         }
 
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Verify all configs exist
         for (int i = 0; i < configCount; i++) {
@@ -100,7 +102,9 @@ public class NacosBatchConfigTest {
             assertTrue(success, "Should publish to group " + group);
         }
 
-        Thread.sleep(500);
+        for (String group : groups) {
+            TestSupport.waitForConfigPresent(configService, dataId, group);
+        }
 
         // Verify each group has its own config
         for (String group : groups) {
@@ -181,7 +185,9 @@ public class NacosBatchConfigTest {
         for (int i = 0; i < configCount; i++) {
             configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "data=" + i);
         }
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Batch get
         long startTime = System.currentTimeMillis();
@@ -217,7 +223,9 @@ public class NacosBatchConfigTest {
         for (int i = 0; i < configCount; i++) {
             configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "value=" + i);
         }
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Concurrent get
         int threadCount = 10;
@@ -267,7 +275,9 @@ public class NacosBatchConfigTest {
         for (int i = 0; i < configCount; i++) {
             configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "temp=" + i);
         }
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Batch delete
         int deleted = 0;
@@ -280,7 +290,9 @@ public class NacosBatchConfigTest {
         System.out.println("Batch deleted " + deleted + " configs");
 
         // Verify deletion
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigDeleted(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
         for (int i = 0; i < configCount; i++) {
             String content = configService.getConfig(prefix + "-" + i, DEFAULT_GROUP, 3000);
             assertNull(content, "Config should be deleted");
@@ -298,7 +310,8 @@ public class NacosBatchConfigTest {
         // Only create some configs
         configService.publishConfig(prefix + "-0", DEFAULT_GROUP, "exists");
         configService.publishConfig(prefix + "-2", DEFAULT_GROUP, "exists");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, prefix + "-0", DEFAULT_GROUP);
+        TestSupport.waitForConfigPresent(configService, prefix + "-2", DEFAULT_GROUP);
 
         // Try to delete all (some don't exist)
         int successCount = 0;
@@ -327,7 +340,9 @@ public class NacosBatchConfigTest {
             String dataId = prefix + "-" + i;
             configService.publishConfig(dataId, customGroup, "custom=" + i);
         }
-        Thread.sleep(500);
+        for (int i = 0; i < 3; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, customGroup);
+        }
 
         // Verify in custom group
         for (int i = 0; i < 3; i++) {
@@ -364,7 +379,9 @@ public class NacosBatchConfigTest {
             expected.put(groups[i], content);
             configService.publishConfig(dataId, groups[i], content);
         }
-        Thread.sleep(500);
+        for (String group : groups) {
+            TestSupport.waitForConfigPresent(configService, dataId, group);
+        }
 
         // Verify each group has its own content
         for (String group : groups) {
@@ -428,7 +445,9 @@ public class NacosBatchConfigTest {
             boolean success = configService.publishConfig(dataId, DEFAULT_GROUP, content);
             assertTrue(success, "Should publish large config");
         }
-        Thread.sleep(1000);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Verify
         for (int i = 0; i < configCount; i++) {
@@ -460,14 +479,18 @@ public class NacosBatchConfigTest {
         for (int i = 0; i < configCount; i++) {
             configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "version=1");
         }
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigPresent(configService, prefix + "-" + i, DEFAULT_GROUP);
+        }
 
         // Update all
         for (int i = 0; i < configCount; i++) {
             boolean success = configService.publishConfig(prefix + "-" + i, DEFAULT_GROUP, "version=2");
             assertTrue(success);
         }
-        Thread.sleep(500);
+        for (int i = 0; i < configCount; i++) {
+            TestSupport.waitForConfigContent(configService, prefix + "-" + i, DEFAULT_GROUP, "version=2");
+        }
 
         // Verify updates
         for (int i = 0; i < configCount; i++) {
@@ -497,9 +520,8 @@ public class NacosBatchConfigTest {
             configService.publishConfig(dataId, DEFAULT_GROUP, "iteration=" + i);
         }
 
-        Thread.sleep(1000);
-
         // Get final value
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, "iteration=" + (updateCount - 1));
         String content = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(content);
         System.out.println("Final content after rapid updates: " + content);

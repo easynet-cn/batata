@@ -49,6 +49,45 @@ public class NacosNamingServiceTest {
         }
     }
 
+    // ==================== Shared polling helpers (replace fixed sleeps) ====================
+
+    /**
+     * Poll until the service reports exactly {@code expected} instances, or 10s elapse.
+     * Reduces flakiness compared to a fixed Thread.sleep on slow CI machines.
+     */
+    private static List<Instance> waitForInstances(String serviceName, int expected) throws NacosException {
+        long deadline = System.currentTimeMillis() + 10_000;
+        List<Instance> instances = namingService.getAllInstances(serviceName);
+        while (instances.size() != expected && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            instances = namingService.getAllInstances(serviceName);
+        }
+        return instances;
+    }
+
+    /**
+     * Poll until at least {@code expectedMin} services are listed, or 10s elapse.
+     */
+    private static boolean waitForServiceCount(int expectedMin) throws NacosException {
+        long deadline = System.currentTimeMillis() + 10_000;
+        long count = namingService.getServicesOfServer(1, 100).getCount();
+        while (count < expectedMin && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            count = namingService.getServicesOfServer(1, 100).getCount();
+        }
+        return count >= expectedMin;
+    }
+
     // ==================== P0: Critical Tests ====================
 
     /**
@@ -64,11 +103,8 @@ public class NacosNamingServiceTest {
         // Register
         namingService.registerInstance(serviceName, ip, port);
 
-        // Wait for registration to propagate
-        Thread.sleep(1000);
-
-        // Verify
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        // Wait for registration to propagate (poll up to 10s)
+        List<Instance> instances = waitForInstances(serviceName, 1);
         assertFalse(instances.isEmpty(), "Should have at least one instance");
 
         Instance instance = instances.get(0);
@@ -91,18 +127,16 @@ public class NacosNamingServiceTest {
 
         // Register
         namingService.registerInstance(serviceName, ip, port);
-        Thread.sleep(1000);
 
         // Verify registered
-        List<Instance> beforeDeregister = namingService.getAllInstances(serviceName);
+        List<Instance> beforeDeregister = waitForInstances(serviceName, 1);
         assertFalse(beforeDeregister.isEmpty());
 
         // Deregister
         namingService.deregisterInstance(serviceName, ip, port);
-        Thread.sleep(1000);
 
-        // Verify deregistered
-        List<Instance> afterDeregister = namingService.getAllInstances(serviceName);
+        // Verify deregistered (poll until empty)
+        List<Instance> afterDeregister = waitForInstances(serviceName, 0);
         assertTrue(afterDeregister.isEmpty(), "Should have no instances after deregister");
     }
 
@@ -118,10 +152,9 @@ public class NacosNamingServiceTest {
         namingService.registerInstance(serviceName, "192.168.1.1", 8080);
         namingService.registerInstance(serviceName, "192.168.1.2", 8080);
         namingService.registerInstance(serviceName, "192.168.1.3", 8080);
-        Thread.sleep(1500);
 
-        // Get all
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        // Get all (poll up to 10s)
+        List<Instance> instances = waitForInstances(serviceName, 3);
         assertEquals(3, instances.size(), "Should have 3 instances");
 
         Set<String> ips = new HashSet<>();
@@ -154,7 +187,8 @@ public class NacosNamingServiceTest {
         healthyInstance.setWeight(1.0);
         namingService.registerInstance(serviceName, healthyInstance);
 
-        Thread.sleep(1000);
+        // Wait for registration (poll up to 10s)
+        waitForInstances(serviceName, 1);
 
         // Select healthy only
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, true);
@@ -179,9 +213,11 @@ public class NacosNamingServiceTest {
         // Register multiple instances
         namingService.registerInstance(serviceName, "192.168.1.20", 8080);
         namingService.registerInstance(serviceName, "192.168.1.21", 8080);
-        Thread.sleep(1000);
 
-        // Select one multiple times - should load balance
+        // Wait for both instances to be registered (poll up to 10s)
+        waitForInstances(serviceName, 2);
+
+        // Select one multiple times - should load balance across both instances
         Set<String> selectedIps = new HashSet<>();
         for (int i = 0; i < 100; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName);
@@ -189,8 +225,11 @@ public class NacosNamingServiceTest {
             selectedIps.add(selected.getIp());
         }
 
-        // Both instances should be selected at least once (probabilistic)
-        assertTrue(selectedIps.size() >= 1, "Should select at least one unique instance");
+        // Both instances should be selected at least once (verifies real load balancing)
+        assertTrue(selectedIps.contains("192.168.1.20"),
+                "Instance 192.168.1.20 should be selected at least once, got: " + selectedIps);
+        assertTrue(selectedIps.contains("192.168.1.21"),
+                "Instance 192.168.1.21 should be selected at least once, got: " + selectedIps);
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.1.20", 8080);
@@ -217,7 +256,7 @@ public class NacosNamingServiceTest {
             }
         };
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register triggers notification
         namingService.registerInstance(serviceName, "192.168.1.30", 8080);
@@ -250,9 +289,9 @@ public class NacosNamingServiceTest {
 
         // Subscribe then unsubscribe
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
         namingService.unsubscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForUnsubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register should NOT trigger notification
         namingService.registerInstance(serviceName, "192.168.1.40", 8080);
@@ -286,10 +325,9 @@ public class NacosNamingServiceTest {
 
         // Register with metadata
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
 
-        // Get and verify metadata
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        // Get and verify metadata (poll up to 10s)
+        List<Instance> instances = waitForInstances(serviceName, 1);
         assertFalse(instances.isEmpty());
 
         Instance retrieved = instances.get(0);
@@ -322,7 +360,8 @@ public class NacosNamingServiceTest {
         heavy.setWeight(0.9);
         namingService.registerInstance(serviceName, heavy);
 
-        Thread.sleep(1000);
+        // Wait for both instances (poll up to 10s)
+        waitForInstances(serviceName, 2);
 
         // Select many times - heavy should be selected more often
         int lightCount = 0;
@@ -360,9 +399,7 @@ public class NacosNamingServiceTest {
         ephemeral.setEphemeral(true);
         namingService.registerInstance(serviceName, ephemeral);
 
-        Thread.sleep(1000);
-
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = waitForInstances(serviceName, 1);
         assertFalse(instances.isEmpty());
         assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
 
@@ -391,13 +428,9 @@ public class NacosNamingServiceTest {
         cluster2.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, cluster2);
 
-        Thread.sleep(2000);
-
-        // Verify all instances are registered first
-        List<Instance> allInstances = namingService.getAllInstances(serviceName);
+        // Verify all instances are registered first (poll up to 10s)
+        List<Instance> allInstances = waitForInstances(serviceName, 2);
         assertEquals(2, allInstances.size(), "Should have 2 total instances");
-
-        Thread.sleep(500);
 
         // Get from specific cluster using direct query (subscribe=false)
         List<Instance> clusterA = namingService.getAllInstances(serviceName,
@@ -428,9 +461,9 @@ public class NacosNamingServiceTest {
             String serviceName = prefix + "-service-" + i;
             namingService.registerInstance(serviceName, "192.168.1." + (90 + i), 8080);
         }
-        Thread.sleep(2000);
 
-        // List services with pagination
+        // List services with pagination (poll until at least 5 are listed)
+        assertTrue(waitForServiceCount(5), "Should have at least 5 services");
         com.alibaba.nacos.api.naming.pojo.ListView<String> listView =
                 namingService.getServicesOfServer(1, 10);
 

@@ -102,7 +102,16 @@ public class NacosAiMcpTest {
                         buildServerSpec(name, "1.0.0", "List test " + i),
                         null, buildDirectEndpoint("localhost", 3000 + i));
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<McpServerBasicInfo> page = aiService.mcp().listMcpServer(1, 100);
+                    return page != null && page.getPageItems() != null
+                            && names.stream().allMatch(name -> page.getPageItems().stream()
+                                    .anyMatch(i -> name.equals(i.getName())));
+                } catch (Exception e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<McpServerBasicInfo> page = aiService.mcp().listMcpServer(1, 100);
             assertNotNull(page, "MCP server list should not be null");
@@ -133,7 +142,15 @@ public class NacosAiMcpTest {
             aiService.mcp().createRemoteMcpServer(name2,
                     buildServerSpec(name2, "1.0.0", "Search beta"),
                     null, buildDirectEndpoint("localhost", 3001));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<McpServerBasicInfo> result = aiService.mcp().searchMcpServer(prefix, 1, 100);
+                    return result != null && result.getPageItems() != null
+                            && result.getPageItems().size() >= 2;
+                } catch (Exception e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<McpServerBasicInfo> result = aiService.mcp().searchMcpServer(prefix, 1, 100);
             assertNotNull(result, "Search result should not be null");
@@ -157,7 +174,13 @@ public class NacosAiMcpTest {
             aiService.mcp().createRemoteMcpServer(mcpName,
                     buildServerSpec(mcpName, "1.0.0", "Original description"),
                     null, buildDirectEndpoint("localhost", 3000));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.mcp().getMcpServerDetail(mcpName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             boolean updated = aiService.mcp().updateMcpServer(mcpName, true,
                     buildServerSpec(mcpName, "2.0.0", "Updated description"),
@@ -184,7 +207,13 @@ public class NacosAiMcpTest {
         aiService.mcp().createRemoteMcpServer(mcpName,
                 buildServerSpec(mcpName, "1.0.0", "To be deleted"),
                 null, buildDirectEndpoint("localhost", 3000));
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return aiService.mcp().getMcpServerDetail(mcpName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         boolean deleted = aiService.mcp().deleteMcpServer(mcpName);
         assertTrue(deleted, "MCP server deletion should succeed");
@@ -224,7 +253,13 @@ public class NacosAiMcpTest {
             aiService.mcp().createRemoteMcpServer(mcpName,
                     buildServerSpec(mcpName, "1.0.0", "Version test"),
                     null, buildDirectEndpoint("localhost", 3000));
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.mcp().getMcpServerDetail(mcpName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Get by specific version
             McpServerDetailInfo detail = aiService.mcp().getMcpServerDetail(mcpName, "1.0.0");

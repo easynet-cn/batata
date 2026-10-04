@@ -68,7 +68,7 @@ public class NacosHealthCheckTest {
         instance.setWeight(1.0);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have registered instance");
@@ -98,7 +98,7 @@ public class NacosHealthCheckTest {
         instance.setWeight(1.0);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Get all instances including unhealthy
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
@@ -133,7 +133,7 @@ public class NacosHealthCheckTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select only healthy
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
@@ -159,17 +159,16 @@ public class NacosHealthCheckTest {
     void testSelectAllInstances() throws NacosException, InterruptedException {
         String serviceName = "select-all-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register mixed health instances with delay between each to allow server processing
+        // Register mixed health instances
         for (int i = 0; i < 3; i++) {
             Instance instance = new Instance();
             instance.setIp("192.168.10." + (20 + i));
             instance.setPort(8080);
             instance.setHealthy(i % 2 == 0); // Alternate health status
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-            Thread.sleep(3000);
         }
 
-        Thread.sleep(3000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Use getAllInstances with subscribe=false to bypass cache and get all instances directly
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -211,7 +210,7 @@ public class NacosHealthCheckTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have instance with TCP health check");
@@ -248,7 +247,7 @@ public class NacosHealthCheckTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have instance with HTTP health check");
@@ -297,7 +296,7 @@ public class NacosHealthCheckTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Select healthy instances
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
@@ -355,7 +354,7 @@ public class NacosHealthCheckTest {
         normal.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, normal);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select should prefer non-zero weight
         int zeroSelected = 0;
@@ -395,10 +394,9 @@ public class NacosHealthCheckTest {
         instance.setEphemeral(true);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Wait and check if instance stays healthy (heartbeat working)
-        Thread.sleep(2000);
-
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Ephemeral instance should still be registered");
         assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
@@ -424,7 +422,7 @@ public class NacosHealthCheckTest {
         instance.setEphemeral(true);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(2000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Instance should remain healthy because the gRPC connection is active
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
@@ -473,7 +471,7 @@ public class NacosHealthCheckTest {
         healthyB.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, healthyB);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Select healthy from cluster-a only
         List<Instance> clusterAHealthy = namingService.selectInstances(
@@ -515,7 +513,7 @@ public class NacosHealthCheckTest {
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         }
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Get all instances from all clusters
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);

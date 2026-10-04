@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-19
 **Server:** Batata (embedded RocksDB mode, clean start)
-**Client:** Nacos Java SDK 3.1.1
+**Client:** Nacos Java SDK 3.2.4 (pom.xml bumped 3.1.1 → 3.2.0 → 3.2.4; this report predates the bump and must be re-run)
 **JDK:** 25.0.2
 
 ## Summary

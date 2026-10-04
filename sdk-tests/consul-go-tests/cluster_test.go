@@ -83,19 +83,14 @@ func TestClusterKVWriteNode1ReadOthers(t *testing.T) {
 	_, err := c1.KV().Put(&api.KVPair{Key: key, Value: value}, nil)
 	require.NoError(t, err, "Node 1 should write KV successfully")
 
-	// Wait for replication
-	time.Sleep(2 * time.Second)
-
-	// Read from Node 2
-	pair2, _, err := c2.KV().Get(key, nil)
-	require.NoError(t, err)
-	require.NotNil(t, pair2, "Node 2 should read KV written on Node 1")
+	// Poll Node 2 until replicated (max 10s)
+	pair2 := waitForKV(t, c2, key, 10*time.Second)
+	require.NotNil(t, pair2, "Node 2 should read KV written on Node 1 within timeout")
 	assert.Equal(t, value, pair2.Value, "Node 2 value should match")
 
-	// Read from Node 3
-	pair3, _, err := c3.KV().Get(key, nil)
-	require.NoError(t, err)
-	require.NotNil(t, pair3, "Node 3 should read KV written on Node 1")
+	// Poll Node 3 until replicated
+	pair3 := waitForKV(t, c3, key, 10*time.Second)
+	require.NotNil(t, pair3, "Node 3 should read KV written on Node 1 within timeout")
 	assert.Equal(t, value, pair3.Value, "Node 3 value should match")
 
 	// Cleanup
@@ -115,13 +110,10 @@ func TestClusterKVMultiNodeWrite(t *testing.T) {
 	c2.KV().Put(&api.KVPair{Key: key2, Value: []byte("from-node2")}, nil)
 	c3.KV().Put(&api.KVPair{Key: key3, Value: []byte("from-node3")}, nil)
 
-	time.Sleep(2 * time.Second)
-
-	// Verify all keys visible from Node 2
+	// Verify all keys visible from Node 2 via polling
 	for _, key := range []string{key1, key2, key3} {
-		pair, _, err := c2.KV().Get(key, nil)
-		require.NoError(t, err)
-		require.NotNil(t, pair, "Node 2 should see key %s", key)
+		pair := waitForKV(t, c2, key, 10*time.Second)
+		require.NotNil(t, pair, "Node 2 should see key %s within timeout", key)
 	}
 
 	// Cleanup
@@ -138,24 +130,22 @@ func TestClusterKVDeleteReplication(t *testing.T) {
 
 	// Write on Node 1
 	c1.KV().Put(&api.KVPair{Key: key, Value: []byte("to-delete")}, nil)
-	time.Sleep(2 * time.Second)
 
-	// Verify on Node 3
-	pair, _, _ := c3.KV().Get(key, nil)
+	// Verify on Node 3 via polling
+	pair := waitForKV(t, c3, key, 10*time.Second)
 	require.NotNil(t, pair, "Node 3 should see KV before delete")
 
 	// Delete on Node 2
 	_, err := c2.KV().Delete(key, nil)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	// Poll Node 1 until deleted
+	assert.True(t, waitForKVAbsent(t, c1, key, 10*time.Second),
+		"Node 1 should not see deleted KV within timeout")
 
-	// Verify gone on Node 1 and Node 3
-	pair1, _, _ := c1.KV().Get(key, nil)
-	assert.Nil(t, pair1, "Node 1 should not see deleted KV")
-
-	pair3, _, _ := c3.KV().Get(key, nil)
-	assert.Nil(t, pair3, "Node 3 should not see deleted KV")
+	// Poll Node 3 until deleted
+	assert.True(t, waitForKVAbsent(t, c3, key, 10*time.Second),
+		"Node 3 should not see deleted KV within timeout")
 }
 
 // ==================== Service Registration Cross-Node Tests ====================
@@ -201,15 +191,11 @@ func TestClusterSessionReplication(t *testing.T) {
 	require.NotEmpty(t, sessionID)
 	defer c1.Session().Destroy(sessionID, nil)
 
-	time.Sleep(2 * time.Second)
-
-	// Read from Node 2
-	info, _, err := c2.Session().Info(sessionID, nil)
-	if err != nil {
-		t.Skipf("Cross-node session read not available: %v", err)
+	// Poll Node 2 until session replicates (max 10s)
+	info := waitForSession(t, c2, sessionID, 10*time.Second)
+	if info == nil {
+		t.Skip("Cross-node session read not available within timeout")
 	}
-	if info != nil {
-		assert.Equal(t, sessionID, info.ID, "Node 2 should see session from Node 1")
-		t.Logf("Session %s visible on Node 2", sessionID)
-	}
+	assert.Equal(t, sessionID, info.ID, "Node 2 should see session from Node 1")
+	t.Logf("Session %s visible on Node 2", sessionID)
 }

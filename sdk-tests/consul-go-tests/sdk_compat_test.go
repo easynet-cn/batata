@@ -276,7 +276,7 @@ func TestCompatFilterInOperator(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(svc)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, svc, 10*time.Second), "service should appear in catalog")
 
 	opts := (&api.QueryOptions{Filter: `"v1" in ServiceTags`})
 	entries, _, err := client.Health().Service(svc, "", false, opts)
@@ -301,7 +301,7 @@ func TestCompatFilterContainsOperator(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(svc)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, svc, 10*time.Second), "service should appear in catalog")
 
 	opts := &api.QueryOptions{Filter: `ServiceTags contains "staging"`}
 	entries, _, err := client.Health().Service(svc, "", false, opts)
@@ -321,7 +321,7 @@ func TestCompatFilterLogicalOperators(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(svc)
-	time.Sleep(500 * time.Millisecond)
+	require.True(t, waitForService(t, client, svc, 10*time.Second), "service should appear in catalog")
 
 	// AND: both tags present
 	opts := &api.QueryOptions{
@@ -410,7 +410,7 @@ func TestCompatMergeCentralConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer client.Agent().ServiceDeregister(svc)
-	time.Sleep(300 * time.Millisecond)
+	require.True(t, waitForService(t, client, svc, 10*time.Second), "service should appear in catalog")
 
 	// Write a proxy-defaults config entry
 	_, _, err = client.ConfigEntries().Set(&api.ProxyConfigEntry{
@@ -470,7 +470,7 @@ func TestCompatCatalogServiceConnectField(t *testing.T) {
 		ID: svc, Name: svc, Port: 8080,
 	}))
 	defer client.Agent().ServiceDeregister(svc)
-	time.Sleep(200 * time.Millisecond)
+	require.True(t, waitForService(t, client, svc, 10*time.Second), "service should appear in catalog")
 
 	services, _, err := client.Catalog().Service(svc, "", nil)
 	require.NoError(t, err)

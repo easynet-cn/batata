@@ -85,7 +85,7 @@ public class NacosConfigCasTest {
         // Publish initial config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
         assertTrue(published, "Initial publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Verify initial content
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -99,7 +99,7 @@ public class NacosConfigCasTest {
         assertTrue(casResult, "CAS publish with correct MD5 should succeed");
 
         // Verify the update took effect
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, updatedContent);
         String afterCas = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(updatedContent, afterCas, "Content should be updated after successful CAS");
 
@@ -123,7 +123,7 @@ public class NacosConfigCasTest {
         // Publish initial config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
         assertTrue(published, "Initial publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Attempt CAS update with a completely wrong MD5
         String wrongMd5 = "00000000000000000000000000000000";
@@ -154,7 +154,7 @@ public class NacosConfigCasTest {
 
         // Step 1: Publish original config
         configService.publishConfig(dataId, DEFAULT_GROUP, originalContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Step 2: "Client A" reads and computes MD5
         String clientAContent = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -164,7 +164,7 @@ public class NacosConfigCasTest {
         // Step 3: Another update happens (simulating Client B)
         boolean interveningPublished = configService.publishConfig(dataId, DEFAULT_GROUP, interveningContent);
         assertTrue(interveningPublished, "Intervening publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, interveningContent);
 
         // Verify the intervening update took effect
         String currentContent = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -197,7 +197,7 @@ public class NacosConfigCasTest {
 
         // Publish initial config
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // All threads read the same content and compute same MD5
         String currentContent = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -267,7 +267,7 @@ public class NacosConfigCasTest {
         // Publish initial JSON config
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, initialContent, "json");
         assertTrue(published, "Initial typed publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(initialContent, retrieved);
@@ -277,7 +277,7 @@ public class NacosConfigCasTest {
         boolean casResult = configService.publishConfigCas(dataId, DEFAULT_GROUP, updatedContent, md5, "json");
         assertTrue(casResult, "CAS publish with type should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, updatedContent);
         String afterCas = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(updatedContent, afterCas, "Typed content should be updated after CAS");
 
@@ -299,7 +299,7 @@ public class NacosConfigCasTest {
 
         // Publish initial
         configService.publishConfig(dataId, DEFAULT_GROUP, content);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Perform 5 sequential CAS updates
         for (int i = 1; i <= 5; i++) {
@@ -311,7 +311,7 @@ public class NacosConfigCasTest {
 
             boolean casResult = configService.publishConfigCas(dataId, DEFAULT_GROUP, newContent, currentMd5);
             assertTrue(casResult, "Sequential CAS update " + i + " should succeed");
-            Thread.sleep(300);
+            TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, newContent);
 
             content = newContent;
         }

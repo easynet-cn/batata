@@ -69,7 +69,7 @@ public class NacosWeightTest {
 
         // Register instance without setting weight
         namingService.registerInstance(serviceName, "192.168.200.1", 8080);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty(), "Should have registered instance");
@@ -101,7 +101,7 @@ public class NacosWeightTest {
         instance.setHealthy(true);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -141,7 +141,7 @@ public class NacosWeightTest {
         normalWeight.setHealthy(true);
         namingService.registerInstance(serviceName, normalWeight);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Zero weight instance should rarely or never be selected
         int zeroSelected = 0;
@@ -184,7 +184,7 @@ public class NacosWeightTest {
         maxWeight.setHealthy(true);
 
         namingService.registerInstance(serviceName, maxWeight);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -216,7 +216,7 @@ public class NacosWeightTest {
         instance.setHealthy(true);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify initial weight
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -225,7 +225,15 @@ public class NacosWeightTest {
         // Update weight
         instance.setWeight(8.0);
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService
+                        .getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false)
+                        .stream().anyMatch(i -> Math.abs(i.getWeight() - 8.0) < 0.001);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify updated weight (subscribe=false to force server query instead of using cache)
         instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -265,7 +273,7 @@ public class NacosWeightTest {
         lowWeight.setHealthy(true);
         namingService.registerInstance(serviceName, lowWeight);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select many times and count distribution
         Map<String, Integer> selectionCount = new HashMap<>();
@@ -321,7 +329,7 @@ public class NacosWeightTest {
         weight3.setHealthy(true);
         namingService.registerInstance(serviceName, weight3);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Run many selections
         Map<String, Integer> counts = new HashMap<>();
@@ -378,7 +386,7 @@ public class NacosWeightTest {
             namingService.registerInstance(serviceName, instance);
         }
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 10);
 
         // Verify all instances registered
         List<Instance> allInstances = namingService.getAllInstances(serviceName);
@@ -431,7 +439,7 @@ public class NacosWeightTest {
         instance.setHealthy(true);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify weight
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -439,11 +447,10 @@ public class NacosWeightTest {
 
         // Deregister
         namingService.deregisterInstance(serviceName, "192.168.200.40", 8080);
-        Thread.sleep(500);
 
         // Re-register with same weight
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify weight persists
         instances = namingService.getAllInstances(serviceName);
@@ -481,7 +488,7 @@ public class NacosWeightTest {
         healthyLowWeight.setHealthy(true);
         namingService.registerInstance(serviceName, healthyLowWeight);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Select healthy instances only
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
@@ -530,7 +537,7 @@ public class NacosWeightTest {
         instance2.setHealthy(true);
         namingService.registerInstance(serviceName, instance2);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 2);
 
         // Initial selection should be roughly equal
         Map<String, Integer> initialCounts = new HashMap<>();
@@ -544,7 +551,16 @@ public class NacosWeightTest {
         // Increase weight of instance1
         instance1.setWeight(9.0);
         namingService.registerInstance(serviceName, instance1);
-        Thread.sleep(3000);
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService
+                        .getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false)
+                        .stream().anyMatch(i -> "192.168.200.60".equals(i.getIp())
+                                && Math.abs(i.getWeight() - 9.0) < 0.001);
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Verify updated weight (subscribe=false to force server query instead of using cache)
         List<Instance> updatedInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
@@ -608,7 +624,7 @@ public class NacosWeightTest {
         clusterB.setHealthy(true);
         namingService.registerInstance(serviceName, clusterB);
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 3);
 
         // Select from cluster-A only
         List<String> clusters = Arrays.asList("cluster-A");
@@ -658,7 +674,7 @@ public class NacosWeightTest {
         instance.setMetadata(metadata);
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         List<Instance> instances = namingService.getAllInstances(serviceName);
         assertFalse(instances.isEmpty());
@@ -693,7 +709,7 @@ public class NacosWeightTest {
         instance.setWeight(1.0);
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Perform concurrent weight updates
         int numThreads = 5;
@@ -729,7 +745,7 @@ public class NacosWeightTest {
         latch.await(30, TimeUnit.SECONDS);
         executor.shutdown();
 
-        Thread.sleep(1000);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
         // Verify instance still exists and has a valid weight
         List<Instance> instances = namingService.getAllInstances(serviceName);
@@ -798,7 +814,7 @@ public class NacosWeightTest {
         backup.setMetadata(Map.of("tier", "backup", "dc", "backup-dc"));
         namingService.registerInstance(serviceName, backup);
 
-        Thread.sleep(1500);
+        TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 5);
 
         // Simulate traffic distribution
         int totalRequests = 10000;

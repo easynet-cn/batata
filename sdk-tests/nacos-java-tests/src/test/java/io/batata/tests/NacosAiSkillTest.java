@@ -89,7 +89,13 @@ public class NacosAiSkillTest {
         try {
             String skillCard = buildSkillCardJson(skillName, "Original description");
             aiService.skill().createDraft(DEFAULT_NAMESPACE, skillCard);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Update draft with new description
             String updatedCard = buildSkillCardJson(skillName, "Updated description");
@@ -134,7 +140,13 @@ public class NacosAiSkillTest {
             String skillCard = buildSkillCardJson(skillName, "Full lifecycle test");
             String draftVersion = aiService.skill().createDraft(DEFAULT_NAMESPACE, skillCard);
             assertNotNull(draftVersion, "Draft should be created");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Step 2: Submit for review
             String submitResult = aiService.skill().submit(DEFAULT_NAMESPACE, skillName, draftVersion);
@@ -145,7 +157,14 @@ public class NacosAiSkillTest {
             boolean published = aiService.skill().publish(
                     DEFAULT_NAMESPACE, skillName, draftVersion, true);
             assertTrue(published, "Publish should succeed");
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillVersionDetail(
+                            DEFAULT_NAMESPACE, skillName, draftVersion) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Verify: get version detail
             Skill versionDetail = aiService.skill().getSkillVersionDetail(
@@ -175,7 +194,16 @@ public class NacosAiSkillTest {
                 String card = buildSkillCardJson(name, "List test " + i);
                 aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
             }
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<SkillSummary> page = aiService.skill().listSkills(
+                            DEFAULT_NAMESPACE, prefix, "blur", 1, 100);
+                    return page != null && page.getPageItems() != null
+                            && page.getPageItems().size() >= 3;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<SkillSummary> page = aiService.skill().listSkills(
                     DEFAULT_NAMESPACE, prefix, "blur", 1, 100);
@@ -201,7 +229,17 @@ public class NacosAiSkillTest {
         try {
             String card = buildSkillCardJson(skillName, "Accurate search test");
             aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    Page<SkillSummary> page = aiService.skill().listSkills(
+                            DEFAULT_NAMESPACE, skillName, "accurate", 1, 100);
+                    return page != null && page.getPageItems() != null
+                            && page.getPageItems().stream()
+                            .anyMatch(s -> skillName.equals(s.getName()));
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             Page<SkillSummary> page = aiService.skill().listSkills(
                     DEFAULT_NAMESPACE, skillName, "accurate", 1, 100);
@@ -227,7 +265,13 @@ public class NacosAiSkillTest {
         try {
             String card = buildSkillCardJson(skillName, "Tags test");
             aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             boolean updated = aiService.skill().updateBizTags(
                     DEFAULT_NAMESPACE, skillName, "[\"ai\",\"test\",\"batata\"]");
@@ -253,7 +297,13 @@ public class NacosAiSkillTest {
         try {
             String card = buildSkillCardJson(skillName, "Scope test");
             aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             boolean updated = aiService.skill().updateScope(DEFAULT_NAMESPACE, skillName, "PRIVATE");
             assertTrue(updated, "Update scope should succeed");
@@ -276,7 +326,13 @@ public class NacosAiSkillTest {
 
         String card = buildSkillCardJson(skillName, "To be deleted");
         aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
-        Thread.sleep(500);
+        TestSupport.waitFor(() -> {
+            try {
+                return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         boolean deleted = aiService.skill().deleteSkill(DEFAULT_NAMESPACE, skillName);
         assertTrue(deleted, "Skill deletion should succeed");
@@ -301,11 +357,24 @@ public class NacosAiSkillTest {
             // Create, submit, publish
             String card = buildSkillCardJson(skillName, "Status test");
             String version = aiService.skill().createDraft(DEFAULT_NAMESPACE, card);
-            Thread.sleep(300);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillMeta(DEFAULT_NAMESPACE, skillName) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
             aiService.skill().submit(DEFAULT_NAMESPACE, skillName, version);
             Thread.sleep(300);
             aiService.skill().publish(DEFAULT_NAMESPACE, skillName, version, true);
-            Thread.sleep(500);
+            TestSupport.waitFor(() -> {
+                try {
+                    return aiService.skill().getSkillVersionDetail(
+                            DEFAULT_NAMESPACE, skillName, version) != null;
+                } catch (NacosException e) {
+                    return false;
+                }
+            }, 10_000);
 
             // Set offline
             boolean offlined = aiService.skill().changeOnlineStatus(

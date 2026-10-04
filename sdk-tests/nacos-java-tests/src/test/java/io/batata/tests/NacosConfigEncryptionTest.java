@@ -134,7 +134,7 @@ public class NacosConfigEncryptionTest {
         // Publish via SDK (content goes through encryption filter)
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, plainContent);
         assertTrue(published, "Publish cipher- config should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Read back via SDK (should be decrypted transparently)
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -161,7 +161,7 @@ public class NacosConfigEncryptionTest {
         // Publish normal config
         boolean published = configService.publishConfig(normalDataId, DEFAULT_GROUP, content);
         assertTrue(published, "Normal config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, normalDataId, DEFAULT_GROUP);
 
         // Read back - should be identical
         String retrieved = configService.getConfig(normalDataId, DEFAULT_GROUP, 5000);
@@ -193,7 +193,7 @@ public class NacosConfigEncryptionTest {
         // Publish via SDK
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, plainContent);
         assertTrue(published, "Cipher config publish should succeed");
-        Thread.sleep(1000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Read raw from server (bypassing decryption)
         String rawResponse = getRawConfigFromServer(dataId, DEFAULT_GROUP);
@@ -235,7 +235,7 @@ public class NacosConfigEncryptionTest {
         // Publish initial
         boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
         assertTrue(published, "Initial cipher config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Verify initial
         String retrieved1 = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -244,7 +244,7 @@ public class NacosConfigEncryptionTest {
         // Update
         boolean updated = configService.publishConfig(dataId, DEFAULT_GROUP, updatedContent);
         assertTrue(updated, "Cipher config update should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, dataId, DEFAULT_GROUP, updatedContent);
 
         // Verify updated
         String retrieved2 = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
@@ -271,7 +271,7 @@ public class NacosConfigEncryptionTest {
 
         boolean jsonPublished = configService.publishConfig(jsonDataId, DEFAULT_GROUP, jsonContent, "json");
         assertTrue(jsonPublished, "Cipher JSON config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, jsonDataId, DEFAULT_GROUP, jsonContent);
 
         String jsonRetrieved = configService.getConfig(jsonDataId, DEFAULT_GROUP, 5000);
         assertEquals(jsonContent, jsonRetrieved, "Cipher JSON content should be decrypted correctly");
@@ -282,7 +282,7 @@ public class NacosConfigEncryptionTest {
 
         boolean yamlPublished = configService.publishConfig(yamlDataId, DEFAULT_GROUP, yamlContent, "yaml");
         assertTrue(yamlPublished, "Cipher YAML config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForConfigContent(configService, yamlDataId, DEFAULT_GROUP, yamlContent);
 
         String yamlRetrieved = configService.getConfig(yamlDataId, DEFAULT_GROUP, 5000);
         assertEquals(yamlContent, yamlRetrieved, "Cipher YAML content should be decrypted correctly");
@@ -306,13 +306,12 @@ public class NacosConfigEncryptionTest {
         String content1 = "listener.secret.v1=first_secret";
         String content2 = "listener.secret.v2=second_secret";
 
-        java.util.concurrent.atomic.AtomicReference<String> receivedContent =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<String> receivedContent = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
 
         // Publish initial content
         configService.publishConfig(dataId, DEFAULT_GROUP, content1);
-        Thread.sleep(3000);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Add listener
         configService.addListener(dataId, DEFAULT_GROUP, new com.alibaba.nacos.api.config.listener.Listener() {
@@ -328,11 +327,9 @@ public class NacosConfigEncryptionTest {
                 latch.countDown();
             }
         });
-        Thread.sleep(1000);
 
         // Update to trigger listener
         configService.publishConfig(dataId, DEFAULT_GROUP, content2);
-        Thread.sleep(5000);
 
         boolean received = latch.await(20, TimeUnit.SECONDS);
         assertTrue(received, "Listener should receive notification for cipher config update");
@@ -357,7 +354,7 @@ public class NacosConfigEncryptionTest {
 
         // Publish
         configService.publishConfig(dataId, DEFAULT_GROUP, content);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
 
         // Verify exists
         String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);

@@ -88,9 +88,7 @@ public class NacosGrpcTest {
         String serviceName = "grpc-server-check-" + UUID.randomUUID();
 
         namingService.registerInstance(serviceName, "192.168.1.1", 8080);
-        Thread.sleep(500);
-
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
         assertFalse(instances.isEmpty(), "gRPC server should respond to naming requests");
 
         // Cleanup
@@ -262,16 +260,12 @@ public class NacosGrpcTest {
 
         // InstanceRequestHandler handles register
         namingService.registerInstance(serviceName, "192.168.1.10", 8080);
-        Thread.sleep(500);
-
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
         assertEquals(1, instances.size(), "InstanceRequestHandler should register instance");
 
         // InstanceRequestHandler handles deregister
         namingService.deregisterInstance(serviceName, "192.168.1.10", 8080);
-        Thread.sleep(500);
-
-        instances = namingService.getAllInstances(serviceName);
+        instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 0);
         assertTrue(instances.isEmpty(), "InstanceRequestHandler should deregister instance");
     }
 
@@ -287,9 +281,7 @@ public class NacosGrpcTest {
         for (int i = 0; i < 5; i++) {
             namingService.registerInstance(serviceName, "192.168.1." + (20 + i), 8080);
         }
-        Thread.sleep(1500);
-
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 5);
         assertEquals(5, instances.size(), "BatchInstanceRequestHandler should handle multiple instances");
 
         // Cleanup
@@ -310,9 +302,14 @@ public class NacosGrpcTest {
         for (int i = 0; i < 3; i++) {
             namingService.registerInstance(prefix + "-" + i, "192.168.1." + (30 + i), 8080);
         }
-        Thread.sleep(1000);
-
         // ServiceListRequestHandler handles this
+        TestSupport.waitFor(() -> {
+            try {
+                return namingService.getServicesOfServer(1, 100).getCount() >= 3;
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
         var listView = namingService.getServicesOfServer(1, 100);
         assertNotNull(listView);
         assertTrue(listView.getCount() >= 3, "ServiceListRequestHandler should return services");
@@ -338,10 +335,7 @@ public class NacosGrpcTest {
         instance.setMetadata(Map.of("version", "1.0.0", "region", "us-west"));
 
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
-
-        // ServiceQueryRequestHandler handles this
-        List<Instance> instances = namingService.getAllInstances(serviceName);
+        List<Instance> instances = TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
         assertFalse(instances.isEmpty());
 
         Instance retrieved = instances.get(0);
@@ -372,7 +366,7 @@ public class NacosGrpcTest {
         };
 
         namingService.subscribe(serviceName, listener);
-        Thread.sleep(500);
+        TestSupport.waitForSubscribed(namingService, serviceName, DEFAULT_GROUP);
 
         // Register triggers notification
         namingService.registerInstance(serviceName, "192.168.1.50", 8080);

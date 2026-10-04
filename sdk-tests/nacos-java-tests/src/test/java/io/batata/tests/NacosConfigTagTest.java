@@ -112,8 +112,7 @@ public class NacosConfigTagTest {
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, taggedContent,
                 null, null, tag, null, null);
         assertTrue(tagPub, "Tagged publish should succeed");
-
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Query with tag filter - should return tagged content
         // Note: listConfigs with configTags filter
@@ -148,7 +147,7 @@ public class NacosConfigTagTest {
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, grayContent,
                 null, null, null, null, null, "10.0.0.1,10.0.0.2");
         assertTrue(betaPublished, "Beta gray config publish should succeed");
-        Thread.sleep(500);
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Query without gray context - should return normal/default content (not gray)
         ConfigDetailInfo configDetail = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -184,7 +183,7 @@ public class NacosConfigTagTest {
             assertTrue(published, "Publish with tag '" + tag + "' should succeed");
         }
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Verify config exists (content will be the last published version since
         // tags may overwrite each other in the same dataId)
@@ -212,14 +211,14 @@ public class NacosConfigTagTest {
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         assertTrue(published, "Stable config publish should succeed");
         cleanupConfigs.add(new String[]{dataId, DEFAULT_GROUP});
-
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Publish gray config via beta endpoint
         boolean betaPublished = maintainerService.publishBetaConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, grayContent,
                 null, null, null, null, null, "10.0.0.1,10.0.0.2");
         assertTrue(betaPublished, "Gray config publish should succeed");
+        TestSupport.waitForBetaPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Verify stable config is still accessible
         ConfigDetailInfo stableConfig = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
@@ -256,13 +255,13 @@ public class NacosConfigTagTest {
         maintainerService.publishConfig(
                 dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent,
                 null, null, tag, null, null);
-        Thread.sleep(500);
+        TestSupport.waitForConfigPresent(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Delete the config
         boolean deleted = maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
         assertTrue(deleted, "Delete should succeed");
 
-        Thread.sleep(500);
+        TestSupport.waitForConfigDeleted(maintainerService, dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
 
         // Verify config is gone
         try {
