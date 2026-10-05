@@ -10,6 +10,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+
 /**
  * Nacos AK/SK (accessKey/secretKey) authentication compatibility test.
  *

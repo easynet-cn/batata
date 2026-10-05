@@ -13,7 +13,7 @@
 #   apollo [--live]                       Apollo plugin live verification
 #                                          (--live: against container :8080;
 #                                           default: embedded plugin :18080)
-#   sdk [--quick|--matrix]                SDK (Consul Go + Nacos Java) tests
+#   sdk [--quick|--matrix]                SDK (Consul Go + Nacos Java + Apollo Java) tests
 #                                          default --quick
 #   console [mode]                        Console datasource E2E (delegates to
 #                                          test_standalone_embedded.sh etc.)
@@ -277,7 +277,7 @@ cmd_sdk_quick() {
     # Start cluster unless NO_RESTART
     if [ "${NO_RESTART:-}" != "1" ]; then
         echo -e "${BOLD}Starting cluster ($(basename $BINARY))...${NC}"
-        BINARY="$BINARY" CONSUL_ENABLED=true "${SCRIPT_DIR}/startup.sh" cluster 2>&1 | grep "ready\|ERROR"
+        BINARY="$BINARY" CONSUL_ENABLED=true APOLLO_ENABLED=true "${SCRIPT_DIR}/startup.sh" cluster 2>&1 | grep "ready\|ERROR"
     fi
 
     run_consul() {
@@ -293,11 +293,17 @@ cmd_sdk_quick() {
         sdk_run_nacos "$FILTER" 2>&1 | tee /tmp/test-cluster-nacos.txt | grep "Tests run:" | grep -v " -- in " | tail -1
     }
 
+    run_apollo() {
+        echo -e "\n${BOLD}=== Apollo Java SDK Tests ===${NC}"
+        APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo "$FILTER" 2>&1 | tee /tmp/test-cluster-apollo.txt | grep "Tests run:" | grep -v " -- in " | tail -1
+    }
+
     case "$SUITE" in
         consul)  run_consul ;;
         nacos)   run_batata ;;
-        all)     run_consul; run_batata ;;
-        *)       echo "Usage: $0 sdk --quick {all|consul|nacos} [filter]"; return 1 ;;
+        apollo)  run_apollo ;;
+        all)     run_consul; run_batata; run_apollo ;;
+        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo} [filter]"; return 1 ;;
     esac
 
     echo -e "\n${BOLD}Done.${NC}"
@@ -424,6 +430,7 @@ cmd_sdk_matrix() {
         "${BINARY}" -m standalone -d merged \
             --batata.server.main.port=8848 --batata.console.port=8081 \
             --batata.plugin.consul.enabled=true --batata.plugin.consul.port=8500 \
+            --batata.plugin.apollo.enabled=true --batata.plugin.apollo.port=18080 \
             "${args[@]}" \
             > "${ROOT}/logs/sdk-node1/stdout.log" 2>&1 &
         SERVER_PIDS+=("$!")
@@ -438,7 +445,7 @@ cmd_sdk_matrix() {
             n_dirs=("${ROOT}/data/rock-n1" "${ROOT}/data/rock-n2" "${ROOT}/data/rock-n3")
         fi
         cluster_write_conf "$ROOT"
-        local common=(-m cluster --batata.member.list="${CLUSTER_MEMBER_LIST}" --batata.plugin.consul.enabled=true "${args[@]}")
+        local common=(-m cluster --batata.member.list="${CLUSTER_MEMBER_LIST}" --batata.plugin.consul.enabled=true --batata.plugin.apollo.enabled=true "${args[@]}")
         for i in 0 1 2; do
             local deploy=server
             [ "$i" -eq 0 ] && deploy=merged
@@ -448,6 +455,7 @@ cmd_sdk_matrix() {
                 --batata.server.main.port="${CLUSTER_NODE_PORTS[$i]}" \
                 --batata.console.port="${CLUSTER_CONSOLE_PORTS[$i]}" \
                 --batata.plugin.consul.port="${CLUSTER_CONSUL_PORTS[$i]}" \
+                --batata.plugin.apollo.port="${CLUSTER_APOLLO_PORTS[$i]}" \
                 "${data_arg[@]}" \
                 > "${ROOT}/logs/sdk-node$((i+1))/stdout.log" 2>&1 &
             SERVER_PIDS+=("$!")
@@ -503,6 +511,11 @@ cmd_sdk_matrix() {
         CONSUL_HTTP_TOKEN=root sdk_run_consul || consul_rc=$?
         [ "$consul_rc" -eq 0 ] && ok "Consul SDK 通过" || fail "Consul SDK 退出码 $consul_rc"
 
+        log ">>> 运行 Apollo Java SDK (meta=127.0.0.1:18080)"
+        local apollo_rc=0
+        APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo || apollo_rc=$?
+        [ "$apollo_rc" -eq 0 ] && ok "Apollo SDK 通过" || fail "Apollo SDK 退出码 $apollo_rc"
+
         log ">>> 检查日志目录异常日志"
         local danger_log_scan=0
         while IFS= read -r line; do
@@ -513,8 +526,8 @@ cmd_sdk_matrix() {
 
         stop_servers
 
-        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
-        [ "$nacos_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && return 0 || return 1
+        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) Apollo=$([ $apollo_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
+        [ "$nacos_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && [ "$apollo_rc" -eq 0 ] && return 0 || return 1
     }
 
     SERVER_PIDS=()
@@ -1017,12 +1030,18 @@ cmd_all() {
         podman compose run --rm consul-tests || consul_rc=$?
         cd "$PROJECT_ROOT"
         if [ $consul_rc -eq 0 ]; then log_pass "Consul Go SDK tests"; else log_fail "Consul Go SDK tests (exit code: ${consul_rc})"; fi
+        log_info "Running Apollo Java SDK tests..."
+        local apollo_rc=0
+        cd "${PROJECT_ROOT}/sdk-tests"
+        podman compose run --rm apollo-tests || apollo_rc=$?
+        cd "$PROJECT_ROOT"
+        if [ $apollo_rc -eq 0 ]; then log_pass "Apollo Java SDK tests"; else log_fail "Apollo Java SDK tests (exit code: ${apollo_rc})"; fi
         log_info "Stopping SDK test stack..."
         cd "${PROJECT_ROOT}/sdk-tests"
-        podman compose -f deploy/compose/podman-compose.yml down -v 2>/dev/null || true
+        podman compose down -v 2>/dev/null || true
         cd "$PROJECT_ROOT"
         SDK_DOCKER_STARTED=false
-        if [ $nacos_rc -ne 0 ] || [ $consul_rc -ne 0 ]; then
+        if [ $nacos_rc -ne 0 ] || [ $consul_rc -ne 0 ] || [ $apollo_rc -ne 0 ]; then
             return 1
         fi
         log_pass "All SDK compatibility tests completed"
@@ -1077,7 +1096,7 @@ cmd_all() {
     fi
     if [ "$RUN_SDK" = true ] && [ "$OVERALL_EXIT_CODE" -eq 0 ]; then
         stage_rc=0; run_sdk || stage_rc=$?
-        if [ $stage_rc -eq 0 ]; then record_stage "SDK (Nacos Java + Consul Go)" "PASS"; else record_stage "SDK (Nacos Java + Consul Go)" "FAIL"; OVERALL_EXIT_CODE=1; fi
+        if [ $stage_rc -eq 0 ]; then record_stage "SDK (Nacos Java + Consul Go + Apollo Java)" "PASS"; else record_stage "SDK (Nacos Java + Consul Go + Apollo Java)" "FAIL"; OVERALL_EXIT_CODE=1; fi
     fi
 
     echo ""
@@ -1113,7 +1132,7 @@ Usage: $0 <subcommand> [args]
 Subcommands:
   separation [main_url] [console_url]   Console/Server route separation test
   apollo [--live]                       Apollo plugin live verification
-  sdk [--quick|--matrix]                SDK (Consul Go + Nacos Java) tests
+  sdk [--quick|--matrix]                SDK (Consul Go + Nacos Java + Apollo Java) tests
   console [mode]                        Console datasource E2E
                                         mode: standalone-embedded |
                                               standalone-externaldb |

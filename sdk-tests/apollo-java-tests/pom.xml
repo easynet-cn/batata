@@ -18,6 +18,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <apollo.version>2.5.0</apollo.version>
         <junit.version>5.10.2</junit.version>
+        <!-- Apollo SDK connection defaults; overridable via -D on the CLI. -->
+        <apollo.meta>http://127.0.0.1:18080</apollo.meta>
+        <apollo.openapi.url>http://127.0.0.1:18080</apollo.openapi.url>
+        <apollo.openapi.token>admin</apollo.openapi.token>
     </properties>
 
     <dependencies>
@@ -88,9 +92,9 @@
                 <configuration>
                     <useManifestOnlyJar>false</useManifestOnlyJar>
                     <systemPropertyVariables>
-                        <apollo.meta>http://127.0.0.1:18080</apollo.meta>
-                        <apollo.openapi.token>admin</apollo.openapi.token>
-                        <apollo.openapi.url>http://127.0.0.1:18080</apollo.openapi.url>
+                        <apollo.meta>${apollo.meta}</apollo.meta>
+                        <apollo.openapi.token>${apollo.openapi.token}</apollo.openapi.token>
+                        <apollo.openapi.url>${apollo.openapi.url}</apollo.openapi.url>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

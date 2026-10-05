@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::service::notifier::ConfigChangeNotifier;
+use crate::service::notifier::{ConfigChangeNotifier, NotifyEntry};
 
 /// Parse listener configs from the "Listening-Configs" form parameter
 ///
@@ -160,15 +160,16 @@ pub async fn config_listener(
     }
 
     // No changes yet - wait for notifications using ConfigChangeNotifier.
-    // Collect Notify handles for all listened configs so we wake up on any change.
+    // Collect Notify entries for all listened configs so we wake up on any change.
     let max_timeout = configs
         .iter()
         .map(|(_, _, _, timeout)| *timeout)
         .max()
         .unwrap_or(30000);
 
-    // Build notify futures for each config key
-    let notify_handles: Vec<_> = configs
+    let timeout_duration = Duration::from_millis(max_timeout);
+
+    let entries: Vec<Arc<NotifyEntry>> = configs
         .iter()
         .map(|(data_id, group, _, _)| {
             let key = ConfigChangeNotifier::build_key(&namespace_id, group, data_id);
@@ -176,40 +177,57 @@ pub async fn config_listener(
         })
         .collect();
 
-    // Wait for any config change notification or timeout
-    let timeout_duration = Duration::from_millis(max_timeout);
+    // Generations captured before the first wait — used to detect a notification
+    // that fires between our config check and the moment the `notified()` future
+    // is polled (a lost-wakeup race that `notify_waiters()` alone cannot cover).
+    let mut last_generations: Vec<u64> = entries.iter().map(|e| e.generation()).collect();
 
-    let notified_futures = notify_handles
-        .iter()
-        .map(|n| n.notified())
-        .collect::<Vec<_>>();
+    // Single long-poll timeout: re-check config; if unchanged, register waiters
+    // and re-check the generation. If the generation advanced, re-check config
+    // immediately (no second wait) to recover the missed wakeup. Otherwise wait
+    // once, then re-check and return.
+    let result = loop {
+        let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+        if !changed_configs.is_empty() {
+            info!(
+                count = changed_configs.len(),
+                "Config changes detected"
+            );
+            break Result::<HashMap<String, String>>::http_success(changed_configs);
+        }
 
-    // Use tokio::select! with a timeout: wake on the first notification or timeout
-    let _was_notified = tokio::time::timeout(timeout_duration, async {
-        // Wait for ANY of the notified futures to complete
-        // We use a select-like approach: spawn a future that completes when any notify fires
-        futures::future::select_all(notified_futures.into_iter().map(|f| {
-            Box::pin(f) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-        }))
+        // Register waiters, then re-read generations to catch a missed wakeup.
+        let notified_futures = entries.iter().map(|e| e.notify.notified()).collect::<Vec<_>>();
+        let current_generations: Vec<u64> = entries.iter().map(|e| e.generation()).collect();
+        if current_generations != last_generations {
+            last_generations = current_generations;
+            continue; // a change happened; re-check config without waiting
+        }
+
+        // Wait for any config change notification or timeout
+        let _was_notified = tokio::time::timeout(timeout_duration, async {
+            futures::future::select_all(notified_futures.into_iter().map(|f| {
+                Box::pin(f) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            }))
+            .await;
+        })
         .await;
-    })
-    .await;
 
-    // Re-check for changes after being notified (or after timeout)
-    let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+        let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+        if !changed_configs.is_empty() {
+            info!(
+                count = changed_configs.len(),
+                "Config changes detected after notification"
+            );
+            break Result::<HashMap<String, String>>::http_success(changed_configs);
+        }
 
-    if !changed_configs.is_empty() {
+        // Timeout - return empty result
         info!(
-            count = changed_configs.len(),
-            "Config changes detected after notification"
+            timeout_ms = max_timeout,
+            "Config listener timeout, no changes"
         );
-        return Result::<HashMap<String, String>>::http_success(changed_configs);
-    }
-
-    // Timeout - return empty result
-    info!(
-        timeout_ms = max_timeout,
-        "Config listener timeout, no changes"
-    );
-    Result::<HashMap<String, String>>::http_success(HashMap::<String, String>::new())
+        break Result::<HashMap<String, String>>::http_success(HashMap::<String, String>::new());
+    };
+    result
 }

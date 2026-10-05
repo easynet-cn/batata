@@ -113,7 +113,10 @@ scripts/
 ├── test_standalone_embedded.sh     # Standalone + RocksDB tests
 ├── test_standalone_externaldb.sh   # Standalone + MySQL/PostgreSQL tests
 ├── test_cluster_externaldb.sh      # 3-node Cluster + ExternalDb tests
-└── test_cluster_embedded.sh        # 3-node Cluster + Raft+RocksDB tests
+├── test_cluster_embedded.sh        # 3-node Cluster + Raft+RocksDB tests
+├── sdk_run_lib.sh                  # SDK runner helpers (nacos / consul / apollo)
+├── cluster_lib.sh                  # Cluster startup/teardown helpers for SDK matrix
+└── startup.sh                      # Local multi-node startup helper (used by SDK matrix)
 ```
 
 ### test_utils.sh
@@ -221,6 +224,82 @@ Each Batata server node uses 4 ports:
 | Console HTTP | configurable (8081) | Console admin API |
 | SDK gRPC | base + 1000 (9848) | Client SDK communication |
 | Cluster gRPC | base + 1001 (9849) | Inter-node cluster communication |
+
+## SDK Compatibility Tests
+
+`scripts/test.sh sdk` runs the **official SDK client test suites** against a real Batata
+server with the corresponding compatibility plugin enabled. The suites live under
+[`sdk-tests/`](../../sdk-tests) and are executed as Podman (or Docker) Compose test
+containers so they do not require a local JVM/Go toolchain to be installed on the host.
+
+| Suite | Language | Batata plugin | Default endpoint |
+|-------|----------|---------------|------------------|
+| `nacos-java-tests`  | Java (Maven)  | Nacos (`BATATA_PLUGIN_CONSUL_ENABLED` not needed) | `nacos.server=batata:8848` |
+| `consul-go-tests`   | Go (`go test`)| Consul (`BATATA_PLUGIN_CONSUL_ENABLED=true`)       | `CONSUL_HTTP_ADDR=batata:8500` |
+| `apollo-java-tests` | Java (Maven)  | Apollo (`BATATA_PLUGIN_APOLLO_ENABLED=true`)       | `apollo.meta=batata:18080` |
+
+> The Apollo plugin does not verify the OpenAPI token by default (`openapi_auth_enabled=false`),
+> so the test token `admin` works out of the box. In the `all sdk` stack the batata service
+> additionally sets `BATATA_PLUGIN_CONSUL_ENABLED=true` and `BATATA_PLUGIN_APOLLO_ENABLED=true`.
+
+### Prerequisites
+
+- `podman` + `podman-compose` (or `docker` + `docker compose`) available on `PATH`
+- Network access to pull base images and (for the Java suites) download Maven dependencies
+
+### Run via test.sh
+
+```bash
+# Quick: standalone + embedded, runs nacos + consul + apollo against a local cluster
+./scripts/test.sh sdk --quick all
+
+# Matrix: embedded + MySQL + 3-node cluster variants, each with nacos/consul/apollo
+./scripts/test.sh sdk --matrix all
+
+# Full: build & run the whole SDK stack with Podman Compose (MySQL + batata + test containers)
+./scripts/test.sh all sdk
+```
+
+Filter by suite or test class (apollo only shows as a single aggregate here):
+
+```bash
+./scripts/test.sh sdk --quick nacos
+./scripts/test.sh sdk --matrix apollo
+```
+
+### Run a suite manually against a local Batata
+
+Start Batata with the required plugin(s) enabled, then run the suite directly:
+
+```bash
+# Nacos (Java)
+cd sdk-tests/nacos-java-tests
+mvn test -Dnacos.server=127.0.0.1:8848 -Dnacos.username=nacos -Dnacos.password=nacos
+
+# Consul (Go)
+cd sdk-tests/consul-go-tests
+CONSUL_HTTP_ADDR=http://127.0.0.1:8500 CONSUL_HTTP_TOKEN=root go test ./... -v -count=1
+
+# Apollo (Java)
+cd sdk-tests/apollo-java-tests
+mvn test -Dapollo.meta=http://127.0.0.1:18080 \
+         -Dapollo.openapi.url=http://127.0.0.1:18080 \
+         -Dapollo.openapi.token=admin
+```
+
+To run only a subset of the Apollo test classes, pass `-Dtest=ApolloConfig*` (or any
+prefix of the class name, e.g. `ApolloGray`, `ApolloCluster`).
+
+### Standalone debug (local cluster with Apollo enabled)
+
+Use `startup.sh cluster` to spin up a 3-node local cluster with the Apollo plugin on:
+
+```bash
+APOLLO_ENABLED=true ./scripts/startup.sh cluster
+```
+
+Each node exposes Apollo on its own port (`18080` / `18090` / `18100` for nodes 1–3 by
+default); override with `NODE1_APOLLO_PORT` / `NODE2_APOLLO_PORT` / `NODE3_APOLLO_PORT`.
 
 ## Troubleshooting
 

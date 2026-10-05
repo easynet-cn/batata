@@ -204,6 +204,7 @@ impl ConsulPlugin {
         let kv = ConsulKVService::new();
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
         let peering = Arc::new(ConsulPeeringService::new());
+        let config_entry = ConsulConfigEntryService::new();
 
         ConsulPluginInner {
             naming_store: naming_store.clone(),
@@ -236,8 +237,10 @@ impl ConsulPlugin {
             session,
             query: ConsulQueryService::new(),
             peering: peering.clone(),
-            config_entry: ConsulConfigEntryService::new(),
-            connect: ConsulConnectService::new().with_peering_service(peering.clone()),
+            config_entry: config_entry.clone(),
+            connect: ConsulConnectService::new()
+                .with_peering_service(peering.clone())
+                .with_config_entry_service(Arc::new(config_entry.clone())),
             connect_ca: ConsulConnectCAService::new(),
             coordinate: ConsulCoordinateService::new()
                 .with_node_name(self.dc_config.node_name.clone()),
@@ -296,6 +299,7 @@ impl ConsulPlugin {
             self.dc_config.datacenter.clone(),
             self.dc_config.consul_port,
         ));
+        let config_entry = ConsulConfigEntryService::with_raft(db.clone(), consul_raft.clone());
 
         ConsulPluginInner {
             naming_store: naming_store.clone(),
@@ -319,8 +323,10 @@ impl ConsulPlugin {
             event: ConsulEventService::new(index_provider.clone()),
             query: ConsulQueryService::with_raft(db.clone(), consul_raft.clone()),
             peering: peering.clone(),
-            config_entry: ConsulConfigEntryService::with_raft(db.clone(), consul_raft.clone()),
-            connect: ConsulConnectService::new().with_peering_service(peering.clone()),
+            config_entry: config_entry.clone(),
+            connect: ConsulConnectService::new()
+                .with_peering_service(peering.clone())
+                .with_config_entry_service(Arc::new(config_entry.clone())),
             connect_ca: ConsulConnectCAService::with_raft(db.clone(), consul_raft.clone()),
             coordinate: ConsulCoordinateService::with_raft(
                 db.clone(),

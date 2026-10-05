@@ -147,8 +147,8 @@ public class NacosCoreMaintainerServiceTest {
         assertTrue(updated, "Namespace update should succeed");
         TestSupport.waitFor(() -> {
             try {
-                Namespace ns = maintainerService.getNamespace(nsId);
-                return ns != null && updatedName.equals(ns.getNamespaceShowName());
+                Namespace fetchedNs = maintainerService.getNamespace(nsId);
+                return fetchedNs != null && updatedName.equals(fetchedNs.getNamespaceShowName());
             } catch (NacosException e) {
                 return false;
             }
@@ -223,8 +223,14 @@ public class NacosCoreMaintainerServiceTest {
         // Create with auto-generated ID (empty string)
         Boolean created = maintainerService.createNamespace(nsName, nsDesc);
         assertTrue(created, "Namespace creation with auto ID should succeed");
-        TestSupport.waitFor(() -> maintainerService.getNamespaceList().stream()
-                .anyMatch(ns -> nsName.equals(ns.getNamespaceShowName())), 10_000);
+        TestSupport.waitFor(() -> {
+            try {
+                return maintainerService.getNamespaceList().stream()
+                        .anyMatch(ns -> nsName.equals(ns.getNamespaceShowName()));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         // Find it in the namespace list
         List<Namespace> namespaces = maintainerService.getNamespaceList();

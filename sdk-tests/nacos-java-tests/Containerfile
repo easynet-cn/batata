@@ -1,0 +1,21 @@
+# Nacos Java SDK Tests
+#
+# Runs the official Nacos Java SDK against a Batata server. Connection points
+# default to the batata compose service (batata:8848); override via the
+# -Dnacos.* system properties below if running against a different host.
+#
+# Build/run (standalone):
+#   podman build -f Containerfile -t nacos-tests .
+#   podman run --rm nacos-tests
+
+FROM maven:3.9-eclipse-temurin-21 AS deps
+WORKDIR /app
+COPY pom.xml .
+RUN mvn -q -B -DskipTests -Dmaven.repo.local=/app/.m2 dependency:go-offline || true
+
+FROM maven:3.9-eclipse-temurin-21
+WORKDIR /app
+COPY --from=deps /app/.m2 /root/.m2
+COPY pom.xml .
+COPY src ./src
+ENTRYPOINT ["sh", "-c", "mvn test -Dnacos.server=${NACOS_SERVER:-batata:8848} -Dnacos.username=${NACOS_USERNAME:-nacos} -Dnacos.password=${NACOS_PASSWORD:-nacos} -Dnacos.cluster.node1=${NACOS_CLUSTER_NODE1:-batata:8848} -Dnacos.cluster.node2=${NACOS_CLUSTER_NODE2:-batata:8848} -Dnacos.cluster.node3=${NACOS_CLUSTER_NODE3:-batata:8848}"]

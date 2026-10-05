@@ -65,6 +65,7 @@ if [ "$SUBCMD" = "cluster" ]; then
     NODE1_PORT=${CLUSTER_NODE_PORTS[0]}; NODE2_PORT=${CLUSTER_NODE_PORTS[1]}; NODE3_PORT=${CLUSTER_NODE_PORTS[2]}
     CONSOLE_PORT=${CLUSTER_CONSOLE_PORTS[0]}
     NODE1_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[0]}; NODE2_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[1]}; NODE3_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[2]}
+    NODE1_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[0]}; NODE2_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[1]}; NODE3_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[2]}
 
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
     log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -75,6 +76,7 @@ if [ "$SUBCMD" = "cluster" ]; then
     BINARY="${BINARY:-${BASE_DIR}/target/release/batata-server}"
 
     CONSUL_ENABLED="${CONSUL_ENABLED:-false}"
+    APOLLO_ENABLED="${APOLLO_ENABLED:-false}"
     WITH_CONSOLE="${WITH_CONSOLE:-true}"
     BUILD="${BUILD:-false}"
 
@@ -136,6 +138,17 @@ if [ "$SUBCMD" = "cluster" ]; then
                 fi
             done
         fi
+        if [ "$APOLLO_ENABLED" = "true" ]; then
+            for aport in $NODE1_APOLLO_PORT $NODE2_APOLLO_PORT $NODE3_APOLLO_PORT; do
+                local code
+                code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${aport}/services/config" 2>/dev/null || echo "000")
+                if [ "$code" = "200" ]; then
+                    echo -e "  Apollo :${aport} ${GREEN}UP${NC}"
+                else
+                    echo -e "  Apollo :${aport} ${RED}DOWN${NC}"
+                fi
+            done
+        fi
     }
 
     start_cluster() {
@@ -168,6 +181,9 @@ if [ "$SUBCMD" = "cluster" ]; then
         if [ "$CONSUL_ENABLED" = "true" ]; then
             common_args="${common_args} --batata.plugin.consul.enabled=true"
         fi
+        if [ "$APOLLO_ENABLED" = "true" ]; then
+            common_args="${common_args} --batata.plugin.apollo.enabled=true"
+        fi
 
         local deploy_mode="server"
         if [ "$WITH_CONSOLE" = "true" ]; then
@@ -182,6 +198,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node1" \
             --batata.logs.path="${BASE_DIR}/logs/node1" \
             --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
+            --batata.plugin.apollo.port=${NODE1_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node1/stdout.log" 2>&1 &
         echo $! > "${CLUSTER_PID_DIR}/node1.pid"
@@ -193,6 +210,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node2" \
             --batata.logs.path="${BASE_DIR}/logs/node2" \
             --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
+            --batata.plugin.apollo.port=${NODE2_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node2/stdout.log" 2>&1 &
         echo $! > "${CLUSTER_PID_DIR}/node2.pid"
@@ -204,6 +222,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node3" \
             --batata.logs.path="${BASE_DIR}/logs/node3" \
             --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \
+            --batata.plugin.apollo.port=${NODE3_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node3/stdout.log" 2>&1 &
         echo $! > "${CLUSTER_PID_DIR}/node3.pid"
@@ -247,6 +266,12 @@ if [ "$SUBCMD" = "cluster" ]; then
             echo "    Node 1: 127.0.0.1:${NODE1_CONSUL_PORT}"
             echo "    Node 2: 127.0.0.1:${NODE2_CONSUL_PORT}"
             echo "    Node 3: 127.0.0.1:${NODE3_CONSUL_PORT}"
+        fi
+        if [ "$APOLLO_ENABLED" = "true" ]; then
+            echo "  Apollo API:"
+            echo "    Node 1: 127.0.0.1:${NODE1_APOLLO_PORT}"
+            echo "    Node 2: 127.0.0.1:${NODE2_APOLLO_PORT}"
+            echo "    Node 3: 127.0.0.1:${NODE3_APOLLO_PORT}"
         fi
         echo ""
         echo "  Stop with: ./scripts/startup.sh cluster stop"

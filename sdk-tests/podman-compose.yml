@@ -33,11 +33,18 @@ services:
       - "9848:9848"
       - "9849:9849"
       - "8081:8081"
+      - "8500:8500"
+      - "18080:18080"
     environment:
       - DB_URL=mysql://root:root@mysql:3306/batata
       - BATATA_DB_MIGRATION_ENABLED=true
       - NACOS_AUTH_ENABLED=true
       - NACOS_AUTH_TOKEN_SECRET_KEY=YmF0YXRhLXRlc3Qtc2VjcmV0LWtleS1mb3Itand0LXRva2Vu
+      # Enable the Consul + Apollo compatibility plugins for the SDK suites
+      # (both are off by default in conf/application.yml).
+      - BATATA_PLUGIN_CONSUL_ENABLED=true
+      - BATATA_PLUGIN_APOLLO_ENABLED=true
+      - BATATA_PLUGIN_APOLLO_PORT=18080
     depends_on:
       mysql:
         condition: service_healthy
@@ -76,6 +83,24 @@ services:
     environment:
       - CONSUL_HTTP_ADDR=batata:8500
       - CONSUL_HTTP_TOKEN=root
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+  # Apollo Java SDK Tests
+  apollo-tests:
+    build:
+      context: ./apollo-java-tests
+      dockerfile: Containerfile
+    container_name: apollo-sdk-tests
+    environment:
+      - APOLLO_META=http://batata:18080
+      - APOLLO_OPENAPI_URL=http://batata:18080
+      - APOLLO_OPENAPI_TOKEN=admin
     depends_on:
       batata:
         condition: service_healthy

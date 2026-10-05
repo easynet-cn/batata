@@ -5,6 +5,7 @@
 //! config key are notified immediately.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use tokio::sync::Notify;
@@ -12,14 +13,35 @@ use tokio::sync::Notify;
 /// Maximum number of tracked notifier entries to prevent unbounded memory growth.
 const MAX_NOTIFIER_ENTRIES: usize = 100_000;
 
+/// A single config-key notification entry.
+///
+/// Pairs the `Notify` used to wake long-polling listeners with a monotonically
+/// increasing `generation` counter. The counter lets a waiter detect a change
+/// that happened *between* its initial config check and the moment its
+/// `notified()` future is polled — a window where `notify_waiters()` would
+/// otherwise fire with no registered waiter and the wakeup would be lost (see
+/// `crates/batata-config/src/api/v2/listener.rs`).
+pub struct NotifyEntry {
+    /// The `Notify` used to wake long-polling listeners for this config key.
+    pub(crate) notify: Notify,
+    generation: AtomicU64,
+}
+
+impl NotifyEntry {
+    /// Current generation counter (see `ConfigChangeNotifier::notify_change`).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+}
+
 /// Global config change notifier for long-polling support.
 ///
 /// Listeners register interest in specific config keys and wait for notifications.
 /// When a config changes, all waiting listeners for that key are woken up.
 pub struct ConfigChangeNotifier {
-    /// Map of config key -> notification handle
+    /// Map of config key -> notification entry
     /// Key format: "{tenant}+{group}+{dataId}"
-    notifiers: DashMap<String, Arc<Notify>>,
+    notifiers: DashMap<String, Arc<NotifyEntry>>,
 }
 
 impl ConfigChangeNotifier {
@@ -36,9 +58,9 @@ impl ConfigChangeNotifier {
         batata_common::build_config_key(tenant, group, data_id)
     }
 
-    /// Get or create a Notify handle for a config key.
+    /// Get or create a Notify entry for a config key.
     /// If the map exceeds MAX_NOTIFIER_ENTRIES, stale entries with no active waiters are evicted.
-    pub fn get_or_create(&self, key: &str) -> Arc<Notify> {
+    pub fn get_or_create(&self, key: &str) -> Arc<NotifyEntry> {
         if let Some(existing) = self.notifiers.get(key) {
             return existing.clone();
         }
@@ -48,7 +70,12 @@ impl ConfigChangeNotifier {
         }
         self.notifiers
             .entry(key.to_string())
-            .or_insert_with(|| Arc::new(Notify::new()))
+            .or_insert_with(|| {
+                Arc::new(NotifyEntry {
+                    notify: Notify::new(),
+                    generation: AtomicU64::new(0),
+                })
+            })
             .clone()
     }
 
@@ -63,9 +90,24 @@ impl ConfigChangeNotifier {
     /// Notify all waiters for a specific config key
     pub fn notify_change(&self, tenant: &str, group: &str, data_id: &str) {
         let key = Self::build_key(tenant, group, data_id);
-        if let Some(notify) = self.notifiers.get(&key) {
-            notify.notify_waiters();
+        if let Some(entry) = self.notifiers.get(&key) {
+            // Bump the generation BEFORE waking waiters so a waiter that
+            // re-checks the generation after registering its `notified()`
+            // future can detect a change it might otherwise have missed.
+            entry.generation.fetch_add(1, Ordering::SeqCst);
+            entry.notify.notify_waiters();
         }
+    }
+
+    /// Current generation counter for a config key.
+    ///
+    /// Used by long-polling waiters to detect a notification that occurred
+    /// before their `notified()` future was polled (lost-wakeup protection).
+    pub fn generation(&self, key: &str) -> u64 {
+        self.notifiers
+            .get(key)
+            .map(|e| e.generation.load(Ordering::SeqCst))
+            .unwrap_or(0)
     }
 
     /// Notify changes for multiple config keys at once
@@ -183,7 +225,7 @@ mod tests {
 
         // Wait for notification with timeout
         let result =
-            tokio::time::timeout(std::time::Duration::from_secs(1), notify.notified()).await;
+            tokio::time::timeout(std::time::Duration::from_secs(1), notify.notify.notified()).await;
 
         assert!(result.is_ok(), "Should have been notified");
         handle.await.unwrap();

@@ -12,11 +12,13 @@
 #   source "$(dirname "$0")/cluster_lib.sh"
 # ==============================================================================
 
-# Node / console / consul port layout (shared across all cluster launchers).
-# Node i  : main port 8848 + 1000, console 8081 + 1000, consul 8500 + 1000.
+# Node / console / consul / apollo port layout (shared across all cluster launchers).
+# Node i  : main port 8848 + 1000, console 8081 + 1000, consul 8500 + 1000,
+#           apollo 18080 + 100.
 CLUSTER_NODE_PORTS=(8848 8858 8868)
 CLUSTER_CONSOLE_PORTS=(8081 8082 8083)
 CLUSTER_CONSUL_PORTS=(8500 8510 8520)
+CLUSTER_APOLLO_PORTS=(18080 18090 18100)
 
 # Comma-separated member list used for --batata.member.list.
 CLUSTER_MEMBER_LIST="127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"

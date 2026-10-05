@@ -44,6 +44,8 @@ services:
       - BATATA_LOG_LEVEL=info
     command:
       - "--batata.sql.init.platform=embedded"
+      # Apollo compatibility plugin (port 8080, already exposed above)
+      - "--batata.plugin.apollo.enabled=true"
     volumes:
       - batata-data:/app/data
       - *batata-conf
@@ -183,6 +185,7 @@ services:
       - "9848:9848"
       - "9849:9849"
       - "8500:8500"
+      - "18080:18080"   # Apollo plugin HTTP API
     environment:
       - BATATA_SERVER_IP=batata-node1
       - BATATA_LOG_LEVEL=info
@@ -192,6 +195,8 @@ services:
       - "-m"
       - "cluster"
       - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
+      - "--batata.plugin.apollo.enabled=true"
+      - "--batata.plugin.apollo.port=18080"
     volumes:
       - cluster-node1-data:/app/data
       - *batata-conf
@@ -213,6 +218,7 @@ services:
       - "9858:9858"
       - "9859:9859"
       - "8510:8510"
+      - "18090:18090"   # Apollo plugin HTTP API
     environment:
       - BATATA_SERVER_IP=batata-node2
       - BATATA_LOG_LEVEL=info
@@ -224,6 +230,8 @@ services:
       - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
       - "--batata.server.main.port=8858"
       - "--batata.console.port=8091"
+      - "--batata.plugin.apollo.enabled=true"
+      - "--batata.plugin.apollo.port=18090"
     volumes:
       - cluster-node2-data:/app/data
       - *batata-conf
@@ -245,6 +253,7 @@ services:
       - "9868:9868"
       - "9869:9869"
       - "8520:8520"
+      - "18100:18100"   # Apollo plugin HTTP API
     environment:
       - BATATA_SERVER_IP=batata-node3
       - BATATA_LOG_LEVEL=info
@@ -256,6 +265,8 @@ services:
       - "--batata.member.list=batata-node1:8848,batata-node2:8858,batata-node3:8868"
       - "--batata.server.main.port=8868"
       - "--batata.console.port=8101"
+      - "--batata.plugin.apollo.enabled=true"
+      - "--batata.plugin.apollo.port=18100"
     volumes:
       - cluster-node3-data:/app/data
       - *batata-conf

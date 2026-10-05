@@ -1,0 +1,22 @@
+# Apollo Java SDK Tests
+#
+# Runs the official Apollo Java SDK against a Batata server with the Apollo
+# compatibility plugin enabled. Connection points are taken from the
+# APOLLO_META / APOLLO_OPENAPI_URL / APOLLO_OPENAPI_TOKEN environment
+# variables (see sdk-tests/podman-compose.yml), falling back to localhost.
+#
+# Build/run (standalone):
+#   podman build -f Containerfile -t apollo-tests .
+#   podman run --rm -e APOLLO_META=http://host:18080 apollo-tests
+
+FROM maven:3.9-eclipse-temurin-21 AS deps
+WORKDIR /app
+COPY pom.xml .
+RUN mvn -q -B -DskipTests -Dmaven.repo.local=/app/.m2 dependency:go-offline || true
+
+FROM maven:3.9-eclipse-temurin-21
+WORKDIR /app
+COPY --from=deps /app/.m2 /root/.m2
+COPY pom.xml .
+COPY src ./src
+ENTRYPOINT ["sh", "-c", "mvn test -Dapollo.meta=${APOLLO_META:-http://127.0.0.1:18080} -Dapollo.openapi.url=${APOLLO_OPENAPI_URL:-http://127.0.0.1:18080} -Dapollo.openapi.token=${APOLLO_OPENAPI_TOKEN:-admin}"]

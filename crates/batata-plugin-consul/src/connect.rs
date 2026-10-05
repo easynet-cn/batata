@@ -417,6 +417,10 @@ pub struct CompiledDiscoveryChain {
     pub nodes: HashMap<String, DiscoveryGraphNode>,
 /// The `targets` field.
     pub targets: HashMap<String, DiscoveryTarget>,
+/// The `default` field. True when the chain is the auto-generated default
+/// (no custom service-router/service-splitter/service-resolver config entries).
+    #[serde(default)]
+    pub default: bool,
 }
 
 /// Discovery chain API response
@@ -818,6 +822,9 @@ impl ConsulConnectService {
                 start_node,
                 nodes,
                 targets,
+                default: router_entry.is_none()
+                    && splitter_entry.is_none()
+                    && resolver_entry.is_none(),
             },
         }
     }
