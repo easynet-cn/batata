@@ -15,6 +15,7 @@ use actix_web::{HttpRequest, HttpResponse, Scope, get, web};
 use batata_common::ClusterManager;
 
 use crate::acl::AclService;
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;
 
 #[get("/leader")]
@@ -23,8 +24,9 @@ async fn get_leader(
     acl_service: web::Data<AclService>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::status::get_leader(req, acl_service, member_manager, dc_config).await
+    crate::status::get_leader(req, acl_service, member_manager, dc_config, index_provider).await
 }
 
 #[get("/peers")]

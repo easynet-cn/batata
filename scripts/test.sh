@@ -274,39 +274,95 @@ cmd_sdk_quick() {
     SUITE="${1:-all}"
     FILTER="${2:-}"
 
-    # Start cluster unless NO_RESTART
+    # --- Targeted tracing -------------------------------------------------
+    # init_logging() uses EnvFilter::try_from_default_env(), so RUST_LOG is a
+    # ready-made per-module switch. For consul (and all) we bump the consul
+    # plugin + healthcheck reactor to debug, so the check registration ->
+    # reactor execution -> query path is fully visible without an OTEL backend.
+    if [ "${SUITE}" = "consul" ] || [ "${SUITE}" = "all" ]; then
+        export RUST_LOG="${RUST_LOG:-info},batata_plugin_consul=debug,batata_naming::healthcheck=debug,batata_naming=debug"
+    fi
+
+    # --- Start backend ----------------------------------------------------
+    # SDK_MODE=standalone -> single node (fast verify); default cluster (full
+    # suite, incl. peering/raft cases). Both enable consul + apollo.
+    MODE="${SDK_MODE:-cluster}"
     if [ "${NO_RESTART:-}" != "1" ]; then
-        echo -e "${BOLD}Starting cluster ($(basename $BINARY))...${NC}"
-        BINARY="$BINARY" CONSUL_ENABLED=true APOLLO_ENABLED=true "${SCRIPT_DIR}/startup.sh" cluster 2>&1 | grep "ready\|ERROR"
+        # Kill any leftover batata-server so we don't collide on shared ports
+        # (e.g. a previous cluster run still holding 8848/8081/8500).
+        pkill -f batata-server 2>/dev/null || true
+        sleep 2
+        for port in 8848 8858 8868 8081 8500 8510 8520 8080 18080 18090 18100 \
+                    9848 9858 9868 9849 9859 9869 7848 7858 7868; do
+            lsof -ti:"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+        done
+        sleep 1
+        if [ "${MODE}" = "standalone" ]; then
+            echo -e "${BOLD}Starting standalone node ($(basename $BINARY)) with consul+apollo...${NC}"
+            # startup.sh's standalone branch does NOT read CONSUL_ENABLED/
+            # APOLLO_ENABLED; rely on BATATA_PLUGIN_*_ENABLED env overrides.
+            BATATA_PLUGIN_CONSUL_ENABLED=true BATATA_PLUGIN_APOLLO_ENABLED=true \
+                BINARY="$BINARY" "${SCRIPT_DIR}/startup.sh" -m standalone 2>&1 | grep "ready\|ERROR" || true
+            LOG_SOURCES=("${ROOT}/logs/startup.log")
+        else
+            echo -e "${BOLD}Starting cluster ($(basename $BINARY))...${NC}"
+            BINARY="$BINARY" CONSUL_ENABLED=true APOLLO_ENABLED=true "${SCRIPT_DIR}/startup.sh" cluster 2>&1 | grep "ready\|ERROR" || true
+            LOG_SOURCES=("${ROOT}/logs/node1" "${ROOT}/logs/node2" "${ROOT}/logs/node3")
+        fi
     fi
 
     run_consul() {
         echo -e "\n${BOLD}=== Consul Go Tests ===${NC}"
-        sdk_run_consul "$FILTER" 2>&1 | grep -v "^{" | tee /tmp/test-cluster-consul.txt | grep -E "^---|PASS|FAIL"
-        local pass=$(grep -c '^--- PASS' /tmp/test-cluster-consul.txt 2>/dev/null || echo 0)
-        local fail=$(grep -c '^--- FAIL' /tmp/test-cluster-consul.txt 2>/dev/null || echo 0)
+        sdk_run_consul "$FILTER" 2>&1 | grep -v "^{" | tee /tmp/test-${MODE}-consul.txt | grep -E "^---|PASS|FAIL"
+        local pass=$(grep -c '^--- PASS' /tmp/test-${MODE}-consul.txt 2>/dev/null || echo 0)
+        local fail=$(grep -c '^--- FAIL' /tmp/test-${MODE}-consul.txt 2>/dev/null || echo 0)
         echo -e "\n${BOLD}Consul: ${GREEN}${pass} PASS${NC} ${RED}${fail} FAIL${NC}"
     }
 
     run_batata() {
         echo -e "\n${BOLD}=== Nacos Java SDK Tests ===${NC}"
-        sdk_run_nacos "$FILTER" 2>&1 | tee /tmp/test-cluster-nacos.txt | grep "Tests run:" | grep -v " -- in " | tail -1
+        sdk_run_nacos "$FILTER" 2>&1 | tee /tmp/test-${MODE}-nacos.txt | grep "Tests run:" | grep -v " -- in " | tail -1
     }
 
     run_apollo() {
         echo -e "\n${BOLD}=== Apollo Java SDK Tests ===${NC}"
-        APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo "$FILTER" 2>&1 | tee /tmp/test-cluster-apollo.txt | grep "Tests run:" | grep -v " -- in " | tail -1
+        APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo "$FILTER" 2>&1 | tee /tmp/test-${MODE}-apollo.txt | grep "Tests run:" | grep -v " -- in " | tail -1
     }
 
+    # Run the suite without errexit: a test failure must not abort before we
+    # archive the server logs (and the standalone/cluster start above already
+    # backgrounded the server regardless).
+    local suite_rc=0
+    set +e
     case "$SUITE" in
         consul)  run_consul ;;
         nacos)   run_batata ;;
         apollo)  run_apollo ;;
         all)     run_consul; run_batata; run_apollo ;;
-        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo} [filter]"; return 1 ;;
+        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo} [filter]"; suite_rc=1 ;;
     esac
+    suite_rc=$?
+    set -e
+
+    # --- Archive server logs (avoid per-run overwrite, ease post-mortem) --
+    local ts=$(date +%Y%m%d-%H%M%S)
+    local arc="/tmp/sdk-${MODE}-${SUITE}-server-${ts}.log"
+    : > "$arc"
+    for src in "${LOG_SOURCES[@]:-}"; do
+        [ -e "$src" ] || continue
+        if [ -f "$src" ]; then
+            { echo "===== $src ====="; cat "$src"; } >> "$arc"
+        elif [ -d "$src" ]; then
+            for f in "$src"/*.log "$src"/stdout.log; do
+                [ -f "$f" ] || continue
+                { echo "===== $f ====="; cat "$f"; } >> "$arc"
+            done
+        fi
+    done
+    echo -e "${BOLD}Server logs archived to: ${arc}${NC}"
 
     echo -e "\n${BOLD}Done.${NC}"
+    return $suite_rc
 }
 
 # ---------------------------------------------------------------------------

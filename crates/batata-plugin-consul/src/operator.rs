@@ -701,13 +701,10 @@ pub async fn transfer_leader(
         }
     };
 
-    // Only the leader can transfer leadership
-    if !raft_node.is_leader() {
-        return HttpResponse::BadRequest().consul_error(ConsulError::new(
-            "Leadership transfer must be requested on the leader node",
-        ));
-    }
-
+    // Leadership transfer may be requested against any node. Consul forwards
+    // the operation to the leader before applying it; here we achieve the same
+    // effect by triggering an election directly on the target voter from the
+    // node that received the request (valid for followers and leaders alike).
     let current_leader = raft_node.leader_id();
 
     // Get all cluster members
@@ -716,7 +713,9 @@ pub async fn transfer_leader(
     // Determine the target node for transfer
     let target_addr = if let Some(ref target_id) = query.id {
         if !target_id.is_empty() {
-            // Find the target node by address or IP
+            // Find the target by address or IP. `RaftGetConfiguration` reports
+            // each server's `ID` as its member address, so the Consul Go SDK
+            // passes that address back as the transfer target.
             let found = members
                 .iter()
                 .find(|m| m.address == *target_id || m.ip == *target_id);
@@ -746,14 +745,26 @@ pub async fn transfer_leader(
         ));
     };
 
+    // `target_addr` is the target member's main server address. The
+    // RaftManagementService gRPC used by `trigger_remote_election` listens on
+    // the Raft port (main port - 1000), so convert it before triggering.
+    let target_raft_addr = match target_addr.split_once(':') {
+        Some((host, port_str)) => {
+            let port: u16 = port_str.parse().unwrap_or(0);
+            let raft_port = port.saturating_sub(1000);
+            format!("{}:{}", host, raft_port)
+        }
+        None => target_addr.clone(),
+    };
+
     // Send TriggerElection gRPC to the target node
     tracing::info!(
-        target = %target_addr,
+        target = %target_raft_addr,
         "Initiating leader transfer to {}",
-        target_addr
+        target_raft_addr
     );
 
-    match raft_node.trigger_remote_election(&target_addr).await {
+    match raft_node.trigger_remote_election(&target_raft_addr).await {
         Ok(_) => {
             // Wait for leader to change (5 second timeout)
             match raft_node

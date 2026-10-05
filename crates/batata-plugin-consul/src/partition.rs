@@ -236,9 +236,11 @@ impl ConsulPartitionService {
     }
 
     /// Read a partition by name.
-    /// Returns the partition (including soft-deleted ones with DeletedAt set).
+    /// Returns the partition, or `None` if it does not exist (a soft-deleted
+    /// partition is treated as gone, so `GET /v1/partition/<name>` returns
+    /// 404 after deletion — matching Consul's behaviour).
     pub fn read_partition(&self, name: &str) -> Option<Partition> {
-        self.get(name)
+        self.get(name).filter(|p| p.deleted_at.is_none())
     }
 
     /// Delete a partition (soft delete — sets DeletedAt timestamp).

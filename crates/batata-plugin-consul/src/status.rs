@@ -12,6 +12,8 @@ use serde::Deserialize;
 use batata_common::ClusterManager;
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 
 /// Query parameters for status endpoints
@@ -32,12 +34,17 @@ fn to_raft_address(batata_address: &str, raft_port: u16) -> String {
 }
 
 /// GET /v1/status/leader
-/// Returns the actual Raft leader address from ClusterManager
+/// Returns the actual Raft leader address from ClusterManager.
+///
+/// Mirrors Consul, which returns an `X-Consul-Index` header on this endpoint
+/// so raw/blocking queries observe a non-zero `QueryMeta.LastIndex` (the
+/// hashicorp/consul Go SDK reads it via `Raw().Query`).
 pub async fn get_leader(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -50,7 +57,8 @@ pub async fn get_leader(
         .map(|addr| to_raft_address(&addr, raft_port))
         .unwrap_or_default();
 
-    HttpResponse::Ok().json(leader)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(leader)
 }
 
 /// GET /v1/status/peers

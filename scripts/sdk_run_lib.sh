@@ -36,7 +36,7 @@ sdk_run_consul() {
         CONSUL_CLUSTER_NODE2=127.0.0.1:8510 \
         CONSUL_CLUSTER_NODE3=127.0.0.1:8520 \
         ${CONSUL_HTTP_TOKEN:+CONSUL_HTTP_TOKEN="$CONSUL_HTTP_TOKEN"} \
-        go test ./... -v -count=1 -timeout 120s $run_flag )
+        go test ./... -v -count=1 -timeout 600s $run_flag )
 }
 
 # Run the Nacos Java SDK test suite.

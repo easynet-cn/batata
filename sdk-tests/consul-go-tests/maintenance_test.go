@@ -30,7 +30,7 @@ func TestMaintenanceEnableNode(t *testing.T) {
 			return false
 		}
 		for _, check := range checks {
-			if check.Name == "_node_maintenance" && check.Status == api.HealthCritical {
+			if check.CheckID == "_node_maintenance" && check.Status == api.HealthCritical {
 				return true
 			}
 		}
@@ -77,7 +77,7 @@ func TestMaintenanceDisableNode(t *testing.T) {
 			return false
 		}
 		for _, check := range checks {
-			if check.Name == "_node_maintenance" && check.Status == api.HealthCritical {
+			if check.CheckID == "_node_maintenance" && check.Status == api.HealthCritical {
 				return true
 			}
 		}
