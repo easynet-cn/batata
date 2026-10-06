@@ -183,6 +183,8 @@ impl UnhealthyInstanceChecker {
             }
 
             // Mark unhealthy instances
+            let mut marked_count = 0usize;
+
             for (key, elapsed) in &unhealthy_instances {
                 // Clone entry data to release heartbeat_map lock before calling NamingService.
                 // This prevents holding heartbeat_map read lock during potentially slow
@@ -191,11 +193,6 @@ impl UnhealthyInstanceChecker {
                 // --- heartbeat_map lock released ---
 
                 if let Some(entry) = entry_data {
-                    info!(
-                        "Marking instance {}:{} as unhealthy due to heartbeat timeout (elapsed: {}ms, timeout: {}ms)",
-                        entry.ip, entry.port, elapsed, entry.heartbeat_timeout
-                    );
-
                     // Zero-copy snapshot — we only read fields, no ownership needed.
                     let snapshot = naming_service.get_instances_snapshot(
                         &entry.namespace,
@@ -207,14 +204,35 @@ impl UnhealthyInstanceChecker {
 
                     for instance in snapshot.iter() {
                         if instance.ip == entry.ip && instance.port == entry.port {
-                            if naming_service.heartbeat(
+                            // Nacos parity — `UnhealthyInstanceChecker.doCheck()` only acts on
+                            // instances that are *still* healthy:
+                            //   if (instance.isHealthy() && isUnhealthy(...)) { changeHealthyStatus(...) }
+                            // Without this guard the checker re-marks long-dead instances and
+                            // re-publishes their health-change / Distro sync on every interval,
+                            // forever. Instances that recover are flipped back to healthy by
+                            // `heartbeat()`, so a later timeout is still detected.
+                            if !instance.healthy {
+                                break;
+                            }
+
+                            info!(
+                                "Marking instance {}:{} as unhealthy due to heartbeat timeout (elapsed: {}ms, timeout: {}ms)",
+                                entry.ip, entry.port, elapsed, entry.heartbeat_timeout
+                            );
+
+                            // `heartbeat()` (client beat) flips an instance back to
+                            // *healthy*; to mark it *unhealthy* after a timeout we must
+                            // use the explicit health-status setter instead.
+                            if naming_service.update_instance_health(
                                 &entry.namespace,
                                 &entry.group_name,
                                 &entry.service_name,
                                 &instance.ip,
                                 instance.port,
                                 &entry.cluster_name,
+                                false,
                             ) {
+                                marked_count += 1;
                                 debug!(
                                     "Successfully marked {}:{} as unhealthy",
                                     instance.ip, instance.port
@@ -231,10 +249,10 @@ impl UnhealthyInstanceChecker {
                 }
             }
 
-            if !unhealthy_instances.is_empty() {
+            if marked_count > 0 {
                 info!(
                     "Marked {} instances as unhealthy due to heartbeat timeout",
-                    unhealthy_instances.len()
+                    marked_count
                 );
             }
         }

@@ -16,6 +16,58 @@ use batata_server_common::{
 };
 
 use batata_api::naming::NamingServiceProvider;
+use batata_api::naming::model::NotifySubscriberRequest;
+use batata_api::remote::model::RequestTrait;
+use batata_core::service::remote::ConnectionManager;
+
+/// Push an instance-change notification to all SDK subscribers of a service.
+///
+/// The nacos SDK's `getAllInstances` reads from the local subscription cache,
+/// which is only refreshed by a server push or the periodic (~10s) poll. Admin
+/// metadata mutations must therefore trigger a push; otherwise SDK-side reads
+/// observe stale data until the next poll. This mirrors `InstanceRequestHandler`
+/// behavior for client-driven registrations.
+async fn notify_subscribers(
+    naming_service: &Arc<dyn NamingServiceProvider>,
+    connection_manager: &Arc<ConnectionManager>,
+    namespace: &str,
+    group_name: &str,
+    service_name: &str,
+) {
+    let subscribers = naming_service.get_subscribers(namespace, group_name, service_name);
+    if subscribers.is_empty() {
+        return;
+    }
+    let service_info = naming_service.get_service(namespace, group_name, service_name, "", false);
+    let notification =
+        NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+    let payload = notification.build_server_push_payload();
+    let cm = connection_manager.clone();
+    tokio::spawn(async move {
+        cm.push_message_to_many(&subscribers, payload).await;
+    });
+}
+
+/// Merge a form deserialized from the URL query string and/or the request body.
+///
+/// The nacos maintainer client sends some admin operations (e.g. batch update
+/// metadata, partial update) as URL query parameters and others (batch delete
+/// metadata) as a form body. The nacos server binds these via a Spring form
+/// object that accepts both, so we do the same to stay compatible. When the
+/// query string is empty/missing the required fields `web::Query` fails to
+/// extract, yielding `None`, and we fall back to the body.
+fn merge_form<T: serde::de::DeserializeOwned>(
+    query: Option<web::Query<T>>,
+    body: Option<web::Form<T>>,
+) -> Option<T> {
+    if let Some(q) = query {
+        return Some(q.into_inner());
+    }
+    if let Some(b) = body {
+        return Some(b.into_inner());
+    }
+    None
+}
 
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
@@ -165,8 +217,21 @@ async fn register_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<InstanceRegisterForm>,
+    query: Option<web::Query<InstanceRegisterForm>>,
+    body: Option<web::Form<InstanceRegisterForm>>,
 ) -> impl Responder {
+    let form = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                false,
+            );
+        }
+    };
+
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -271,8 +336,21 @@ async fn deregister_instance(
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     connection_manager: Option<web::Data<Arc<dyn batata_core::ClientConnectionManager>>>,
-    params: web::Query<InstanceDeregisterQuery>,
+    query: Option<web::Query<InstanceDeregisterQuery>>,
+    body: Option<web::Form<InstanceDeregisterQuery>>,
 ) -> impl Responder {
+    let params = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                false,
+            );
+        }
+    };
+
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
         return Result::<bool>::http_response(
             400,
@@ -369,8 +447,21 @@ async fn update_instance(
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     connection_manager: Option<web::Data<Arc<dyn batata_core::ClientConnectionManager>>>,
-    form: web::Form<InstanceRegisterForm>,
+    query: Option<web::Query<InstanceRegisterForm>>,
+    body: Option<web::Form<InstanceRegisterForm>>,
 ) -> impl Responder {
+    let form = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                false,
+            );
+        }
+    };
+
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
             400,
@@ -593,8 +684,21 @@ async fn update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<MetadataUpdateForm>,
+    query: Option<web::Query<MetadataUpdateForm>>,
+    body: Option<web::Form<MetadataUpdateForm>>,
 ) -> impl Responder {
+    let form = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName' and 'instances' are missing".to_string(),
+                false,
+            );
+        }
+    };
+
     if form.service_name.is_empty() || form.instances.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -667,6 +771,20 @@ async fn update_metadata(
         .await;
     }
 
+    // Push instance-change notification to SDK subscribers so that
+    // getAllInstances (subscription-cache based) reflects the metadata update
+    // immediately instead of waiting for the ~10s poll.
+    if let Some(cm) = data.connection_manager.get().cloned() {
+        notify_subscribers(
+            naming_service.get_ref(),
+            &cm,
+            &namespace_id,
+            &group_name,
+            &form.service_name,
+        )
+        .await;
+    }
+
     // Return InstanceMetadataBatchResult format: {"updated": ["ip:port", ...]}
     let batch_result = serde_json::json!({ "updated": updated_ips });
     Result::<serde_json::Value>::http_success(batch_result)
@@ -680,8 +798,21 @@ async fn partial_update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<InstanceRegisterForm>,
+    query: Option<web::Query<InstanceRegisterForm>>,
+    body: Option<web::Form<InstanceRegisterForm>>,
 ) -> impl Responder {
+    let form = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                false,
+            );
+        }
+    };
+
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
             400,
@@ -752,6 +883,20 @@ async fn partial_update_instance(
             existing,
         )
         .await;
+
+        // Push instance-change notification to SDK subscribers so that
+        // getAllInstances (subscription-cache based) reflects the partial update
+        // immediately instead of waiting for the ~10s poll.
+        if let Some(cm) = data.connection_manager.get().cloned() {
+            notify_subscribers(
+                naming_service.get_ref(),
+                &cm,
+                &namespace_id,
+                &group_name,
+                &form.service_name,
+            )
+            .await;
+        }
 
         if result {
             Result::<bool>::http_success(true)
@@ -829,8 +974,21 @@ async fn delete_metadata_batch(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    params: web::Query<MetadataUpdateForm>,
+    query: Option<web::Query<MetadataUpdateForm>>,
+    body: Option<web::Form<MetadataUpdateForm>>,
 ) -> impl Responder {
+    let params = match merge_form(query, body) {
+        Some(f) => f,
+        None => {
+            return Result::<bool>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                "Required parameters 'serviceName' and 'instances' are missing".to_string(),
+                false,
+            );
+        }
+    };
+
     if params.service_name.is_empty() || params.instances.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -907,6 +1065,18 @@ async fn delete_metadata_batch(
             group_name,
             &params.service_name,
             updated_instance,
+        )
+        .await;
+    }
+
+    // Push instance-change notification to SDK subscribers (see update_metadata).
+    if let Some(cm) = data.connection_manager.get().cloned() {
+        notify_subscribers(
+            naming_service.get_ref(),
+            &cm,
+            &namespace_id,
+            &group_name,
+            &params.service_name,
         )
         .await;
     }

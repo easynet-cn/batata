@@ -127,6 +127,27 @@ impl HealthCheckInterceptorChain {
         Self::new(interceptors)
     }
 
+    /// Cluster-aware chain for the ephemeral last-beat checkers
+    /// (`UnhealthyInstanceChecker` / `ExpiredInstanceChecker`).
+    ///
+    /// Unlike [`Self::cluster`], this chain does **not** include the
+    /// `HealthCheckResponsibleInterceptor`. Ephemeral heartbeat tracking is
+    /// owned by the node that received the registration/heartbeat — the
+    /// "native" node, matching Nacos 2.x `ConnectionBasedClient.isNative()`
+    /// (the node holding the client connection is the only one that runs the
+    /// check). In Batata that owning node is exactly the one holding the
+    /// `heartbeat_map` entry, so the check must run there unconditionally.
+    ///
+    /// Using the distro `ip:port` responsibility here would wrongly skip the
+    /// owning node (which may not be the hashed responsible node) and leave
+    /// the instance never-checked — the bug behind
+    /// `test_instance_marked_unhealthy_after_heartbeat_timeout` in a cluster.
+    pub fn cluster_heartbeat(config: Arc<HealthCheckConfig>) -> Self {
+        let interceptors: Vec<Box<dyn HealthCheckInterceptor>> =
+            vec![Box::new(HealthCheckEnableInterceptor::new(config))];
+        Self::new(interceptors)
+    }
+
     /// Returns `true` if the health check should proceed.
     ///
     /// Evaluates all interceptors in order. If any blocks, returns `false`.

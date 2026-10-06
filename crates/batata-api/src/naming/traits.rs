@@ -132,12 +132,18 @@ pub trait NamingServiceProvider: Send + Sync {
     ) -> bool;
 
     /// The `merge_remote_instances` method.
+    ///
+    /// `source` is the address of the node that sent this Distro sync. It scopes
+    /// the garbage-collection of stale replicas to that origin (matching Nacos
+    /// Distro's per-client reconciliation) so a sync from one node can never
+    /// delete instances another node replicated here.
     fn merge_remote_instances(
         &self,
         namespace: &str,
         group_name: &str,
         service_name: &str,
         instances: Vec<Instance>,
+        source: &str,
     ) -> bool;
 
     /// The `batch_deregister_instances` method.

@@ -57,9 +57,11 @@ async fn test_instance_marked_unhealthy_after_heartbeat_timeout() {
 
     assert_eq!(response["code"], 0, "Query should succeed");
 
-    // Wait for heartbeat timeout (default is 15 seconds)
-    // In a real test, we might need to wait longer or adjust the timeout
-    sleep(Duration::from_secs(16)).await;
+    // Wait for heartbeat timeout (default is 15 seconds). The health checker
+    // polls on its own interval (default 5s) and marks an instance unhealthy only
+    // once `elapsed > timeout` (strictly greater, matching Nacos). Allow a
+    // generous margin over the 15s timeout + one poll interval.
+    sleep(Duration::from_secs(25)).await;
 
     // Query instances again - instance should be marked as unhealthy
     let response: serde_json::Value = client

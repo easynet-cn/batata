@@ -135,8 +135,9 @@ impl NamingServiceProvider for NamingService {
         group_name: &str,
         service_name: &str,
         instances: Vec<Instance>,
+        source: &str,
     ) -> bool {
-        self.merge_remote_instances(namespace, group_name, service_name, instances);
+        self.merge_remote_instances(namespace, group_name, service_name, instances, source);
         true
     }
 

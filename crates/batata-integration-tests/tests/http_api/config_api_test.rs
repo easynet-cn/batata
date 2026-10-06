@@ -480,55 +480,50 @@ async fn test_config_md5() {
         .await
         .expect("Failed to publish config");
 
-    // Get config and check for MD5 field in the response
-    let response: serde_json::Value = client
-        .get_with_query(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-                ("showBeta", "false"),
-            ],
-        )
+    // Get config and check the MD5 returned by the server.
+    // Nacos returns the config content in the JSON `data` field and the MD5 of
+    // that content in the `Content-MD5` response header.
+    let response = client
+        .raw_get(&format!(
+            "/nacos/v2/cs/config?dataId={}&group={}&showBeta=false",
+            data_id, DEFAULT_GROUP
+        ))
         .await
         .expect("Failed to get config");
 
-    assert_eq!(response["code"], 0, "Get should succeed");
+    assert!(
+        response.status().is_success(),
+        "Get should succeed, got {}",
+        response.status()
+    );
+
+    let content_md5 = response
+        .headers()
+        .get("content-md5")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body = response.text().await.expect("Should read response body");
+    let json: serde_json::Value = serde_json::from_str(&body).expect("Should parse JSON");
+
+    assert_eq!(json["code"], 0, "Get should succeed");
     assert_eq!(
-        response["data"], content,
+        json["data"], content,
         "Content should match published value"
     );
 
-    // Check MD5 field in the response data
-    let md5_value = &response["data"];
-    assert!(
-        md5_value.is_string(),
-        "Response should contain an md5 field in data, got: {:?}",
-        response["data"]
-    );
-
-    let md5_str = md5_value.as_str().unwrap();
-
-    // MD5 should be a valid 32-character hex string
-    assert_eq!(
-        md5_str.len(),
-        32,
-        "MD5 should be 32 characters long, got {} chars: '{}'",
-        md5_str.len(),
-        md5_str
-    );
-    assert!(
-        md5_str.chars().all(|c| c.is_ascii_hexdigit()),
-        "MD5 should only contain hex digits, got: '{}'",
-        md5_str
-    );
-
-    // Verify MD5 matches the expected value for the content
+    // Verify MD5 matches the expected value for the content. Nacos exposes the
+    // MD5 via the `Content-MD5` header rather than the JSON body.
     let expected_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
+    let actual_md5 = content_md5.unwrap_or_else(|| {
+        panic!(
+            "Content-MD5 header should be present, body: {}",
+            body
+        )
+    });
     assert_eq!(
-        md5_str, expected_md5,
-        "MD5 should match md5 of content '{}': expected '{}', got '{}'",
-        content, expected_md5, md5_str
+        actual_md5, expected_md5,
+        "Content-MD5 header should match md5 of content '{}': expected '{}', got '{}'",
+        content, expected_md5, actual_md5
     );
 }
 

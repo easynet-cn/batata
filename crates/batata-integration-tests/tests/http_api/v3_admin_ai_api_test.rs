@@ -1,6 +1,12 @@
 //! V3 Admin AI API integration tests
 //!
 //! Tests for /nacos/v3/admin/ai/* endpoints (MCP and A2A)
+//!
+//! The request/response shapes follow the upstream Nacos 3.x admin API:
+//! - `endpointSpecification` is a JSON *string* carrying a Nacos
+//!   `McpEndpointSpec` (`{"type":"direct","data":{"address":..,"port":..}}`).
+//! - MCP get/delete use query params (`mcpName`), not path params.
+//! - A2A get/delete use query params (`namespaceId` + `agentName`), not path params.
 
 use batata_integration_tests::{
     CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id,
@@ -42,12 +48,13 @@ async fn test_v3_admin_create_mcp_server() {
     let client = authenticated_client().await;
     let server_name = format!("test-mcp-{}", unique_test_id());
 
+    // `endpointSpecification` is a JSON string carrying a Nacos McpEndpointSpec.
     let response: serde_json::Value = client
         .post_form(
             "/nacos/v3/admin/ai/mcp",
             &json!({
                 "mcpName": server_name,
-                "endpointSpecification": "http://localhost:9090/mcp",
+                "endpointSpecification": r#"{"type":"direct","data":{"address":"localhost","port":9090}}"#,
                 "description": "Test MCP server"
             }),
         )
@@ -56,9 +63,12 @@ async fn test_v3_admin_create_mcp_server() {
 
     assert_eq!(response["code"], 0, "Create MCP server should succeed");
 
-    // Cleanup
+    // Cleanup (query params, matching Nacos)
     let _: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/mcp",
+            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+        )
         .await
         .ok()
         .unwrap_or_default();
@@ -77,15 +87,18 @@ async fn test_v3_admin_get_mcp_server() {
             "/nacos/v3/admin/ai/mcp",
             &json!({
                 "mcpName": server_name,
-                "endpointSpecification": "http://localhost:9090/mcp"
+                "endpointSpecification": r#"{"type":"direct","data":{"address":"localhost","port":9090}}"#
             }),
         )
         .await
         .expect("Failed to create MCP server");
 
-    // Get (uses path params: /mcp/{namespace}/{name})
+    // Get (query params, matching Nacos: /mcp?mcpName=...)
     let response: serde_json::Value = client
-        .get(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
+        .get_with_query(
+            "/nacos/v3/admin/ai/mcp",
+            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+        )
         .await
         .expect("Failed to get MCP server");
 
@@ -93,7 +106,10 @@ async fn test_v3_admin_get_mcp_server() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/mcp",
+            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+        )
         .await
         .ok()
         .unwrap_or_default();
@@ -112,15 +128,18 @@ async fn test_v3_admin_delete_mcp_server() {
             "/nacos/v3/admin/ai/mcp",
             &json!({
                 "mcpName": server_name,
-                "endpointSpecification": "http://localhost:9090/mcp"
+                "endpointSpecification": r#"{"type":"direct","data":{"address":"localhost","port":9090}}"#
             }),
         )
         .await
         .expect("Failed to create MCP server");
 
-    // Delete (uses path params: /mcp/{namespace}/{name})
+    // Delete (query params, matching Nacos: /mcp?mcpName=...)
     let response: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/mcp",
+            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+        )
         .await
         .expect("Failed to delete MCP server");
 
@@ -172,9 +191,12 @@ async fn test_v3_admin_register_a2a_agent() {
 
     assert_eq!(response["code"], 0, "Register agent should succeed");
 
-    // Cleanup
+    // Cleanup (query params, matching Nacos)
     let _: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/a2a",
+            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+        )
         .await
         .ok()
         .unwrap_or_default();
@@ -205,9 +227,12 @@ async fn test_v3_admin_get_a2a_agent() {
         .await
         .expect("Failed to register agent");
 
-    // Get (uses path params: /a2a/{namespace}/{name})
+    // Get (query params, matching Nacos: /a2a?agentName=...)
     let response: serde_json::Value = client
-        .get(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
+        .get_with_query(
+            "/nacos/v3/admin/ai/a2a",
+            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+        )
         .await
         .expect("Failed to get agent");
 
@@ -215,7 +240,10 @@ async fn test_v3_admin_get_a2a_agent() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/a2a",
+            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+        )
         .await
         .ok()
         .unwrap_or_default();
@@ -246,9 +274,12 @@ async fn test_v3_admin_delete_a2a_agent() {
         .await
         .expect("Failed to register agent");
 
-    // Delete (uses path params: /a2a/{namespace}/{name})
+    // Delete (query params, matching Nacos: /a2a?agentName=...)
     let response: serde_json::Value = client
-        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
+        .delete_with_query(
+            "/nacos/v3/admin/ai/a2a",
+            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+        )
         .await
         .expect("Failed to delete agent");
 

@@ -485,7 +485,17 @@ public class NacosMetadataTest {
 
         TestSupport.waitForInstances(namingService, serviceName, DEFAULT_GROUP, 1);
 
-        List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        // Assert against the server's authoritative state rather than the client cache.
+        // The 2-arg `getAllInstances` defaults to subscribe=true, and in that mode nacos
+        // serves the result from the client's in-memory ServiceInfo cache:
+        //   NacosNamingService#getAllInstances -> getServiceInfoBySubscribe
+        //     -> ServiceInfoHolder#getServiceInfo -> serviceInfoMap.get(key)
+        // which the server push refreshes asynchronously — so a write made moments earlier
+        // is not necessarily visible. Passing subscribe=false selects nacos's
+        // non-subscribing overload instead, which queries the server directly via
+        // `clientProxy.queryInstancesOfService(...)`. Deterministic: no sleep, no polling.
+        List<Instance> instances =
+                namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
         assertFalse(instances.isEmpty(), "Instance should still exist after concurrent updates");
         assertEquals(1, instances.size(), "Should have exactly 1 instance after concurrent updates");
 

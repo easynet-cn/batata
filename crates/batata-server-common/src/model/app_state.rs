@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuthProvider};
 use batata_consistency::RaftNode;
+use batata_core::service::remote::ConnectionManager;
 use batata_persistence::PersistenceService;
 use batata_plugin::{ControlPlugin, PluginStateProvider};
 use batata_plugin::spi::PluginManager;
@@ -67,6 +68,12 @@ pub struct AppState {
     /// Dynamic log level setter (set by batata-server logging init)
     /// Accepts a tracing filter directive string like "info" or "batata_naming=debug"
     pub log_level_setter: Option<Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>>,
+    /// gRPC connection manager, populated lazily once gRPC servers start (see
+    /// `ServerBuilder::with_grpc_servers`). Admin naming handlers use it to push
+    /// instance-change notifications to SDK subscribers after metadata mutations,
+    /// so that `getAllInstances` (subscription-cache based) reflects changes
+    /// immediately instead of waiting for the periodic poll.
+    pub connection_manager: Arc<std::sync::OnceLock<Arc<ConnectionManager>>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -89,6 +96,7 @@ impl std::fmt::Debug for AppState {
             .field("encryption_service", &self.encryption_service.is_some())
             .field("plugin_state_providers", &self.plugin_state_providers.len())
             .field("plugin_manager", &self.plugin_manager.is_some())
+            .field("connection_manager", &self.connection_manager.get().is_some())
             .finish()
     }
 }
@@ -111,6 +119,7 @@ impl Clone for AppState {
             plugin_state_providers: self.plugin_state_providers.clone(),
             plugin_manager: self.plugin_manager.clone(),
             log_level_setter: self.log_level_setter.clone(),
+            connection_manager: self.connection_manager.clone(),
         }
     }
 }

@@ -199,14 +199,17 @@ async fn test_access_without_token() {
         status
     );
 
-    // Check error message mentions token or auth
+    // Check error message mentions token or auth. Nacos (and Batata) reject the
+    // request with code 10001 and a body such as "access denied" / "user not found".
     let body_lower = body.to_lowercase();
     assert!(
         body_lower.contains("token")
             || body_lower.contains("auth")
             || body_lower.contains("forbidden")
             || body_lower.contains("unauthorized")
-            || body_lower.contains("login"),
+            || body_lower.contains("login")
+            || body_lower.contains("denied")
+            || body_lower.contains("user not found"),
         "Error response should mention token/auth/forbidden, got body: {}",
         body
     );

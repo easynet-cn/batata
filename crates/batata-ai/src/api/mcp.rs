@@ -110,13 +110,36 @@ impl McpAdminForm {
         if let Some(endpoint) = self.endpoint_specification.as_deref()
             && !endpoint.trim().is_empty()
         {
-            let parsed = serde_json::from_str::<McpServerRegistration>(endpoint)
+            let spec: serde_json::Value = serde_json::from_str(endpoint)
                 .map_err(|e| format!("Invalid endpointSpecification: {e}"))?;
-            // Only the transport-relevant fields travel in the endpoint spec.
-            if !parsed.endpoint.is_empty() {
-                reg.endpoint = parsed.endpoint;
+            // Nacos encodes the endpoint as a McpEndpointSpec: {"type", "data"}.
+            // For the "direct" type the address/port live in `data`.
+            if let Some(data) = spec.get("data").and_then(|d| d.as_object()) {
+                let address = data.get("address").and_then(|v| v.as_str());
+                let port = data
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| {
+                        data.get("port")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<u64>().ok())
+                    });
+                if let (Some(address), Some(port)) = (address, port) {
+                    reg.endpoint = format!("{address}:{port}");
+                }
+                if let Some(t) = spec.get("type").and_then(|v| v.as_str()) {
+                    reg.transport = batata_common::model::ai::mcp::McpTransport {
+                        transport_type: t.to_string(),
+                        ..Default::default()
+                    };
+                }
+            } else if let Ok(parsed) = serde_json::from_value::<McpServerRegistration>(spec.clone()) {
+                // Backwards-compatible: {endpoint, transport}
+                if !parsed.endpoint.is_empty() {
+                    reg.endpoint = parsed.endpoint;
+                }
+                reg.transport = parsed.transport;
             }
-            reg.transport = parsed.transport;
         }
 
         Ok(reg)

@@ -11,6 +11,7 @@
 mod client_op;
 mod cluster;
 mod disconnect_listener;
+mod empty_service_cleaner;
 mod fuzzy_watch;
 mod instance;
 mod metadata;
@@ -25,6 +26,8 @@ pub use client_op::{
     ClientOperationService, ClientOperationServiceProxy, EphemeralClientOperationService,
     PersistentClientOperationService, deregister_instance_dispatch, register_instance_dispatch,
 };
+
+pub use empty_service_cleaner::EmptyServiceCleaner;
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -121,6 +124,13 @@ pub struct NamingService {
     /// Index: namespace@@group prefix -> set of service names.
     /// Enables O(page_size) list_services instead of O(total_services) full scan.
     service_name_index: Arc<DashMap<String, HashSet<String>>>,
+    /// Key: service_key, Value: timestamp (ms) at which the service first became
+    /// empty (no instances). Consumed by the empty-service reaper
+    /// (`clean_empty_services`). Deliberately *not* the generic revision timestamp:
+    /// Distro re-syncs an already-empty service on every cycle and each re-sync bumps
+    /// the revision, so a revision-based clock would be refreshed forever and no
+    /// empty service would ever expire.
+    service_empty_since: Arc<DashMap<String, i64>>,
 }
 
 /// Build cluster config key format: service_key##clusterName (pre-allocated)
@@ -146,6 +156,7 @@ impl NamingService {
             connection_instances: Arc::new(DashMap::new()),
             closing_connections: Arc::new(DashMap::new()),
             service_name_index: Arc::new(DashMap::new()),
+            service_empty_since: Arc::new(DashMap::new()),
         }
     }
 

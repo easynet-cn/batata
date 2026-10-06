@@ -72,25 +72,32 @@ impl HealthCheckManager {
         distro_mapper: Option<Arc<DistroMapper>>,
         local_address: Option<String>,
     ) -> Self {
-        // Build interceptor chain: cluster-aware if DistroMapper provided, standalone otherwise
-        let interceptor_chain = Arc::new(match (distro_mapper, local_address) {
-            (Some(mapper), Some(addr)) => {
-                HealthCheckInterceptorChain::cluster(config.clone(), mapper, addr)
+        // Build the interceptor chain for the last-beat checkers.
+        //
+        // The last-beat checkers (Unhealthy/Expired) run on the *owning* node
+        // — the node that received the registration/heartbeat — so they use a
+        // heartbeat chain WITHOUT the distro responsibility interceptor. The
+        // active health-check reactor (TCP/HTTP/MySQL, persistent instances)
+        // keeps the full cluster chain with responsibility, set later in
+        // `upgrade_to_cluster`.
+        let heartbeat_chain = match (distro_mapper, local_address) {
+            (Some(_), Some(_)) => {
+                Arc::new(HealthCheckInterceptorChain::cluster_heartbeat(config.clone()))
             }
-            _ => HealthCheckInterceptorChain::standalone(config.clone()),
-        });
+            _ => Arc::new(HealthCheckInterceptorChain::standalone(config.clone())),
+        };
 
         let unhealthy_checker = UnhealthyInstanceChecker::new(
             naming_service.clone(),
             config.clone(),
-            interceptor_chain.clone(),
+            heartbeat_chain.clone(),
         );
         let expired_checker = ExpiredInstanceChecker::new(
             naming_service.clone(),
             config.clone(),
             expire_enabled,
             unhealthy_checker.heartbeat_map.clone(),
-            interceptor_chain,
+            heartbeat_chain,
         );
         let reactor = HealthCheckReactor::new(naming_service.clone(), config);
         let core_handler = Arc::new(result_handler::CoreResultHandler::new(naming_service));
@@ -141,14 +148,17 @@ impl HealthCheckManager {
         local_address: String,
         distro_protocol: Arc<batata_core::service::distro::DistroProtocol>,
     ) {
-        let chain = Arc::new(HealthCheckInterceptorChain::cluster(
+        let heartbeat_chain = Arc::new(HealthCheckInterceptorChain::cluster_heartbeat(
+            config.clone(),
+        ));
+        let reactor_chain = Arc::new(HealthCheckInterceptorChain::cluster(
             config,
             distro_mapper,
             local_address,
         ));
-        self.unhealthy_checker.set_interceptor_chain(chain.clone());
-        self.expired_checker.set_interceptor_chain(chain.clone());
-        self.reactor.set_interceptor_chain(chain);
+        self.unhealthy_checker.set_interceptor_chain(heartbeat_chain.clone());
+        self.expired_checker.set_interceptor_chain(heartbeat_chain.clone());
+        self.reactor.set_interceptor_chain(reactor_chain);
 
         // Enable Distro sync for health state change propagation
         self.core_result_handler

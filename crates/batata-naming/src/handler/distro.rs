@@ -188,6 +188,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             &instance_data.group_name,
             &instance_data.service_name,
             instances,
+            &data.source,
         );
 
         info!(
@@ -244,6 +245,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             &group_name,
             &service_name,
             Vec::new(),
+            "",
         );
         debug!(
             "Removed remote ephemeral instances for non-responsible key: {}",

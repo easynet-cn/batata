@@ -100,11 +100,20 @@ public class NacosConfigChangeNotifyTest {
             }
         });
 
+        // Register the listener BEFORE the config exists. When a listener is registered
+        // after the config is already published, the client starts from the content/md5 it
+        // already knows, so nacos delivers no initial callback in that case — only later
+        // changes fire (hence a single notification for add+modify collapsed together).
+        // Registering first is also how the sibling CCN-001 case (testListenerOnConfigAdd)
+        // observes its "add" notification.
+        // Note: no waitForConfigPresent() here — an earlier getConfig() would settle the
+        // client's md5 and suppress exactly this initial notification.
+        configService.addListener(dataId, DEFAULT_GROUP, listener);
+
         // Publish initial config
         configService.publishConfig(dataId, DEFAULT_GROUP, "ccn.modify=initial");
-        TestSupport.waitForConfigPresent(configService, dataId, DEFAULT_GROUP);
-
-        configService.addListener(dataId, DEFAULT_GROUP, listener);
+        assertTrue(addLatch.await(10, TimeUnit.SECONDS),
+                "Listener should fire when config is first published");
 
         // Modify config
         String modifiedContent = "ccn.modify=updated";

@@ -64,6 +64,8 @@ if [ "$SUBCMD" = "cluster" ]; then
 
     NODE1_PORT=${CLUSTER_NODE_PORTS[0]}; NODE2_PORT=${CLUSTER_NODE_PORTS[1]}; NODE3_PORT=${CLUSTER_NODE_PORTS[2]}
     CONSOLE_PORT=${CLUSTER_CONSOLE_PORTS[0]}
+    NODE2_CONSOLE_PORT=${CLUSTER_CONSOLE_PORTS[1]}
+    NODE3_CONSOLE_PORT=${CLUSTER_CONSOLE_PORTS[2]}
     NODE1_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[0]}; NODE2_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[1]}; NODE3_CONSUL_PORT=${CLUSTER_CONSUL_PORTS[2]}
     NODE1_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[0]}; NODE2_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[1]}; NODE3_APOLLO_PORT=${CLUSTER_APOLLO_PORTS[2]}
 
@@ -119,13 +121,15 @@ if [ "$SUBCMD" = "cluster" ]; then
             fi
         done
         if [ "$WITH_CONSOLE" = "true" ]; then
-            local code
-            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${CONSOLE_PORT}/v3/auth/user/login" 2>/dev/null || echo "000")
-            if [ "$code" != "000" ]; then
-                echo -e "  Console :${CONSOLE_PORT} ${GREEN}UP${NC}"
-            else
-                echo -e "  Console :${CONSOLE_PORT} ${RED}DOWN${NC}"
-            fi
+            for cport in $CONSOLE_PORT $NODE2_CONSOLE_PORT $NODE3_CONSOLE_PORT; do
+                local code
+                code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${cport}/v3/auth/user/login" 2>/dev/null || echo "000")
+                if [ "$code" != "000" ]; then
+                    echo -e "  Console :${cport} ${GREEN}UP${NC}"
+                else
+                    echo -e "  Console :${cport} ${RED}DOWN${NC}"
+                fi
+            done
         fi
         if [ "$CONSUL_ENABLED" = "true" ]; then
             for cport in $NODE1_CONSUL_PORT $NODE2_CONSUL_PORT $NODE3_CONSUL_PORT; do
@@ -203,10 +207,11 @@ if [ "$SUBCMD" = "cluster" ]; then
             > "${BASE_DIR}/logs/node1/stdout.log" 2>&1 &
         echo $! > "${CLUSTER_PID_DIR}/node1.pid"
 
-        log_info "Starting Node 2 (:${NODE2_PORT}, consul:${NODE2_CONSUL_PORT}, mode=server, cluster)..."
+        log_info "Starting Node 2 (:${NODE2_PORT}, consul:${NODE2_CONSUL_PORT}, console:${NODE2_CONSOLE_PORT}, mode=merged, cluster)..."
         nohup "$BINARY" \
-            -d server \
+            -d merged \
             --batata.server.main.port=${NODE2_PORT} \
+            --batata.console.port=${NODE2_CONSOLE_PORT} \
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node2" \
             --batata.logs.path="${BASE_DIR}/logs/node2" \
             --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
@@ -215,10 +220,11 @@ if [ "$SUBCMD" = "cluster" ]; then
             > "${BASE_DIR}/logs/node2/stdout.log" 2>&1 &
         echo $! > "${CLUSTER_PID_DIR}/node2.pid"
 
-        log_info "Starting Node 3 (:${NODE3_PORT}, consul:${NODE3_CONSUL_PORT}, mode=server, cluster)..."
+        log_info "Starting Node 3 (:${NODE3_PORT}, consul:${NODE3_CONSUL_PORT}, console:${NODE3_CONSOLE_PORT}, mode=merged, cluster)..."
         nohup "$BINARY" \
-            -d server \
+            -d merged \
             --batata.server.main.port=${NODE3_PORT} \
+            --batata.console.port=${NODE3_CONSOLE_PORT} \
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node3" \
             --batata.logs.path="${BASE_DIR}/logs/node3" \
             --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \

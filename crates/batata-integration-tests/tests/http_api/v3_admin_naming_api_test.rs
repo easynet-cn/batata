@@ -373,10 +373,10 @@ async fn test_v3_admin_update_instance_metadata() {
         .await
         .expect("Failed to register");
 
-    // Update metadata
+    // Update metadata (nacos batch endpoint: /instance/metadata/batch)
     let response: serde_json::Value = client
         .put_form(
-            "/nacos/v3/admin/ns/instance/metadata",
+            "/nacos/v3/admin/ns/instance/metadata/batch",
             &json!({
                 "serviceName": service_name,
                 "instances": r#"[{"ip":"192.168.10.30","port":8080}]"#,

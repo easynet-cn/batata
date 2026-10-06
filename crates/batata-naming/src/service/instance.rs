@@ -59,6 +59,7 @@ impl NamingService {
         // Update service name index and revision
         self.index_service_name(&service_key);
         self.increment_service_revision(&service_key);
+        self.update_empty_state(&service_key, instances.is_empty());
         true
     }
 
@@ -83,6 +84,7 @@ impl NamingService {
             if instances.remove(&instance_key).is_some() {
                 self.increment_service_revision(&service_key);
             }
+            self.update_empty_state(&service_key, instances.is_empty());
             // Return true for idempotency — deregistering a non-existent instance
             // is OK (Nacos SDK expects this during cleanup)
             return true;
@@ -472,21 +474,114 @@ impl NamingService {
         true
     }
 
+    /// Record (or clear) the moment a service became empty.
+    ///
+    /// Keyed on *emptiness* rather than on the generic revision timestamp on purpose:
+    /// Distro re-syncs an already-empty service on every cycle and each re-sync bumps
+    /// the revision, so a revision-based clock would be refreshed forever and no empty
+    /// service could ever expire.
+    ///
+    /// `empty` MUST be computed from a guard the caller already holds: this method only
+    /// touches the separate `service_empty_since` map and deliberately never re-locks
+    /// `services`. Re-locking it here would nest a `services` guard inside another one
+    /// (`merge_remote_instances` holds a *write* guard), which deadlocks DashMap's
+    /// per-shard RwLock — that blocked every naming operation via Distro sync.
+    fn update_empty_state(&self, service_key: &str, empty: bool) {
+        if empty {
+            let now = chrono::Utc::now().timestamp_millis();
+            self.service_empty_since
+                .entry(service_key.to_string())
+                .or_insert(now);
+        } else {
+            self.service_empty_since.remove(service_key);
+        }
+    }
+
+    /// Remove services that have held no instances for at least `expired_ms`.
+    ///
+    /// Mirrors Nacos `EmptyServiceAutoCleanerV2#cleanEmptyService`, which reclaims a
+    /// service only when no client has instances registered for it **and** it has
+    /// stayed empty past `nacos.naming.emptyService.cleanTimeout` (60s default).
+    /// Without this reaper every service ever created stays resident, and Distro keeps
+    /// re-syncing empty services forever — background work grows without bound and
+    /// eventually starves the cluster.
+    pub fn clean_empty_services(&self, expired_ms: i64) -> usize {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let victims: Vec<String> = self
+            .services
+            .iter()
+            .filter(|e| {
+                if !e.value().is_empty() {
+                    return false;
+                }
+                self.service_empty_since
+                    .get(e.key())
+                    .map(|since| now - *since >= expired_ms)
+                    .unwrap_or(false)
+            })
+            .map(|e| e.key().clone())
+            .collect();
+
+        let mut removed = 0usize;
+        for key in victims {
+            // Re-check immediately before dropping: an instance may have been registered
+            // between the scan and now. Removing the whole service entry would
+            // otherwise discard a live registration.
+            let still_empty = self
+                .services
+                .get(&key)
+                .map(|instances| instances.is_empty())
+                .unwrap_or(false);
+            if !still_empty {
+                self.service_empty_since.remove(&key);
+                continue;
+            }
+
+            tracing::info!(
+                "Empty service auto-clean: dropping service {} (no instances for >= {}ms)",
+                key,
+                expired_ms
+            );
+            self.services.remove(&key);
+            self.service_empty_since.remove(&key);
+            self.service_metadata.remove(&key);
+            self.maybe_unindex_service_name(&key);
+            removed += 1;
+        }
+        removed
+    }
+
     /// Merge remote instances from a Distro sync.
     ///
     /// Adds or updates instances from the sync data. Also removes ephemeral
-    /// instances that were previously synced from remote (marked with
-    /// `_distro_remote=true` metadata) but are no longer in the incoming data
-    /// — this handles deregistration propagation. Locally registered instances
-    /// (without the remote marker) are never removed by sync.
+    /// instances previously synced from the **same source** node that are no
+    /// longer in the incoming data — this handles deregistration propagation.
+    /// Instances synced from a *different* source are preserved (per-source
+    /// reconcile, matching Nacos Distro's client-scoped reconciliation), so a
+    /// sync from node X can never delete instances that node Y replicated here.
+    ///
+    /// `source` is the address of the node that sent this sync. An empty
+    /// `source` (the dispossession path) removes *all* remotely-synced
+    /// instances for the service key. Locally registered instances (without the
+    /// `_distro_remote` marker) are never removed by sync.
     pub fn merge_remote_instances(
         &self,
         namespace: &str,
         group_name: &str,
         service_name: &str,
         instances: Vec<Instance>,
+        source: &str,
     ) {
         let service_key = build_service_key(namespace, group_name, service_name);
+
+        // A sync carrying no instances must NOT materialise a service entry: doing so
+        // would resurrect services already reclaimed by the empty-service reaper every
+        // time a peer broadcasts an empty instance list.
+        if instances.is_empty() && !self.services.contains_key(&service_key) {
+            return;
+        }
+
         let entry = self.services.entry(service_key.clone()).or_default();
 
         // Build set of incoming instance keys
@@ -499,10 +594,17 @@ impl NamingService {
                 instance.cluster_name = "DEFAULT".to_string();
             }
             instance.service_name = service_name.to_string();
-            // Mark as remotely synced
+            // Mark as remotely synced and record the origin source node.
             instance
                 .metadata
                 .insert("_distro_remote".to_string(), "true".to_string());
+            if source.is_empty() {
+                instance.metadata.remove("_distro_source");
+            } else {
+                instance
+                    .metadata
+                    .insert("_distro_source".to_string(), source.to_string());
+            }
             let instance_key = build_instance_key(&instance);
             incoming_keys.insert(instance_key.clone());
             // Only insert if the key doesn't already exist as a locally-registered
@@ -525,17 +627,29 @@ impl NamingService {
         }
 
         // Remove ephemeral instances previously synced from remote that are
-        // no longer in the incoming data (deregistered on the source node).
+        // no longer in the incoming data. Scope the removal by `source` so a
+        // sync from node X only ever garbage-collects node X's own replicas
+        // (and `source.is_empty()` wipes every remote replica, used by the
+        // dispossession path).
         let keys_to_remove: Vec<String> = entry
             .iter()
             .filter(|e| {
-                e.value().ephemeral
+                let is_remote = e.value().ephemeral
                     && e.value()
                         .metadata
                         .get("_distro_remote")
                         .map(|v| v == "true")
-                        .unwrap_or(false)
-                    && !incoming_keys.contains(e.key())
+                        .unwrap_or(false);
+                if !is_remote {
+                    return false;
+                }
+                let same_source = source.is_empty()
+                    || e.value()
+                        .metadata
+                        .get("_distro_source")
+                        .map(|v| v == source)
+                        .unwrap_or(false);
+                same_source && !incoming_keys.contains(e.key())
             })
             .map(|e| e.key().clone())
             .collect();
@@ -544,6 +658,7 @@ impl NamingService {
         }
 
         self.increment_service_revision(&service_key);
+        self.update_empty_state(&service_key, entry.is_empty());
     }
 
     /// Batch deregister instances

@@ -492,6 +492,7 @@ impl AppBuilder {
             log_level_setter: Some(Arc::new(|filter: &str| {
                 crate::startup::logging::set_log_level(filter)
             })),
+            connection_manager: Arc::new(std::sync::OnceLock::new()),
         });
 
         if !app_state.configuration.data_warmup() {
@@ -656,6 +657,14 @@ impl AppBuilder {
             );
         }
 
+        // Expose the gRPC connection manager to AppState so admin naming
+        // handlers can push instance-change notifications to SDK subscribers.
+        if let Some(app_state) = &self.app_state {
+            let _ = app_state
+                .connection_manager
+                .set(grpc_servers.connection_manager().clone());
+        }
+
         self.grpc_servers = Some(grpc_servers);
         self.server_registry = Some(server_registry);
 
@@ -708,7 +717,7 @@ impl AppBuilder {
         }
 
         // Start health checkers
-        start_health_checkers(&self.health_check_manager);
+        start_health_checkers(&self.health_check_manager, &self.naming_service_concrete);
 
         // Start warmup poller
         start_warmup_poller(
@@ -1107,7 +1116,10 @@ fn init_encryption_service(
 }
 
 /// Start health check background tasks.
-fn start_health_checkers(health_check_manager: &Option<Arc<HealthCheckManager>>) {
+fn start_health_checkers(
+    health_check_manager: &Option<Arc<HealthCheckManager>>,
+    naming_service: &Option<Arc<batata_naming::NamingService>>,
+) {
     if let Some(hc_manager) = health_check_manager {
         let hc1 = hc_manager.clone();
         tokio::spawn(async move { hc1.unhealthy_checker().start().await });
@@ -1116,6 +1128,15 @@ fn start_health_checkers(health_check_manager: &Option<Arc<HealthCheckManager>>)
         tokio::spawn(async move { hc2.expired_checker().start().await });
 
         info!("Health check manager started (unhealthy/expired instance checkers)");
+    }
+
+    // Reclaim services that hold no instances — the batata counterpart of Nacos
+    // `EmptyServiceAutoCleanerV2`. Without it every service ever created stays resident
+    // and Distro keeps re-syncing empty ones indefinitely.
+    if let Some(ns) = naming_service {
+        let cleaner = batata_naming::service::EmptyServiceCleaner::new(ns.clone());
+        tokio::spawn(async move { cleaner.start().await });
+        info!("Empty service cleaner started");
     }
 }
 
