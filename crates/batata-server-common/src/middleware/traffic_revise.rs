@@ -16,7 +16,7 @@ use actix_web::{
     http::StatusCode,
 };
 
-use crate::model::server_status::ServerStatusManager;
+use crate::model::server_status::{ServerStatus, ServerStatusManager};
 
 /// Middleware factory that rejects requests with 503 when the server is not UP.
 pub struct TrafficReviseFilter {
@@ -72,6 +72,24 @@ fn is_cluster_peer(user_agent: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a request may be served under the given lifecycle status.
+///
+/// Nacos parity (`TrafficReviseFilter`): `UP` serves everything; the operator modes
+/// serve one half of the traffic — `READ_ONLY` passes GET, `WRITE_ONLY` passes non-GET.
+/// Every other status (STARTING / DOWN / DRAINING / PAUSED) serves nothing here and
+/// falls through to the bypass rules before being rejected with 503.
+fn traffic_allowed(status: ServerStatus, method: &str) -> bool {
+    match status {
+        ServerStatus::Up => true,
+        ServerStatus::ReadOnly => method.eq_ignore_ascii_case("GET"),
+        ServerStatus::WriteOnly => !method.eq_ignore_ascii_case("GET"),
+        ServerStatus::Starting
+        | ServerStatus::Down
+        | ServerStatus::Draining
+        | ServerStatus::Paused => false,
+    }
+}
+
 impl<S, B> Service<ServiceRequest> for TrafficReviseMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
@@ -90,8 +108,18 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        let status = self.status_manager.status();
+
         // Fast path: server is UP → pass through immediately (single atomic load).
-        if self.status_manager.is_up() {
+        if status == ServerStatus::Up {
+            let fut = self.service.call(req);
+            return Box::pin(async move { fut.await.map(|res| res.map_into_left_body()) });
+        }
+
+        // Operator modes still serve one half of the traffic (Nacos parity):
+        // READ_ONLY passes GET, WRITE_ONLY passes non-GET.
+        let method = req.method().to_string();
+        if traffic_allowed(status, &method) {
             let fut = self.service.call(req);
             return Box::pin(async move { fut.await.map(|res| res.map_into_left_body()) });
         }
@@ -137,6 +165,30 @@ mod tests {
         assert!(is_bypass_path("/v3/admin/core/state/readiness"));
         assert!(!is_bypass_path("/nacos/v2/cs/config"));
         assert!(!is_bypass_path("/nacos/v2/ns/instance"));
+    }
+
+    #[test]
+    fn test_traffic_allowed_by_status() {
+        // UP serves everything.
+        assert!(traffic_allowed(ServerStatus::Up, "GET"));
+        assert!(traffic_allowed(ServerStatus::Up, "POST"));
+
+        // Operator modes serve one half each (Nacos TrafficReviseFilter parity).
+        assert!(traffic_allowed(ServerStatus::ReadOnly, "GET"));
+        assert!(!traffic_allowed(ServerStatus::ReadOnly, "POST"));
+        assert!(!traffic_allowed(ServerStatus::WriteOnly, "GET"));
+        assert!(traffic_allowed(ServerStatus::WriteOnly, "PUT"));
+
+        // Lifecycle / paused states serve nothing.
+        for status in [
+            ServerStatus::Starting,
+            ServerStatus::Down,
+            ServerStatus::Draining,
+            ServerStatus::Paused,
+        ] {
+            assert!(!traffic_allowed(status, "GET"));
+            assert!(!traffic_allowed(status, "POST"));
+        }
     }
 
     #[test]

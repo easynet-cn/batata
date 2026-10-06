@@ -23,6 +23,7 @@ pub mod error;
 pub mod macros;
 /// Data models shared across Batata components.
 pub mod model;
+pub mod server_status;
 pub mod traits;
 pub mod utils;
 

@@ -13,6 +13,8 @@ use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::info;
 
+use batata_common::server_status::ServerStatusManager;
+
 use super::NamingService;
 
 /// Grace period before an empty service is reclaimed (milliseconds).
@@ -29,6 +31,10 @@ pub struct EmptyServiceCleaner {
     naming_service: Arc<NamingService>,
     interval_secs: u64,
     expired_ms: i64,
+    /// Optional lifecycle status handle. When present the reaper stays idle until the
+    /// node is UP, mirroring Nacos `ServiceMetadataReadyInterceptor`, which skips health
+    /// checks until the application has started.
+    status: Option<Arc<ServerStatusManager>>,
 }
 
 impl EmptyServiceCleaner {
@@ -38,7 +44,14 @@ impl EmptyServiceCleaner {
             naming_service,
             interval_secs: DEFAULT_INTERVAL_SECS,
             expired_ms: DEFAULT_EMPTY_SERVICE_EXPIRED_MS,
+            status: None,
         }
+    }
+
+    /// Attach the server lifecycle status so the reaper stays idle until the node is UP.
+    pub fn with_status(mut self, status: Arc<ServerStatusManager>) -> Self {
+        self.status = Some(status);
+        self
     }
 
     /// Create a cleaner with a custom scan interval and expiry.
@@ -51,6 +64,7 @@ impl EmptyServiceCleaner {
             naming_service,
             interval_secs,
             expired_ms,
+            status: None,
         }
     }
 
@@ -64,6 +78,15 @@ impl EmptyServiceCleaner {
 
         loop {
             interval.tick().await;
+
+            // While the node is not UP the instance state is still being seeded (data
+            // warmup / Distro snapshot load). Reaping now could drop services that are
+            // about to receive their instances, so stay idle until ready.
+            if let Some(ref status) = self.status {
+                if !status.is_up() {
+                    continue;
+                }
+            }
 
             let removed = self.naming_service.clean_empty_services(self.expired_ms);
             if removed > 0 {

@@ -111,6 +111,15 @@ pub const ACCESS_DENIED: ErrorCode<'static> = ErrorCode {
     message: "access denied",
 };
 
+/// The server is starting or a required subsystem is not ready yet.
+///
+/// Nacos parity: `NacosException.INVALID_SERVER_STATUS = 300`, returned by
+/// `GrpcRequestAcceptor` while `ApplicationUtils.isStarted()` is false.
+pub const INVALID_SERVER_STATUS: ErrorCode<'static> = ErrorCode {
+    code: 300,
+    message: "server is starting, please try later",
+};
+
 // Nacos-compatible auth error codes
 /// Login failed.
 pub const LOGIN_FAILED: ErrorCode<'static> = ErrorCode {

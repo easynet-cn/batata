@@ -1,7 +1,11 @@
 // RPC service implementations for gRPC communication
 // This file defines the core RPC services for handling client connections and message processing
 
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
 
 use futures::Stream;
 use tokio::sync::mpsc;
@@ -239,6 +243,24 @@ pub fn check_server_identity(
 /// in the response body. The SDK checks response.errorCode, not gRPC Status.
 const NO_RIGHT: i32 = 403;
 
+/// gRPC message types that must keep flowing while the server is not UP.
+///
+/// These are the liveness/health probes clients and orchestrators use to *discover*
+/// that the node is not ready. Rejecting them would hide the status instead of
+/// reporting it.
+fn is_status_probe(message_type: &str) -> bool {
+    matches!(message_type, "HealthCheckRequest" | "ServerCheckRequest")
+}
+
+/// Whether a request may bypass the server-status gate.
+///
+/// Nacos parity: `GrpcRequestAcceptor` gates requests while the server has not started,
+/// but internal (peer/raft) traffic must keep flowing — otherwise peers could never
+/// elect a Raft leader or load Distro data, and the node would never become ready.
+fn bypasses_status_gate(auth_requirement: &AuthRequirement, message_type: &str) -> bool {
+    matches!(auth_requirement, AuthRequirement::Internal) || is_status_probe(message_type)
+}
+
 fn build_auth_error_payload(response_type: &str, error_code: i32, message: &str) -> Payload {
     let response = serde_json::json!({
         "resultCode": ResponseCode::Fail.code(),
@@ -329,6 +351,11 @@ pub struct HandlerRegistry {
     default_handler: Arc<dyn PayloadHandler>,
     auth_service: Arc<GrpcAuthService>,
     tps_checker: Option<Arc<dyn TpsChecker>>,
+    /// Shared server lifecycle status, used to reject SDK gRPC traffic while the node
+    /// is not ready. Nacos parity: `GrpcRequestAcceptor` returns
+    /// `NacosException.INVALID_SERVER_STATUS` while `ApplicationUtils.isStarted()` is
+    /// false. Set once during startup; `None` means "never gate" (tests / standalone).
+    server_status: OnceLock<Arc<batata_common::server_status::ServerStatusManager>>,
 }
 
 impl Default for HandlerRegistry {
@@ -345,7 +372,20 @@ impl HandlerRegistry {
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(GrpcAuthService::default()),
             tps_checker: None,
+            server_status: OnceLock::new(),
         }
+    }
+
+    /// Attach the shared server-status handle used to gate gRPC traffic while the node
+    /// is not ready. Can also be attached later via `set_server_status`, which matters
+    /// because the registry is shared behind an `Arc` right after construction.
+    pub fn set_server_status(&self, status: Arc<batata_common::server_status::ServerStatusManager>) {
+        let _ = self.server_status.set(status);
+    }
+
+    /// The attached server-status handle, if any.
+    pub fn server_status(&self) -> Option<&Arc<batata_common::server_status::ServerStatusManager>> {
+        self.server_status.get()
     }
 
     /// Create a new HandlerRegistry with auth service
@@ -355,6 +395,7 @@ impl HandlerRegistry {
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(auth_service),
             tps_checker: None,
+            server_status: OnceLock::new(),
         }
     }
 
@@ -512,6 +553,32 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let response_type = message_type.replace("Request", "Response");
 
             let auth_requirement = handler.auth_requirement();
+
+            // Server-status gate — Nacos `GrpcRequestAcceptor` parity.
+            // While the node is not UP, reject SDK traffic with `INVALID_SERVER_STATUS`
+            // (300) instead of letting it fail deeper down with an opaque 500 (for
+            // example a Raft write that cannot be forwarded because no leader has been
+            // elected yet). Internal peer traffic and health probes are exempt so the
+            // cluster can still initialise and operators can observe the status.
+            if let Some(status) = self.handler_registry.server_status() {
+                if !status.is_up() && !bypasses_status_gate(&auth_requirement, message_type) {
+                    let message = match status.error_msg().await {
+                        Some(reason) => format!("server is {} now, {}", status.status(), reason),
+                        None => format!("server is {} now, please try again later!", status.status()),
+                    };
+                    warn!(
+                        message_type = %message_type,
+                        status = %status.status(),
+                        "Rejecting gRPC request: server not ready"
+                    );
+                    return Ok(Response::new(build_auth_error_payload(
+                        &response_type,
+                        batata_common::error::INVALID_SERVER_STATUS.code,
+                        &message,
+                    )));
+                }
+            }
+
             match auth_requirement {
                 AuthRequirement::None => {}
                 AuthRequirement::Internal => {
@@ -1051,5 +1118,44 @@ mod tests {
 
         let types = registry.registered_message_types();
         assert_eq!(types.len(), 10);
+    }
+}
+
+#[cfg(test)]
+mod status_gate_tests {
+    use super::*;
+
+    #[test]
+    fn internal_traffic_bypasses_gate() {
+        // Peer/raft traffic must keep flowing while the node is not ready, otherwise the
+        // cluster could never elect a leader or load Distro data.
+        assert!(bypasses_status_gate(
+            &AuthRequirement::Internal,
+            "DistroDataRequest"
+        ));
+        assert!(bypasses_status_gate(&AuthRequirement::Internal, "RaftRequest"));
+    }
+
+    #[test]
+    fn health_probes_bypass_gate() {
+        assert!(is_status_probe("HealthCheckRequest"));
+        assert!(is_status_probe("ServerCheckRequest"));
+        assert!(!is_status_probe("ConfigQueryRequest"));
+    }
+
+    #[test]
+    fn business_traffic_is_gated() {
+        assert!(!bypasses_status_gate(
+            &AuthRequirement::Read,
+            "ConfigQueryRequest"
+        ));
+        assert!(!bypasses_status_gate(
+            &AuthRequirement::Write,
+            "InstanceRequest"
+        ));
+        assert!(!bypasses_status_gate(
+            &AuthRequirement::None,
+            "ConfigQueryRequest"
+        ));
     }
 }

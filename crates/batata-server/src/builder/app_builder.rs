@@ -717,7 +717,11 @@ impl AppBuilder {
         }
 
         // Start health checkers
-        start_health_checkers(&self.health_check_manager, &self.naming_service_concrete);
+        start_health_checkers(
+            &self.health_check_manager,
+            &self.naming_service_concrete,
+            self.server_status.as_ref(),
+        );
 
         // Start warmup poller
         start_warmup_poller(
@@ -1119,6 +1123,7 @@ fn init_encryption_service(
 fn start_health_checkers(
     health_check_manager: &Option<Arc<HealthCheckManager>>,
     naming_service: &Option<Arc<batata_naming::NamingService>>,
+    server_status: Option<&Arc<ServerStatusManager>>,
 ) {
     if let Some(hc_manager) = health_check_manager {
         let hc1 = hc_manager.clone();
@@ -1135,20 +1140,35 @@ fn start_health_checkers(
     // and Distro keeps re-syncing empty ones indefinitely.
     if let Some(ns) = naming_service {
         let cleaner = batata_naming::service::EmptyServiceCleaner::new(ns.clone());
+        // Stay idle until the node is UP so warmup / Distro loading is not reaped.
+        let cleaner = match server_status {
+            Some(status) => cleaner.with_status(status.clone()),
+            None => cleaner,
+        };
         tokio::spawn(async move { cleaner.start().await });
         info!("Empty service cleaner started");
     }
 }
 
-/// Start data warmup poller if enabled.
+/// Start the server-status refresher.
+///
+/// Runs every 5s and derives the live `ServerStatus` from subsystem readiness
+/// (db + raft + distro), mirroring Nacos `ServerStatusManager.refreshServerStatus()`.
+///
+/// Nacos parity for the operator override: if `overriddenServerStatus` is set, the
+/// refresher adopts that value verbatim and returns *before* the readiness computation —
+/// `if (isNotBlank(overriddenServerStatus)) { status = value; return; }`. Clearing the
+/// override (via `PUT /v3/admin/core/state` with `overriddenServerStatus=null`) makes the
+/// refresher revert to computing UP/DOWN again.
+///
+/// When data warmup is disabled the readiness computation short-circuits to UP, matching
+/// Nacos `isReady()` which returns `true` when `!isDataWarmup()`.
 fn start_warmup_poller(
     app_state: &Arc<AppState>,
     server_status: &Arc<ServerStatusManager>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
 ) {
-    if !app_state.configuration.data_warmup() {
-        return;
-    }
+    let data_warmup = app_state.configuration.data_warmup();
 
     let status_mgr = server_status.clone();
     let console_ds = app_state.console_datasource.clone();
@@ -1161,6 +1181,24 @@ fn start_warmup_poller(
 
         loop {
             interval.tick().await;
+
+            // Operator override wins over everything (Nacos parity).
+            if let Some(overridden) = status_mgr.overridden() {
+                status_mgr.set_overridden(overridden);
+                status_mgr.set_error_msg(None).await;
+                continue;
+            }
+
+            // Data warmup disabled → always ready (Nacos `isReady()` short-circuit).
+            if !data_warmup {
+                if !status_mgr.is_up() {
+                    status_mgr.set_up();
+                    status_mgr.set_error_msg(None).await;
+                    info!("Server status: UP (data warmup disabled)");
+                }
+                continue;
+            }
+
             let db_ready = console_ds.server_readiness().await;
             let (raft_ready, raft_reason) = match &raft_ref {
                 Some(raft) => raft.is_ready(),

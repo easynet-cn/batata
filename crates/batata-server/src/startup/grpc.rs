@@ -647,6 +647,14 @@ pub fn start_grpc_servers(
         info!("gRPC TPS control enabled");
     }
 
+    // Gate SDK-facing gRPC traffic on the server lifecycle status (Nacos
+    // `GrpcRequestAcceptor` parity). While the node is not UP — e.g. Raft has no leader
+    // yet or the Distro snapshot is still loading — business requests are rejected with
+    // `INVALID_SERVER_STATUS` (300) instead of failing deeper down with an opaque 500.
+    // Internal peer traffic and health probes are exempt, so the cluster can still
+    // initialise and operators can still observe the status.
+    handler_registry.set_server_status(app_state.server_status.clone());
+
     // Create config fuzzy watch manager
     let config_fuzzy_watch_manager = Arc::new(ConfigFuzzyWatchManager::new());
 
