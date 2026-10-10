@@ -25,6 +25,7 @@ path = "src/main.rs"
 # Internal crates (always required)
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-server-api = { workspace = true }
 batata-migration = { workspace = true }
 batata-persistence = { workspace = true }
 batata-auth = { workspace = true }

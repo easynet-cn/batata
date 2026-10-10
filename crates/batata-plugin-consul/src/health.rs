@@ -823,7 +823,7 @@ async fn build_service_health_results(
         }
 
         // Use real local IP for node address (not service address which may be empty)
-        let node_ip = batata_common::local_ip();
+        let node_ip = batata_api::local_ip();
 
         let mut node_tagged_addresses = std::collections::HashMap::new();
         node_tagged_addresses.insert("lan".to_string(), node_ip.clone());

@@ -1,14 +1,20 @@
+use serde::{Deserialize, Serialize};
+
 /// AI-related model types.
 pub mod ai;
 /// Plugin model types.
 pub mod plugin;
 
-use serde::{Deserialize, Serialize};
-
 /// Generic pagination wrapper for API responses
 ///
 /// Serde aliases support Nacos-compatible deserialization where different
 /// endpoints use different field names for the same concept.
+///
+/// NOTE: This is the server-internal copy of `Page<T>` (the "service-trait"
+/// contract). The wire/client copy lives in `batata-api::model::Page`. The two
+/// are intentionally identical so they serialize the same way over the wire,
+/// but they are distinct types to keep `batata-common` free of a dependency on
+/// `batata-api` (and thus keep the client crate off server-only deps).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {

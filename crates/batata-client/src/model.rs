@@ -393,7 +393,7 @@ pub struct ClientListResponse {
 }
 
 /// Paginated response (re-exported from batata-common)
-pub use batata_common::model::Page;
+pub use batata_api::model::Page;
 
 // ============== Service/Naming Models ==============
 

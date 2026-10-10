@@ -36,7 +36,8 @@ pub mod model; // Data models and types
 pub mod secured; // Security context and secured! macro
 
 // Re-export common types from batata-common to maintain backward compatibility
-pub use batata_common::{ActionTypes, ApiType, SignType, is_valid, local_ip};
+pub use batata_common::{ActionTypes, ApiType, SignType, is_valid};
+pub use batata_api::local_ip;
 
 // Re-export model types for convenience
 pub use model::{Configuration, ErrorResult};

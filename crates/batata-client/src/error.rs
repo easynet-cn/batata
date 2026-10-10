@@ -17,7 +17,12 @@ pub enum ClientError {
 
     /// Server returned an explicit application-level error.
     #[error("server returned error: code={code}, message={message}")]
-    ServerError { #[doc = "Application error code returned by the server."] code: i32, #[doc = "Human-readable error message returned by the server."] message: String },
+    ServerError {
+        #[doc = "Application error code returned by the server."]
+        code: i32,
+        #[doc = "Human-readable error message returned by the server."]
+        message: String,
+    },
 
     /// Connection is not established or has been torn down.
     #[error("connection not ready")]

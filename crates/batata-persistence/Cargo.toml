@@ -9,6 +9,7 @@ description = "Database entities and persistence layer for Batata"
 
 [dependencies]
 batata-common = { workspace = true }
+batata-api = { workspace = true }
 batata-consistency = { workspace = true }
 
 # Database

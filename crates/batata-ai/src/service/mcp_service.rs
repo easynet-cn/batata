@@ -642,7 +642,7 @@ impl McpServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> batata_api::model::Page<McpServerBasicInfo> {
+    ) -> batata_common::model::Page<McpServerBasicInfo> {
         let page_no = page_no.max(1);
         let offset = ((page_no - 1) * page_size) as usize;
         let limit = page_size as usize;
@@ -687,7 +687,7 @@ impl McpServerOperationService {
             })
             .collect();
 
-        batata_api::model::Page::new(total, page_no as u64, page_size as u64, page_items)
+        batata_common::model::Page::new(total, page_no as u64, page_size as u64, page_items)
     }
 
     /// Build a version summary from a stored version row.
@@ -780,7 +780,7 @@ impl McpServerOperationService {
         name: &str,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_api::model::Page<McpServerVersionSummary>> {
+    ) -> anyhow::Result<batata_common::model::Page<McpServerVersionSummary>> {
         let resource = self
             .persistence
             .ai_resource_find(namespace, name, resource_type::MCP)
@@ -805,7 +805,7 @@ impl McpServerOperationService {
             .map(|r| Self::version_to_summary(&r, latest.as_deref()))
             .collect();
 
-        Ok(batata_api::model::Page::new(
+        Ok(batata_common::model::Page::new(
             total_count,
             page_no,
             page_size,
@@ -1402,7 +1402,7 @@ impl super::traits::McpServerService for McpServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> batata_api::model::Page<McpServerBasicInfo> {
+    ) -> batata_common::model::Page<McpServerBasicInfo> {
         self.list_mcp_servers(namespace, name, search_type, page_no, page_size, user)
             .await
     }
@@ -1413,7 +1413,7 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_api::model::Page<McpServerVersionSummary>> {
+    ) -> anyhow::Result<batata_common::model::Page<McpServerVersionSummary>> {
         self.list_mcp_server_versions(namespace, name, page_no, page_size)
             .await
     }
@@ -1542,7 +1542,7 @@ impl super::traits::McpServerService for McpServerOperationService {
         query: &str,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_api::model::Page<AiResourceSearchHit>> {
+    ) -> anyhow::Result<batata_common::model::Page<AiResourceSearchHit>> {
         crate::search::query::search(
             self.persistence.as_ref(),
             namespace,

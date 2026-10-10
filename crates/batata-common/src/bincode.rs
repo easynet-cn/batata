@@ -3,7 +3,7 @@
 //! This module wraps postcard's serde backend to provide `serialize` and `deserialize`
 //! functions that are drop-in replacements for bincode 1.x's API.
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 #[derive(Debug)]
 /// The `EncodeError` struct.

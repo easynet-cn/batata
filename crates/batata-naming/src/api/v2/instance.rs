@@ -28,7 +28,7 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use batata_api::naming::NamingServiceProvider;
-use batata_api::validation;
+use batata_server_api::validation;
 
 /// Validate common instance parameters (service_name, ip, port).
 /// Returns an error HttpResponse if validation fails, or None if all valid.

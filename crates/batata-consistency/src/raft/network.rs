@@ -17,7 +17,7 @@ use openraft::{BasicNode, Snapshot, Vote};
 use tonic::transport::Channel;
 use tracing::{debug, error, warn};
 
-use batata_api::raft::{
+use batata_server_api::raft::{
     AppendEntriesRequest as ProtoAppendEntriesRequest, Entry as ProtoEntry, LogId as ProtoLogId,
     Vote as ProtoVote, VoteRequest as ProtoVoteRequest, raft_service_client::RaftServiceClient,
 };
@@ -341,7 +341,7 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         }
 
         // Create snapshot metadata
-        let meta = Some(batata_api::raft::SnapshotMeta {
+        let meta = Some(batata_server_api::raft::SnapshotMeta {
             last_log_id: Self::to_proto_log_id(snapshot.meta.last_log_id),
             last_membership: None, // Membership is serialized separately in the snapshot data
             snapshot_id: snapshot.meta.snapshot_id.clone(),
@@ -352,10 +352,10 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         let chunks: Vec<_> = data.chunks(CHUNK_SIZE).collect();
         let total_chunks = chunks.len();
 
-        let requests: Vec<batata_api::raft::InstallSnapshotRequest> = chunks
+        let requests: Vec<batata_server_api::raft::InstallSnapshotRequest> = chunks
             .into_iter()
             .enumerate()
-            .map(|(i, chunk)| batata_api::raft::InstallSnapshotRequest {
+            .map(|(i, chunk)| batata_server_api::raft::InstallSnapshotRequest {
                 term: vote.leader_id().term,
                 leader_id: vote.leader_id().node_id,
                 meta: if i == 0 { meta.clone() } else { None },

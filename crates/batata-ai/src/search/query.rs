@@ -27,7 +27,7 @@ pub async fn search(
     resource_types: &[&str],
     page_no: u64,
     page_size: u64,
-) -> anyhow::Result<batata_api::model::Page<AiResourceSearchHit>> {
+) -> anyhow::Result<batata_common::model::Page<AiResourceSearchHit>> {
     let page_no = page_no.max(1);
     let page_size = if page_size == 0 {
         DEFAULT_PAGE_SIZE
@@ -50,7 +50,7 @@ pub async fn search(
     let start = ((page_no - 1) * page_size) as usize;
     let items = ranked.into_iter().skip(start).take(page_size as usize).collect();
 
-    Ok(batata_api::model::Page::new(
+    Ok(batata_common::model::Page::new(
         total_count,
         page_no,
         page_size,

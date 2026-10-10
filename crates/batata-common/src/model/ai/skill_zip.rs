@@ -607,9 +607,7 @@ mod tests {
             .expect("gamma must be reported");
         assert!(bad.skill.is_none());
         assert!(
-            bad.error
-                .as_deref()
-                .is_some_and(|e| e.contains("SKILL.md")),
+            bad.error.as_deref().is_some_and(|e| e.contains("SKILL.md")),
             "must explain the missing manifest: {:?}",
             bad.error
         );

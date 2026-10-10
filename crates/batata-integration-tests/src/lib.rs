@@ -67,6 +67,8 @@ pub const TEST_GROUP: &str = "TEST_GROUP";
 /// coarse enough that two calls in quick succession can return the same value.
 static UNIQUE_ID_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Generate a unique test ID combining a nanosecond timestamp with a monotonic
+/// sequence counter, so fast successive calls never collide.
 pub fn unique_test_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()

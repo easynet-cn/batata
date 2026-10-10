@@ -397,7 +397,7 @@ impl AgentRegistry {
     pub fn list_with_search(
         &self,
         query: &AgentListQuery,
-    ) -> batata_api::model::Page<AgentCardVersionInfo> {
+    ) -> batata_common::model::Page<AgentCardVersionInfo> {
         let namespace = query.namespace_id.clone();
         let search_type = query.search.as_deref().unwrap_or("blur");
         let page_no = query.page_no.unwrap_or(1).max(1) as u64;
@@ -458,7 +458,7 @@ impl AgentRegistry {
             })
             .collect();
 
-        batata_api::model::Page::new(total, page_no, page_size, version_infos)
+        batata_common::model::Page::new(total, page_no, page_size, version_infos)
     }
 
     /// Delete an agent by query params (Nacos-compatible)

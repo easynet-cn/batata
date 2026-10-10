@@ -195,7 +195,7 @@ fn build_node_from_store(
     health_service: &ConsulHealthService,
     _index: u64,
 ) -> UINode {
-    let ip = batata_common::local_ip();
+    let ip = batata_api::local_ip();
 
     let mut tagged = HashMap::new();
     tagged.insert("lan".to_string(), ip.clone());
@@ -259,7 +259,7 @@ pub async fn ui_nodes(
     }
 
     let index = index_provider.current_index(ConsulTable::Catalog);
-    let local_ip = batata_common::local_ip();
+    let local_ip = batata_api::local_ip();
     let members = member_manager.all_members_extended();
 
     let mut nodes = Vec::with_capacity(members.len());
@@ -358,7 +358,7 @@ pub async fn ui_node_info(
 
     // In single-node mode, return the local node for any valid query.
     // Match by: configured node name, local IP, or any registered service address.
-    let local_ip = batata_common::local_ip();
+    let local_ip = batata_api::local_ip();
     let is_local = node_name == dc_config.node_name
         || node_name == local_ip
         || naming_store

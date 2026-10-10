@@ -6,34 +6,51 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::result_large_err)]
 #![allow(clippy::empty_line_after_doc_comments)]
-//! Batata API - gRPC and HTTP API definitions
+//! Batata API - shared protocol contract
 //!
-//! This crate provides:
+//! This crate provides the protocol contract shared by Batata clients and
+//! the server:
 //! - Common API models and constants
 //! - gRPC service definitions (generated from proto)
 //! - HTTP API request/response models
-//! - Input validation utilities
+//!
+//! It deliberately excludes server-only modules (`raft`, `distro`,
+//! `validation`, now in `batata-server-api`) and has no dependency on
+//! `batata-common`, so external SDK clients can depend on it without pulling
+//! in server-side heavy dependencies.
 
 /// Shared macros for API definitions.
 #[macro_use]
 pub mod macros;
 /// Config API models.
 pub mod config;
-/// Distro protocol models.
-pub mod distro;
 /// gRPC service definitions (generated from proto).
 pub mod grpc;
 /// Common API models and constants.
 pub mod model;
 /// Naming/service discovery API models.
 pub mod naming;
-/// Raft protocol models.
-pub mod raft;
 /// Remote API models.
 pub mod remote;
-/// Input validation utilities.
-pub mod validation;
 
 // Re-export commonly used types
 pub use model::*;
-pub use validation::*;
+
+/// Returns the local non-loopback IPv4 address, or "127.0.0.1" if none found.
+///
+/// Moved here from `batata-common` so SDK clients can resolve the local IP
+/// without depending on the server-side utility crate.
+pub fn local_ip() -> String {
+    if_addrs::get_if_addrs()
+        .ok()
+        .and_then(|addrs| {
+            addrs
+                .into_iter()
+                .find(|iface| !iface.is_loopback() && matches!(iface.addr, if_addrs::IfAddr::V4(_)))
+                .and_then(|iface| match iface.addr {
+                    if_addrs::IfAddr::V4(addr) => Some(addr.ip.to_string()),
+                    _ => None,
+                })
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}

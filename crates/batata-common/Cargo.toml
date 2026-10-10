@@ -30,7 +30,6 @@ regex = { workspace = true }
 moka = { workspace = true }
 
 # Network
-if-addrs = { workspace = true }
 
 # Encryption
 aes-gcm = { workspace = true }

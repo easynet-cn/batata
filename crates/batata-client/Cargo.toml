@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Rust SDK client for Batata/Nacos"
 
 [dependencies]
-batata-common = { workspace = true }
 batata-api = { workspace = true }
 
 # gRPC

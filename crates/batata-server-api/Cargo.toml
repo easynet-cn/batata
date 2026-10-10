@@ -1,34 +1,27 @@
 [package]
-name = "batata-api"
+name = "batata-server-api"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "API contract for Batata (gRPC and HTTP models, shared by clients and server)"
+description = "Server-only API definitions for Batata (raft, distro, validation)"
 
 [dependencies]
-# Serialization
+batata-api = { workspace = true }
+batata-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-# gRPC
 prost = { workspace = true }
 prost-types = { workspace = true }
+bytes = { workspace = true }
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 tonic-prost = { workspace = true }
-http = { workspace = true }
-
-# Async
-async-trait = { workspace = true }
-
-# Logging
-tracing = { workspace = true }
-
-# Utils
-bytes = { workspace = true }
+validator = { workspace = true }
 chrono = { workspace = true }
-if-addrs = { workspace = true }
+
+[build-dependencies]
+tonic-prost-build = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

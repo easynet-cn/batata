@@ -17,13 +17,13 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use batata_api::{
-    distro::{
-        DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataItem,
-        DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
-        DistroDataSyncResponse, DistroDataVerifyRequest, DistroDataVerifyResponse,
-    },
     model::Member,
     remote::model::ResponseTrait,
+};
+use batata_server_api::distro::{
+    DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataItem,
+    DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
+    DistroDataSyncResponse, DistroDataVerifyRequest, DistroDataVerifyResponse,
 };
 
 /// Default maximum number of items packed into one `DistroDataBatchSyncRequest`.
@@ -905,10 +905,10 @@ impl DistroProtocol {
                     for member_address in &other_members {
                         let (api_data_type, custom_type_name) = match data_type {
                             DistroDataType::NamingInstance => {
-                                (batata_api::distro::DistroDataType::NamingInstance, None)
+                                (batata_server_api::distro::DistroDataType::NamingInstance, None)
                             }
                             DistroDataType::Custom(name) => (
-                                batata_api::distro::DistroDataType::Custom,
+                                batata_server_api::distro::DistroDataType::Custom,
                                 Some(name.clone()),
                             ),
                         };
@@ -1013,13 +1013,13 @@ impl DistroProtocol {
         for (data_type, handler) in &handler_entries {
             let api_data_type = match data_type {
                 DistroDataType::NamingInstance => {
-                    batata_api::distro::DistroDataType::NamingInstance
+                    batata_server_api::distro::DistroDataType::NamingInstance
                 }
                 DistroDataType::Custom(name) => {
                     // For custom types we need to use for_custom_type constructor
                     // but store the name for logging. The api_data_type is Custom.
                     let _ = name;
-                    batata_api::distro::DistroDataType::Custom
+                    batata_server_api::distro::DistroDataType::Custom
                 }
             };
 
@@ -1060,10 +1060,10 @@ impl DistroProtocol {
                                 let item_count = snapshot_response.snapshot.len();
                                 for item in snapshot_response.snapshot {
                                     let internal_data_type = match item.data_type {
-                                        batata_api::distro::DistroDataType::NamingInstance => {
+                                        batata_server_api::distro::DistroDataType::NamingInstance => {
                                             DistroDataType::NamingInstance
                                         }
-                                        batata_api::distro::DistroDataType::Custom => {
+                                        batata_server_api::distro::DistroDataType::Custom => {
                                             DistroDataType::Custom(
                                                 item.custom_type_name.clone().unwrap_or_default(),
                                             )
@@ -1170,10 +1170,10 @@ impl DistroProtocol {
             .map(|d| {
                 let (api_data_type, custom_type_name) = match &d.data_type {
                     DistroDataType::NamingInstance => {
-                        (batata_api::distro::DistroDataType::NamingInstance, None)
+                        (batata_server_api::distro::DistroDataType::NamingInstance, None)
                     }
                     DistroDataType::Custom(name) => (
-                        batata_api::distro::DistroDataType::Custom,
+                        batata_server_api::distro::DistroDataType::Custom,
                         Some(name.clone()),
                     ),
                 };
@@ -1235,10 +1235,10 @@ impl DistroProtocol {
         // Convert internal DistroData to API DistroDataItem
         let (api_data_type, custom_type_name) = match &data.data_type {
             DistroDataType::NamingInstance => {
-                (batata_api::distro::DistroDataType::NamingInstance, None)
+                (batata_server_api::distro::DistroDataType::NamingInstance, None)
             }
             DistroDataType::Custom(name) => (
-                batata_api::distro::DistroDataType::Custom,
+                batata_server_api::distro::DistroDataType::Custom,
                 Some(name.clone()),
             ),
         };

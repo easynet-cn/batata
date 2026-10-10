@@ -487,8 +487,8 @@ impl RaftNode {
         leader_addr: &str,
         request_bytes: &[u8],
     ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
-        use batata_api::raft::ClientWriteRequest;
-        use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
+        use batata_server_api::raft::ClientWriteRequest;
+        use batata_server_api::raft::raft_management_service_client::RaftManagementServiceClient;
 
         // Cache lookup — release the lock immediately so concurrent forwards
         // don't serialize on each other. Holding the Mutex across
@@ -569,8 +569,8 @@ impl RaftNode {
     /// Used by the `transfer_leader` HTTP handler to implement leader transfer
     /// when openraft 0.9 doesn't have a native `transfer_leader()` API.
     pub async fn trigger_remote_election(&self, addr: &str) -> Result<(), String> {
-        use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
-        use batata_api::raft::TriggerElectionRequest;
+        use batata_server_api::raft::raft_management_service_client::RaftManagementServiceClient;
+        use batata_server_api::raft::TriggerElectionRequest;
 
         let endpoint = format!("http://{}", addr);
         let mut client = RaftManagementServiceClient::connect(endpoint)

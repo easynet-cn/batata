@@ -57,7 +57,7 @@ impl ClientLabelsCollector {
         labels.insert("ClientLanguage".to_string(), "Rust".to_string());
 
         // Local IP
-        let local_ip = batata_common::local_ip();
+        let local_ip = batata_api::local_ip();
         labels.insert("ClientIp".to_string(), local_ip);
 
         // OS info

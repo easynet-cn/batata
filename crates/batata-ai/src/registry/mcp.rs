@@ -251,7 +251,7 @@ impl McpServerRegistry {
 
     /// List servers with optional filtering.
     /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
-    pub fn list(&self, query: &McpServerQuery) -> batata_api::model::Page<McpServerBasicInfo> {
+    pub fn list(&self, query: &McpServerQuery) -> batata_common::model::Page<McpServerBasicInfo> {
         let mut servers: Vec<McpServer> = self
             .servers
             .iter()
@@ -348,7 +348,7 @@ impl McpServerRegistry {
             vec![]
         };
 
-        batata_api::model::Page::new(total, page as u64, query.page_size as u64, page_items)
+        batata_common::model::Page::new(total, page as u64, query.page_size as u64, page_items)
     }
 
     /// Update server health status
@@ -401,7 +401,7 @@ impl McpServerRegistry {
     pub fn list_with_search(
         &self,
         query: &McpListQuery,
-    ) -> batata_api::model::Page<McpServerBasicInfo> {
+    ) -> batata_common::model::Page<McpServerBasicInfo> {
         let namespace = query.namespace_id.clone();
         let search_type = query.search.as_deref().unwrap_or("blur");
         let page_no = query.page_no.unwrap_or(1).max(1);
@@ -459,7 +459,7 @@ impl McpServerRegistry {
             vec![]
         };
 
-        batata_api::model::Page::new(total, page_no as u64, page_size as u64, page_items)
+        batata_common::model::Page::new(total, page_no as u64, page_size as u64, page_items)
     }
 
     /// Delete a server by query params (Nacos-compatible)

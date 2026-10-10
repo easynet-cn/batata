@@ -391,7 +391,7 @@ impl Configuration {
                 return ip.to_string();
             }
         }
-        batata_common::local_ip()
+        batata_api::local_ip()
     }
 
     // ===================== Cluster Client Configuration =====================

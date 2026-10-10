@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
-use batata_api::raft::{
+use batata_server_api::raft::{
     AddLearnerRequest, AddLearnerResponse, AppendEntriesRequest as ProtoAppendEntriesRequest,
     AppendEntriesResponse as ProtoAppendEntriesResponse, ChangeMembershipRequest,
     ChangeMembershipResponse, ClientWriteRequest, ClientWriteResponse, Entry as ProtoEntry,

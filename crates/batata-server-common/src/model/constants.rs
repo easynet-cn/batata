@@ -45,12 +45,10 @@ pub use batata_api::model::{
     DEFAULT_CLUSTER_NAME,
     DEFAULT_DOMAINNAME,
     // Group/namespace constants
-    DEFAULT_GROUP,
     DEFAULT_HEART_BEAT_INTERVAL,
     DEFAULT_HEART_BEAT_TIMEOUT,
     DEFAULT_INSTANCE_ID_GENERATOR,
     DEFAULT_IP_DELETE_TIMEOUT,
-    DEFAULT_NAMESPACE_ID,
     DEFAULT_PROTECT_THRESHOLD,
     DEFAULT_REDO_DELAY_TIME,
     DEFAULT_REDO_THREAD_COUNT,
@@ -116,6 +114,10 @@ pub use batata_api::model::{
     WORD_SEPARATOR,
     WRITE_REDIRECT_CODE,
 };
+
+// Re-export group/namespace constants from batata-common (kept there as the
+// server-side source of truth; they are plain string constants).
+pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
 
 // ============================================================================
 // System Constants

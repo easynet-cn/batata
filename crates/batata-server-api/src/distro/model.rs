@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use prost_types::Any;
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use batata_api::{
     grpc::Payload,
     remote::model::{InternalRequest, RequestTrait, Response, ResponseTrait},
 };

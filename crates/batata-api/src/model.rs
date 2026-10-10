@@ -13,8 +13,6 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
-
 // Client protocol version
 /// The client protocol version.
 pub const CLIENT_VERSION: &str = "3.0.0";
@@ -309,8 +307,65 @@ pub const FIND_DATASOURCE_ERROR_CODE: i32 = 102;
 /// Table lookup error code.
 pub const FIND_TABLE_ERROR_CODE: i32 = 103;
 
-/// Generic pagination wrapper for API responses (re-exported from batata-common)
-pub use batata_common::model::Page;
+/// Generic pagination wrapper for API responses
+///
+/// Serde aliases support Nacos-compatible deserialization where different
+/// endpoints use different field names for the same concept.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Page<T> {
+    #[serde(alias = "count", default)]
+    /// The `total_count` field.
+    pub total_count: u64,
+    #[serde(default)]
+    /// The `page_number` field.
+    pub page_number: u64,
+    #[serde(default)]
+    /// The `pages_available` field.
+    pub pages_available: u64,
+    #[serde(
+        alias = "serviceList",
+        alias = "configList",
+        alias = "hosts",
+        alias = "subscribers",
+        alias = "list",
+        default
+    )]
+    /// The `page_items` field.
+    pub page_items: Vec<T>,
+}
+
+impl<T> Default for Page<T> {
+    fn default() -> Self {
+        Self {
+            total_count: 0,
+            page_number: 1,
+            pages_available: 0,
+            page_items: vec![],
+        }
+    }
+}
+
+impl<T> Page<T> {
+    /// Creates a new `Page` from the given counts and items.
+    pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
+        Self {
+            total_count,
+            page_number,
+            pages_available: if page_size > 0 {
+                (total_count as f64 / page_size as f64).ceil() as u64
+            } else {
+                0
+            },
+            page_items,
+        }
+    }
+
+    /// Creates an empty `Page`.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+}
 
 /// Node state enumeration for cluster members
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]

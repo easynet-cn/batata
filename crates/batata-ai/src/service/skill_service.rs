@@ -1605,7 +1605,7 @@ impl super::traits::SkillService for SkillOperationService {
         page_no: u64,
         page_size: u64,
         _user: Option<&str>,
-    ) -> anyhow::Result<batata_api::model::Page<SkillSummary>> {
+    ) -> anyhow::Result<batata_common::model::Page<SkillSummary>> {
         let p = self
             .list_skills(
                 namespace_id,
@@ -1617,7 +1617,7 @@ impl super::traits::SkillService for SkillOperationService {
                 _user,
             )
             .await?;
-        Ok(batata_api::model::Page {
+        Ok(batata_common::model::Page {
             total_count: p.total_count,
             page_number: p.page_number,
             pages_available: p.pages_available,
@@ -1794,11 +1794,11 @@ impl super::traits::SkillService for SkillOperationService {
         page_no: u64,
         page_size: u64,
         _user: Option<&str>,
-    ) -> anyhow::Result<batata_api::model::Page<SkillBasicInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<SkillBasicInfo>> {
         let p = self
             .search_skills(namespace_id, keyword, page_no, page_size, _user)
             .await?;
-        Ok(batata_api::model::Page {
+        Ok(batata_common::model::Page {
             total_count: p.total_count,
             page_number: p.page_number,
             pages_available: p.pages_available,

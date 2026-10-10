@@ -293,7 +293,7 @@ async fn create_raft_node(
     // All nodes must agree on the SAME set of member addresses
     // (using the SAME IPs from cluster.conf), so we find our own
     // entry by matching the port, and derive the raft port from it.
-    let local_ip = batata_common::local_ip();
+    let local_ip = batata_api::local_ip();
     let node_addr = {
         let cluster_addrs = configuration.cluster_member_addresses();
         let mut matched_ip = local_ip.clone();

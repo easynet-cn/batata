@@ -55,7 +55,8 @@ impl ResourceVersionInfo {
 
     /// Mark `version` as the latest published version.
     pub fn set_latest(&mut self, version: &str) {
-        self.labels.insert("latest".to_string(), version.to_string());
+        self.labels
+            .insert("latest".to_string(), version.to_string());
     }
 
     /// Drop the `latest` label.

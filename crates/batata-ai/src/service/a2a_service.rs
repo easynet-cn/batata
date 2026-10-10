@@ -600,7 +600,7 @@ impl A2aServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
         let page_no = page_no.max(1) as u64;
         let page_size_u64 = page_size as u64;
 
@@ -627,7 +627,7 @@ impl A2aServerOperationService {
             .map(Self::parse_version_info)
             .collect();
 
-        Ok(batata_api::model::Page::new(
+        Ok(batata_common::model::Page::new(
             page.total_count,
             page_no,
             page_size_u64,
@@ -1062,7 +1062,7 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
         self.list_agents(namespace, agent_name, search_type, page_no, page_size, user)
             .await
     }

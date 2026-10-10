@@ -10,6 +10,7 @@ description = "Raft and Distro consensus protocols for Batata"
 [dependencies]
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-server-api = { workspace = true }
 
 # Raft consensus
 openraft = { workspace = true }

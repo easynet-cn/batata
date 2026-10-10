@@ -10,7 +10,7 @@ use tokio::sync::{OnceCell, RwLock};
 use tracing::info;
 
 use batata_api::model::{Member, MemberBuilder, NodeState};
-use batata_common::local_ip;
+use batata_api::local_ip;
 
 use crate::model::Configuration;
 

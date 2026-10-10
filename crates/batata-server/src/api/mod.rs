@@ -39,11 +39,11 @@ pub mod model;
 
 // Raft consensus gRPC service definitions - re-exported from batata-api crate
 /// Re-exported item.
-pub use batata_api::raft;
+pub use batata_server_api::raft;
 
 // Distro protocol API - re-exported from batata-api crate
 /// Re-exported item.
-pub use batata_api::distro;
+pub use batata_server_api::distro;
 
 // Shared logic between V2 and V3 API implementations
 /// `shared` module.

@@ -32,7 +32,7 @@ pub use traits::ClientConnectionManager;
 /// Re-exports from batata-api for handler macro compatibility.
 /// Handler macros use `$crate::api::grpc::Payload` etc.
 pub mod api {
-    pub use batata_api::distro;
+    pub use batata_server_api::distro;
     pub use batata_api::grpc;
     pub use batata_api::remote;
 }
@@ -63,4 +63,4 @@ pub use server::{
 };
 
 // Re-export common functions
-pub use batata_common::local_ip;
+pub use batata_api::local_ip;

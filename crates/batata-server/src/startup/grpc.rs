@@ -664,7 +664,7 @@ pub fn start_grpc_servers(
     register_internal_handlers(&mut handler_registry, connection_manager.clone());
     // Determine cluster mode and create shared cluster resources
     let is_standalone = app_state.configuration.is_standalone();
-    let local_ip = batata_common::local_ip();
+    let local_ip = batata_api::local_ip();
     let main_port = app_state.configuration.server_main_port();
     let local_address = format!("{}:{}", local_ip, main_port);
 
@@ -1009,10 +1009,10 @@ pub fn start_grpc_servers(
                 .http2_keepalive_interval(Some(raft_http2_interval))
                 .http2_keepalive_timeout(Some(raft_http2_timeout))
                 .add_service(
-                    batata_api::raft::raft_service_server::RaftServiceServer::new(raft_service),
+                    batata_server_api::raft::raft_service_server::RaftServiceServer::new(raft_service),
                 )
                 .add_service(
-                    batata_api::raft::raft_management_service_server::RaftManagementServiceServer::new(
+                    batata_server_api::raft::raft_management_service_server::RaftManagementServiceServer::new(
                         raft_mgmt_service,
                     ),
                 )

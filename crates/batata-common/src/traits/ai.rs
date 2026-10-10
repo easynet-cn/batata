@@ -105,11 +105,7 @@ pub trait PromptService: Send + Sync {
 
     /// Submit the version currently being edited. Upstream's submit carries an
     /// optional version, so omitting it means "the draft".
-    async fn submit_draft(
-        &self,
-        namespace_id: &str,
-        prompt_key: &str,
-    ) -> anyhow::Result<String>;
+    async fn submit_draft(&self, namespace_id: &str, prompt_key: &str) -> anyhow::Result<String>;
 
     /// Publish a reviewed version.
     async fn publish(

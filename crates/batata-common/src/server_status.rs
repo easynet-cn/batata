@@ -13,8 +13,8 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
 
 /// Server lifecycle status.
 #[repr(u8)]
@@ -166,24 +166,28 @@ impl ServerStatusManager {
 
     /// Mark the server not ready (a required subsystem is unavailable).
     pub fn set_down(&self) {
-        self.status.store(ServerStatus::Down as u8, Ordering::Relaxed);
+        self.status
+            .store(ServerStatus::Down as u8, Ordering::Relaxed);
     }
 
     /// Mark the server as draining before shutdown.
     pub fn set_draining(&self) {
-        self.status.store(ServerStatus::Draining as u8, Ordering::Relaxed);
+        self.status
+            .store(ServerStatus::Draining as u8, Ordering::Relaxed);
     }
 
     /// Mark the server as starting again.
     pub fn set_starting(&self) {
-        self.status.store(ServerStatus::Starting as u8, Ordering::Relaxed);
+        self.status
+            .store(ServerStatus::Starting as u8, Ordering::Relaxed);
     }
 
     /// Operator mode: serve only read (GET) traffic.
     ///
     /// Nacos parity: `ServerStatus.READ_ONLY`, settable via the overridden server status.
     pub fn set_read_only(&self) {
-        self.status.store(ServerStatus::ReadOnly as u8, Ordering::Relaxed);
+        self.status
+            .store(ServerStatus::ReadOnly as u8, Ordering::Relaxed);
     }
 
     /// Operator mode: serve only write (non-GET) traffic.
@@ -198,7 +202,8 @@ impl ServerStatusManager {
     ///
     /// Nacos parity: `ServerStatus.PAUSED`, settable via the overridden server status.
     pub fn set_paused(&self) {
-        self.status.store(ServerStatus::Paused as u8, Ordering::Relaxed);
+        self.status
+            .store(ServerStatus::Paused as u8, Ordering::Relaxed);
     }
 
     /// Get the current error message (cold path — only called on rejection).
@@ -335,7 +340,10 @@ mod tests {
             ServerStatus::from_str("READ_ONLY").unwrap(),
             ServerStatus::ReadOnly
         );
-        assert_eq!(ServerStatus::from_str("PAUSED").unwrap(), ServerStatus::Paused);
+        assert_eq!(
+            ServerStatus::from_str("PAUSED").unwrap(),
+            ServerStatus::Paused
+        );
         assert_eq!(
             ServerStatus::from_str("WRITE_ONLY").unwrap(),
             ServerStatus::WriteOnly

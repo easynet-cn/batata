@@ -209,7 +209,7 @@ pub async fn publish_config(
         );
     }
 
-    if batata_api::validation::validate_data_id(&form.data_id).is_err() {
+    if batata_server_api::validation::validate_data_id(&form.data_id).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
@@ -218,7 +218,7 @@ pub async fn publish_config(
         );
     }
 
-    if batata_api::validation::validate_group(&form.group).is_err() {
+    if batata_server_api::validation::validate_group(&form.group).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
@@ -504,7 +504,7 @@ pub async fn delete_config(
         );
     }
 
-    if batata_api::validation::validate_data_id(&params.data_id).is_err() {
+    if batata_server_api::validation::validate_data_id(&params.data_id).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
@@ -513,7 +513,7 @@ pub async fn delete_config(
         );
     }
 
-    if batata_api::validation::validate_group(&params.group).is_err() {
+    if batata_server_api::validation::validate_group(&params.group).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,

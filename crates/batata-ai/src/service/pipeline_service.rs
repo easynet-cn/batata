@@ -94,7 +94,7 @@ impl super::traits::PipelineService for PipelineQueryService {
         version: Option<&str>,
         page_no: u64,
         page_size: u64,
-    ) -> anyhow::Result<batata_api::model::Page<PipelineExecution>> {
+    ) -> anyhow::Result<batata_common::model::Page<PipelineExecution>> {
         let p = self
             .list_pipelines(
                 resource_type,
@@ -105,7 +105,7 @@ impl super::traits::PipelineService for PipelineQueryService {
                 page_size,
             )
             .await?;
-        Ok(batata_api::model::Page {
+        Ok(batata_common::model::Page {
             total_count: p.total_count,
             page_number: p.page_number,
             pages_available: p.pages_available,

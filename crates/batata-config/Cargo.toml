@@ -10,6 +10,7 @@ description = "Configuration management service for Batata"
 [dependencies]
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-server-api = { workspace = true }
 batata-core = { workspace = true }
 batata-plugin = { workspace = true }
 batata-persistence = { workspace = true }

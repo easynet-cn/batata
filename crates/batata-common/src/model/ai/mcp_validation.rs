@@ -14,8 +14,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::mcp::{
-    McpServerImportItem, McpServerImportValidationResult, McpServerRegistration,
-    McpServerType, McpServerValidationItem, McpTransport, VALID_MCP_PROTOCOLS, validation_status,
+    McpServerImportItem, McpServerImportValidationResult, McpServerRegistration, McpServerType,
+    McpServerValidationItem, McpTransport, VALID_MCP_PROTOCOLS, validation_status,
 };
 
 /// The `stdio` protocol, which is the only one satisfied by a local config.
@@ -562,8 +562,7 @@ mod tests {
 
     #[test]
     fn a_keyed_map_supplies_the_name() {
-        let servers =
-            parse_import_payload(r#"{"my-server":{"protocol":"http"}}"#).expect("parse");
+        let servers = parse_import_payload(r#"{"my-server":{"protocol":"http"}}"#).expect("parse");
         assert_eq!(servers[0].name.as_deref(), Some("my-server"));
     }
 

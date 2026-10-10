@@ -82,7 +82,7 @@ impl ConsulAgentService {
         &self,
         dc_config: &ConsulDatacenterConfig,
     ) -> Result<(), String> {
-        use batata_common::local_ip;
+        use batata_api::local_ip;
 
         let ip = local_ip();
         let raft_port = dc_config.raft_port();
