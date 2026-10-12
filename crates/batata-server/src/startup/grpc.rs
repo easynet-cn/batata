@@ -29,10 +29,10 @@ use crate::{
     model::common::AppState,
     service::{
         ai_handler::{
-            AgentDiscoveryRpcHandler, AgentEndpointDeregisterRpcHandler,
-            AgentEndpointHandler, AgentEndpointRegisterRpcHandler, AgentSearchRpcHandler,
-            McpServerEndpointHandler, QueryAgentCardHandler, QueryMcpServerHandler,
-            QueryPromptHandler, ReleaseAgentCardHandler, ReleaseMcpServerHandler,
+            AgentDiscoveryRpcHandler, AgentEndpointDeregisterRpcHandler, AgentEndpointHandler,
+            AgentEndpointRegisterRpcHandler, AgentSearchRpcHandler, McpServerEndpointHandler,
+            QueryAgentCardHandler, QueryMcpServerHandler, QueryPromptHandler,
+            ReleaseAgentCardHandler, ReleaseMcpServerHandler,
         },
         cluster_handler::{
             MemberReportHandler, PluginAvailabilityHandler, PluginAvailabilityProvider,
@@ -725,10 +725,9 @@ pub fn start_grpc_servers(
     // owned by this node. Without this, reconciliation waits up to one
     // verify cycle (~5s). The verify loop still runs its own periodic
     // refresh as a safety net.
-    if !is_standalone
-        && let Some(ref smm) = server_member_manager {
-            distro_protocol.subscribe_member_changes(smm.event_publisher().clone());
-        }
+    if !is_standalone && let Some(ref smm) = server_member_manager {
+        distro_protocol.subscribe_member_changes(smm.event_publisher().clone());
+    }
 
     // Build the ClientOperationServiceProxy that routes instance writes by
     // the `instance.ephemeral` flag:

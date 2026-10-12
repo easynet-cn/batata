@@ -13,16 +13,12 @@ use tracing::{debug, info};
 use crate::model::Connection;
 use batata_api::model::NodeState;
 
-use crate::{
-    api::{
-        grpc::Payload,
-        remote::model::{
-            MemberReportRequest, MemberReportResponse, PluginAvailabilityRequest,
-            PluginAvailabilityResponse, RequestTrait, ResponseTrait,
-        },
-    },
-    handler::rpc::{AuthRequirement, PayloadHandler},
-    service::cluster::ServerMemberManager,
+use crate::handler::rpc::{AuthRequirement, PayloadHandler};
+use crate::service::cluster::ServerMemberManager;
+use batata_api::grpc::Payload;
+use batata_api::remote::model::{
+    MemberReportRequest, MemberReportResponse, PluginAvailabilityRequest,
+    PluginAvailabilityResponse, RequestTrait, ResponseTrait,
 };
 
 /// Handler for MemberReportRequest - processes cluster member heartbeat reports
@@ -166,7 +162,7 @@ impl PayloadHandler for PluginAvailabilityHandler {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::remote::model::RequestTrait;
+    use batata_api::remote::model::RequestTrait;
 
     #[test]
     fn test_member_report_request_type() {

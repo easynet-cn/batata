@@ -18,7 +18,6 @@ pub struct ListLocksQuery {
     pub namespace_id: Option<String>,
 }
 
-
 /// GET /v3/admin/core/lock/list
 ///
 /// Returns all locks currently stored in Raft state (both held and free).

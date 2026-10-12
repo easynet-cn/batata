@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_ai::model::{
     AgentCapabilities, AgentCard, AgentSkill, McpCapability, McpServerRegistration, McpServerType,
     McpTool, McpTransport,
@@ -212,7 +212,10 @@ async fn build_app(
 }
 
 /// Connect, clean and build the app together with the backing service.
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<McpServerOperationService>) {
+async fn setup() -> (
+    Arc<ExternalDbPersistService>,
+    Arc<McpServerOperationService>,
+) {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
     let conn = connect_database(&url).await;
@@ -242,7 +245,10 @@ async fn versions_endpoint_lists_versions() {
     assert_eq!(resp.status(), StatusCode::OK, "versions should return 200");
     let body = test::read_body(resp).await;
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("1.0.0"), "body should list the version: {body}");
+    assert!(
+        body.contains("1.0.0"),
+        "body should list the version: {body}"
+    );
 
     clean(&store).await;
 }
@@ -265,7 +271,10 @@ async fn version_endpoint_returns_one_version() {
     assert_eq!(resp.status(), StatusCode::OK, "version should return 200");
     let body = test::read_body(resp).await;
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("2.0.0"), "body should name the version: {body}");
+    assert!(
+        body.contains("2.0.0"),
+        "body should name the version: {body}"
+    );
 
     clean(&store).await;
 }
@@ -278,7 +287,9 @@ async fn versions_endpoint_requires_mcp_name() {
     let (store, svc) = setup().await;
     let app = build_app(store.clone(), svc.clone()).await;
 
-    let req = test::TestRequest::get().uri("/ai/mcp/versions").to_request();
+    let req = test::TestRequest::get()
+        .uri("/ai/mcp/versions")
+        .to_request();
     let resp = test::call_service(&app, req).await;
 
     assert_eq!(
@@ -301,7 +312,7 @@ async fn search_endpoint_returns_ranked_hits() {
 
     // Build the index the same way the background consumer would.
     let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(
-        store.clone() as std::sync::Arc<dyn batata_persistence::PersistenceService>,
+        store.clone() as std::sync::Arc<dyn batata_persistence::PersistenceService>
     );
     svc.publish_mcp_server_version(NS, NAME, "1.0.0")
         .await
@@ -493,10 +504,17 @@ async fn force_publish_endpoint_skips_review() {
         .to_request();
     let resp = test::call_service(&app, req).await;
 
-    assert_eq!(resp.status(), StatusCode::OK, "force-publish should succeed");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "force-publish should succeed"
+    );
     let body = test::read_body(resp).await;
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("online"), "force-publish should go online: {body}");
+    assert!(
+        body.contains("online"),
+        "force-publish should go online: {body}"
+    );
 
     clean(&store).await;
 }
@@ -505,14 +523,24 @@ async fn force_publish_endpoint_skips_review() {
 #[actix_web::test]
 #[ignore]
 async fn redraft_endpoint_moves_version_back_to_draft() {
-    assert_transition("/ai/mcp/redraft?mcpName=route-mcp&version=1.0.0", "draft", "redraft").await;
+    assert_transition(
+        "/ai/mcp/redraft?mcpName=route-mcp&version=1.0.0",
+        "draft",
+        "redraft",
+    )
+    .await;
 }
 
 /// POST /ai/mcp/offline takes an online version offline.
 #[actix_web::test]
 #[ignore]
 async fn offline_endpoint_takes_version_offline() {
-    assert_transition("/ai/mcp/offline?mcpName=route-mcp&version=1.0.0", "offline", "offline").await;
+    assert_transition(
+        "/ai/mcp/offline?mcpName=route-mcp&version=1.0.0",
+        "offline",
+        "offline",
+    )
+    .await;
 }
 
 /// POST /ai/mcp/online brings an offline version back online.
@@ -561,8 +589,14 @@ async fn labels_endpoint_replaces_labels_and_keeps_latest() {
     assert_eq!(resp.status(), StatusCode::OK, "labels should succeed");
     let body = test::read_body(resp).await;
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("stable"), "custom label must be stored: {body}");
-    assert!(body.contains("latest"), "the latest label must survive: {body}");
+    assert!(
+        body.contains("stable"),
+        "custom label must be stored: {body}"
+    );
+    assert!(
+        body.contains("latest"),
+        "the latest label must survive: {body}"
+    );
 
     clean(&store).await;
 }
@@ -591,10 +625,10 @@ async fn scope_endpoint_sets_scope() {
 async fn validate_payload<S>(app: &S, content: &str) -> String
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri("/ai/mcp/import/validate")
@@ -617,7 +651,10 @@ async fn import_validate_rejects_an_incomplete_server() {
     // Parses fine, but has no protocol, no description and no remote config.
     let body = validate_payload(&app, r#"[{"name":"broken"}]"#).await;
     assert!(body.contains("\"valid\":false"), "must be invalid: {body}");
-    assert!(body.contains("Protocol is required"), "missing protocol: {body}");
+    assert!(
+        body.contains("Protocol is required"),
+        "missing protocol: {body}"
+    );
     assert!(
         body.contains("Description is required"),
         "missing description: {body}"
@@ -635,7 +672,10 @@ async fn import_validate_accepts_a_complete_server() {
     let content = r#"[{"name":"complete","protocol":"http","description":"does things","remoteServerConfig":{"url":"http://localhost:8080"}}]"#;
     let body = validate_payload(&app, content).await;
     assert!(body.contains("\"valid\":true"), "must be valid: {body}");
-    assert!(body.contains("\"validCount\":1"), "one valid server: {body}");
+    assert!(
+        body.contains("\"validCount\":1"),
+        "one valid server: {body}"
+    );
 
     clean(&store).await;
 }
@@ -701,10 +741,10 @@ async fn clean_agent(store: &ExternalDbPersistService, name: &str) {
 async fn agent_post<S>(app: &S, path: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post().uri(path).to_request();
     let resp = test::call_service(app, req).await;
@@ -728,25 +768,57 @@ async fn agent_admin_endpoints_walk_the_lifecycle() {
     let version = "1.0.0";
 
     // Registration publishes directly, so the version starts online.
-    let (status, body) = agent_post(&app, &format!("{base}/offline?agentName={name}&version={version}")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/offline?agentName={name}&version={version}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "offline should succeed: {body}");
-    assert!(body.contains("offline"), "must report the new status: {body}");
+    assert!(
+        body.contains("offline"),
+        "must report the new status: {body}"
+    );
 
-    let (status, body) = agent_post(&app, &format!("{base}/online?agentName={name}&version={version}")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/online?agentName={name}&version={version}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "online should succeed: {body}");
-    assert!(body.contains("online"), "must report the new status: {body}");
+    assert!(
+        body.contains("online"),
+        "must report the new status: {body}"
+    );
 
-    let (status, body) = agent_post(&app, &format!("{base}/redraft?agentName={name}&version={version}")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/redraft?agentName={name}&version={version}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "redraft should succeed: {body}");
     assert!(body.contains("draft"), "must report the new status: {body}");
 
-    let (status, body) = agent_post(&app, &format!("{base}/submit?agentName={name}&version={version}")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/submit?agentName={name}&version={version}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "submit should succeed: {body}");
-    assert!(body.contains("reviewing"), "must report the new status: {body}");
+    assert!(
+        body.contains("reviewing"),
+        "must report the new status: {body}"
+    );
 
-    let (status, body) = agent_post(&app, &format!("{base}/publish?agentName={name}&version={version}")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/publish?agentName={name}&version={version}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "publish should succeed: {body}");
-    assert!(body.contains("online"), "must report the new status: {body}");
+    assert!(
+        body.contains("online"),
+        "must report the new status: {body}"
+    );
 
     clean_agent(&store, name).await;
     clean(&store).await;
@@ -804,7 +876,10 @@ async fn agent_admin_draft_endpoints_walk_the_flow() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK, "create draft should succeed");
     let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
-    assert!(body.contains("draft"), "the new version must be a draft: {body}");
+    assert!(
+        body.contains("draft"),
+        "the new version must be a draft: {body}"
+    );
 
     // A second draft without overwrite must be refused: only one is edited.
     let req = test::TestRequest::post()
@@ -827,10 +902,16 @@ async fn agent_admin_draft_endpoints_walk_the_flow() {
     assert_eq!(resp.status(), StatusCode::OK, "update draft should succeed");
 
     // The draft can then be submitted for review.
-    let (status, body) =
-        agent_post(&app, &format!("{base}/submit?agentName={name}&version=2.0.0")).await;
+    let (status, body) = agent_post(
+        &app,
+        &format!("{base}/submit?agentName={name}&version=2.0.0"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "submit should succeed: {body}");
-    assert!(body.contains("reviewing"), "must report the new status: {body}");
+    assert!(
+        body.contains("reviewing"),
+        "must report the new status: {body}"
+    );
 
     // And the leftover draft of another version can be deleted.
     let req = test::TestRequest::delete()
@@ -922,7 +1003,8 @@ async fn agent_admin_endpoints_require_the_version() {
     let (store, _svc) = setup().await;
     let app = build_app(store.clone(), _svc.clone()).await;
 
-    let (status, _body) = agent_post(&app, "/v3/admin/ai/agents/offline?agentName=route-agent").await;
+    let (status, _body) =
+        agent_post(&app, "/v3/admin/ai/agents/offline?agentName=route-agent").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "version is required");
 
     clean(&store).await;
@@ -932,10 +1014,10 @@ async fn agent_admin_endpoints_require_the_version() {
 async fn execute_payload<S>(app: &S, body: serde_json::Value) -> String
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri("/ai/mcp/import/execute")
@@ -984,7 +1066,10 @@ async fn import_execute_creates_the_server() {
         serde_json::json!({ "content": import_content("imported-create"), "namespace": NS }),
     )
     .await;
-    assert!(body.contains("\"success\":true"), "import must succeed: {body}");
+    assert!(
+        body.contains("\"success\":true"),
+        "import must succeed: {body}"
+    );
     assert!(body.contains("\"successCount\":1"), "one imported: {body}");
 
     // The point of the endpoint: the server is now really there.
@@ -1016,9 +1101,15 @@ async fn import_execute_skips_an_existing_server() {
     )
     .await;
     assert!(body.contains("\"skippedCount\":1"), "must skip: {body}");
-    assert!(body.contains("existing"), "must report the conflict: {body}");
+    assert!(
+        body.contains("existing"),
+        "must report the conflict: {body}"
+    );
     // A skip is not a failure.
-    assert!(body.contains("\"success\":true"), "skips do not fail: {body}");
+    assert!(
+        body.contains("\"success\":true"),
+        "skips do not fail: {body}"
+    );
 
     clean_named(&store, "imported-skip").await;
     clean(&store).await;
@@ -1036,7 +1127,10 @@ async fn import_execute_refuses_an_invalid_batch() {
         serde_json::json!({ "content": r#"[{"name":"broken"}]"#, "namespace": NS }),
     )
     .await;
-    assert!(body.contains("\"success\":false"), "must be refused: {body}");
+    assert!(
+        body.contains("\"success\":false"),
+        "must be refused: {body}"
+    );
     assert!(
         body.contains("Import validation failed"),
         "must explain why: {body}"
@@ -1065,7 +1159,10 @@ async fn import_execute_updates_when_overwrite_is_requested() {
         serde_json::json!({ "content": content, "namespace": NS, "overwrite": true }),
     )
     .await;
-    assert!(body.contains("\"successCount\":1"), "second import updates: {body}");
+    assert!(
+        body.contains("\"successCount\":1"),
+        "second import updates: {body}"
+    );
     assert!(
         !body.contains("\"skippedCount\":1"),
         "overwrite must not skip: {body}"
@@ -1092,7 +1189,10 @@ async fn import_validate_flags_an_existing_server_as_duplicate() {
         body.contains("Server already exists"),
         "must report the existing server: {body}"
     );
-    assert!(body.contains("\"duplicateCount\":1"), "one duplicate: {body}");
+    assert!(
+        body.contains("\"duplicateCount\":1"),
+        "one duplicate: {body}"
+    );
 
     clean(&store).await;
 }

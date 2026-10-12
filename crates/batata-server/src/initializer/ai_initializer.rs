@@ -31,14 +31,11 @@ impl ServiceInitializer for AiInitializer {
         // Determine which AI services to initialize based on persistence availability
         let persistence = ctx.persistence.persistence.clone();
         let naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>> = None;
-        
+
         let ai_services = if let Some(ref persist) = persistence {
             if let Some(ref ns) = naming_service {
                 tracing::info!("AI services using config-backed persistence");
-                crate::startup::AIServices::with_persistence(
-                    persist.clone(),
-                    ns.clone(),
-                )
+                crate::startup::AIServices::with_persistence(persist.clone(), ns.clone())
             } else {
                 tracing::info!("AI services using in-memory storage (no naming service)");
                 crate::startup::AIServices::new()
@@ -47,14 +44,14 @@ impl ServiceInitializer for AiInitializer {
             tracing::info!("AI services using in-memory storage (no persistence)");
             crate::startup::AIServices::new()
         };
-        
+
         Ok(Arc::new(ai_services) as Arc<dyn std::any::Any + Send + Sync>)
     }
-    
+
     fn priority(&self) -> u8 {
         50 // AI services are lower priority
     }
-    
+
     fn name(&self) -> &'static str {
         "AIServices"
     }

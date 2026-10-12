@@ -8,13 +8,6 @@
 //! - Abstraction layer for multi-registry support
 
 #![warn(missing_docs)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::unnecessary_sort_by)]
-#![allow(clippy::assertions_on_constants)]
-#![allow(clippy::field_reassign_with_default)]
-#![allow(clippy::result_large_err)]
-#![allow(clippy::empty_line_after_doc_comments)]
 
 /// Unified abstraction layer for service discovery, configuration, and health checking.
 pub mod abstraction;
@@ -28,14 +21,6 @@ pub mod traits;
 
 // Re-export ClientConnectionManager trait
 pub use traits::ClientConnectionManager;
-
-/// Re-exports from batata-api for handler macro compatibility.
-/// Handler macros use `$crate::api::grpc::Payload` etc.
-pub mod api {
-    pub use batata_server_api::distro;
-    pub use batata_api::grpc;
-    pub use batata_api::remote;
-}
 
 /// Re-export cluster module
 pub mod cluster {

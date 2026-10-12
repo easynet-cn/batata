@@ -32,7 +32,10 @@ async fn capabilities_declares_what_the_server_provides() {
 
     // RAD v1: runtime endpoints are published, deregistered and discovered
     // (including by version range), so the capability can be declared.
-    assert!(body.contains("\"radV1\":true"), "radV1 must be true: {body}");
+    assert!(
+        body.contains("\"radV1\":true"),
+        "radV1 must be true: {body}"
+    );
     assert!(body.contains("\"schemaVersion\":1"), "{body}");
 
     println!("ok: capability declaration = {body}");

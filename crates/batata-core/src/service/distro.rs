@@ -16,10 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use batata_api::{
-    model::Member,
-    remote::model::ResponseTrait,
-};
+use batata_api::{model::Member, remote::model::ResponseTrait};
 use batata_server_api::distro::{
     DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataItem,
     DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
@@ -851,9 +848,10 @@ impl DistroProtocol {
                     let keys = handler.get_all_keys().await;
                     for key in keys {
                         if !mapper.is_responsible(&key, &local_address)
-                            && handler.remove_data(&key).await.is_ok() {
-                                cleanup_removed += 1;
-                            }
+                            && handler.remove_data(&key).await.is_ok()
+                        {
+                            cleanup_removed += 1;
+                        }
                     }
                 }
                 if cleanup_removed > 0 {
@@ -904,9 +902,10 @@ impl DistroProtocol {
 
                     for member_address in &other_members {
                         let (api_data_type, custom_type_name) = match data_type {
-                            DistroDataType::NamingInstance => {
-                                (batata_server_api::distro::DistroDataType::NamingInstance, None)
-                            }
+                            DistroDataType::NamingInstance => (
+                                batata_server_api::distro::DistroDataType::NamingInstance,
+                                None,
+                            ),
                             DistroDataType::Custom(name) => (
                                 batata_server_api::distro::DistroDataType::Custom,
                                 Some(name.clone()),
@@ -1169,9 +1168,10 @@ impl DistroProtocol {
             .into_iter()
             .map(|d| {
                 let (api_data_type, custom_type_name) = match &d.data_type {
-                    DistroDataType::NamingInstance => {
-                        (batata_server_api::distro::DistroDataType::NamingInstance, None)
-                    }
+                    DistroDataType::NamingInstance => (
+                        batata_server_api::distro::DistroDataType::NamingInstance,
+                        None,
+                    ),
                     DistroDataType::Custom(name) => (
                         batata_server_api::distro::DistroDataType::Custom,
                         Some(name.clone()),
@@ -1234,9 +1234,10 @@ impl DistroProtocol {
 
         // Convert internal DistroData to API DistroDataItem
         let (api_data_type, custom_type_name) = match &data.data_type {
-            DistroDataType::NamingInstance => {
-                (batata_server_api::distro::DistroDataType::NamingInstance, None)
-            }
+            DistroDataType::NamingInstance => (
+                batata_server_api::distro::DistroDataType::NamingInstance,
+                None,
+            ),
             DistroDataType::Custom(name) => (
                 batata_server_api::distro::DistroDataType::Custom,
                 Some(name.clone()),

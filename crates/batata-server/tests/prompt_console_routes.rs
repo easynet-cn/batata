@@ -15,12 +15,12 @@
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_ai::PromptOperationService;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
+use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::ExternalDbPersistService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
@@ -173,10 +173,10 @@ async fn setup() -> (Arc<ExternalDbPersistService>, Arc<PromptOperationService>)
 async fn post_form<S>(app: &S, uri: &str, form: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)
@@ -267,10 +267,19 @@ async fn governance_reports_lifecycle_state() {
     let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
 
     // The draft is reported, and versions carry their status.
-    assert!(body.contains("editingVersion"), "must report the draft: {body}");
+    assert!(
+        body.contains("editingVersion"),
+        "must report the draft: {body}"
+    );
     assert!(body.contains("2.0.0"), "must list the version: {body}");
-    assert!(body.contains("versionDetails"), "must carry versionDetails: {body}");
-    assert!(body.contains("\"draft\""), "version must carry its status: {body}");
+    assert!(
+        body.contains("versionDetails"),
+        "must carry versionDetails: {body}"
+    );
+    assert!(
+        body.contains("\"draft\""),
+        "version must carry its status: {body}"
+    );
     println!("ok: governance reports lifecycle state");
 
     clean(&store).await;

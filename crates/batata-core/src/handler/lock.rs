@@ -11,13 +11,11 @@ use tracing::{debug, warn};
 
 use crate::{GrpcAuthService, GrpcResource, PermissionAction, model::Connection};
 
-use crate::{
-    api::{
-        grpc::Payload,
-        remote::model::{LockOperationRequest, LockOperationResponse, RequestTrait, ResponseTrait},
-    },
-    handler::rpc::{AuthRequirement, PayloadHandler},
-    service::lock::LockService,
+use crate::handler::rpc::{AuthRequirement, PayloadHandler};
+use crate::service::lock::LockService;
+use batata_api::grpc::Payload;
+use batata_api::remote::model::{
+    LockOperationRequest, LockOperationResponse, RequestTrait, ResponseTrait,
 };
 
 const LOCK_OP_ACQUIRE: &str = "ACQUIRE";

@@ -19,7 +19,7 @@ impl ConfigBuilder {
         let config = Configuration::new()?;
         Ok(Arc::new(config))
     }
-    
+
     /// Validate the configuration
     pub fn validate(
         config: &Configuration,
@@ -31,24 +31,27 @@ impl ConfigBuilder {
             Err(Box::new(ValidationErrors::new(errors)))
         }
     }
-    
+
     /// Validate configuration and return errors
     fn validate_config(config: &Configuration) -> Vec<ValidationError> {
         let mut errors = Vec::new();
-        
+
         // Check JWT secret when auth is enabled
         if config.auth_enabled() && config.token_secret_key().is_empty() {
-            errors.push(ValidationError::new(
-                "Authentication is enabled but no JWT secret key is configured",
-            ).with_field("batata.core.auth.plugin.default.token.secret.key"));
+            errors.push(
+                ValidationError::new(
+                    "Authentication is enabled but no JWT secret key is configured",
+                )
+                .with_field("batata.core.auth.plugin.default.token.secret.key"),
+            );
         }
-        
+
         // Check for default secret key
         const DEFAULT_SECRET_KEYS: &[&str] = &[
             "NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm",
             "VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=",
         ];
-        
+
         if config.auth_enabled() {
             let secret = config.token_secret_key();
             if !secret.is_empty() && DEFAULT_SECRET_KEYS.contains(&secret.as_str()) {
@@ -57,7 +60,7 @@ impl ConfigBuilder {
                 );
             }
         }
-        
+
         errors
     }
 }
@@ -85,7 +88,7 @@ impl ValidationErrors {
     pub fn new(errors: Vec<ValidationError>) -> Self {
         Self { errors }
     }
-    
+
     /// `is_empty` function.
     ///
     /// # Returns
@@ -93,7 +96,7 @@ impl ValidationErrors {
     pub fn is_empty(&self) -> bool {
         self.errors.is_empty()
     }
-    
+
     /// `len` function.
     ///
     /// # Returns
@@ -101,7 +104,7 @@ impl ValidationErrors {
     pub fn len(&self) -> usize {
         self.errors.len()
     }
-    
+
     /// `iter` function.
     ///
     /// # Returns
@@ -126,17 +129,17 @@ impl std::error::Error for ValidationErrors {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // We can't easily test ConfigBuilder without a full environment setup,
     // but we can test the ValidationErrors type
-    
+
     #[test]
     fn test_validation_errors_empty() {
         let errors = ValidationErrors::new(Vec::new());
         assert!(errors.is_empty());
         assert_eq!(errors.len(), 0);
     }
-    
+
     #[test]
     fn test_validation_errors_with_errors() {
         let errors = vec![
@@ -144,20 +147,23 @@ mod tests {
             ValidationError::new("Error 2").with_field("field_name"),
         ];
         let validation_errors = ValidationErrors::new(errors);
-        
+
         assert!(!validation_errors.is_empty());
         assert_eq!(validation_errors.len(), 2);
     }
-    
+
     #[test]
     fn test_validation_error_display() {
         let error = ValidationError::new("Test error message");
         assert_eq!(format!("{}", error), "Test error message");
-        
+
         let error_with_field = ValidationError::new("Test error").with_field("my_field");
-        assert_eq!(format!("{}", error_with_field), "Test error [field: my_field]");
+        assert_eq!(
+            format!("{}", error_with_field),
+            "Test error [field: my_field]"
+        );
     }
-    
+
     #[test]
     fn test_validation_errors_display() {
         let errors = vec![
@@ -165,7 +171,7 @@ mod tests {
             ValidationError::new("Error 2").with_field("field"),
         ];
         let validation_errors = ValidationErrors::new(errors);
-        
+
         let display = format!("{}", validation_errors);
         assert!(display.contains("Validation errors (2)"));
         assert!(display.contains("Error 1"));

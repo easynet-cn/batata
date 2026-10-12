@@ -15,12 +15,12 @@
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_ai::A2aServerOperationService;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
+use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::ExternalDbPersistService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
@@ -159,7 +159,10 @@ async fn build_app(
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<A2aServerOperationService>) {
+async fn setup() -> (
+    Arc<ExternalDbPersistService>,
+    Arc<A2aServerOperationService>,
+) {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
     let conn = connect_database(&url).await;
@@ -202,10 +205,10 @@ async fn register(svc: &A2aServerOperationService) {
 async fn post_form<S>(app: &S, uri: &str, form: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)
@@ -297,7 +300,10 @@ async fn versions_are_listable_over_console_http() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
     assert!(body.contains("3.0.0"), "must list the draft: {body}");
-    assert!(body.contains("1.0.0"), "must list the registered version: {body}");
+    assert!(
+        body.contains("1.0.0"),
+        "must list the registered version: {body}"
+    );
     println!("ok: versions listed");
 
     clean(&store).await;

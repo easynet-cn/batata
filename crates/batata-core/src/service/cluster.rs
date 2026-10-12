@@ -9,8 +9,8 @@ use serde_json::Value;
 use tokio::sync::{OnceCell, RwLock};
 use tracing::info;
 
-use batata_api::model::{Member, MemberBuilder, NodeState};
 use batata_api::local_ip;
+use batata_api::model::{Member, MemberBuilder, NodeState};
 
 use crate::model::Configuration;
 

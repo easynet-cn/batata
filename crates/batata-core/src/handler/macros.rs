@@ -5,7 +5,7 @@
 
 use tonic::Status;
 
-use crate::api::{grpc::Payload, remote::model::ResponseCode};
+use batata_api::{grpc::Payload, remote::model::ResponseCode};
 
 /// Helper trait for creating error responses
 pub trait ErrorResponseBuilder {
@@ -83,9 +83,9 @@ macro_rules! impl_ack_handler {
             async fn handle(
                 &self,
                 _connection: &$crate::model::Connection,
-                payload: &$crate::api::grpc::Payload,
-            ) -> Result<$crate::api::grpc::Payload, tonic::Status> {
-                use $crate::api::remote::model::{RequestTrait, ResponseTrait};
+                payload: &::batata_api::grpc::Payload,
+            ) -> Result<::batata_api::grpc::Payload, tonic::Status> {
+                use ::batata_api::remote::model::{RequestTrait, ResponseTrait};
 
                 let request = <$request_type>::from(payload);
                 let request_id = request.request_id();
@@ -115,9 +115,9 @@ macro_rules! impl_ack_handler {
             async fn handle(
                 &self,
                 _connection: &$crate::model::Connection,
-                payload: &$crate::api::grpc::Payload,
-            ) -> Result<$crate::api::grpc::Payload, tonic::Status> {
-                use $crate::api::remote::model::{RequestTrait, ResponseTrait};
+                payload: &::batata_api::grpc::Payload,
+            ) -> Result<::batata_api::grpc::Payload, tonic::Status> {
+                use ::batata_api::remote::model::{RequestTrait, ResponseTrait};
 
                 let request = <$request_type>::from(payload);
                 let request_id = request.request_id();
@@ -150,8 +150,8 @@ macro_rules! error_response {
     ($response_type:ty, $request_id:expr, $message:expr) => {{
         let mut response = <$response_type>::new();
         response.response.request_id = $request_id;
-        response.response.result_code = $crate::api::remote::model::ResponseCode::Fail.code();
-        response.response.error_code = $crate::api::remote::model::ResponseCode::Fail.code();
+        response.response.result_code = ::batata_api::remote::model::ResponseCode::Fail.code();
+        response.response.error_code = ::batata_api::remote::model::ResponseCode::Fail.code();
         response.response.success = false;
         response.response.message = $message.to_string();
         response
@@ -159,7 +159,7 @@ macro_rules! error_response {
     ($response_type:ty, $request_id:expr, $error_code:expr, $message:expr) => {{
         let mut response = <$response_type>::new();
         response.response.request_id = $request_id;
-        response.response.result_code = $crate::api::remote::model::ResponseCode::Fail.code();
+        response.response.result_code = ::batata_api::remote::model::ResponseCode::Fail.code();
         response.response.error_code = $error_code;
         response.response.success = false;
         response.response.message = $message.to_string();

@@ -3,8 +3,8 @@
 //! This module provides ServerLifecycle implementation for xDS service mesh support.
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use async_trait::async_trait;
 
@@ -106,7 +106,7 @@ impl XdsServerLifecycle {
             state: Arc::new(XdsServerState::new()),
         }
     }
-    
+
     /// Check if xDS is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
@@ -189,17 +189,17 @@ impl GracefulShutdownable for XdsServerLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_xds_server_config_default() {
         let config = XdsServerConfig::default();
-        
+
         assert!(!config.enabled);
         assert_eq!(config.port, 15010);
         assert_eq!(config.server_id, "batata-xds-server");
         assert_eq!(config.sync_interval_ms, 5000);
     }
-    
+
     #[test]
     fn test_xds_server_state() {
         let state = XdsServerState::new();

@@ -13,9 +13,9 @@
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_ai::AgentSpecOperationService;
-use batata_common::model::ai::agentspec::{AgentSpec, AGENTSPEC_TYPE};
+use batata_common::model::ai::agentspec::{AGENTSPEC_TYPE, AgentSpec};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -158,7 +158,10 @@ async fn build_app(
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<AgentSpecOperationService>) {
+async fn setup() -> (
+    Arc<ExternalDbPersistService>,
+    Arc<AgentSpecOperationService>,
+) {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
     let conn = connect_database(&url).await;
@@ -170,10 +173,10 @@ async fn setup() -> (Arc<ExternalDbPersistService>, Arc<AgentSpecOperationServic
 async fn post_json<S>(app: &S, uri: &str, json: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)

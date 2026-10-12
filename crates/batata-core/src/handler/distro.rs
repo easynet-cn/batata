@@ -11,17 +11,13 @@ use crate::{
 };
 use tonic::Status;
 
-use crate::{
-    api::{
-        distro::{
-            DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataSnapshotRequest,
-            DistroDataSnapshotResponse, DistroDataSyncRequest, DistroDataSyncResponse,
-            DistroDataVerifyRequest, DistroDataVerifyResponse,
-        },
-        grpc::Payload,
-        remote::model::{RequestTrait, ResponseTrait},
-    },
-    handler::rpc::{AuthRequirement, PayloadHandler},
+use crate::handler::rpc::{AuthRequirement, PayloadHandler};
+use batata_api::grpc::Payload;
+use batata_api::remote::model::{RequestTrait, ResponseTrait};
+use batata_server_api::distro::{
+    DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataSnapshotRequest,
+    DistroDataSnapshotResponse, DistroDataSyncRequest, DistroDataSyncResponse,
+    DistroDataVerifyRequest, DistroDataVerifyResponse,
 };
 
 /// Handler for DistroDataSyncRequest - receives sync data from other cluster nodes
@@ -39,8 +35,10 @@ impl PayloadHandler for DistroDataSyncHandler {
 
         // Convert API data type to internal data type
         let data_type = match request.distro_data.data_type {
-            crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
-            crate::api::distro::DistroDataType::Custom => {
+            batata_server_api::distro::DistroDataType::NamingInstance => {
+                DistroDataType::NamingInstance
+            }
+            batata_server_api::distro::DistroDataType::Custom => {
                 let type_name = request
                     .distro_data
                     .custom_type_name
@@ -101,10 +99,10 @@ impl PayloadHandler for DistroDataBatchSyncHandler {
             .into_iter()
             .map(|item| {
                 let data_type = match item.data_type {
-                    crate::api::distro::DistroDataType::NamingInstance => {
+                    batata_server_api::distro::DistroDataType::NamingInstance => {
                         DistroDataType::NamingInstance
                     }
-                    crate::api::distro::DistroDataType::Custom => {
+                    batata_server_api::distro::DistroDataType::Custom => {
                         let type_name = item
                             .custom_type_name
                             .clone()
@@ -153,8 +151,10 @@ impl PayloadHandler for DistroDataVerifyHandler {
 
         // Convert API data type to internal data type
         let data_type = match request.data_type {
-            crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
-            crate::api::distro::DistroDataType::Custom => {
+            batata_server_api::distro::DistroDataType::NamingInstance => {
+                DistroDataType::NamingInstance
+            }
+            batata_server_api::distro::DistroDataType::Custom => {
                 let type_name = request
                     .custom_type_name
                     .clone()
@@ -218,8 +218,10 @@ impl PayloadHandler for DistroDataSnapshotHandler {
 
         // Convert API data type to internal data type
         let data_type = match request.data_type {
-            crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
-            crate::api::distro::DistroDataType::Custom => {
+            batata_server_api::distro::DistroDataType::NamingInstance => {
+                DistroDataType::NamingInstance
+            }
+            batata_server_api::distro::DistroDataType::Custom => {
                 let type_name = request
                     .custom_type_name
                     .clone()
@@ -232,19 +234,20 @@ impl PayloadHandler for DistroDataSnapshotHandler {
         let snapshot = self.distro_protocol.get_snapshot(&data_type).await;
 
         // Convert to API format
-        let api_snapshot: Vec<crate::api::distro::DistroDataItem> = snapshot
+        let api_snapshot: Vec<batata_server_api::distro::DistroDataItem> = snapshot
             .into_iter()
             .map(|d| {
                 let (api_data_type, custom_name) = match &d.data_type {
-                    DistroDataType::NamingInstance => {
-                        (crate::api::distro::DistroDataType::NamingInstance, None)
-                    }
+                    DistroDataType::NamingInstance => (
+                        batata_server_api::distro::DistroDataType::NamingInstance,
+                        None,
+                    ),
                     DistroDataType::Custom(name) => (
-                        crate::api::distro::DistroDataType::Custom,
+                        batata_server_api::distro::DistroDataType::Custom,
                         Some(name.clone()),
                     ),
                 };
-                crate::api::distro::DistroDataItem {
+                batata_server_api::distro::DistroDataItem {
                     data_type: api_data_type,
                     custom_type_name: custom_name,
                     key: d.key,

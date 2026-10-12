@@ -44,9 +44,9 @@ pub mod service; // Business services
 pub mod startup; // Application startup utilities
 
 // Re-export common types from batata-common to maintain backward compatibility
+pub use batata_api::local_ip;
 /// Re-exported item.
 pub use batata_common::{ActionTypes, ApiType, SignType, is_valid};
-pub use batata_api::local_ip;
 
 // Re-export shared types from batata-server-common
 /// Re-exported item.

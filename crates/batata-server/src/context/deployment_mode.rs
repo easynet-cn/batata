@@ -17,13 +17,13 @@ pub enum DeploymentMode {
     /// Merged mode: Console (8081) + Main Server (8848) in same process
     #[default]
     Merged,
-    
+
     /// Server only: Main Server (8848) + gRPC (9848/9849), no console
     Server,
-    
+
     /// Console only: Connects to remote server
     Console,
-    
+
     /// Server with MCP: Main Server + MCP Registry (9080)
     ServerWithMcp,
 }
@@ -39,7 +39,7 @@ impl DeploymentMode {
             _ => DeploymentMode::Merged,
         }
     }
-    
+
     /// Get the configuration key value
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -49,17 +49,20 @@ impl DeploymentMode {
             DeploymentMode::ServerWithMcp => "serverWithMcp",
         }
     }
-    
+
     /// Check if this mode includes the main HTTP server
     pub fn has_main_server(&self) -> bool {
-        matches!(self, DeploymentMode::Merged | DeploymentMode::Server | DeploymentMode::ServerWithMcp)
+        matches!(
+            self,
+            DeploymentMode::Merged | DeploymentMode::Server | DeploymentMode::ServerWithMcp
+        )
     }
-    
+
     /// Check if this mode includes the console HTTP server
     pub fn has_console_server(&self) -> bool {
         matches!(self, DeploymentMode::Merged | DeploymentMode::Console)
     }
-    
+
     /// Check if this mode includes MCP registry
     pub fn has_mcp_registry(&self) -> bool {
         matches!(self, DeploymentMode::ServerWithMcp)
@@ -87,16 +90,19 @@ impl From<&str> for DeploymentMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_deployment_mode_from_str() {
         assert_eq!(DeploymentMode::from_str("merged"), DeploymentMode::Merged);
         assert_eq!(DeploymentMode::from_str("server"), DeploymentMode::Server);
         assert_eq!(DeploymentMode::from_str("console"), DeploymentMode::Console);
-        assert_eq!(DeploymentMode::from_str("serverWithMcp"), DeploymentMode::ServerWithMcp);
+        assert_eq!(
+            DeploymentMode::from_str("serverWithMcp"),
+            DeploymentMode::ServerWithMcp
+        );
         assert_eq!(DeploymentMode::from_str("unknown"), DeploymentMode::Merged);
     }
-    
+
     #[test]
     fn test_deployment_mode_as_str() {
         assert_eq!(DeploymentMode::Merged.as_str(), "merged");
@@ -104,7 +110,7 @@ mod tests {
         assert_eq!(DeploymentMode::Console.as_str(), "console");
         assert_eq!(DeploymentMode::ServerWithMcp.as_str(), "serverWithMcp");
     }
-    
+
     #[test]
     fn test_deployment_mode_has_server() {
         assert!(DeploymentMode::Merged.has_main_server());
@@ -112,7 +118,7 @@ mod tests {
         assert!(!DeploymentMode::Console.has_main_server());
         assert!(DeploymentMode::ServerWithMcp.has_main_server());
     }
-    
+
     #[test]
     fn test_deployment_mode_has_console() {
         assert!(DeploymentMode::Merged.has_console_server());
@@ -120,7 +126,7 @@ mod tests {
         assert!(DeploymentMode::Console.has_console_server());
         assert!(!DeploymentMode::ServerWithMcp.has_console_server());
     }
-    
+
     #[test]
     fn test_deployment_mode_has_mcp() {
         assert!(!DeploymentMode::Merged.has_mcp_registry());
@@ -128,13 +134,13 @@ mod tests {
         assert!(!DeploymentMode::Console.has_mcp_registry());
         assert!(DeploymentMode::ServerWithMcp.has_mcp_registry());
     }
-    
+
     #[test]
     fn test_deployment_mode_display() {
         assert_eq!(format!("{}", DeploymentMode::Merged), "merged");
         assert_eq!(format!("{}", DeploymentMode::Server), "server");
     }
-    
+
     #[test]
     fn test_deployment_mode_default() {
         assert_eq!(DeploymentMode::default(), DeploymentMode::Merged);

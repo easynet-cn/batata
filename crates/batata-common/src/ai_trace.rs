@@ -143,6 +143,7 @@ pub struct AiResourceTraceEvent {
 ///
 /// `version` and `ext` are dropped entirely when blank, matching
 /// `AiResourceTraceLogSubscriber.buildLogEntry`.
+#[allow(clippy::too_many_arguments)]
 pub fn build_trace_event(
     event_time_millis: i64,
     operator: &str,
@@ -189,6 +190,7 @@ pub fn build_trace_event(
 ///
 /// Logged at INFO under [`TRACE_LOGGER`] so ELK/Loki pipelines written for
 /// upstream Nacos keep working unchanged.
+#[allow(clippy::too_many_arguments)]
 pub fn log(
     resource_type: &str,
     resource_id: &str,

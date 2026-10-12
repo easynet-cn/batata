@@ -32,7 +32,7 @@ impl ValidationError {
             field: None,
         }
     }
-    
+
     /// `with_field` function.
     ///
     /// # Arguments
@@ -94,12 +94,12 @@ pub trait ServiceInitializer: Send + Sync {
 pub trait PhaseInitializer: Send + Sync {
     /// Phase identifier
     fn phase_id(&self) -> &'static str;
-    
+
     /// Phase priority - execution order
     fn priority(&self) -> u8 {
         128
     }
-    
+
     /// Execute the phase
     async fn execute(&self, ctx: &mut crate::context::AppContext) -> InitResult<()>;
 }
@@ -112,7 +112,7 @@ pub trait PhaseInitializer: Send + Sync {
 pub trait ConfigBuilderTrait: Send + Sync {
     /// Build and validate configuration
     fn build(&self) -> InitResult<Arc<Configuration>>;
-    
+
     /// Validate the configuration
     fn validate(&self, config: &Configuration) -> Result<(), Vec<ValidationError>>;
 }
@@ -258,7 +258,10 @@ impl ServerHandle {
     ///
     /// # Returns
     /// `(Self , tokio :: sync :: watch :: Receiver < bool >)`.
-    pub fn new(kind: ServerKind, name: impl Into<String>) -> (Self, tokio::sync::watch::Receiver<bool>) {
+    pub fn new(
+        kind: ServerKind,
+        name: impl Into<String>,
+    ) -> (Self, tokio::sync::watch::Receiver<bool>) {
         let (tx, rx) = tokio::sync::watch::channel(false);
         (
             Self {
@@ -269,7 +272,7 @@ impl ServerHandle {
             rx,
         )
     }
-    
+
     /// `shutdown` function.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
@@ -283,16 +286,16 @@ impl ServerHandle {
 pub trait ServerLifecycle: Send + Sync {
     /// Server type identifier
     fn kind(&self) -> ServerKind;
-    
+
     /// Server display name
     fn name(&self) -> Cow<'static, str>;
-    
+
     /// Start the server
     async fn start(&self, ctx: &crate::context::AppContext) -> InitResult<ServerHandle>;
-    
+
     /// Stop the server gracefully
     async fn stop(&self, handle: &ServerHandle) -> InitResult<()>;
-    
+
     /// Get current health status
     fn health(&self) -> ServerHealth;
 }
@@ -308,10 +311,10 @@ pub trait GracefulShutdownable: Send + Sync {
     fn shutdown_order(&self) -> u8 {
         128
     }
-    
+
     /// Execute shutdown
     async fn shutdown(&self) -> InitResult<()>;
-    
+
     /// Drain in-progress requests
     async fn drain(&self, _timeout: Duration) -> InitResult<()> {
         Ok(())
@@ -323,11 +326,11 @@ impl<T: GracefulShutdownable + ?Sized> GracefulShutdownable for Arc<T> {
     fn shutdown_order(&self) -> u8 {
         (**self).shutdown_order()
     }
-    
+
     async fn shutdown(&self) -> InitResult<()> {
         (**self).shutdown().await
     }
-    
+
     async fn drain(&self, timeout: Duration) -> InitResult<()> {
         (**self).drain(timeout).await
     }

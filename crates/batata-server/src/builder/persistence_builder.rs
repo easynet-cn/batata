@@ -27,14 +27,11 @@ impl PersistenceBuilder {
             tracing::info!("Console remote mode - skipping persistence init");
             return Ok(PersistenceContext::empty());
         }
-        
+
         tracing::info!("Initializing persistence layer...");
-        let ctx = crate::startup::persistence::init_persistence(
-            config.as_ref(),
-            plugin_cf_names,
-        )
-        .await?;
-        
+        let ctx =
+            crate::startup::persistence::init_persistence(config.as_ref(), plugin_cf_names).await?;
+
         Ok(ctx)
     }
 }
@@ -49,21 +46,21 @@ impl Default for PersistenceBuilder {
 mod tests {
     // PersistenceBuilder requires a full runtime environment,
     // so we test the basic types and structures here
-    
+
     use super::*;
-    
+
     #[test]
     fn test_persistence_builder_default() {
         // Just verify it can be created
         let _builder = PersistenceBuilder;
     }
-    
+
     #[test]
     fn test_deployment_mode_affects_persistence() {
         // Console mode should not need persistence
         let console_mode = DeploymentMode::Console;
         let merged_mode = DeploymentMode::Merged;
-        
+
         assert_ne!(console_mode, merged_mode);
     }
 }

@@ -41,8 +41,8 @@ impl PayloadHandler for ConsulEventBroadcastHandler {
     async fn handle(
         &self,
         connection: &Connection,
-        payload: &batata_core::api::grpc::Payload,
-    ) -> Result<batata_core::api::grpc::Payload, Status> {
+        payload: &batata_api::grpc::Payload,
+    ) -> Result<batata_api::grpc::Payload, Status> {
         let request = ConsulEventBroadcastRequest::from(payload);
         let request_id = request.request_id();
 

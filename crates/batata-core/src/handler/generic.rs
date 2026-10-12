@@ -6,16 +6,11 @@ use sysinfo::System;
 use tonic::Status;
 use tracing::{info, warn};
 
-use crate::{
-    api::{
-        grpc::Payload,
-        remote::model::{
-            ClientDetectionResponse, ConnectResetResponse, HealthCheckResponse, Response,
-            ResponseTrait, ServerCheckResponse, ServerLoaderInfoResponse, ServerReloadResponse,
-            SetupAckResponse,
-        },
-    },
-    handler::rpc::{AuthRequirement, PayloadHandler},
+use crate::handler::rpc::{AuthRequirement, PayloadHandler};
+use batata_api::grpc::Payload;
+use batata_api::remote::model::{
+    ClientDetectionResponse, ConnectResetResponse, HealthCheckResponse, Response, ResponseTrait,
+    ServerCheckResponse, ServerLoaderInfoResponse, ServerReloadResponse, SetupAckResponse,
 };
 
 #[derive(Clone)]
@@ -361,8 +356,8 @@ impl PayloadHandler for PushAckHandler {
 mod tests {
     use super::*;
 
-    use crate::api::remote::model::{RequestTrait, ServerLoaderInfoRequest};
     use async_trait::async_trait;
+    use batata_api::remote::model::{RequestTrait, ServerLoaderInfoRequest};
     use batata_common::ConnectionInfo;
 
     /// Minimal `ClientConnectionManager` stub that reports a fixed connection

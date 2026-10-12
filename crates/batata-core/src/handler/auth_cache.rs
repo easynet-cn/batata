@@ -14,14 +14,10 @@ use tracing::debug;
 
 use crate::model::Connection;
 
-use crate::{
-    api::{
-        grpc::Payload,
-        remote::model::{
-            AuthCacheInvalidateRequest, AuthCacheInvalidateResponse, RequestTrait, ResponseTrait,
-        },
-    },
-    handler::rpc::{AuthRequirement, PayloadHandler},
+use crate::handler::rpc::{AuthRequirement, PayloadHandler};
+use batata_api::grpc::Payload;
+use batata_api::remote::model::{
+    AuthCacheInvalidateRequest, AuthCacheInvalidateResponse, RequestTrait, ResponseTrait,
 };
 
 /// Trait for invalidating auth caches without depending on `batata-auth`.

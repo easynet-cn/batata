@@ -440,7 +440,12 @@ impl GrpcAuthService {
 
         headers
             .get(&self.server_identity_key)
-            .map(|v| bool::from(subtle::ConstantTimeEq::ct_eq(v.as_bytes(), self.server_identity_value.as_bytes())))
+            .map(|v| {
+                bool::from(subtle::ConstantTimeEq::ct_eq(
+                    v.as_bytes(),
+                    self.server_identity_value.as_bytes(),
+                ))
+            })
             .unwrap_or(false)
     }
 

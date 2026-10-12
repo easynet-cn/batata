@@ -4,8 +4,8 @@
 //! for HTTP servers (main and console).
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use async_trait::async_trait;
 
@@ -137,7 +137,7 @@ impl HttpServerLifecycle {
             state: Arc::new(HttpServerState::new()),
         }
     }
-    
+
     /// Create a new console HTTP server lifecycle
     pub fn new_console(config: HttpServerConfig) -> Self {
         Self {
@@ -146,7 +146,7 @@ impl HttpServerLifecycle {
             state: Arc::new(HttpServerState::new()),
         }
     }
-    
+
     /// Create a new plugin HTTP server lifecycle
     pub fn new_plugin(name: String, config: HttpServerConfig) -> Self {
         Self {
@@ -237,20 +237,26 @@ impl GracefulShutdownable for HttpServerLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_http_server_kind_as_str() {
         assert_eq!(HttpServerKind::Main.as_str(), "HttpMain");
         assert_eq!(HttpServerKind::Console.as_str(), "HttpConsole");
-        assert_eq!(HttpServerKind::Plugin("Consul".to_string()).as_str(), "Consul");
+        assert_eq!(
+            HttpServerKind::Plugin("Consul".to_string()).as_str(),
+            "Consul"
+        );
     }
-    
+
     #[test]
     fn test_http_server_kind_conversion() {
         assert_eq!(ServerKind::from(HttpServerKind::Main), ServerKind::HttpMain);
-        assert_eq!(ServerKind::from(HttpServerKind::Console), ServerKind::HttpConsole);
+        assert_eq!(
+            ServerKind::from(HttpServerKind::Console),
+            ServerKind::HttpConsole
+        );
     }
-    
+
     #[test]
     fn test_http_server_state() {
         let state = HttpServerState::new();
@@ -277,15 +283,15 @@ mod tests {
             compression_enabled: true,
             access_log_enabled: true,
         };
-        
+
         let main = HttpServerLifecycle::new_main(config.clone());
         assert_eq!(main.kind(), ServerKind::HttpMain);
         assert_eq!(main.name(), "Main HTTP Server");
-        
+
         let console = HttpServerLifecycle::new_console(config.clone());
         assert_eq!(console.kind(), ServerKind::HttpConsole);
         assert_eq!(console.name(), "Console HTTP Server");
-        
+
         let plugin = HttpServerLifecycle::new_plugin("Consul".to_string(), config);
         assert!(matches!(plugin.kind(), ServerKind::Plugin(name) if name == "Consul"));
     }

@@ -5,8 +5,8 @@
 // Configuration management API
 /// `config` module.
 pub mod config {
-        /// `model` module.
-pub mod model;
+    /// `model` module.
+    pub mod model;
 }
 
 // Consul-compatible API implementation
@@ -26,15 +26,15 @@ pub mod model;
 // Naming/Service discovery API
 /// `naming` module.
 pub mod naming {
-        /// `model` module.
-pub mod model;
+    /// `model` module.
+    pub mod model;
 }
 
 // Remote communication API models
 /// `remote` module.
 pub mod remote {
-        /// `model` module.
-pub mod model;
+    /// `model` module.
+    pub mod model;
 }
 
 // Raft consensus gRPC service definitions - re-exported from batata-api crate

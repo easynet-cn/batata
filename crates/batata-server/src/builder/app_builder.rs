@@ -66,8 +66,7 @@ pub struct AppBuilder {
     persistence_ctx: Option<startup::persistence::PersistenceContext>,
 
     // Phase 4: Services and state
-    config_subscriber_manager:
-        Option<Arc<dyn batata_common::ConfigSubscriptionService>>,
+    config_subscriber_manager: Option<Arc<dyn batata_common::ConfigSubscriptionService>>,
     naming_service_concrete: Option<Arc<batata_naming::NamingService>>,
     naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>>,
     plugin_state_providers: Vec<Arc<dyn batata_plugin::PluginStateProvider>>,
@@ -137,9 +136,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Load configuration and initialize logging
-    pub async fn with_config_and_logging(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_config_and_logging(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 1] Loading configuration and initializing logging...");
 
         let configuration = Configuration::new()?;
@@ -175,7 +172,9 @@ impl AppBuilder {
                 "Starting system stats reporter with interval of {} seconds",
                 interval_secs
             );
-            Some(crate::metrics::start_system_stats_reporter(Some(interval_secs)))
+            Some(crate::metrics::start_system_stats_reporter(Some(
+                interval_secs,
+            )))
         } else {
             tracing::info!("System stats reporter is disabled");
             None
@@ -210,9 +209,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Determine deployment mode and register plugins
-    pub async fn with_plugins(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_plugins(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 2] Determining deployment mode and registering plugins...");
 
         let config = self.configuration.as_ref().unwrap();
@@ -258,8 +255,9 @@ impl AppBuilder {
 
             let consul_config =
                 batata_plugin_consul::ConsulPluginConfig::from_config(&config.config);
-            let consul_plugin =
-                Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(consul_config));
+            let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_plugin_config(
+                consul_config,
+            ));
 
             if consul_plugin.is_enabled() {
                 plugin_manager.register_protocol_adapter(consul_plugin.clone());
@@ -305,9 +303,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Initialize persistence layer
-    pub async fn with_persistence(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_persistence(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 3] Initializing persistence layer...");
 
         let config = self.configuration.as_ref().unwrap();
@@ -330,9 +326,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Create shared services and application state
-    pub async fn with_services(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_services(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 4] Creating shared services and application state...");
 
         let config = self.configuration.as_ref().unwrap();
@@ -394,35 +388,35 @@ impl AppBuilder {
         let oauth_service = init_oauth_service(config)?;
 
         // Health check manager
-        let health_check_manager: Option<Arc<HealthCheckManager>> =
-            if let Some(ref ns) = naming_service_concrete {
-                let health_check_config = Arc::new(HealthCheckConfig {
-                    heartbeat_interval_secs: config.naming_heartbeat_check_interval_secs(),
-                    ttl_monitor_interval_secs: config.naming_ttl_monitor_interval_secs(),
-                    deregister_monitor_interval_secs: config
-                        .naming_deregister_monitor_interval_secs(),
-                    ..HealthCheckConfig::default()
-                });
-                let expire_enabled = config.expire_instance_enabled();
-                let health_check_enabled = health_check_config.is_enabled();
-                let manager = Arc::new(HealthCheckManager::new(
-                    ns.clone(),
-                    health_check_config,
-                    expire_enabled,
-                    None,
-                    None,
-                ));
+        let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) =
+            naming_service_concrete
+        {
+            let health_check_config = Arc::new(HealthCheckConfig {
+                heartbeat_interval_secs: config.naming_heartbeat_check_interval_secs(),
+                ttl_monitor_interval_secs: config.naming_ttl_monitor_interval_secs(),
+                deregister_monitor_interval_secs: config.naming_deregister_monitor_interval_secs(),
+                ..HealthCheckConfig::default()
+            });
+            let expire_enabled = config.expire_instance_enabled();
+            let health_check_enabled = health_check_config.is_enabled();
+            let manager = Arc::new(HealthCheckManager::new(
+                ns.clone(),
+                health_check_config,
+                expire_enabled,
+                None,
+                None,
+            ));
 
-                info!(
-                    "Health check manager created (expire_enabled={}, health_check_enabled={})",
-                    expire_enabled, health_check_enabled
-                );
+            info!(
+                "Health check manager created (expire_enabled={}, health_check_enabled={})",
+                expire_enabled, health_check_enabled
+            );
 
-                Some(manager)
-            } else {
-                info!("No naming service available - skipping health check manager");
-                None
-            };
+            Some(manager)
+        } else {
+            info!("No naming service available - skipping health check manager");
+            None
+        };
 
         let server_status = Arc::new(ServerStatusManager::new());
 
@@ -459,13 +453,13 @@ impl AppBuilder {
         let mut plugin_manager = PluginManager::new();
         // Register audit plugin
         plugin_manager.register_config_change_v2(Arc::new(batata_plugin::AuditPlugin::new(
-            Arc::new(batata_plugin::InMemoryAuditLogStore::new(10000))
+            Arc::new(batata_plugin::InMemoryAuditLogStore::new(10000)),
         )));
         // Register webhook config change plugin (bridges config changes to webhook delivery)
         let webhook_plugin: Arc<dyn batata_plugin::WebhookPlugin> =
             Arc::new(batata_plugin::DefaultWebhookPlugin::new());
         plugin_manager.register_config_change_v2(Arc::new(
-            batata_plugin::WebhookConfigChangePlugin::new(webhook_plugin)
+            batata_plugin::WebhookConfigChangePlugin::new(webhook_plugin),
         ));
         let plugin_manager = Arc::new(plugin_manager);
 
@@ -524,9 +518,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Initialize shutdown handler and AI services
-    pub async fn with_shutdown_and_ai(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_shutdown_and_ai(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 5] Initializing shutdown handler and AI services...");
 
         let app_state = self.app_state.as_ref().unwrap();
@@ -534,8 +526,10 @@ impl AppBuilder {
 
         let drain_timeout_secs = app_state.configuration.shutdown_drain_timeout_secs();
         let shutdown_signal = startup::wait_for_shutdown_signal().await;
-        let graceful_shutdown =
-            GracefulShutdown::new(shutdown_signal.clone(), Duration::from_secs(drain_timeout_secs));
+        let graceful_shutdown = GracefulShutdown::new(
+            shutdown_signal.clone(),
+            Duration::from_secs(drain_timeout_secs),
+        );
 
         let ai_services = match (&app_state.persistence, &naming_service) {
             (Some(persist), Some(ns)) => {
@@ -581,7 +575,12 @@ impl AppBuilder {
         let ai_services = self.ai_services.as_ref().unwrap().clone();
         let graceful_shutdown = self.graceful_shutdown.as_ref().unwrap().clone();
         let server_status = self.server_status.as_ref().unwrap().clone();
-        let database_connection = self.persistence_ctx.as_ref().unwrap().database_connection.clone();
+        let database_connection = self
+            .persistence_ctx
+            .as_ref()
+            .unwrap()
+            .database_connection
+            .clone();
 
         run_console_remote(
             app_state.clone(),
@@ -600,9 +599,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Start gRPC servers
-    pub async fn with_grpc_servers(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_grpc_servers(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 7] Starting gRPC servers...");
 
         let app_state = self.app_state.as_ref().unwrap();
@@ -622,7 +619,8 @@ impl AppBuilder {
         )?;
 
         // Wire naming apply hook for Raft
-        if let (Some(raft), Some(ns)) = (&persistence_ctx.raft_node, &self.naming_service_concrete) {
+        if let (Some(raft), Some(ns)) = (&persistence_ctx.raft_node, &self.naming_service_concrete)
+        {
             let hook = std::sync::Arc::new(
                 batata_naming::handler::raft_hook::NamingApplyHookImpl::new(ns.clone()),
             );
@@ -677,9 +675,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Start background tasks (health checks, warmup, MCP index refresh)
-    pub async fn with_background_tasks(
-        self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_background_tasks(self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 8] Starting background tasks...");
 
         let app_state = self.app_state.as_ref().unwrap();
@@ -691,28 +687,28 @@ impl AppBuilder {
         // Upgrade health check to cluster mode if not standalone
         if !app_state.configuration.is_standalone() {
             if let Some(hc_manager) = self.health_check_manager.as_ref() {
-            let distro = grpc_servers.distro_protocol();
-            hc_manager.upgrade_to_cluster(
-                Arc::new(HealthCheckConfig {
-                    heartbeat_interval_secs: app_state
-                        .configuration
-                        .naming_heartbeat_check_interval_secs(),
-                    ttl_monitor_interval_secs: app_state
-                        .configuration
-                        .naming_ttl_monitor_interval_secs(),
-                    deregister_monitor_interval_secs: app_state
-                        .configuration
-                        .naming_deregister_monitor_interval_secs(),
-                    ..HealthCheckConfig::default()
-                }),
-                distro.mapper().clone(),
-                distro.local_address().to_string(),
-                distro.clone(),
-            );
-            info!(
-                "Health check upgraded to cluster mode (local_address={})",
-                distro.local_address()
-            );
+                let distro = grpc_servers.distro_protocol();
+                hc_manager.upgrade_to_cluster(
+                    Arc::new(HealthCheckConfig {
+                        heartbeat_interval_secs: app_state
+                            .configuration
+                            .naming_heartbeat_check_interval_secs(),
+                        ttl_monitor_interval_secs: app_state
+                            .configuration
+                            .naming_ttl_monitor_interval_secs(),
+                        deregister_monitor_interval_secs: app_state
+                            .configuration
+                            .naming_deregister_monitor_interval_secs(),
+                        ..HealthCheckConfig::default()
+                    }),
+                    distro.mapper().clone(),
+                    distro.local_address().to_string(),
+                    distro.clone(),
+                );
+                info!(
+                    "Health check upgraded to cluster mode (local_address={})",
+                    distro.local_address()
+                );
             }
         }
 
@@ -745,9 +741,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Initialize cluster and Raft
-    pub async fn with_cluster_init(
-        self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_cluster_init(self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 9] Initializing cluster and Raft...");
 
         let app_state = self.app_state.as_ref().unwrap();
@@ -773,9 +767,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Start xDS service if enabled
-    pub async fn with_xds(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_xds(mut self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 10] Starting xDS service mesh support...");
 
         let app_state = self.app_state.as_ref().unwrap();
@@ -793,9 +785,7 @@ impl AppBuilder {
     // ========================================================================
 
     /// Initialize protocol adapter plugins
-    pub async fn with_plugin_init(
-        self,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_plugin_init(self) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[Phase 11] Initializing protocol adapter plugins...");
 
         let app_state = self.app_state.as_ref().unwrap();

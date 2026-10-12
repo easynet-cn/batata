@@ -211,6 +211,7 @@ pub trait SkillService: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// The `list_skills` method.
+    #[allow(clippy::too_many_arguments)]
     async fn list_skills(
         &self,
         namespace_id: &str,

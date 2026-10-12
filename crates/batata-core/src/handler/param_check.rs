@@ -132,7 +132,7 @@ fn validate_service_name(service_name: &str) -> Result<(), String> {
 /// Returns Ok(()) if params are valid or if no params need checking.
 pub fn check_request_params(
     message_type: &str,
-    payload: &crate::api::grpc::Payload,
+    payload: &batata_api::grpc::Payload,
 ) -> Result<(), tonic::Status> {
     let headers = match payload.metadata.as_ref() {
         Some(m) => &m.headers,

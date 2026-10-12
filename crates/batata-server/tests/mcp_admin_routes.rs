@@ -185,10 +185,10 @@ fn percent_encode(value: &str) -> String {
 async fn post_form<S>(app: &S, uri: &str, body: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)
@@ -197,20 +197,26 @@ where
         .to_request();
     let resp = test::call_service(app, req).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 async fn get<S>(app: &S, uri: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let resp = test::call_service(app, test::TestRequest::get().uri(uri).to_request()).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 fn registration() -> McpServerRegistration {
@@ -307,10 +313,10 @@ async fn create_rejects_a_malformed_specification() {
 async fn post_json<S>(app: &S, uri: &str, json: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)
@@ -319,16 +325,19 @@ where
         .to_request();
     let resp = test::call_service(app, req).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 async fn put_json<S>(app: &S, uri: &str, json: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::put()
         .uri(uri)
@@ -337,20 +346,26 @@ where
         .to_request();
     let resp = test::call_service(app, req).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 async fn delete_at<S>(app: &S, uri: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let resp = test::call_service(app, test::TestRequest::delete().uri(uri).to_request()).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 /// The status a version carries in `ai_resource_version`.
@@ -369,10 +384,10 @@ async fn version_status(store: &ExternalDbPersistService, version: &str) -> Opti
 async fn with_draft<S>(app: &S) -> Result<(), String>
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let spec = serde_json::to_string(&registration()).expect("serialize");
     let (status, out) = post_form(
@@ -415,7 +430,10 @@ async fn draft_moves_through_submit_and_publish() {
     let app = build_app(store.clone(), svc.clone()).await;
 
     with_draft(&app).await.expect("draft");
-    assert_eq!(version_status(&store, DRAFT_VERSION).await.as_deref(), Some("draft"));
+    assert_eq!(
+        version_status(&store, DRAFT_VERSION).await.as_deref(),
+        Some("draft")
+    );
 
     let qs = format!("mcpName={NAME}&version={DRAFT_VERSION}");
     let (status, out) = post_json(&app, &format!("/v3/admin/ai/mcp/submit?{qs}"), "{}").await;
@@ -495,7 +513,10 @@ async fn redraft_returns_a_version_to_draft() {
 
     let (status, out) = post_json(&app, &format!("/v3/admin/ai/mcp/redraft?{qs}"), "{}").await;
     assert_eq!(status, StatusCode::OK, "redraft failed: {out}");
-    assert_eq!(version_status(&store, DRAFT_VERSION).await.as_deref(), Some("draft"));
+    assert_eq!(
+        version_status(&store, DRAFT_VERSION).await.as_deref(),
+        Some("draft")
+    );
     println!("ok: redraft returns a version to draft");
 
     clean(&store).await;
@@ -543,8 +564,12 @@ async fn labels_status_and_scope_take_effect() {
     assert_eq!(status, StatusCode::OK, "update labels failed: {out}");
     assert!(out.contains("stable"), "the label must come back: {out}");
 
-    let (status, out) =
-        put_json(&app, &format!("/v3/admin/ai/mcp/scope?{qs}&scope=PRIVATE"), "{}").await;
+    let (status, out) = put_json(
+        &app,
+        &format!("/v3/admin/ai/mcp/scope?{qs}&scope=PRIVATE"),
+        "{}",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "update scope failed: {out}");
 
     let (status, out) = put_json(

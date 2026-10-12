@@ -111,9 +111,10 @@ async fn clean(store: &ExternalDbPersistService) {
         .await
         .expect("clean documents");
     ai_resource_task::Entity::delete_many()
-        .filter(ai_resource_task::Column::TaskKey.eq(batata_ai::search::task::task_key(
-            NS, "mcp", NAME,
-        )))
+        .filter(
+            ai_resource_task::Column::TaskKey
+                .eq(batata_ai::search::task::task_key(NS, "mcp", NAME)),
+        )
         .exec(db)
         .await
         .expect("clean tasks");
@@ -186,14 +187,17 @@ async fn build_app(
 async fn get<S>(app: &S, uri: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let resp = test::call_service(app, test::TestRequest::get().uri(uri).to_request()).await;
     let status = resp.status();
-    (status, String::from_utf8_lossy(&test::read_body(resp).await).to_string())
+    (
+        status,
+        String::from_utf8_lossy(&test::read_body(resp).await).to_string(),
+    )
 }
 
 /// Indexing a server makes it findable through the client search endpoint.

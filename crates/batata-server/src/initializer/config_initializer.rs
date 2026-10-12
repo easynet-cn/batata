@@ -31,11 +31,11 @@ impl ServiceInitializer for ConfigSubscriberInitializer {
         let manager = Arc::new(batata_core::ConfigSubscriberManager::new());
         Ok(manager as Arc<dyn std::any::Any + Send + Sync>)
     }
-    
+
     fn priority(&self) -> u8 {
         10 // High priority - config subscriber is fundamental
     }
-    
+
     fn name(&self) -> &'static str {
         "ConfigSubscriberManager"
     }

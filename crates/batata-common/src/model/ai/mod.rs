@@ -135,10 +135,12 @@ mod tests {
     /// must match Nacos, which uses camelCase.
     #[test]
     fn resource_version_info_uses_nacos_field_names() {
-        let mut info = ResourceVersionInfo::default();
-        info.editing_version = Some("1.0.0".to_string());
-        info.reviewing_version = Some("2.0.0".to_string());
-        info.online_cnt = 3;
+        let mut info = ResourceVersionInfo {
+            editing_version: Some("1.0.0".to_string()),
+            reviewing_version: Some("2.0.0".to_string()),
+            online_cnt: 3,
+            ..Default::default()
+        };
         info.set_latest("2.0.0");
 
         let value = serde_json::to_value(&info).unwrap();

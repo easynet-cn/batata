@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use actix_web::HttpRequest;
 use actix_web::{
     App, HttpResponse, HttpServer,
     dev::Server,
@@ -10,7 +11,6 @@ use actix_web::{
     middleware::{Compress, Condition, DefaultHeaders, Logger},
     web,
 };
-use actix_web::HttpRequest;
 #[cfg(feature = "consul")]
 use batata_plugin::ProtocolAdapterPlugin;
 
@@ -30,9 +30,8 @@ use crate::{
     auth,
     console::v3::{
         ai_a2a as console_a2a, ai_agent as console_agent, ai_agentspec as console_agentspec,
-        ai_mcp as console_mcp,
-        ai_pipeline as console_pipeline, ai_plugin as console_plugin, ai_prompt as console_prompt,
-        ai_skill as console_skill,
+        ai_mcp as console_mcp, ai_pipeline as console_pipeline, ai_plugin as console_plugin,
+        ai_prompt as console_prompt, ai_skill as console_skill,
     },
     middleware::{
         auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
@@ -375,10 +374,9 @@ impl AIServices {
             None,
             false,
         ));
-        let pipeline_service =
-            Arc::new(batata_ai::service::pipeline_service::PipelineQueryService::new(
-                persistence.clone(),
-            ));
+        let pipeline_service = Arc::new(
+            batata_ai::service::pipeline_service::PipelineQueryService::new(persistence.clone()),
+        );
 
         Self {
             mcp_registry: Arc::new(McpServerRegistry::new()),

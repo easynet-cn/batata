@@ -827,8 +827,10 @@ mod tests {
 
     #[test]
     fn test_connection_idle_millis() {
-        let mut conn = Connection::default();
-        conn.last_active = AtomicLastActive::now();
+        let conn = Connection {
+            last_active: AtomicLastActive::now(),
+            ..Default::default()
+        };
         assert!(conn.idle_millis() < 1000);
     }
 

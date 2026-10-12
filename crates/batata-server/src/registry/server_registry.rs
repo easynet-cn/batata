@@ -36,7 +36,7 @@ impl ServerRegistry {
             servers: RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Register a server lifecycle
     pub async fn register(&self, lifecycle: Arc<dyn ServerLifecycle>) {
         let mut servers = self.servers.write().await;
@@ -49,17 +49,17 @@ impl ServerRegistry {
             },
         );
     }
-    
+
     /// Start a registered server
     pub async fn start(&self, kind: ServerKind, ctx: &AppContext) -> InitResult<ServerHandle> {
         let lifecycle = {
             let servers = self.servers.read().await;
             servers.get(&kind).map(|e| e.lifecycle.clone())
         };
-        
+
         let lifecycle = lifecycle.context(format!("Server {} not registered", kind))?;
         let handle = lifecycle.start(ctx).await?;
-        
+
         {
             let mut servers = self.servers.write().await;
             if let Some(entry) = servers.get_mut(&kind) {
@@ -67,10 +67,10 @@ impl ServerRegistry {
                 entry.state = ServerHealth::Running;
             }
         }
-        
+
         Ok(handle)
     }
-    
+
     /// Stop a registered server
     pub async fn stop(&self, kind: ServerKind) -> InitResult<()> {
         let (lifecycle, handle) = {
@@ -82,11 +82,11 @@ impl ServerRegistry {
                 return Ok(()); // Not registered, nothing to stop
             }
         };
-        
+
         if let Some(h) = handle {
             lifecycle.stop(&h).await?;
         }
-        
+
         {
             let mut servers = self.servers.write().await;
             if let Some(entry) = servers.get_mut(&kind) {
@@ -94,25 +94,22 @@ impl ServerRegistry {
                 entry.handle = None;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get health status of a server
     pub async fn health(&self, kind: ServerKind) -> Option<ServerHealth> {
         let servers = self.servers.read().await;
         servers.get(&kind).map(|e| e.state)
     }
-    
+
     /// Get all server health statuses
     pub async fn health_all(&self) -> Vec<(ServerKind, ServerHealth)> {
         let servers = self.servers.read().await;
-        servers
-            .iter()
-            .map(|(k, e)| (k.clone(), e.state))
-            .collect()
+        servers.iter().map(|(k, e)| (k.clone(), e.state)).collect()
     }
-    
+
     /// Set server to draining state
     pub async fn set_draining(&self, kind: ServerKind) {
         let mut servers = self.servers.write().await;
@@ -120,7 +117,7 @@ impl ServerRegistry {
             entry.state = ServerHealth::Draining;
         }
     }
-    
+
     /// Set all servers to draining state
     pub async fn set_all_draining(&self) {
         let mut servers = self.servers.write().await;
@@ -128,19 +125,19 @@ impl ServerRegistry {
             entry.state = ServerHealth::Draining;
         }
     }
-    
+
     /// Check if a server is registered
     pub async fn contains(&self, kind: ServerKind) -> bool {
         let servers = self.servers.read().await;
         servers.contains_key(&kind)
     }
-    
+
     /// Get the number of registered servers
     pub async fn len(&self) -> usize {
         let servers = self.servers.read().await;
         servers.len()
     }
-    
+
     /// Check if the registry is empty
     pub async fn is_empty(&self) -> bool {
         let servers = self.servers.read().await;

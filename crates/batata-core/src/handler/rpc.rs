@@ -19,10 +19,8 @@ use crate::{
     service::remote::ConnectionManager,
 };
 
-use crate::api::{
-    grpc::{Metadata, Payload, bi_request_stream_server::BiRequestStream},
-    remote::model::{ConnectionSetupRequest, ResponseCode},
-};
+use batata_api::grpc::{Metadata, Payload, bi_request_stream_server::BiRequestStream};
+use batata_api::remote::model::{ConnectionSetupRequest, ResponseCode};
 
 use batata_api::model::APPNAME;
 use batata_api::remote::RequestTrait;
@@ -109,7 +107,7 @@ pub trait PayloadHandler: Send + Sync {
     /// Returns `None` if no permission checking is needed (default).
     fn resource_from_payload(
         &self,
-        _payload: &crate::api::grpc::Payload,
+        _payload: &batata_api::grpc::Payload,
     ) -> Option<(GrpcResource, PermissionAction)> {
         None
     }
@@ -379,7 +377,10 @@ impl HandlerRegistry {
     /// Attach the shared server-status handle used to gate gRPC traffic while the node
     /// is not ready. Can also be attached later via `set_server_status`, which matters
     /// because the registry is shared behind an `Arc` right after construction.
-    pub fn set_server_status(&self, status: Arc<batata_common::server_status::ServerStatusManager>) {
+    pub fn set_server_status(
+        &self,
+        status: Arc<batata_common::server_status::ServerStatusManager>,
+    ) {
         let _ = self.server_status.set(status);
     }
 
@@ -491,7 +492,7 @@ impl GrpcRequestService {
 }
 
 #[tonic::async_trait]
-impl crate::api::grpc::request_server::Request for GrpcRequestService {
+impl batata_api::grpc::request_server::Request for GrpcRequestService {
     async fn request(
         &self,
         request: tonic::Request<Payload>,
@@ -560,23 +561,26 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             // example a Raft write that cannot be forwarded because no leader has been
             // elected yet). Internal peer traffic and health probes are exempt so the
             // cluster can still initialise and operators can observe the status.
-            if let Some(status) = self.handler_registry.server_status() {
-                if !status.is_up() && !bypasses_status_gate(&auth_requirement, message_type) {
-                    let message = match status.error_msg().await {
-                        Some(reason) => format!("server is {} now, {}", status.status(), reason),
-                        None => format!("server is {} now, please try again later!", status.status()),
-                    };
-                    warn!(
-                        message_type = %message_type,
-                        status = %status.status(),
-                        "Rejecting gRPC request: server not ready"
-                    );
-                    return Ok(Response::new(build_auth_error_payload(
-                        &response_type,
-                        batata_common::error::INVALID_SERVER_STATUS.code,
-                        &message,
-                    )));
-                }
+            if let Some(status) = self.handler_registry.server_status()
+                && !status.is_up()
+                && !bypasses_status_gate(&auth_requirement, message_type)
+            {
+                let message = match status.error_msg().await {
+                    Some(reason) => format!("server is {} now, {}", status.status(), reason),
+                    None => {
+                        format!("server is {} now, please try again later!", status.status())
+                    }
+                };
+                warn!(
+                    message_type = %message_type,
+                    status = %status.status(),
+                    "Rejecting gRPC request: server not ready"
+                );
+                return Ok(Response::new(build_auth_error_payload(
+                    &response_type,
+                    batata_common::error::INVALID_SERVER_STATUS.code,
+                    &message,
+                )));
             }
 
             match auth_requirement {
@@ -1133,7 +1137,10 @@ mod status_gate_tests {
             &AuthRequirement::Internal,
             "DistroDataRequest"
         ));
-        assert!(bypasses_status_gate(&AuthRequirement::Internal, "RaftRequest"));
+        assert!(bypasses_status_gate(
+            &AuthRequirement::Internal,
+            "RaftRequest"
+        ));
     }
 
     #[test]

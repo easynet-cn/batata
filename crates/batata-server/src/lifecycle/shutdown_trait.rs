@@ -12,19 +12,19 @@ use crate::initializer::traits::{GracefulShutdownable, InitResult};
 pub mod priority {
     /// HTTP servers should stop first
     pub const HTTP_SERVER: u8 = 10;
-    
+
     /// gRPC servers should stop after HTTP
     pub const GRPC_SERVER: u8 = 20;
-    
+
     /// Health checks should stop with gRPC
     pub const HEALTH_CHECK: u8 = 25;
-    
+
     /// Cluster manager should stop after gRPC
     pub const CLUSTER_MANAGER: u8 = 30;
-    
+
     /// Raft should stop after cluster manager
     pub const RAFT: u8 = 40;
-    
+
     /// Database connection should close last
     pub const DATABASE: u8 = 50;
 }
@@ -51,7 +51,8 @@ impl ShutdownHelper {
 
     /// Signal shutdown to all listeners
     pub fn shutdown(&self) {
-        self.is_shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.is_shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = self.shutdown_tx.send(true);
     }
 
@@ -81,7 +82,7 @@ impl DrainHelper {
     pub fn new(timeout: Duration) -> Self {
         Self { timeout }
     }
-    
+
     /// Wait for drain to complete
     pub async fn drain<F, Fut>(&self, check_fn: F) -> InitResult<()>
     where
@@ -89,7 +90,7 @@ impl DrainHelper {
         Fut: std::future::Future<Output = bool>,
     {
         let start = std::time::Instant::now();
-        
+
         while start.elapsed() < self.timeout {
             if check_fn().await {
                 tracing::info!("Drain completed successfully");
@@ -97,7 +98,7 @@ impl DrainHelper {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        
+
         tracing::warn!("Drain timed out after {:?}", self.timeout);
         Ok(())
     }
@@ -110,8 +111,19 @@ impl DrainHelper {
 pub struct ClosureShutdown {
     name: &'static str,
     order: u8,
-    shutdown_fn: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = InitResult<()>> + Send>> + Send + Sync>,
-    drain_fn: Box<dyn Fn(Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = InitResult<()>> + Send>> + Send + Sync>,
+    shutdown_fn: Box<
+        dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = InitResult<()>> + Send>>
+            + Send
+            + Sync,
+    >,
+    drain_fn: Box<
+        dyn Fn(
+                Duration,
+            )
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = InitResult<()>> + Send>>
+            + Send
+            + Sync,
+    >,
 }
 
 impl ClosureShutdown {
@@ -258,9 +270,9 @@ impl Default for ShutdownOrchestrator {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
     use std::sync::Arc;
-    
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
     struct MockShutdownable {
         order: Arc<AtomicU8>,
         shutdown_called: Arc<AtomicBool>,
@@ -296,45 +308,47 @@ mod tests {
             Ok(())
         }
     }
-    
+
     #[tokio::test]
     async fn test_shutdown_helper() {
         let (helper, mut rx) = ShutdownHelper::new();
-        
+
         assert!(!helper.is_shutdown());
-        
+
         helper.shutdown();
-        
+
         // Receiver should receive the signal
         rx.changed().await.unwrap();
         assert!(rx.borrow().to_owned());
     }
-    
+
     #[tokio::test]
     async fn test_drain_helper() {
         let drain = DrainHelper::new(Duration::from_millis(100));
         let counter = Arc::new(std::sync::atomic::AtomicU8::new(0));
         let counter_clone = counter.clone();
-        
-        let result = drain.drain(|| async {
-            counter_clone.fetch_add(1, Ordering::SeqCst);
-            counter_clone.load(Ordering::SeqCst) >= 3
-        }).await;
-        
+
+        let result = drain
+            .drain(|| async {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                counter_clone.load(Ordering::SeqCst) >= 3
+            })
+            .await;
+
         assert!(result.is_ok());
         assert_eq!(counter.load(Ordering::SeqCst), 3);
     }
-    
+
     #[tokio::test]
     async fn test_drain_helper_timeout() {
         let drain = DrainHelper::new(Duration::from_millis(50));
-        
+
         let result = drain.drain(|| async { false }).await;
-        
+
         // Should succeed even if not completed
         assert!(result.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_shutdown_orchestrator() {
         let mut orchestrator = ShutdownOrchestrator::new();
@@ -365,7 +379,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_orchestrator_drain() {
-        let mut orchestrator = ShutdownOrchestrator::new().with_drain_timeout(Duration::from_millis(100));
+        let mut orchestrator =
+            ShutdownOrchestrator::new().with_drain_timeout(Duration::from_millis(100));
 
         let comp1 = Arc::new(MockShutdownable::new(10));
         let comp2 = Arc::new(MockShutdownable::new(20));
@@ -385,7 +400,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_orchestrator_graceful_shutdown() {
-        let mut orchestrator = ShutdownOrchestrator::new().with_drain_timeout(Duration::from_millis(50));
+        let mut orchestrator =
+            ShutdownOrchestrator::new().with_drain_timeout(Duration::from_millis(50));
 
         let comp = Arc::new(MockShutdownable::new(5));
         orchestrator.add(comp.clone());

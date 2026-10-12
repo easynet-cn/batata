@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web,
-};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
 use crate::{

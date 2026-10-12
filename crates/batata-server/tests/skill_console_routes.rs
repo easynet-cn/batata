@@ -15,10 +15,10 @@
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_ai::SkillOperationService;
+use batata_common::model::ai::skill::{SKILL_TYPE, Skill};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_common::model::ai::skill::{Skill, SKILL_TYPE};
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
@@ -174,10 +174,10 @@ async fn setup() -> (Arc<ExternalDbPersistService>, Arc<SkillOperationService>) 
 async fn post_json<S>(app: &S, uri: &str, json: &str) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     let req = test::TestRequest::post()
         .uri(uri)
@@ -194,10 +194,10 @@ where
 async fn post_zip<S>(app: &S, uri: &str, bytes: Vec<u8>) -> (StatusCode, String)
 where
     S: actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    >,
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
 {
     const BOUNDARY: &str = "----batata-test-boundary";
     let mut body = Vec::new();
@@ -254,16 +254,9 @@ async fn status_of(store: &ExternalDbPersistService, version: &str) -> Option<St
 async fn force_publish_bypasses_review() {
     let (store, svc) = setup().await;
     clean(&store).await;
-    svc.create_draft(
-        NS,
-        NAME,
-        None,
-        Some("1.0.0"),
-        Some(&test_skill()),
-        "tester",
-    )
-    .await
-    .expect("create draft");
+    svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
+        .await
+        .expect("create draft");
     let app = build_app(store.clone(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";
@@ -300,16 +293,9 @@ async fn force_publish_bypasses_review() {
 async fn redraft_returns_a_version_to_draft() {
     let (store, svc) = setup().await;
     clean(&store).await;
-    svc.create_draft(
-        NS,
-        NAME,
-        None,
-        Some("1.0.0"),
-        Some(&test_skill()),
-        "tester",
-    )
-    .await
-    .expect("create draft");
+    svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
+        .await
+        .expect("create draft");
     let app = build_app(store.clone(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";
@@ -337,8 +323,12 @@ async fn upload_precheck_reports_without_persisting() {
     let svc = Arc::new(SkillOperationService::new(store.clone(), None, false));
     let app = build_app(store.clone(), svc.clone()).await;
 
-    let (status, body) =
-        post_zip(&app, "/v3/console/ai/skills/upload/precheck", one_skill_zip()).await;
+    let (status, body) = post_zip(
+        &app,
+        "/v3/console/ai/skills/upload/precheck",
+        one_skill_zip(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "precheck failed: {body}");
     assert!(body.contains(NAME), "must name the skill: {body}");
     println!("ok: upload/precheck reports");

@@ -4,8 +4,8 @@
 //! for gRPC servers (SDK, cluster, and raft).
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use async_trait::async_trait;
 
@@ -156,7 +156,7 @@ impl GrpcServerLifecycle {
             state: Arc::new(GrpcServerState::new()),
         }
     }
-    
+
     /// Create a new cluster gRPC server lifecycle
     pub fn new_cluster(config: GrpcServerConfig) -> Self {
         Self {
@@ -165,7 +165,7 @@ impl GrpcServerLifecycle {
             state: Arc::new(GrpcServerState::new()),
         }
     }
-    
+
     /// Create a new Raft gRPC server lifecycle
     pub fn new_raft(config: GrpcServerConfig) -> Self {
         Self {
@@ -174,7 +174,7 @@ impl GrpcServerLifecycle {
             state: Arc::new(GrpcServerState::new()),
         }
     }
-    
+
     /// Get the server port
     pub fn port(&self) -> u16 {
         self.config.port
@@ -261,31 +261,34 @@ impl GracefulShutdownable for GrpcServerLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_grpc_server_kind_as_str() {
         assert_eq!(GrpcServerKind::Sdk.as_str(), "GrpcSdk");
         assert_eq!(GrpcServerKind::Cluster.as_str(), "GrpcCluster");
         assert_eq!(GrpcServerKind::Raft.as_str(), "GrpcRaft");
     }
-    
+
     #[test]
     fn test_grpc_server_kind_conversion() {
         assert_eq!(ServerKind::from(GrpcServerKind::Sdk), ServerKind::GrpcSdk);
-        assert_eq!(ServerKind::from(GrpcServerKind::Cluster), ServerKind::GrpcCluster);
+        assert_eq!(
+            ServerKind::from(GrpcServerKind::Cluster),
+            ServerKind::GrpcCluster
+        );
         assert_eq!(ServerKind::from(GrpcServerKind::Raft), ServerKind::GrpcRaft);
     }
-    
+
     #[test]
     fn test_grpc_server_config_default() {
         let config = GrpcServerConfig::default();
-        
+
         assert_eq!(config.port, 9848);
         assert!(!config.tls_enabled);
         assert_eq!(config.tcp_keepalive_secs, 60);
         assert!(config.tcp_nodelay);
     }
-    
+
     #[test]
     fn test_grpc_server_state() {
         let state = GrpcServerState::new();
@@ -299,12 +302,12 @@ mod tests {
     #[test]
     fn test_grpc_server_lifecycle_creation() {
         let config = GrpcServerConfig::default();
-        
+
         let sdk = GrpcServerLifecycle::new_sdk(config.clone());
         assert_eq!(sdk.kind(), ServerKind::GrpcSdk);
         assert_eq!(sdk.name(), "SDK gRPC Server");
         assert_eq!(sdk.port(), 9848);
-        
+
         let cluster = GrpcServerLifecycle::new_cluster(GrpcServerConfig {
             port: 9849,
             ..config.clone()
