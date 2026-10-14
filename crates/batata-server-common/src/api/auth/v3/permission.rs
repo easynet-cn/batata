@@ -132,6 +132,7 @@ async fn create(
     match result {
         Ok(()) => {
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            batata_auth::service::rbac_cache::invalidate_role(&params.role);
             GrpcAuthService::clear_cache();
             Result::<String>::http_success("add permission ok!")
         }
@@ -165,6 +166,7 @@ async fn delete(
     match result {
         Ok(()) => {
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            batata_auth::service::rbac_cache::invalidate_role(&params.role);
             GrpcAuthService::clear_cache();
             Result::<String>::http_success("delete permission ok!")
         }

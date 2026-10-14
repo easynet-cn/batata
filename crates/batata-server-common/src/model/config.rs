@@ -1181,9 +1181,28 @@ impl Configuration {
         self.typed.core.auth.cache.roles_capacity as u64
     }
 
+    /// Auth roles cache TTL in seconds
+    pub fn auth_roles_cache_ttl_secs(&self) -> u64 {
+        self.typed.core.auth.cache.roles_ttl_secs as u64
+    }
+
     /// Auth permissions cache max capacity
     pub fn auth_permissions_cache_capacity(&self) -> u64 {
         self.typed.core.auth.cache.permissions_capacity as u64
+    }
+
+    /// Auth permissions cache TTL in seconds
+    pub fn auth_permissions_cache_ttl_secs(&self) -> u64 {
+        self.typed.core.auth.cache.permissions_ttl_secs as u64
+    }
+
+    /// Whether auth information may be served from cache.
+    ///
+    /// Backed by `batata.core.auth.caching.enabled`, the Batata equivalent of
+    /// Nacos' `nacos.core.auth.caching.enabled`. Disabling it makes every auth
+    /// lookup read straight from the storage layer.
+    pub fn auth_caching_enabled(&self) -> bool {
+        self.typed.core.auth.caching.enabled
     }
 
     /// RocksDB write buffer size in MB
@@ -2530,7 +2549,9 @@ mod tests {
         assert_eq!(cfg.auth_token_cache_capacity(), 50000);
         assert_eq!(cfg.auth_token_cache_ttl_secs(), 60);
         assert_eq!(cfg.auth_roles_cache_capacity(), 50000);
+        assert_eq!(cfg.auth_roles_cache_ttl_secs(), 60);
         assert_eq!(cfg.auth_permissions_cache_capacity(), 20000);
+        assert_eq!(cfg.auth_permissions_cache_ttl_secs(), 300);
         assert_eq!(cfg.auth_blacklist_capacity(), 100000);
         assert_eq!(cfg.auth_blacklist_ttl_secs(), 86400);
         assert_eq!(cfg.grpc_auth_cache_capacity(), 10000);

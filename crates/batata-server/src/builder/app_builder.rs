@@ -182,16 +182,32 @@ impl AppBuilder {
 
         let rate_limit_cleanup_handle = crate::middleware::rate_limit::start_cleanup_task();
 
-        // Initialize auth caches
+        // Initialize auth caches. Every auth cache in the process (token,
+        // blacklist, roles, permissions, RBAC) is sized and switched from the
+        // same `batata.core.auth.caching.*` / `batata.core.auth.cache.*` keys.
         batata_auth::service::auth::init_auth_caches(batata_auth::service::auth::AuthCacheConfig {
             token_capacity: configuration.auth_token_cache_capacity(),
             token_ttl_secs: configuration.auth_token_cache_ttl_secs(),
             blacklist_capacity: configuration.auth_blacklist_capacity(),
             blacklist_ttl_secs: configuration.auth_blacklist_ttl_secs(),
+            enabled: configuration.auth_caching_enabled(),
+            roles_capacity: configuration.auth_roles_cache_capacity(),
+            roles_ttl_secs: configuration.auth_roles_cache_ttl_secs(),
+            permissions_capacity: configuration.auth_permissions_cache_capacity(),
+            permissions_ttl_secs: configuration.auth_permissions_cache_ttl_secs(),
         });
         batata_core::service::grpc_auth::init_grpc_auth_cache(
             configuration.grpc_auth_cache_capacity(),
             configuration.grpc_auth_cache_ttl_secs(),
+        );
+
+        info!(
+            auth_caching_enabled = configuration.auth_caching_enabled(),
+            roles_capacity = configuration.auth_roles_cache_capacity(),
+            roles_ttl_secs = configuration.auth_roles_cache_ttl_secs(),
+            permissions_capacity = configuration.auth_permissions_cache_capacity(),
+            permissions_ttl_secs = configuration.auth_permissions_cache_ttl_secs(),
+            "Auth caches initialized from batata.core.auth.caching.* / batata.core.auth.cache.*"
         );
 
         self.configuration = Some(Arc::new(configuration));
@@ -843,6 +859,39 @@ impl AppBuilder {
                 event_service.set_broadcaster(broadcaster).await;
                 info!("Consul event cluster broadcast enabled");
             }
+        }
+
+        // Wire cross-node auth cache invalidation (cluster mode only).
+        //
+        // Role/permission writes evict the local RBAC caches; without this the
+        // peers would keep serving stale authorizations until their entries hit
+        // the TTL. Broadcasts are fire-and-forget: an unreachable peer simply
+        // falls back to TTL expiry.
+        if let Some(ref client_manager) = *grpc_servers.cluster_client_manager()
+            && let Some(ref smm) = persistence_ctx.server_member_manager
+        {
+            let broadcaster = Arc::new(
+                batata_core::service::auth_cache_broadcast::ClusterAuthCacheBroadcaster::new(
+                    Arc::new(
+                        batata_core::service::cluster_client::ClusterRequestSender::new(
+                            client_manager.clone(),
+                        ),
+                    ),
+                    smm.clone(),
+                ),
+            );
+
+            batata_auth::service::rbac_cache::set_peer_invalidator(Arc::new(
+                move |kind: &str, target: &str| {
+                    let broadcaster = broadcaster.clone();
+                    let kind = kind.to_owned();
+                    let target = target.to_owned();
+
+                    tokio::spawn(async move { broadcaster.broadcast(&kind, &target).await });
+                },
+            ));
+
+            info!("Auth cache cluster invalidation enabled");
         }
 
         info!("Phase 11 complete - protocol adapter plugins initialized");

@@ -12,6 +12,13 @@ default = ["consul", "apollo"]
 consul = ["dep:batata-plugin-consul"]
 apollo = ["dep:batata-plugin-apollo"]
 full = ["consul", "apollo"]
+# Profiling / diagnostics (off by default; enable at build time):
+#   pprof        -> exposes /pprof/* CPU flamegraph endpoints (actix).
+#                   CPU sampling works on Linux; build with --features pprof.
+#   tokio-console-> enables tokio-console task tracing. For real task spans you
+#                   MUST also build with RUSTFLAGS="--cfg tokio_unstable".
+pprof = ["dep:pprof"]
+tokio-console = ["dep:console-subscriber"]
 
 [lib]
 name = "batata_server"
@@ -123,6 +130,12 @@ parking_lot = { workspace = true }
 # Consensus
 openraft = { workspace = true }
 rocksdb = { workspace = true }
+
+# Diagnostics (optional, feature-gated)
+# `pprof` CPU sampling requires Linux + perf privileges (same as `perf`);
+# `flamegraph` feature renders an SVG inline (no external perl scripts needed).
+pprof = { version = "0.14", features = ["flamegraph"], optional = true }
+console-subscriber = { version = "0.4", optional = true }
 
 [dev-dependencies]
 actix-http = { workspace = true }

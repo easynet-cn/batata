@@ -23,6 +23,20 @@ pub struct AuthCacheConfig {
     pub blacklist_capacity: u64,
     /// Token blacklist TTL in seconds (default: 86400)
     pub blacklist_ttl_secs: u64,
+    /// Whether auth lookups may be served from cache (default: true).
+    ///
+    /// Backed by `batata.core.auth.caching.enabled`, the Batata equivalent of
+    /// Nacos' `nacos.core.auth.caching.enabled`. When false, every lookup reads
+    /// straight from the storage layer.
+    pub enabled: bool,
+    /// Role cache max capacity (default: 50000)
+    pub roles_capacity: u64,
+    /// Role cache TTL in seconds (default: 60)
+    pub roles_ttl_secs: u64,
+    /// Permission cache max capacity (default: 20000)
+    pub permissions_capacity: u64,
+    /// Permission cache TTL in seconds (default: 300)
+    pub permissions_ttl_secs: u64,
 }
 
 impl Default for AuthCacheConfig {
@@ -32,8 +46,27 @@ impl Default for AuthCacheConfig {
             token_ttl_secs: 60,
             blacklist_capacity: 100_000,
             blacklist_ttl_secs: 86400,
+            enabled: true,
+            roles_capacity: 50_000,
+            roles_ttl_secs: 60,
+            permissions_capacity: 20_000,
+            permissions_ttl_secs: 300,
         }
     }
+}
+
+/// Active auth cache configuration.
+///
+/// Set by [`init_auth_caches`]; falls back to [`AuthCacheConfig::default`]
+/// until then, so callers never have to check whether initialization ran.
+static AUTH_CACHE_CONFIG: OnceLock<AuthCacheConfig> = OnceLock::new();
+
+/// Return the active auth cache configuration, or the defaults if the server
+/// never called [`init_auth_caches`].
+pub fn cache_config() -> AuthCacheConfig {
+    AUTH_CACHE_CONFIG
+        .get_or_init(AuthCacheConfig::default)
+        .clone()
 }
 
 /// Cached token data containing the full payload
@@ -54,18 +87,22 @@ static USER_BLACKLIST: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
 
 fn token_cache() -> &'static Cache<String, CachedTokenData> {
     TOKEN_CACHE.get_or_init(|| {
+        let config = cache_config();
+
         Cache::builder()
-            .max_capacity(50_000)
-            .time_to_live(Duration::from_secs(300))
+            .max_capacity(config.token_capacity)
+            .time_to_live(Duration::from_secs(config.token_ttl_secs))
             .build()
     })
 }
 
 fn token_blacklist() -> &'static Cache<String, ()> {
     TOKEN_BLACKLIST.get_or_init(|| {
+        let config = cache_config();
+
         Cache::builder()
-            .max_capacity(100_000)
-            .time_to_live(Duration::from_secs(86400))
+            .max_capacity(config.blacklist_capacity)
+            .time_to_live(Duration::from_secs(config.blacklist_ttl_secs))
             .build()
     })
 }
@@ -77,6 +114,8 @@ fn user_blacklist() -> &'static RwLock<HashSet<String>> {
 /// Initialize auth caches with custom configuration.
 /// Must be called before any auth operations. If not called, default values are used.
 pub fn init_auth_caches(config: AuthCacheConfig) {
+    let _ = AUTH_CACHE_CONFIG.set(config.clone());
+
     let _ = TOKEN_CACHE.set(
         Cache::builder()
             .max_capacity(config.token_capacity)
@@ -90,6 +129,20 @@ pub fn init_auth_caches(config: AuthCacheConfig) {
             .build(),
     );
     let _ = USER_BLACKLIST.set(RwLock::new(HashSet::new()));
+
+    // Role, permission and RBAC caches share the same configuration source so
+    // every auth cache in the process honours `batata.core.auth.caching.*`.
+    crate::service::role::init_roles_cache(config.roles_capacity, config.roles_ttl_secs);
+    crate::service::permission::init_permissions_cache(
+        config.permissions_capacity,
+        config.permissions_ttl_secs,
+    );
+    crate::service::rbac_cache::init_caches(
+        config.roles_capacity,
+        config.roles_ttl_secs,
+        config.permissions_capacity,
+        config.permissions_ttl_secs,
+    );
 }
 
 /// Decode and validate JWT token with caching

@@ -116,7 +116,12 @@ scripts/
 ├── test_cluster_embedded.sh        # 3-node Cluster + Raft+RocksDB tests
 ├── sdk_run_lib.sh                  # SDK runner helpers (nacos / consul / apollo)
 ├── cluster_lib.sh                  # Cluster startup/teardown helpers for SDK matrix
-└── startup.sh                      # Local multi-node startup helper (used by SDK matrix)
+├── startup.sh                      # Local multi-node startup helper (used by SDK matrix)
+├── init-admin.sh                   # One-time admin bootstrap (nacos/nacos)
+├── init-bench-user.sh              # Non-admin user for permission-path benchmarks
+├── benchmark.sh                    # wrk/hey throughput benchmark (config / naming / consul)
+├── bench_sync_load.py              # Cluster sync load generator (distinct instances)
+└── profile.sh                      # CPU profiler harness (perf / sample)
 ```
 
 ### test_utils.sh
@@ -341,3 +346,163 @@ If `batata.sql.init.platform` is set to `mysql` or `postgresql` in `conf/applica
 ```yaml
 batata.sql.init.platform:   # empty = embedded mode
 ```
+
+## Benchmark & Profiling
+
+Scripts used to measure throughput and to locate CPU hot spots.
+
+| Script | Purpose |
+|--------|---------|
+| `benchmark.sh` | wrk/hey throughput for config / naming / consul endpoints |
+| `init-admin.sh` | One-time admin bootstrap, required before any authenticated run |
+| `init-bench-user.sh` | Creates a **non-admin** user so the authorization path is exercised |
+| `bench_sync_load.py` | Registers distinct instances to drive cross-node distro sync |
+| `bench_ab.py` | A/B driver: alternating rounds, median aggregation, noise-aware verdict |
+| `profile.sh` | Captures CPU profiles (perf on Linux, `sample` on macOS) |
+
+### Running the naming benchmark
+
+```bash
+./scripts/startup.sh -m standalone
+./scripts/init-admin.sh                 # nacos / nacos
+./scripts/init-bench-user.sh            # benchuser / benchpass / BENCH_ROLE
+./scripts/benchmark.sh naming
+```
+
+Benchmark as a **non-admin** user when measuring authorization cost: the
+default `nacos` account is a global admin, so `validate_authority` short-circuits
+and never loads role and permission bindings.
+
+```bash
+env USERNAME=benchuser PASSWORD=benchpass ./scripts/benchmark.sh naming
+```
+
+`env` is required: `USERNAME` is a special variable in zsh, so a plain
+`USERNAME=benchuser ./scripts/benchmark.sh` leaves the variable unset in the
+script and every request goes out unauthenticated.
+
+### A/B comparisons: use `bench_ab.py`, not two manual runs
+
+A single `benchmark.sh` run is **not** reproducible enough to judge changes of
+10-20%. Measured on a 16-core macOS box with the load generator running on the
+same machine, the spread between repeated runs of one identical configuration
+reached **43%** on Instance Register and **49%** on Service List, and the
+numbers drifted downwards over a session (RocksDB compaction, background load).
+Two manual runs cannot separate that from a real effect.
+
+`bench_ab.py` controls both dominant error sources:
+
+1. **CPU oversubscription** — the server is started with `-d server` (no console
+   server) and `--workers` (default 8), so main + console do not consume 32
+   threads on 16 cores, and `wrk` gets cores of its own.
+2. **Monotonic drift** — variants are measured in alternating order each round
+   (AB, then BA, then AB...), which cancels a linear drift out of the medians.
+3. **Store growth — the biggest one.** A 30s `naming` run writes several hundred
+   thousand registrations, so RocksDB keeps growing and compacting and
+   throughput falls steadily across a session (measured: 13905 -> 7884 RPS for
+   an unchanged build). Pass `--fresh-store` to give every run its own empty
+   embedded store under `--store-root`; it implies `--init`, because a new store
+   has no users. This is what makes runs comparable; AB/BA alone cannot cancel
+   it. (It is passed as a `--batata.persistence.embedded.data_dir=...` CLI
+   override: the `BATATA_*` env mapping rewrites every underscore to a dot, so
+   `data_dir` would arrive as `data.dir` and be silently ignored.)
+
+Each variant is measured once per round after a discarded warmup run, and the
+per-case **median** is reported with the observed min/max. A difference is only
+called `RESOLVED` when it exceeds the spread of both variants — otherwise it is
+reported as `within noise` and must not be quoted as a gain.
+
+```bash
+./scripts/bench_ab.py --case naming --rounds 3 --fresh-store \
+    --variant off=BATATA_CORE_AUTH_CACHING_ENABLED=false \
+    --variant on=
+```
+
+Useful flags: `--rounds` (default 3, minimum 2), `--warmup-rounds` (leading rounds
+that run but are discarded), `--duration` (30s), `--warmup` (10s, discarded),
+`--workers` (8), `--threads` / `--connections` for wrk, `--settle` (idle seconds
+between variants), `--fresh-store` / `--store-root` (isolated empty store per
+run), `--init` (run the init scripts per variant), `--out` (CSV path). The port
+must be free before starting.
+
+Every node in every mode is started with `--batata.server.http.access_log.enabled=false`
+(`COMMON_ARGS`): the access log is on by default and costs milliseconds per
+request, which is larger than the effects this driver resolves.
+
+Before measuring, the driver logs in and registers one instance and requires the
+body to say `code: 0`. Batata answers most failures with **HTTP 200 and an error
+code inside the body**, so a variant that rejects everything looks *faster*
+(sub-millisecond) rather than broken, and `wrk` reports no non-2xx. A variant
+that never passes the probe is skipped instead of producing a fake win.
+
+Concurrency changes the answer: at `-c20` the RBAC cache measured +37% to +54%
+and resolved cleanly, while at `-c100` (server saturated) the same comparison was
+dominated by queueing and spread up to 90%. Measure below saturation when the
+question is "is this path cheaper", and at saturation only when the question is
+"what is the ceiling".
+
+Interpreting the output:
+
+```
+Instance Register
+  off        median      9952   min      9701   max     10240   spread      539 ( 5.4%)
+  on         median      9988   min      9810   max     10112   spread      302 ( 3.0%)
+  -> on vs off: +36 RPS (+0.4%), noise floor 539 => within noise
+```
+
+If every case reports `within noise`, the honest conclusion is that the change
+has no *measurable* throughput effect at this load — switch to a CPU profile
+(`scripts/profile.sh`) or a lower-concurrency latency test instead of quoting
+the median delta.
+
+### Cluster mode
+
+`--mode cluster` starts a real raft cluster instead of a single node. Node 1
+(`--base-port`, default 8848) is the one being measured; the peers listen on
+`base-port + 10*i` and only absorb raft + distro traffic, so they run with
+`--peer-workers` (default 2) HTTP workers to leave cores for `wrk`.
+
+```bash
+./scripts/bench_ab.py --mode cluster --nodes 3 --case naming --rounds 3 \
+    --fresh-store \
+    --variant off=BATATA_CORE_AUTH_CACHING_ENABLED=false \
+    --variant on=
+```
+
+Notes:
+
+- `--fresh-store` creates one store directory per node (`<store>/node1..nodeN`).
+- The driver waits for every node's health probe and then `--cluster-settle`
+  seconds (default 10) so raft elects a leader before the first request;
+  writing before election fails and would be measured as a fast error.
+- The gRPC (+1000) and raft (-1000) sibling ports of every node must be free;
+  the driver refuses to start otherwise.
+- Cluster throughput is lower than standalone for the same load: every write
+  goes through raft and every registration is fanned out by distro. Compare
+  variants inside one mode, never across modes.
+
+### Comparing the RBAC cache on and off
+
+```bash
+BATATA_CORE_AUTH_CACHING_ENABLED=false ./target/release/batata-server -d merged -m standalone
+# equivalent: --batata.core.auth.caching.enabled=false
+# or: batata.core.auth.caching.enabled: false in conf/application.yml
+```
+
+This is the Batata counterpart of Nacos' `nacos.core.auth.caching.enabled`.
+When false every auth lookup reads straight from the storage layer, so the
+cache contribution can be measured on a single binary. The same key also
+gates the token cache; `batata.core.auth.cache.*` sizes the role and
+permission caches.
+
+Turn the cache on and off with the configuration key above and compare with
+`bench_ab.py` (see the A/B section):
+
+```bash
+./scripts/bench_ab.py --case naming --rounds 3 \
+    --variant off=BATATA_CORE_AUTH_CACHING_ENABLED=false \
+    --variant on=
+```
+
+Do not compare a `sample`/`perf` run against a plain run: a concurrent profiler
+distorts throughput, so CPU profiles and throughput runs must be separate.

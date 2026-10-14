@@ -325,6 +325,10 @@ fn register_cluster_handlers(
 /// Concrete implementation of AuthCacheInvalidator that calls batata_auth functions.
 /// Lives in batata-server because this is the only crate that depends on both
 /// batata-core (trait definition) and batata-auth (cache functions).
+///
+/// Every branch uses the `*_local` invalidation variants: this runs on the node
+/// that *received* the eviction, and notifying the peers back would bounce the
+/// same request around the cluster forever.
 struct AuthCacheInvalidatorImpl;
 
 impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalidatorImpl {
@@ -333,21 +337,26 @@ impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalid
             "role" => {
                 batata_auth::service::role::invalidate_roles_cache(target);
                 batata_auth::service::permission::invalidate_permissions_cache_for_role(target);
+                // The RBAC cache keys permissions by role, same as the branch above.
+                batata_auth::service::rbac_cache::invalidate_role_local(target);
             }
             "permission" => {
                 batata_auth::service::permission::invalidate_permissions_cache_for_role(target);
+                batata_auth::service::rbac_cache::invalidate_role_local(target);
             }
             "token" => {
                 batata_auth::service::auth::invalidate_token(target);
             }
             "user" => {
                 batata_auth::service::role::invalidate_roles_cache(target);
+                batata_auth::service::rbac_cache::invalidate_user_local(target);
                 batata_core::service::grpc_auth::GrpcAuthService::invalidate_cache_for_user(target);
             }
             "all" => {
                 batata_auth::service::auth::clear_token_cache();
                 batata_auth::service::role::invalidate_all_roles_cache();
                 batata_auth::service::permission::invalidate_all_permissions_cache();
+                batata_auth::service::rbac_cache::invalidate_all_users_local();
                 batata_core::service::grpc_auth::GrpcAuthService::clear_cache();
             }
             other => {

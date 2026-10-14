@@ -158,7 +158,15 @@ batata.core.auth.console.enabled: true
 
 # Turn on/off caching of auth information.
 # By turning on this switch, the update of auth information would have a 15 seconds delay.
+# Covers the token cache and the role / permission / RBAC caches; when false
+# every auth lookup reads straight from the storage layer.
 batata.core.auth.caching.enabled: true
+
+# Size and TTL of the role and permission caches.
+#batata.core.auth.cache.roles_capacity: 50000
+#batata.core.auth.cache.roles_ttl_secs: 60
+#batata.core.auth.cache.permissions_capacity: 20000
+#batata.core.auth.cache.permissions_ttl_secs: 300
 
 # Server identity for trusted server-to-server communication
 # Used by InnerApi auth bypass and Console remote mode

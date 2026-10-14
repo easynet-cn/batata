@@ -157,6 +157,7 @@ async fn create(
             // Invalidate local role/permission cache and gRPC auth cache
             batata_auth::service::role::invalidate_roles_cache(&params.username);
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            batata_auth::service::rbac_cache::invalidate_user(&params.username);
             GrpcAuthService::clear_cache();
             Result::<String>::http_success("add role ok!")
         }
@@ -200,6 +201,12 @@ pub async fn delete(
             let username = params.username.clone().unwrap_or_default();
             batata_auth::service::role::invalidate_roles_cache(&username);
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            if username.is_empty() {
+                // The role was removed from every holder at once.
+                batata_auth::service::rbac_cache::invalidate_all_users();
+            } else {
+                batata_auth::service::rbac_cache::invalidate_user(&username);
+            }
             GrpcAuthService::clear_cache();
             Result::<String>::http_success(format!("delete role of user {} ok!", username))
         }

@@ -220,9 +220,7 @@ impl VisibilityGrantService for DefaultVisibilityGrantService {
         resource_type: &str,
         action: &str,
     ) -> anyhow::Result<Vec<String>> {
-        if username.trim().is_empty()
-            || resource_type.trim().is_empty()
-            || action.trim().is_empty()
+        if username.trim().is_empty() || resource_type.trim().is_empty() || action.trim().is_empty()
         {
             return Ok(vec![]);
         }
@@ -272,6 +270,8 @@ impl VisibilityGrantService for DefaultVisibilityGrantService {
 fn invalidate_caches(role_name: &str, username: &str) {
     crate::service::role::invalidate_roles_cache(username);
     crate::service::permission::invalidate_permissions_cache_for_role(role_name);
+    crate::service::rbac_cache::invalidate_user(username);
+    crate::service::rbac_cache::invalidate_role(role_name);
 }
 
 /// Normalize namespace ID: blank → "public" (Nacos: `Constants.DEFAULT_NAMESPACE_ID`).
@@ -359,9 +359,7 @@ fn build_resource_identifier(
 /// Returns `Some((namespace_id, resource_type, resource_name))` when the
 /// identifier matches the `@@visibility/...` format with three non-empty
 /// parts, or `None` otherwise.
-fn try_parse_resource_identifier(
-    resource: &str,
-) -> Option<(String, String, String)> {
+fn try_parse_resource_identifier(resource: &str) -> Option<(String, String, String)> {
     if !resource.starts_with(RESOURCE_IDENTIFIER_PREFIX) {
         return None;
     }
@@ -370,14 +368,15 @@ fn try_parse_resource_identifier(
     if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
         return None;
     }
-    Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()))
+    Some((
+        parts[0].to_string(),
+        parts[1].to_string(),
+        parts[2].to_string(),
+    ))
 }
 
 /// Validate that resource type and name are non-empty.
-fn validate_resource_type_and_name(
-    resource_type: &str,
-    resource_name: &str,
-) -> anyhow::Result<()> {
+fn validate_resource_type_and_name(resource_type: &str, resource_name: &str) -> anyhow::Result<()> {
     if resource_type.trim().is_empty() {
         return Err(anyhow::anyhow!("resourceType is blank"));
     }
@@ -475,7 +474,11 @@ mod tests {
         let parsed = try_parse_resource_identifier("@@visibility/dev/config/app.yml");
         assert_eq!(
             parsed,
-            Some(("dev".to_string(), "config".to_string(), "app.yml".to_string()))
+            Some((
+                "dev".to_string(),
+                "config".to_string(),
+                "app.yml".to_string()
+            ))
         );
 
         // Resource name with slashes

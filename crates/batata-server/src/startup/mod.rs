@@ -12,6 +12,8 @@ mod http;
 pub mod logging;
 /// `persistence` module.
 pub mod persistence;
+/// `pprof` diagnostics module (on-demand CPU flamegraphs, feature-gated).
+mod pprof;
 mod shutdown;
 mod telemetry;
 mod xds;

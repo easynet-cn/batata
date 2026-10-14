@@ -646,6 +646,14 @@ pub fn main_server(
         // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
         .configure(configure_prometheus)
         .configure(configure_kubernetes)
+        // On-demand CPU flamegraph endpoints (/debug/pprof/flamegraph).
+        // Gated by the `pprof` feature; enable the server build with `--features pprof`.
+        // The closure keeps the actix `App` builder chain valid while only referencing
+        // the (feature-gated) pprof module when the feature is actually enabled.
+        .configure(|_cfg| {
+            #[cfg(feature = "pprof")]
+            crate::startup::pprof::configure_pprof(_cfg);
+        })
         // Prometheus metrics endpoint at /metrics (standard path, hand-rolled)
         .service(batata_console::v3::metrics::routes())
         // Prometheus metrics endpoint at /prometheus (metrics crate integration)

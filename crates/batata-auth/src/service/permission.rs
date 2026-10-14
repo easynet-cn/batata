@@ -2,7 +2,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use batata_api::Page;
@@ -18,14 +18,32 @@ struct CachedPermissions {
     permissions: Vec<PermissionInfo>,
 }
 
-// Cache for permissions by roles with 5-minute TTL
-// Key is a hash of sorted roles for efficient lookup
-static PERMISSIONS_CACHE: LazyLock<Cache<u64, CachedPermissions>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(20_000)
-        .time_to_live(Duration::from_secs(60))
-        .build()
-});
+// Cache for permissions by roles (default 5-minute TTL, sized by `batata.core.auth.cache.*`)
+static PERMISSIONS_CACHE: OnceLock<Cache<u64, CachedPermissions>> = OnceLock::new();
+
+/// Return the process-wide permission cache, built with the configured size.
+fn permissions_cache() -> &'static Cache<u64, CachedPermissions> {
+    PERMISSIONS_CACHE.get_or_init(|| {
+        let config = crate::service::auth::cache_config();
+
+        Cache::builder()
+            .max_capacity(config.permissions_capacity)
+            .time_to_live(Duration::from_secs(config.permissions_ttl_secs))
+            .build()
+    })
+}
+
+/// Rebuild the permission cache with the given capacity and TTL.
+///
+/// Called by `init_auth_caches`; a no-op once the cache has been built.
+pub fn init_permissions_cache(capacity: u64, ttl_secs: u64) {
+    let _ = PERMISSIONS_CACHE.set(
+        Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(Duration::from_secs(ttl_secs))
+            .build(),
+    );
+}
 
 // Secondary index: role -> set of cache keys that contain this role
 // Enables O(1) targeted cache invalidation instead of O(n) full scan
@@ -123,7 +141,9 @@ pub async fn find_by_roles(
 
     let cache_key = make_cache_key(&roles);
 
-    if let Some(cached) = PERMISSIONS_CACHE.get(&cache_key) {
+    if crate::service::auth::cache_config().enabled
+        && let Some(cached) = permissions_cache().get(&cache_key)
+    {
         return Ok(cached.permissions);
     }
 
@@ -143,7 +163,7 @@ pub async fn find_by_roles(
             .push(cache_key);
     }
 
-    PERMISSIONS_CACHE.insert(
+    permissions_cache().insert(
         cache_key,
         CachedPermissions {
             permissions: permissions.clone(),
@@ -158,7 +178,7 @@ pub async fn find_by_roles(
 pub fn invalidate_permissions_cache_for_role(role: &str) {
     if let Some((_, keys)) = ROLE_CACHE_INDEX.remove(role) {
         for key in keys {
-            PERMISSIONS_CACHE.invalidate(&key);
+            permissions_cache().invalidate(&key);
         }
     }
 }
@@ -172,7 +192,7 @@ pub fn prune_permission_cache_index() {
 /// Invalidate all permission cache entries
 /// Use sparingly - prefer `invalidate_permissions_cache_for_role` when possible
 pub fn invalidate_all_permissions_cache() {
-    PERMISSIONS_CACHE.invalidate_all();
+    permissions_cache().invalidate_all();
     ROLE_CACHE_INDEX.clear();
 }
 
@@ -291,19 +311,19 @@ mod tests {
             ROLE_CACHE_INDEX.entry(role.clone()).or_default().push(key3);
         }
 
-        PERMISSIONS_CACHE.insert(
+        permissions_cache().insert(
             key1,
             CachedPermissions {
                 permissions: vec![],
             },
         );
-        PERMISSIONS_CACHE.insert(
+        permissions_cache().insert(
             key2,
             CachedPermissions {
                 permissions: vec![],
             },
         );
-        PERMISSIONS_CACHE.insert(
+        permissions_cache().insert(
             key3,
             CachedPermissions {
                 permissions: vec![],
@@ -314,10 +334,10 @@ mod tests {
         invalidate_permissions_cache_for_role("admin");
 
         // Entries with "admin" should be invalidated
-        assert!(PERMISSIONS_CACHE.get(&key1).is_none());
-        assert!(PERMISSIONS_CACHE.get(&key2).is_none());
+        assert!(permissions_cache().get(&key1).is_none());
+        assert!(permissions_cache().get(&key2).is_none());
         // Entry without "admin" should remain
-        assert!(PERMISSIONS_CACHE.get(&key3).is_some());
+        assert!(permissions_cache().get(&key3).is_some());
 
         // Cleanup
         invalidate_all_permissions_cache();

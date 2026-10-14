@@ -180,8 +180,14 @@ fn default_auth_token_ttl_secs() -> i64 {
 fn default_auth_roles_capacity() -> i64 {
     50_000
 }
+fn default_auth_roles_ttl_secs() -> i64 {
+    60
+}
 fn default_auth_permissions_capacity() -> i64 {
     20_000
+}
+fn default_auth_permissions_ttl_secs() -> i64 {
+    300
 }
 fn default_auth_blacklist_capacity() -> i64 {
     100_000
@@ -1449,9 +1455,15 @@ pub struct CoreAuthCacheConfig {
     #[serde(default = "default_auth_roles_capacity")]
     /// Maximum number of cached role entries.
     pub roles_capacity: i64,
+    #[serde(default = "default_auth_roles_ttl_secs")]
+    /// How long cached role entries remain valid, in seconds.
+    pub roles_ttl_secs: i64,
     #[serde(default = "default_auth_permissions_capacity")]
     /// Maximum number of cached permission entries.
     pub permissions_capacity: i64,
+    #[serde(default = "default_auth_permissions_ttl_secs")]
+    /// How long cached permission entries remain valid, in seconds.
+    pub permissions_ttl_secs: i64,
     #[serde(default = "default_auth_blacklist_capacity")]
     /// Maximum number of blacklisted tokens.
     pub blacklist_capacity: i64,
@@ -1472,7 +1484,9 @@ impl Default for CoreAuthCacheConfig {
             token_capacity: default_auth_token_capacity(),
             token_ttl_secs: default_auth_token_ttl_secs(),
             roles_capacity: default_auth_roles_capacity(),
+            roles_ttl_secs: default_auth_roles_ttl_secs(),
             permissions_capacity: default_auth_permissions_capacity(),
+            permissions_ttl_secs: default_auth_permissions_ttl_secs(),
             blacklist_capacity: default_auth_blacklist_capacity(),
             blacklist_ttl_secs: default_auth_blacklist_ttl_secs(),
             grpc_permission_capacity: default_grpc_permission_capacity(),

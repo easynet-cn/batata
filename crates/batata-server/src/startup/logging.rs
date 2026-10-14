@@ -433,8 +433,17 @@ pub fn init_logging(
     // --- Initialize the global tracing subscriber ---
     // All filtering is per-layer (no global EnvFilter), so each layer
     // independently decides which events to process.
-    Registry::default()
-        .with(layers)
+    let subscriber = Registry::default().with(layers);
+
+    // tokio-console task tracing. For actual task spans you must ALSO build
+    // with RUSTFLAGS="--cfg tokio_unstable" so tokio emits task events.
+    // Conditionally extending the subscriber keeps the `impl Layer<S>` type that
+    // tracing-subscriber needs (a boxed `dyn Layer` would not match the composed
+    // subscriber stack below it).
+    #[cfg(feature = "tokio-console")]
+    let subscriber = subscriber.with(console_subscriber::ConsoleLayer::builder().spawn());
+
+    subscriber
         .try_init()
         .map_err(|e| format!("Failed to initialize logging: {}", e))?;
 

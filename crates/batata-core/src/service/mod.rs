@@ -1,5 +1,7 @@
 // Core services for cluster and connection management
 
+/// Auth cache invalidation helpers.
+pub mod auth_cache_broadcast;
 /// Circuit breaker for cluster node fault tolerance.
 pub mod circuit_breaker;
 /// Cluster module re-exports.

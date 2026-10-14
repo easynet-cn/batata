@@ -18,6 +18,7 @@ use crate::model::{
 };
 use crate::service::auth::{decode_jwt_token_cached, encode_jwt_token, unblacklist_user};
 use crate::service::ldap::LdapAuthService;
+use crate::service::rbac_cache;
 
 /// Default auth plugin — the standard authentication backend.
 ///
@@ -79,11 +80,11 @@ impl DefaultAuthPlugin {
     }
 
     /// Check if a user has the global admin role
+    ///
+    /// Reads through the shared RBAC cache, so a warmed entry costs no
+    /// storage round-trip.
     pub(crate) async fn is_global_admin(&self, username: &str) -> bool {
-        self.persistence
-            .role_has_global_admin_by_username(username)
-            .await
-            .unwrap_or(false)
+        rbac_cache::is_global_admin(&*self.persistence, username).await
     }
 
     /// Verify password against stored hash.
@@ -159,24 +160,15 @@ impl AuthPlugin for DefaultAuthPlugin {
             return AuthCheckResult::fail(AuthError::NotAuthenticated);
         }
 
-        // Load roles
-        let roles = self
-            .persistence
-            .role_find_by_username(&identity.username)
-            .await
-            .unwrap_or_default();
+        // Load roles through the shared RBAC cache
+        let roles = rbac_cache::roles(&*self.persistence, &identity.username).await;
 
         if roles.is_empty() {
             return AuthCheckResult::fail(AuthError::NoRolesFound);
         }
 
-        // Load permissions for all roles
-        let role_names: Vec<String> = roles.iter().map(|r| r.role.clone()).collect();
-        let permissions = self
-            .persistence
-            .permission_find_by_roles(role_names)
-            .await
-            .unwrap_or_default();
+        // Load permissions for all roles, also through the cache
+        let permissions = rbac_cache::permissions(&*self.persistence, &roles).await;
 
         // Check if any permission matches the requested resource+action
         // Uses the same regex escaping logic as the original secured! macro

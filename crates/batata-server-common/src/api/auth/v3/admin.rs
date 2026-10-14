@@ -104,6 +104,9 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         return ApiResult::<String>::http_internal_error(e);
     }
 
+    // The new admin's cached role lookups are stale from here on.
+    batata_auth::service::rbac_cache::invalidate_user(&username);
+
     tracing::info!(username = %username, "Admin user initialized successfully");
 
     // Generate JWT token

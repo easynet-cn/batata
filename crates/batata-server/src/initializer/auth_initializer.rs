@@ -34,6 +34,11 @@ impl ServiceInitializer for AuthInitializer {
             token_ttl_secs: ctx.config.auth_token_cache_ttl_secs(),
             blacklist_capacity: ctx.config.auth_blacklist_capacity(),
             blacklist_ttl_secs: ctx.config.auth_blacklist_ttl_secs(),
+            enabled: ctx.config.auth_caching_enabled(),
+            roles_capacity: ctx.config.auth_roles_cache_capacity(),
+            roles_ttl_secs: ctx.config.auth_roles_cache_ttl_secs(),
+            permissions_capacity: ctx.config.auth_permissions_cache_capacity(),
+            permissions_ttl_secs: ctx.config.auth_permissions_cache_ttl_secs(),
         });
 
         // Initialize gRPC auth cache

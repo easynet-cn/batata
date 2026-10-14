@@ -1,6 +1,6 @@
 //! Role service
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use batata_api::Page;
@@ -15,13 +15,33 @@ use dashmap::DashMap;
 
 use crate::model::{GLOBAL_ADMIN_ROLE, RoleInfo};
 
-// Cache for user roles with 60-second TTL (cluster-safe default)
-static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(50_000)
-        .time_to_live(Duration::from_secs(60))
-        .build()
-});
+// Cache for user roles (default 60-second TTL, sized by `batata.core.auth.cache.*`)
+static ROLES_CACHE: OnceLock<Cache<String, Vec<RoleInfo>>> = OnceLock::new();
+
+/// Return the process-wide role cache, building it with the configured size.
+fn roles_cache() -> &'static Cache<String, Vec<RoleInfo>> {
+    ROLES_CACHE.get_or_init(|| {
+        let config = crate::service::auth::cache_config();
+
+        Cache::builder()
+            .max_capacity(config.roles_capacity)
+            .time_to_live(Duration::from_secs(config.roles_ttl_secs))
+            .build()
+    })
+}
+
+/// Rebuild the role cache with the given capacity and TTL.
+///
+/// Called by `init_auth_caches`; a no-op once the cache has been built, which
+/// keeps the first caller's configuration authoritative.
+pub fn init_roles_cache(capacity: u64, ttl_secs: u64) {
+    let _ = ROLES_CACHE.set(
+        Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(Duration::from_secs(ttl_secs))
+            .build(),
+    );
+}
 
 // Secondary index: role name -> set of usernames that have this role
 // Enables O(1) targeted cache invalidation instead of O(n) full scan
@@ -45,7 +65,9 @@ pub async fn find_by_username(
     username: &str,
 ) -> anyhow::Result<Vec<RoleInfo>> {
     // Use get() with &str directly - moka supports Borrow<str> lookup for String keys
-    if let Some(cached_roles) = ROLES_CACHE.get(username) {
+    if crate::service::auth::cache_config().enabled
+        && let Some(cached_roles) = roles_cache().get(username)
+    {
         return Ok(cached_roles);
     }
 
@@ -66,14 +88,14 @@ pub async fn find_by_username(
             .push(username_owned.clone());
     }
 
-    ROLES_CACHE.insert(username_owned, roles.clone());
+    roles_cache().insert(username_owned, roles.clone());
 
     Ok(roles)
 }
 
 /// Invalidate cache for a specific user
 pub fn invalidate_roles_cache(username: &str) {
-    ROLES_CACHE.invalidate(username);
+    roles_cache().invalidate(username);
 }
 
 /// Invalidate cache entries for users who have a specific role
@@ -81,7 +103,7 @@ pub fn invalidate_roles_cache(username: &str) {
 pub fn invalidate_roles_cache_for_role(role: &str) {
     if let Some((_, usernames)) = ROLE_USER_INDEX.remove(role) {
         for username in usernames {
-            ROLES_CACHE.invalidate(&username);
+            roles_cache().invalidate(&username);
         }
     }
 }
@@ -95,7 +117,7 @@ pub fn prune_role_user_index() {
 /// Invalidate all role cache entries
 /// Use sparingly - prefer targeted invalidation when possible
 pub fn invalidate_all_roles_cache() {
-    ROLES_CACHE.invalidate_all();
+    roles_cache().invalidate_all();
     ROLE_USER_INDEX.clear();
 }
 
@@ -293,19 +315,19 @@ mod tests {
             username: user2.clone(),
         }];
 
-        ROLES_CACHE.insert(user1.clone(), roles1);
-        ROLES_CACHE.insert(user2.clone(), roles2);
+        roles_cache().insert(user1.clone(), roles1);
+        roles_cache().insert(user2.clone(), roles2);
 
         // Invalidate cache for user1
         invalidate_roles_cache(&user1);
 
         // user1 should be invalidated
-        assert!(ROLES_CACHE.get(&user1).is_none());
+        assert!(roles_cache().get(&user1).is_none());
         // user2 should remain
-        assert!(ROLES_CACHE.get(&user2).is_some());
+        assert!(roles_cache().get(&user2).is_some());
 
         // Cleanup
-        ROLES_CACHE.invalidate(&user2);
+        roles_cache().invalidate(&user2);
     }
 
     #[test]
@@ -356,21 +378,21 @@ mod tests {
                 .push(user3.clone());
         }
 
-        ROLES_CACHE.insert(user1.clone(), roles_user1);
-        ROLES_CACHE.insert(user2.clone(), roles_user2);
-        ROLES_CACHE.insert(user3.clone(), roles_user3);
+        roles_cache().insert(user1.clone(), roles_user1);
+        roles_cache().insert(user2.clone(), roles_user2);
+        roles_cache().insert(user3.clone(), roles_user3);
 
         // Invalidate cache for users with "superadmin" role
         invalidate_roles_cache_for_role("superadmin");
 
         // Users with "superadmin" role should be invalidated
-        assert!(ROLES_CACHE.get(&user1).is_none());
-        assert!(ROLES_CACHE.get(&user2).is_none());
+        assert!(roles_cache().get(&user1).is_none());
+        assert!(roles_cache().get(&user2).is_none());
         // User without "superadmin" role should remain
-        assert!(ROLES_CACHE.get(&user3).is_some());
+        assert!(roles_cache().get(&user3).is_some());
 
         // Cleanup
-        ROLES_CACHE.invalidate(&user3);
+        roles_cache().invalidate(&user3);
     }
 
     #[test]
@@ -382,14 +404,14 @@ mod tests {
             username: username.to_string(),
         }];
 
-        ROLES_CACHE.insert(username.to_string(), roles);
+        roles_cache().insert(username.to_string(), roles);
 
         // Should be able to lookup with &str directly
-        let result = ROLES_CACHE.get(username);
+        let result = roles_cache().get(username);
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 1);
 
-        ROLES_CACHE.invalidate(username);
+        roles_cache().invalidate(username);
     }
 }
