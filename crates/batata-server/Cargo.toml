@@ -8,10 +8,22 @@ repository.workspace = true
 description = "Batata - Nacos-compatible service discovery and configuration management server"
 
 [features]
-default = ["consul", "apollo"]
+default = ["consul", "apollo", "http-tracing"]
 consul = ["dep:batata-plugin-consul"]
 apollo = ["dep:batata-plugin-apollo"]
-full = ["consul", "apollo"]
+full = ["consul", "apollo", "http-tracing"]
+# HTTP request tracing (access-log + OpenTelemetry export).
+#
+# Mirrors the `consul`/`plugin` convention: tracing is gated by BOTH a compile
+# feature and a runtime toggle. When this feature is disabled at build time the
+# per-request tracing middleware and the OpenTelemetry export layer are compiled
+# out entirely (zero per-request overhead, smaller binary). When enabled, the
+# runtime `batata.server.http.access_log.enabled` and `otel.enabled` config keys
+# still switch tracing on/off without a rebuild.
+#
+# Build for maximum throughput with:
+#   cargo build --no-default-features --features consul,apollo
+http-tracing = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
 # Profiling / diagnostics (off by default; enable at build time):
 #   pprof        -> exposes /pprof/* CPU flamegraph endpoints (actix).
 #                   CPU sampling works on Linux; build with --features pprof.
@@ -89,12 +101,14 @@ tracing-log = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tracing-bunyan-formatter = { workspace = true }
 tracing-appender = { workspace = true }
-tracing-opentelemetry = { workspace = true }
+# OpenTelemetry is optional and gated by the `http-tracing` feature so it can be
+# compiled out for production builds that don't need distributed tracing.
+tracing-opentelemetry = { workspace = true, optional = true }
 
-# OpenTelemetry
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true }
+# OpenTelemetry (optional, gated by `http-tracing`)
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
 
 # Error handling
 anyhow = { workspace = true }

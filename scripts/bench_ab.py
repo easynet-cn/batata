@@ -234,6 +234,7 @@ class Server:
         variant_env: dict[str, str],
         log_path: str,
         store_dir: str | None = None,
+        variant_cli: list[str] | None = None,
     ):
         self.args = args
         self.store_dir = store_dir
@@ -241,6 +242,7 @@ class Server:
         self.env.update(variant_env)
         self.env["BATATA_SERVER_HTTP_WORKERS"] = str(args.workers)
         self.log_path = log_path
+        self.variant_cli = variant_cli or []
         self.procs: list[subprocess.Popen] = []
         self.nodes = self._build_nodes()
 
@@ -249,7 +251,7 @@ class Server:
         base = strip_mode_flag(shlex.split(self.args.server_cmd))
 
         if self.args.mode == "standalone":
-            cmd = [*base, "-m", "standalone", *COMMON_ARGS]
+            cmd = [*base, "-m", "standalone", *COMMON_ARGS, *self.variant_cli]
             if self.store_dir is not None:
                 cmd.append(f"--{DATA_DIR_KEY}={self.store_dir}")
                 print(f"  fresh store: {self.store_dir}")
@@ -265,6 +267,7 @@ class Server:
                 "-m",
                 "cluster",
                 *COMMON_ARGS,
+                *self.variant_cli,
                 f"--batata.server.main.port={port}",
                 f"--batata.member.list={member_list}",
                 "--batata.sql.init.platform=embedded",
@@ -360,6 +363,25 @@ def parse_variants(raw: list[str]) -> list[tuple[str, dict[str, str]]]:
     return variants
 
 
+def parse_variant_cli(raw: list[str]) -> list[tuple[str, list[str]]]:
+    """Parse `NAME=--flag;--flag2=val` style variant CLI-arg definitions.
+
+    Unlike `--variant` (which injects environment variables and cannot express
+    config keys containing an underscore, e.g. `access_log`, due to the BATATA_*
+    env underscore->dot rewriting), this attaches raw CLI arguments to a variant.
+    They are appended after COMMON_ARGS so the last write wins.
+    """
+    cli: list[tuple[str, list[str]]] = []
+    for item in raw:
+        name, _, spec = item.partition("=")
+        name = name.strip()
+        if not name:
+            raise SystemExit(f"invalid variant-cli (empty name): {item!r}")
+        tokens = [tok.strip() for tok in spec.split(";") if tok.strip()]
+        cli.append((name, tokens))
+    return cli
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="A/B benchmark driver with alternating rounds and median aggregation",
@@ -379,6 +401,16 @@ def main() -> int:
         required=True,
         metavar="NAME=ENV",
         help="variant definition, repeatable; env pairs separated by ';'",
+    )
+    parser.add_argument(
+        "--variant-cli",
+        action="append",
+        default=[],
+        metavar="NAME=--FLAG;--FLAG2=VAL",
+        help="per-variant CLI args appended AFTER COMMON_ARGS (so they override the "
+        "hardcoded defaults, e.g. --batata.server.http.access_log.enabled=true). "
+        "Repeatable; tokens separated by ';'. Needed because --variant only injects "
+        "ENV vars, which cannot express keys with an underscore (access_log).",
     )
     parser.add_argument("--workers", type=int, default=8, help="batata.server.http.workers (default: 8)")
     parser.add_argument("--duration", default="30s", help="measured run duration (default: 30s)")
@@ -465,6 +497,7 @@ def main() -> int:
             raise SystemExit(f"port {port} already in use; stop the running server/cluster first")
 
     variants = parse_variants(args.variant)
+    variant_cli_map = {name: cli for name, cli in parse_variant_cli(args.variant_cli)}
     if args.fresh_store and not args.init:
         # A fresh store contains no users, so the benchmark would run anonymously.
         args.init = True
@@ -502,7 +535,13 @@ def main() -> int:
             store_dir = None
             if args.fresh_store:
                 store_dir = os.path.join(args.store_root, f"{name}-r{round_index}")
-            server = Server(args, env, f"/tmp/bench_ab_{name}.log", store_dir)
+            server = Server(
+                args,
+                env,
+                f"/tmp/bench_ab_{name}.log",
+                store_dir,
+                variant_cli=variant_cli_map.get(name, []),
+            )
 
             try:
                 if not server.start():

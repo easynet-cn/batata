@@ -2,6 +2,9 @@
 // HTTP middleware implementations
 // This module contains middleware for authentication, logging, and request processing
 
+/// HTTP request tracing middleware gating (`http-tracing` feature + runtime toggle).
+pub mod http_tracing;
+
 // Re-export all middleware from server-common
 /// Re-exported item.
 pub use batata_server_common::middleware::auth;

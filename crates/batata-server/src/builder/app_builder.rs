@@ -157,6 +157,7 @@ impl AppBuilder {
         );
         let logging_guard = startup::init_logging(&logging_config, Some(&otel_config))?;
 
+        #[cfg(feature = "http-tracing")]
         if otel_config.enabled {
             info!(
                 "OpenTelemetry tracing enabled, exporting to {}",

@@ -106,6 +106,29 @@ impl DistributedPersistService {
         Ok(())
     }
 
+    /// Local, non-linearizable auth read, executed inline on the async worker.
+    ///
+    /// Auth data (users / roles / permissions) is replicated through Raft and
+    /// changes extremely rarely, so reading the locally-applied state machine is
+    /// safe — this mirrors how Nacos serves an auth check from a local DB
+    /// connection pool instead of a per-request distributed consensus read, and
+    /// matches the inline read the standalone `EmbeddedPersistService` already
+    /// performs for every auth lookup.
+    ///
+    /// The previous code forced a (discarded) `linearizable_read()` consensus
+    /// round-trip on every auth lookup and ran the blocking RocksDB read on a
+    /// separate blocking thread. Under high concurrency the consensus wait
+    /// head-of-line blocked the whole request pipeline and collapsed the
+    /// cluster (see bench_ab cluster RBAC-off collapse). Dropping the consensus
+    /// round-trip removed the collapse; we now read inline to skip the extra
+    /// thread-hop of `spawn_blocking` and keep parity with the standalone path.
+    async fn local_auth_read<F, T>(&self, op: F) -> anyhow::Result<T>
+    where
+        F: FnOnce(RocksDbReader) -> anyhow::Result<T>,
+    {
+        op(RocksDbReader::new(self.reader.db().clone()))
+    }
+
     /// Write through Raft consensus
     async fn raft_write(&self, request: RaftRequest) -> anyhow::Result<()> {
         let response = self
@@ -670,8 +693,10 @@ impl NamespacePersistence for DistributedPersistService {
 #[async_trait]
 impl AuthPersistence for DistributedPersistService {
     async fn user_find_by_username(&self, username: &str) -> anyhow::Result<Option<UserInfo>> {
-        self.ensure_consistent_read().await?;
-        let json = self.reader.get_user(username)?;
+        let username = username.to_string();
+        let json = self
+            .local_auth_read(move |reader| reader.get_user(&username))
+            .await?;
         Ok(json.as_ref().map(EmbeddedPersistService::json_to_user))
     }
 
@@ -682,10 +707,12 @@ impl AuthPersistence for DistributedPersistService {
         page_size: u64,
         accurate: bool,
     ) -> anyhow::Result<Page<UserInfo>> {
-        self.ensure_consistent_read().await?;
+        let username = username.to_string();
         let (items, total) = self
-            .reader
-            .search_users(username, accurate, page_no, page_size)?;
+            .local_auth_read(move |reader| {
+                reader.search_users(&username, accurate, page_no, page_size)
+            })
+            .await?;
         let page_items = items
             .iter()
             .map(EmbeddedPersistService::json_to_user)
@@ -730,8 +757,10 @@ impl AuthPersistence for DistributedPersistService {
     }
 
     async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
-        self.ensure_consistent_read().await?;
-        let (users, _) = self.reader.search_users(username, false, 1, u64::MAX)?;
+        let username = username.to_string();
+        let (users, _) = self
+            .local_auth_read(move |reader| reader.search_users(&username, false, 1, u64::MAX))
+            .await?;
         Ok(users
             .iter()
             .map(|v| v["username"].as_str().unwrap_or("").to_string())
@@ -739,8 +768,10 @@ impl AuthPersistence for DistributedPersistService {
     }
 
     async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
-        self.ensure_consistent_read().await?;
-        let items = self.reader.get_roles_by_username(username)?;
+        let username = username.to_string();
+        let items = self
+            .local_auth_read(move |reader| reader.get_roles_by_username(&username))
+            .await?;
         Ok(items
             .iter()
             .map(EmbeddedPersistService::json_to_role)
@@ -755,10 +786,13 @@ impl AuthPersistence for DistributedPersistService {
         page_size: u64,
         accurate: bool,
     ) -> anyhow::Result<Page<RoleInfo>> {
-        self.ensure_consistent_read().await?;
+        let username = username.to_string();
+        let role = role.to_string();
         let (items, total) = self
-            .reader
-            .search_roles(username, role, accurate, page_no, page_size)?;
+            .local_auth_read(move |reader| {
+                reader.search_roles(&username, &role, accurate, page_no, page_size)
+            })
+            .await?;
         let page_items = items
             .iter()
             .map(EmbeddedPersistService::json_to_role)
@@ -783,19 +817,20 @@ impl AuthPersistence for DistributedPersistService {
     }
 
     async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
-        self.ensure_consistent_read().await?;
-        self.reader.has_global_admin()
+        self.local_auth_read(|reader| reader.has_global_admin()).await
     }
 
     async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool> {
-        self.ensure_consistent_read().await?;
-        self.reader.has_global_admin_by_username(username)
+        let username = username.to_string();
+        self.local_auth_read(move |reader| reader.has_global_admin_by_username(&username)).await
     }
 
     async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
-        self.ensure_consistent_read().await?;
+        let role = role.to_string();
         // Use search_roles with empty username pattern, non-accurate, and large page to get all matches
-        let (items, _total) = self.reader.search_roles("", role, false, 1, u64::MAX)?;
+        let (items, _total) = self
+            .local_auth_read(move |reader| reader.search_roles("", &role, false, 1, u64::MAX))
+            .await?;
         let role_names: Vec<String> = items
             .iter()
             .filter_map(|v| {
@@ -808,8 +843,10 @@ impl AuthPersistence for DistributedPersistService {
     }
 
     async fn permission_find_by_role(&self, role: &str) -> anyhow::Result<Vec<PermissionInfo>> {
-        self.ensure_consistent_read().await?;
-        let items = self.reader.get_permissions_by_role(role)?;
+        let role = role.to_string();
+        let items = self
+            .local_auth_read(move |reader| reader.get_permissions_by_role(&role))
+            .await?;
         Ok(items
             .iter()
             .map(EmbeddedPersistService::json_to_permission)
@@ -820,8 +857,9 @@ impl AuthPersistence for DistributedPersistService {
         &self,
         roles: Vec<String>,
     ) -> anyhow::Result<Vec<PermissionInfo>> {
-        self.ensure_consistent_read().await?;
-        let items = self.reader.get_permissions_by_roles(&roles)?;
+        let items = self
+            .local_auth_read(move |reader| reader.get_permissions_by_roles(&roles))
+            .await?;
         Ok(items
             .iter()
             .map(EmbeddedPersistService::json_to_permission)
@@ -835,10 +873,12 @@ impl AuthPersistence for DistributedPersistService {
         page_size: u64,
         accurate: bool,
     ) -> anyhow::Result<Page<PermissionInfo>> {
-        self.ensure_consistent_read().await?;
+        let role = role.to_string();
         let (items, total) = self
-            .reader
-            .search_permissions(role, accurate, page_no, page_size)?;
+            .local_auth_read(move |reader| {
+                reader.search_permissions(&role, accurate, page_no, page_size)
+            })
+            .await?;
         let page_items = items
             .iter()
             .map(EmbeddedPersistService::json_to_permission)
@@ -852,11 +892,13 @@ impl AuthPersistence for DistributedPersistService {
         resource: &str,
         action: &str,
     ) -> anyhow::Result<Option<PermissionInfo>> {
-        self.ensure_consistent_read().await?;
-        match self.reader.get_permission(role, resource, action)? {
-            Some(v) => Ok(Some(EmbeddedPersistService::json_to_permission(&v))),
-            None => Ok(None),
-        }
+        let role = role.to_string();
+        let resource = resource.to_string();
+        let action = action.to_string();
+        let result = self
+            .local_auth_read(move |reader| reader.get_permission(&role, &resource, &action))
+            .await?;
+        Ok(result.map(|v| EmbeddedPersistService::json_to_permission(&v)))
     }
 
     async fn permission_grant(

@@ -22,18 +22,23 @@
 
 use std::path::PathBuf;
 
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
+// OpenTelemetry is optional and only compiled when the `http-tracing` feature is
+// enabled. `OtelProvider` keeps `LoggingGuard` uniform across build configs.
+#[cfg(feature = "http-tracing")]
+use opentelemetry::trace::TracerProvider;
+#[cfg(feature = "http-tracing")]
+use tracing_opentelemetry::OpenTelemetryLayer;
+
 use super::telemetry::OtelConfig;
+use super::telemetry::OtelProvider;
 
 // ---------------------------------------------------------------------------
 // Global log level reload handle
@@ -282,17 +287,26 @@ impl LoggingConfig {
 /// the OTEL provider is shut down and all buffered log output is flushed.
 pub struct LoggingGuard {
     _file_guards: Vec<WorkerGuard>,
-    _otel_provider: Option<SdkTracerProvider>,
+    #[cfg(feature = "http-tracing")]
+    _otel_provider: Option<OtelProvider>,
+    // When `http-tracing` is disabled the provider is compiled out; keep a
+    // zero-sized placeholder field so the guard's shape stays uniform and the
+    // field is never flagged as dead code.
+    #[cfg(not(feature = "http-tracing"))]
+    _otel_provider: Option<OtelProvider>,
 }
 
 impl Drop for LoggingGuard {
     fn drop(&mut self) {
         // Shutdown OTEL provider first so any final spans are exported
+        #[cfg(feature = "http-tracing")]
         if let Some(provider) = self._otel_provider.take()
             && let Err(e) = provider.shutdown()
         {
             eprintln!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
         }
+        #[cfg(not(feature = "http-tracing"))]
+        let _ = self._otel_provider.take();
         // WorkerGuards are dropped automatically, flushing remaining log output
     }
 }
@@ -401,7 +415,10 @@ pub fn init_logging(
     }
 
     // --- Optional OpenTelemetry layer (with per-layer level filter) ---
-    let otel_provider = match otel_config {
+    // Only compiled when the `http-tracing` feature is enabled. When disabled,
+    // `otel_provider` is `None` and no OTEL export layer is registered.
+    #[cfg(feature = "http-tracing")]
+    let otel_provider: Option<OtelProvider> = match otel_config {
         Some(otel_cfg) if otel_cfg.enabled => {
             match super::telemetry::init_tracer_provider(otel_cfg) {
                 Ok(provider) => {
@@ -422,6 +439,11 @@ pub fn init_logging(
             }
         }
         _ => None,
+    };
+    #[cfg(not(feature = "http-tracing"))]
+    let otel_provider: Option<OtelProvider> = {
+        let _ = otel_config;
+        None
     };
 
     // --- Consul monitor broadcast layer ---

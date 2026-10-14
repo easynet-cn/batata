@@ -167,7 +167,7 @@ macro_rules! secured {
             .configuration
             .auth_enabled_for_api_type(__secured.api_type);
 
-        tracing::info!(
+        tracing::debug!(
             "[DEBUG] secured! path={}, auth_enabled={}, api_type={:?}, auth_console_enabled={}, auth_enabled={}",
             __secured.req.path(),
             __auth_enabled,

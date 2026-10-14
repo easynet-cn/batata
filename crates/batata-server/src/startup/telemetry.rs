@@ -9,18 +9,35 @@
 //! - Zipkin: Direct export to Zipkin
 //! - Console: Print spans to console (for debugging)
 
+#[cfg(feature = "http-tracing")]
 use std::time::Duration;
 
+// OpenTelemetry is optional and only compiled when the `http-tracing` feature is
+// enabled. The `OtelProvider` alias keeps the public `OtelGuard` / `LoggingGuard`
+// types uniform across both build configurations.
+#[cfg(feature = "http-tracing")]
 use opentelemetry::KeyValue;
+#[cfg(feature = "http-tracing")]
 use opentelemetry::trace::TracerProvider;
+#[cfg(feature = "http-tracing")]
 use opentelemetry_otlp::WithExportConfig;
+#[cfg(feature = "http-tracing")]
 use opentelemetry_sdk::{
     Resource,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
+/// Concrete OpenTelemetry tracer provider type when `http-tracing` is enabled,
+/// and `()` (a zero-sized placeholder) when it is compiled out.
+#[cfg(feature = "http-tracing")]
+pub(crate) type OtelProvider = opentelemetry_sdk::trace::SdkTracerProvider;
+/// Placeholder provider type when `http-tracing` is disabled (tracing compiled out).
+#[cfg(not(feature = "http-tracing"))]
+pub(crate) type OtelProvider = ();
+
 use tracing::{Subscriber, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
+#[cfg(feature = "http-tracing")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
 
@@ -163,6 +180,8 @@ impl OtelConfig {
 /// Create an OpenTelemetry tracer provider.
 ///
 /// This is used by the logging module to optionally add an OTEL layer.
+/// Only compiled when the `http-tracing` feature is enabled.
+#[cfg(feature = "http-tracing")]
 pub(crate) fn init_tracer_provider(
     config: &OtelConfig,
 ) -> Result<SdkTracerProvider, Box<dyn std::error::Error>> {
@@ -229,7 +248,7 @@ pub fn get_subscriber(
 pub fn init_tracing_with_otel(
     name: &str,
     env_filter: &str,
-    otel_config: &OtelConfig,
+    _otel_config: &OtelConfig,
 ) -> Result<OtelGuard, Box<dyn std::error::Error>> {
     let env_filter_layer =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(env_filter));
@@ -237,8 +256,12 @@ pub fn init_tracing_with_otel(
 
     LogTracer::init().map_err(|e| format!("Failed to set logger: {}", e))?;
 
-    if otel_config.enabled {
-        let provider = init_tracer_provider(otel_config)?;
+    // When `http-tracing` is enabled and OTEL is turned on at runtime, build a
+    // subscriber that also exports spans. Otherwise fall through to a plain
+    // (non-OTEL) subscriber so tracing can be disabled without a rebuild.
+    #[cfg(feature = "http-tracing")]
+    if _otel_config.enabled {
+        let provider = init_tracer_provider(_otel_config)?;
         let tracer = provider.tracer("batata");
         let otel_layer = OpenTelemetryLayer::new(tracer);
 
@@ -249,16 +272,16 @@ pub fn init_tracing_with_otel(
             .with(otel_layer);
 
         set_global_default(subscriber).map_err(|e| format!("Failed to set subscriber: {}", e))?;
-        Ok(OtelGuard::new(Some(provider)))
-    } else {
-        let subscriber = Registry::default()
-            .with(env_filter_layer)
-            .with(JsonStorageLayer)
-            .with(formatting_layer);
-
-        set_global_default(subscriber).map_err(|e| format!("Failed to set subscriber: {}", e))?;
-        Ok(OtelGuard::new(None))
+        return Ok(OtelGuard::new(Some(provider)));
     }
+
+    let subscriber = Registry::default()
+        .with(env_filter_layer)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+
+    set_global_default(subscriber).map_err(|e| format!("Failed to set subscriber: {}", e))?;
+    Ok(OtelGuard::new(None))
 }
 
 /// Initializes the global subscriber for tracing.
@@ -273,7 +296,8 @@ pub fn init_subscriber(
 }
 
 /// Shutdown OpenTelemetry tracer provider gracefully
-pub fn shutdown_tracer_provider(provider: Option<SdkTracerProvider>) {
+#[cfg(feature = "http-tracing")]
+pub fn shutdown_tracer_provider(provider: Option<OtelProvider>) {
     if let Some(provider) = provider
         && let Err(e) = provider.shutdown()
     {
@@ -283,29 +307,33 @@ pub fn shutdown_tracer_provider(provider: Option<SdkTracerProvider>) {
 
 /// OpenTelemetry guard that ensures proper shutdown
 pub struct OtelGuard {
-    provider: Option<SdkTracerProvider>,
+    /// `provider` field.
+    provider: Option<OtelProvider>,
 }
 
 impl OtelGuard {
     /// `new` function.
     ///
     /// # Arguments
-    /// - `provider`: `provider : Option < SdkTracerProvider > . ty`.
+    /// - `provider`: `provider : Option < OtelProvider > . ty`.
     ///
     /// # Returns
     /// `Self`.
-    pub fn new(provider: Option<SdkTracerProvider>) -> Self {
+    pub fn new(provider: Option<OtelProvider>) -> Self {
         Self { provider }
     }
 }
 
 impl Drop for OtelGuard {
     fn drop(&mut self) {
+        #[cfg(feature = "http-tracing")]
         if let Some(provider) = self.provider.take()
             && let Err(e) = provider.shutdown()
         {
             eprintln!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
         }
+        #[cfg(not(feature = "http-tracing"))]
+        let _ = self.provider.take();
     }
 }
 

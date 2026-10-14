@@ -13,9 +13,12 @@ mod tests {
     // Constants tests
     #[test]
     fn test_api_constants() {
+        // NOTE: DEFAULT_GROUP / DEFAULT_NAMESPACE_ID were moved out of the
+        // `batata_api::model` re-export surface during the batata-client
+        // independent-publish dependency split (batata-api must not depend on
+        // batata-common). They now live in `batata_common` and are covered by
+        // that crate's own unit tests, so they are intentionally not asserted here.
         assert_eq!(CLIENT_VERSION, "3.0.0");
-        assert_eq!(DEFAULT_GROUP, "DEFAULT_GROUP");
-        assert_eq!(DEFAULT_NAMESPACE_ID, "public");
         assert_eq!(DEFAULT_CLUSTER_NAME, "DEFAULT");
         assert_eq!(SDK_GRPC_PORT_DEFAULT_OFFSET, 1000);
         assert_eq!(CLUSTER_GRPC_PORT_DEFAULT_OFFSET, 1001);

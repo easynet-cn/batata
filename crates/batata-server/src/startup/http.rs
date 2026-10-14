@@ -8,7 +8,7 @@ use actix_web::{
     App, HttpResponse, HttpServer,
     dev::Server,
     http::Method,
-    middleware::{Compress, Condition, DefaultHeaders, Logger},
+    middleware::{Compress, Condition, DefaultHeaders},
     web,
 };
 #[cfg(feature = "consul")]
@@ -72,7 +72,7 @@ pub fn console_server(
         let mut app = App::new()
             // HTTP metrics (outermost: captures total request time including all middleware)
             .wrap(crate::middleware::http_metrics::HttpMetrics)
-            .wrap(Condition::new(access_log_enabled, Logger::default()))
+            .wrap(crate::middleware::http_tracing::access_log_layer(access_log_enabled))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))
@@ -207,7 +207,7 @@ pub fn plugin_http_server(
 
     Ok(HttpServer::new(move || {
         App::new()
-            .wrap(Condition::new(access_log_enabled, Logger::default()))
+            .wrap(crate::middleware::http_tracing::access_log_layer(access_log_enabled))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))
@@ -271,7 +271,7 @@ pub fn mcp_registry_server(
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
         App::new()
-            .wrap(Condition::new(access_log_enabled, Logger::default()))
+            .wrap(crate::middleware::http_tracing::access_log_layer(access_log_enabled))
             .app_data(web::Data::from(mcp_registry.clone()))
             .configure(configure_mcp_registry)
     })
@@ -514,7 +514,7 @@ pub fn main_server(
         let mut app = App::new()
             // HTTP metrics (outermost: captures total request time including all middleware)
             .wrap(crate::middleware::http_metrics::HttpMetrics)
-            .wrap(Condition::new(access_log_enabled, Logger::default()))
+            .wrap(crate::middleware::http_tracing::access_log_layer(access_log_enabled))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))

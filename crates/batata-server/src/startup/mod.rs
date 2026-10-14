@@ -34,7 +34,8 @@ pub use shutdown::{GracefulShutdown, ShutdownSignal, run_with_shutdown, wait_for
 /// Re-exported item.
 pub use telemetry::{
     OtelConfig, OtelGuard, get_subscriber, init_subscriber, init_tracing_with_otel,
-    shutdown_tracer_provider,
 };
+#[cfg(feature = "http-tracing")]
+pub use telemetry::shutdown_tracer_provider;
 /// Re-exported item.
 pub use xds::{XdsServerHandle, start_xds_service};
