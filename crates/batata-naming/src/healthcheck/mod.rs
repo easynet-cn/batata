@@ -81,9 +81,9 @@ impl HealthCheckManager {
         // keeps the full cluster chain with responsibility, set later in
         // `upgrade_to_cluster`.
         let heartbeat_chain = match (distro_mapper, local_address) {
-            (Some(_), Some(_)) => {
-                Arc::new(HealthCheckInterceptorChain::cluster_heartbeat(config.clone()))
-            }
+            (Some(_), Some(_)) => Arc::new(HealthCheckInterceptorChain::cluster_heartbeat(
+                config.clone(),
+            )),
             _ => Arc::new(HealthCheckInterceptorChain::standalone(config.clone())),
         };
 
@@ -156,8 +156,10 @@ impl HealthCheckManager {
             distro_mapper,
             local_address,
         ));
-        self.unhealthy_checker.set_interceptor_chain(heartbeat_chain.clone());
-        self.expired_checker.set_interceptor_chain(heartbeat_chain.clone());
+        self.unhealthy_checker
+            .set_interceptor_chain(heartbeat_chain.clone());
+        self.expired_checker
+            .set_interceptor_chain(heartbeat_chain.clone());
         self.reactor.set_interceptor_chain(reactor_chain);
 
         // Enable Distro sync for health state change propagation

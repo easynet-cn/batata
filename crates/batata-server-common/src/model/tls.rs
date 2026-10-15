@@ -110,7 +110,7 @@ pub struct TlsValidationResult {
 }
 
 impl TlsValidationResult {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new() -> Self {
         Self {
             valid: true,
@@ -119,13 +119,13 @@ impl TlsValidationResult {
         }
     }
 
-/// Performs the `add_error` operation.
+    /// Performs the `add_error` operation.
     pub fn add_error(&mut self, error: &str) {
         self.valid = false;
         self.errors.push(error.to_string());
     }
 
-/// Performs the `add_warning` operation.
+    /// Performs the `add_warning` operation.
     pub fn add_warning(&mut self, warning: &str) {
         self.warnings.push(warning.to_string());
     }

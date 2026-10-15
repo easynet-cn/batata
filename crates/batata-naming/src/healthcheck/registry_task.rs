@@ -511,10 +511,7 @@ async fn execute_docker_check(
         }
         Ok(Err(e)) => {
             warn!("Docker check execution failed: {}", e);
-            (
-                CheckStatus::Critical,
-                format!("Docker exec failed: {}", e),
-            )
+            (CheckStatus::Critical, format!("Docker exec failed: {}", e))
         }
         Err(_) => {
             warn!("Docker check timed out after {:?}", timeout_duration);
@@ -724,20 +721,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_script_check_no_script_or_args_is_critical() {
-        let (status, output) =
-            execute_script_check(None, None, Duration::from_secs(5)).await;
+        let (status, output) = execute_script_check(None, None, Duration::from_secs(5)).await;
         assert_eq!(status, CheckStatus::Critical);
         assert!(output.contains("neither script nor args"));
     }
 
     #[tokio::test]
     async fn test_execute_script_check_empty_args_is_critical() {
-        let (status, output) = execute_script_check(
-            None,
-            Some(&[]),
-            Duration::from_secs(5),
-        )
-        .await;
+        let (status, output) = execute_script_check(None, Some(&[]), Duration::from_secs(5)).await;
         assert_eq!(status, CheckStatus::Critical);
         assert!(output.contains("args array is empty"));
     }
@@ -752,12 +743,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_script_check_timeout_is_critical() {
-        let (status, output) = execute_script_check(
-            Some("sleep 10"),
-            None,
-            Duration::from_millis(200),
-        )
-        .await;
+        let (status, output) =
+            execute_script_check(Some("sleep 10"), None, Duration::from_millis(200)).await;
         assert_eq!(status, CheckStatus::Critical);
         assert!(output.contains("timed out"));
     }

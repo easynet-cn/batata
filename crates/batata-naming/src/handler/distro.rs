@@ -5,7 +5,10 @@
 
 use std::sync::Arc;
 
+use batata_api::naming::model::NotifySubscriberRequest;
+use batata_api::remote::model::RequestTrait;
 use batata_core::service::distro::{DistroData, DistroDataHandler, DistroDataType};
+use batata_core::service::remote::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -56,6 +59,9 @@ pub struct DistroInstance {
 pub struct NamingInstanceDistroHandler {
     local_address: String,
     naming_service: Arc<NamingService>,
+    /// Connection manager used to push updates to subscribers connected to
+    /// this node. `None` in unit tests / standalone wiring.
+    connection_manager: Option<Arc<ConnectionManager>>,
 }
 
 impl NamingInstanceDistroHandler {
@@ -64,7 +70,58 @@ impl NamingInstanceDistroHandler {
         Self {
             local_address,
             naming_service,
+            connection_manager: None,
         }
+    }
+
+    /// Creates a new instance that also notifies local subscribers when
+    /// remote (distro) data is merged in.
+    pub fn with_connection_manager(
+        local_address: String,
+        naming_service: Arc<NamingService>,
+        connection_manager: Arc<ConnectionManager>,
+    ) -> Self {
+        Self {
+            local_address,
+            naming_service,
+            connection_manager: Some(connection_manager),
+        }
+    }
+
+    /// Push the current instance list to subscribers connected to this node.
+    ///
+    /// Distro replicas arrive without any local registration event, so without
+    /// this the SDKs subscribed here would keep serving their cached (now
+    /// stale) instance list. Nacos publishes a client-changed event on distro
+    /// sync for exactly the same reason.
+    fn notify_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) {
+        let Some(ref cm) = self.connection_manager else {
+            return;
+        };
+
+        let subscribers = self
+            .naming_service
+            .get_subscribers(namespace, group_name, service_name);
+        if subscribers.is_empty() {
+            return;
+        }
+
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group_name, service_name, "", false);
+        let notification =
+            NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+        let payload = notification.build_server_push_payload();
+
+        let subscriber_count = subscribers.len();
+        let cm = cm.clone();
+        tokio::spawn(async move {
+            let sent = cm.push_message_to_many(&subscribers, payload).await;
+            debug!(
+                "Distro sync: pushed updated instances to {}/{} subscribers",
+                sent, subscriber_count
+            );
+        });
     }
 
     /// Parse service key to (namespace, group_name, service_name)
@@ -195,6 +252,14 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             "Synced {} instances for service {}//{}/{} (merge)",
             count, instance_data.namespace, instance_data.group_name, instance_data.service_name
         );
+
+        // Notify subscribers connected to THIS node about the merged data.
+        self.notify_subscribers(
+            &instance_data.namespace,
+            &instance_data.group_name,
+            &instance_data.service_name,
+        );
+
         Ok(())
     }
 

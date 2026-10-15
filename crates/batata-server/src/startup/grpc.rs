@@ -490,6 +490,7 @@ fn create_distro_protocol(
     members: Arc<DashMap<String, Member>>,
     cluster_client_manager: Arc<ClusterClientManager>,
     distro_config: DistroConfig,
+    connection_manager: Arc<ConnectionManager>,
 ) -> Arc<DistroProtocol> {
     let distro_protocol = DistroProtocol::new(
         local_address.to_string(),
@@ -498,9 +499,15 @@ fn create_distro_protocol(
         members,
     );
 
-    // Create and register naming instance handler
-    let naming_handler =
-        NamingInstanceDistroHandler::new(local_address.to_string(), naming_service);
+    // Create and register naming instance handler. It gets the connection
+    // manager so that instances replicated from peers are also pushed to the
+    // subscribers connected to this node (otherwise their SDK cache would
+    // never see the cross-node instances).
+    let naming_handler = NamingInstanceDistroHandler::with_connection_manager(
+        local_address.to_string(),
+        naming_service,
+        connection_manager,
+    );
     distro_protocol.register_handler(Arc::new(naming_handler));
 
     Arc::new(distro_protocol)
@@ -673,9 +680,20 @@ pub fn start_grpc_servers(
     register_internal_handlers(&mut handler_registry, connection_manager.clone());
     // Determine cluster mode and create shared cluster resources
     let is_standalone = app_state.configuration.is_standalone();
-    let local_ip = batata_api::local_ip();
     let main_port = app_state.configuration.server_main_port();
-    let local_address = format!("{}:{}", local_ip, main_port);
+    // The distro local address MUST be identical to the entry this node owns in
+    // the cluster member list, otherwise distro compares mismatched addresses:
+    // `is_responsible()` would never match the node returned by the hash ring
+    // (so received keys get dropped by `cleanup_non_responsible_keys`) and the
+    // self-filter in `sync_data()` would fail (so the node syncs to itself).
+    // `ServerMemberManager` derives the address from cluster.conf /
+    // batata.member.list (see `Configuration::resolve_local_ip`), which is the
+    // same source the member map keys use. `batata_api::local_ip()` is only a
+    // fallback for standalone or when no member manager is wired yet.
+    let local_address = server_member_manager
+        .as_ref()
+        .map(|smm| smm.local_address().to_string())
+        .unwrap_or_else(|| format!("{}:{}", batata_api::local_ip(), main_port));
 
     // Get the real cluster members map and create a shared ClusterClientManager
     let core_config = app_state.configuration.to_core_config();
@@ -720,6 +738,7 @@ pub fn start_grpc_servers(
             ))
         }),
         distro_config,
+        connection_manager.clone(),
     );
 
     // Pass distro_protocol to naming handlers only in cluster mode

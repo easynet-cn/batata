@@ -144,6 +144,7 @@ async fn build_app(
         plugin_state_providers: vec![],
         plugin_manager: None,
         log_level_setter: None,
+        connection_manager: Arc::new(std::sync::OnceLock::new()),
     });
 
     let specs: Arc<dyn batata_common::AgentSpecService> = svc;

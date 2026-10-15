@@ -27,6 +27,7 @@ use batata_core::{
     service::cluster_client::{ClusterClientManager, ClusterRequestSender},
 };
 use batata_persistence::PersistenceService;
+use md5::Digest;
 
 use crate::api::config_model::{
     ClientConfigMetricRequest, ClientConfigMetricResponse, ConfigBatchListenRequest,
@@ -43,8 +44,8 @@ use batata_api::remote::model::{RequestTrait, ResponseCode, ResponseTrait};
 use batata_common::error;
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_core::{GrpcResource, PermissionAction};
-use batata_server_common::model::AppState;
 use batata_plugin::spi::{ConfigChangeRequest, ConfigPointcut, ExecuteType};
+use batata_server_common::model::AppState;
 
 /// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
 #[allow(dead_code)]
@@ -177,7 +178,7 @@ pub async fn find_matching_gray_config(
 #[derive(Clone)]
 /// `ConfigQueryHandler` data model.
 pub struct ConfigQueryHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -222,8 +223,12 @@ impl PayloadHandler for ConfigQueryHandler {
         let mut content = String::new(); // Empty for get operations
         if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
             let mut req = ConfigChangeRequest::new(
-                &data_id, &group, &tenant, &content,
-                ConfigPointcut::Get, ExecuteType::Before,
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                ConfigPointcut::Get,
+                ExecuteType::Before,
                 operator,
             );
             req.client_ip = Some(src_ip.to_string());
@@ -234,7 +239,8 @@ impl PayloadHandler for ConfigQueryHandler {
                 response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
-                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                response.response.message =
+                    resp.message.unwrap_or_else(|| "plugin denied".to_string());
                 return Ok(response.build_payload());
             }
             // Apply parameter replacement from Before plugins
@@ -286,8 +292,12 @@ impl PayloadHandler for ConfigQueryHandler {
                 // Execute ConfigChangePluginV2 After hook for Get
                 if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
                     let mut req = ConfigChangeRequest::new(
-                        data_id, group, tenant, &decrypted,
-                        ConfigPointcut::Get, ExecuteType::After,
+                        data_id,
+                        group,
+                        tenant,
+                        &decrypted,
+                        ConfigPointcut::Get,
+                        ExecuteType::After,
                         operator,
                     );
                     req.client_ip = Some(src_ip.to_string());
@@ -368,11 +378,11 @@ impl PayloadHandler for ConfigQueryHandler {
 #[derive(Clone)]
 /// `ConfigPublishHandler` data model.
 pub struct ConfigPublishHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
-/// The `fuzzy_watch_manager` value.
+    /// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-/// The `connection_manager` value.
+    /// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config changes to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
@@ -471,7 +481,11 @@ impl PayloadHandler for ConfigPublishHandler {
         let max_gray_count = self.app_state.configuration.config_gray_max_version_count();
 
         // Execute ConfigChangePluginV2 Before hook for Publish
-        let operator = if src_user.is_empty() { "anonymous" } else { src_user };
+        let operator = if src_user.is_empty() {
+            "anonymous"
+        } else {
+            src_user
+        };
         // These may be modified by Before plugins (parameter replacement, like Nacos)
         let mut data_id = data_id.to_string();
         let mut group = group.to_string();
@@ -479,8 +493,12 @@ impl PayloadHandler for ConfigPublishHandler {
         let mut content = content.to_string();
         if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
             let mut req = ConfigChangeRequest::new(
-                &data_id, &group, &tenant, &content,
-                ConfigPointcut::Publish, ExecuteType::Before,
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                ConfigPointcut::Publish,
+                ExecuteType::Before,
                 operator,
             );
             req.client_ip = Some(src_ip.to_string());
@@ -491,7 +509,8 @@ impl PayloadHandler for ConfigPublishHandler {
                 response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
-                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                response.response.message =
+                    resp.message.unwrap_or_else(|| "plugin denied".to_string());
                 return Ok(response.build_payload());
             }
             // Apply parameter replacement from Before plugins (Nacos ConfigChangeAspect pattern)
@@ -686,11 +705,20 @@ impl PayloadHandler for ConfigPublishHandler {
             .await
         {
             Ok(_) => {
+                // The MD5 persisted for this content equals compute_md5(content) used by
+                // config_create_or_update. Compute it locally instead of reading the config
+                // back from storage in notify_fuzzy_watchers.
+                let new_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
+
                 // Execute ConfigChangePluginV2 After hook for Publish
                 if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
                     let mut req = ConfigChangeRequest::new(
-                        data_id, group, tenant, content,
-                        ConfigPointcut::Publish, ExecuteType::After,
+                        data_id,
+                        group,
+                        tenant,
+                        content,
+                        ConfigPointcut::Publish,
+                        ExecuteType::After,
                         operator,
                     );
                     req.client_ip = Some(src_ip.to_string());
@@ -708,8 +736,11 @@ impl PayloadHandler for ConfigPublishHandler {
                     let grp = group.to_string();
                     let tnt = tenant.to_string();
                     let sip = src_ip.to_string();
+                    let md5 = new_md5;
                     tokio::spawn(async move {
-                        if let Err(e) = handler.notify_fuzzy_watchers(&did, &grp, &tnt, &sip).await
+                        if let Err(e) = handler
+                            .notify_fuzzy_watchers(&did, &grp, &tnt, &sip, &md5)
+                            .await
                         {
                             warn!("Failed to notify fuzzy watchers on config publish: {}", e);
                         }
@@ -807,6 +838,7 @@ impl ConfigPublishHandler {
         group: &str,
         tenant: &str,
         _source_ip: &str,
+        new_md5: &str,
     ) -> anyhow::Result<()> {
         // Notify fuzzy watchers
         let fuzzy_watchers = self
@@ -879,15 +911,17 @@ impl ConfigPublishHandler {
             // to prevent duplicate notifications from ConfigBatchListen on the next check.
             // The SDK sends a new ConfigBatchListenRequest immediately after receiving the push,
             // so the MD5 must already be updated by that time.
-            let persistence = self.app_state.persistence();
-            if let Ok(Some(config)) = persistence.config_find_one(data_id, group, tenant).await {
-                for subscriber in &subscribers {
-                    self.app_state.config_subscriber_manager.update_md5(
-                        &subscriber.connection_id,
-                        &config_key,
-                        &config.md5,
-                    );
-                }
+            //
+            // Use the MD5 computed from the just-published content (`new_md5`) instead of
+            // reading the config back from storage. It is identical to what
+            // `config_create_or_update` persisted via `compute_md5(content)`, so no
+            // storage round-trip (and no linearizable/consistency concern) is needed.
+            for subscriber in &subscribers {
+                self.app_state.config_subscriber_manager.update_md5(
+                    &subscriber.connection_id,
+                    &config_key,
+                    new_md5,
+                );
             }
 
             // Push notification to each subscriber in a background task.
@@ -939,11 +973,11 @@ impl ConfigPublishHandler {
 #[derive(Clone)]
 /// `ConfigRemoveHandler` data model.
 pub struct ConfigRemoveHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
-/// The `fuzzy_watch_manager` value.
+    /// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-/// The `connection_manager` value.
+    /// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config removals to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
@@ -984,8 +1018,12 @@ impl PayloadHandler for ConfigRemoveHandler {
         let mut tenant = tenant.to_string();
         if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
             let mut req = ConfigChangeRequest::new(
-                &data_id, &group, &tenant, "",
-                ConfigPointcut::Remove, ExecuteType::Before,
+                &data_id,
+                &group,
+                &tenant,
+                "",
+                ConfigPointcut::Remove,
+                ExecuteType::Before,
                 operator,
             );
             req.client_ip = Some(src_ip.to_string());
@@ -996,7 +1034,8 @@ impl PayloadHandler for ConfigRemoveHandler {
                 response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
-                response.response.message = resp.message.unwrap_or_else(|| "plugin denied".to_string());
+                response.response.message =
+                    resp.message.unwrap_or_else(|| "plugin denied".to_string());
                 return Ok(response.build_payload());
             }
             // Apply parameter replacement from Before plugins (Nacos ConfigChangeAspect pattern)
@@ -1018,8 +1057,12 @@ impl PayloadHandler for ConfigRemoveHandler {
                 // Execute ConfigChangePluginV2 After hook for Remove
                 if let Some(plugin_mgr) = self.app_state.try_plugin_manager() {
                     let mut req = ConfigChangeRequest::new(
-                        data_id, group, tenant, "",
-                        ConfigPointcut::Remove, ExecuteType::After,
+                        data_id,
+                        group,
+                        tenant,
+                        "",
+                        ConfigPointcut::Remove,
+                        ExecuteType::After,
                         operator,
                     );
                     req.client_ip = Some(src_ip.to_string());
@@ -1254,7 +1297,7 @@ impl ConfigRemoveHandler {
 #[derive(Clone)]
 /// `ConfigBatchListenHandler` data model.
 pub struct ConfigBatchListenHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1423,7 +1466,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
 #[derive(Clone)]
 /// `ConfigChangeNotifyHandler` data model.
 pub struct ConfigChangeNotifyHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1454,7 +1497,7 @@ impl PayloadHandler for ConfigChangeNotifyHandler {
 #[derive(Clone)]
 /// `ConfigChangeClusterSyncHandler` data model.
 pub struct ConfigChangeClusterSyncHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
     /// Fuzzy watch manager for notifying local fuzzy watchers
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
@@ -1623,11 +1666,11 @@ impl ConfigChangeClusterSyncHandler {
 #[derive(Clone)]
 /// `ConfigFuzzyWatchHandler` data model.
 pub struct ConfigFuzzyWatchHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
-/// The `fuzzy_watch_manager` value.
+    /// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-/// The `connection_manager` value.
+    /// The `connection_manager` value.
     pub connection_manager: Arc<dyn ClientConnectionManager>,
 }
 
@@ -1729,7 +1772,7 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
 #[derive(Clone)]
 /// `ConfigFuzzyWatchChangeNotifyHandler` data model.
 pub struct ConfigFuzzyWatchChangeNotifyHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
 }
 
@@ -1758,9 +1801,9 @@ impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
 #[derive(Clone)]
 /// `ConfigFuzzyWatchSyncHandler` data model.
 pub struct ConfigFuzzyWatchSyncHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
-/// The `fuzzy_watch_manager` value.
+    /// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
@@ -1821,9 +1864,9 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
 #[derive(Clone)]
 /// `ClientConfigMetricHandler` data model.
 pub struct ClientConfigMetricHandler {
-/// The `app_state` value.
+    /// The `app_state` value.
     pub app_state: Arc<AppState>,
-/// The `fuzzy_watch_manager` value.
+    /// The `fuzzy_watch_manager` value.
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 

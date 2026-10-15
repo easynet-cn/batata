@@ -606,7 +606,6 @@ impl Default for DeploymentConfig {
     }
 }
 
-
 // ============================================================================
 // Server
 // ============================================================================
@@ -637,7 +636,6 @@ pub struct ServerConfig {
     /// gRPC server settings.
     pub grpc: ServerGrpcConfig,
 }
-
 
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `ServerMainConfig`.
@@ -698,8 +696,10 @@ impl Default for ServerHttpConfig {
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `ServerHttpAccessLogConfig`.
 pub struct ServerHttpAccessLogConfig {
-    #[serde(default = "default_true")]
-    /// Whether access logging is enabled.
+    #[serde(default)]
+    /// Whether access logging is enabled. Ships disabled by default for
+    /// throughput; can be enabled at runtime via
+    /// `batata.server.http.access_log.enabled=true`.
     pub enabled: bool,
     #[serde(default = "default_access_log_max_days")]
     /// Number of days access logs are retained.
@@ -715,7 +715,7 @@ pub struct ServerHttpAccessLogConfig {
 impl Default for ServerHttpAccessLogConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             max_days: default_access_log_max_days(),
             pattern: None,
             basedir: None,
@@ -1167,7 +1167,6 @@ impl Default for CoreAuthSystemConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `CoreAuthServerConfig`.
 pub struct CoreAuthServerConfig {
@@ -1308,7 +1307,6 @@ pub struct CoreAuthLdapFilterConfig {
     pub prefix: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthLdapCaseConfig`.
 pub struct CoreAuthLdapCaseConfig {
@@ -1394,7 +1392,6 @@ pub struct CoreAuthOauthUserConfig {
     pub creation: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `CoreAuthOauthRoleConfig`.
 #[derive(Default)]
@@ -1403,7 +1400,6 @@ pub struct CoreAuthOauthRoleConfig {
     /// Whether roles are synchronized from the provider.
     pub sync: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `CoreAuthOauthRedirectConfig`.
@@ -2218,11 +2214,14 @@ pub struct ConfigEncryptionConfig {
 /// Configuration for `ConfigEncryptionPluginConfig`.
 #[derive(Default)]
 pub struct ConfigEncryptionPluginConfig {
-    #[serde(default, deserialize_with = "deserialize_null_to_none", rename = "type")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_to_none",
+        rename = "type"
+    )]
     /// The encryption plugin implementation type.
     pub type_: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `ConfigEncryptionReloadConfig`.
@@ -2493,7 +2492,6 @@ impl Default for LogsConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `LogsConsoleConfig`.
 pub struct LogsConsoleConfig {
@@ -2582,7 +2580,6 @@ pub struct MeshXdsServerConfig {
     /// The identifier advertised by this xDS server.
     pub id: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Default, Deserialize)]
 /// Configuration for `MeshXdsSyncConfig`.
@@ -3176,7 +3173,6 @@ pub struct PersistenceEmbeddedConfig {
     /// Name of the embedded database.
     pub db_name: Option<String>,
 }
-
 
 // ============================================================================
 // RocksDB

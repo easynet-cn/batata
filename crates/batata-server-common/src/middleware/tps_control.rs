@@ -81,7 +81,7 @@ pub struct TpsControlMiddleware {
 }
 
 impl TpsControlMiddleware {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new(control_plugin: Option<Arc<dyn ControlPlugin>>) -> Self {
         Self { control_plugin }
     }

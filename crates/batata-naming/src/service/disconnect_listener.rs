@@ -107,9 +107,9 @@ impl NamingDisconnectListener {
         // Notify local subscribers of each affected service.
         for service_key in &affected {
             if let Some((namespace, group_name, service_name)) = parse_service_key(service_key) {
-                let subscribers =
-                    self.naming
-                        .get_subscribers(namespace, group_name, service_name);
+                let subscribers = self
+                    .naming
+                    .get_subscribers(namespace, group_name, service_name);
                 if subscribers.is_empty() {
                     continue;
                 }

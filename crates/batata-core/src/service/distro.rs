@@ -838,28 +838,13 @@ impl DistroProtocol {
                     mapper.update_members(healthy);
                 }
 
-                // Drop locally-stored keys this node is no longer responsible for.
-                // Iterating handlers separately keeps the main verify loop below
-                // unchanged and avoids holding extra locks during network I/O.
-                let mut cleanup_removed = 0usize;
-                let cleanup_entries: Vec<Arc<dyn DistroDataHandler>> =
-                    handlers.iter().map(|e| e.value().clone()).collect();
-                for handler in cleanup_entries {
-                    let keys = handler.get_all_keys().await;
-                    for key in keys {
-                        if !mapper.is_responsible(&key, &local_address)
-                            && handler.remove_data(&key).await.is_ok()
-                        {
-                            cleanup_removed += 1;
-                        }
-                    }
-                }
-                if cleanup_removed > 0 {
-                    info!(
-                        "Distro verify-cycle cleanup: removed {} non-responsible keys",
-                        cleanup_removed
-                    );
-                }
+                // NOTE: Distro keeps a full replica of every key on every node
+                // (Nacos semantics). `is_responsible()` only decides which node
+                // *drives* sync/verify for a key - it is NOT an ownership claim.
+                // Deleting keys the local node is not responsible for would drop
+                // replicas that peers just pushed, so cross-node instance lookups
+                // would fail on every non-responsible node. Responsibility
+                // changes are reconciled by sync/verify, never by deletion.
 
                 // Get all members except self
                 let other_members: Vec<String> = members

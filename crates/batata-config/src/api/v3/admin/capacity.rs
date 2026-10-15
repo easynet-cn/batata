@@ -9,23 +9,23 @@ use batata_server_common::model::AppState;
 #[serde(rename_all = "camelCase")]
 /// `CapacityRequest` data model.
 pub struct CapacityRequest {
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: Option<String>,
-/// The `group` value.
+    /// The `group` value.
     pub group: Option<String>,
-/// The `quota` value.
+    /// The `quota` value.
     pub quota: Option<i32>,
     #[serde(alias = "maxSize")]
-/// The `max_size` value.
+    /// The `max_size` value.
     pub max_size: Option<i32>,
     #[serde(alias = "maxAggrCount")]
-/// The `max_aggr_count` value.
+    /// The `max_aggr_count` value.
     pub max_aggr_count: Option<i32>,
     #[serde(alias = "maxAggrSize")]
-/// The `max_aggr_size` value.
+    /// The `max_aggr_size` value.
     pub max_aggr_size: Option<i32>,
     #[serde(alias = "maxHistoryCount")]
-/// The `max_history_count` value.
+    /// The `max_history_count` value.
     pub max_history_count: Option<i32>,
 }
 
@@ -33,11 +33,11 @@ pub struct CapacityRequest {
 #[serde(rename_all = "camelCase")]
 /// `CapacityResponse` data model.
 pub struct CapacityResponse {
-/// The `code` value.
+    /// The `code` value.
     pub code: i32,
-/// The `message` value.
+    /// The `message` value.
     pub message: String,
-/// The `data` value.
+    /// The `data` value.
     pub data: Option<CapacityData>,
 }
 
@@ -45,23 +45,23 @@ pub struct CapacityResponse {
 #[serde(rename_all = "camelCase")]
 /// `CapacityData` data model.
 pub struct CapacityData {
-/// The `id` value.
+    /// The `id` value.
     pub id: Option<i64>,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: Option<String>,
-/// The `group` value.
+    /// The `group` value.
     pub group: Option<String>,
-/// The `quota` value.
+    /// The `quota` value.
     pub quota: i32,
-/// The `usage` value.
+    /// The `usage` value.
     pub usage: i32,
-/// The `max_size` value.
+    /// The `max_size` value.
     pub max_size: i32,
-/// The `max_aggr_count` value.
+    /// The `max_aggr_count` value.
     pub max_aggr_count: i32,
-/// The `max_aggr_size` value.
+    /// The `max_aggr_size` value.
     pub max_aggr_size: i32,
-/// The `max_history_count` value.
+    /// The `max_history_count` value.
     pub max_history_count: i32,
 }
 

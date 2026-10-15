@@ -90,11 +90,19 @@ async fn list_history(
         .realip_remote_addr()
         .unwrap_or_default()
         .to_owned();
-    let operator = if src_user.is_empty() { "anonymous" } else { &src_user };
+    let operator = if src_user.is_empty() {
+        "anonymous"
+    } else {
+        &src_user
+    };
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req_plugin = ConfigChangeRequest::new(
-            &params.data_id, &params.group_name, &namespace_id, "",
-            ConfigPointcut::History, ExecuteType::Before,
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "",
+            ConfigPointcut::History,
+            ExecuteType::Before,
             operator,
         );
         req_plugin.client_ip = Some(src_ip.to_string());
@@ -123,8 +131,12 @@ async fn list_history(
     // Execute ConfigChangePluginV2 After hook for History
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req_plugin = ConfigChangeRequest::new(
-            &params.data_id, &params.group_name, &namespace_id, "",
-            ConfigPointcut::History, ExecuteType::After,
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "",
+            ConfigPointcut::History,
+            ExecuteType::After,
             operator,
         );
         req_plugin.client_ip = Some(src_ip.to_string());

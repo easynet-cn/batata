@@ -90,7 +90,7 @@ pub struct RateLimiterState {
 }
 
 impl RateLimiterState {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             buckets: DashMap::new(),
@@ -132,14 +132,14 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             state: Arc::new(RateLimiterState::new(config)),
         }
     }
 
-/// Performs the `with_defaults` operation.
+    /// Performs the `with_defaults` operation.
     pub fn with_defaults() -> Self {
         Self::new(RateLimitConfig::default())
     }
@@ -343,7 +343,7 @@ pub struct AuthRateLimiter {
 }
 
 impl AuthRateLimiter {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new(config: AuthRateLimitConfig) -> Self {
         Self {
             entries: DashMap::new(),
@@ -351,7 +351,7 @@ impl AuthRateLimiter {
         }
     }
 
-/// Performs the `with_defaults` operation.
+    /// Performs the `with_defaults` operation.
     pub fn with_defaults() -> Self {
         Self::new(AuthRateLimitConfig::default())
     }

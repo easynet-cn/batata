@@ -13,8 +13,8 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, delete, get, post, put, web};
 use tracing::info;
 
-use batata_server_api::validation;
 use batata_common::{ActionTypes, ApiType, SignType};
+use batata_server_api::validation;
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;

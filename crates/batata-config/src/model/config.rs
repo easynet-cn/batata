@@ -18,51 +18,51 @@ use batata_persistence::entity;
 /// `ConfigForm` data model.
 pub struct ConfigForm {
     #[serde(alias = "dataId")]
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
     #[serde(alias = "groupName")]
-/// The `group_name` value.
+    /// The `group_name` value.
     pub group_name: String,
     #[serde(alias = "namespaceId")]
-/// The `namespace_id` value.
+    /// The `namespace_id` value.
     pub namespace_id: String,
-/// The `content` value.
+    /// The `content` value.
     pub content: String,
-/// The `tag` value.
+    /// The `tag` value.
     pub tag: Option<String>,
     #[serde(alias = "appName")]
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
     #[serde(alias = "srcUser")]
-/// The `src_user` value.
+    /// The `src_user` value.
     pub src_user: Option<String>,
     #[serde(alias = "configTags")]
-/// The `config_tags` value.
+    /// The `config_tags` value.
     pub config_tags: String,
     #[serde(alias = "encryptedDataKey")]
-/// The `encrypted_data_key` value.
+    /// The `encrypted_data_key` value.
     pub encrypted_data_key: Option<String>,
     #[serde(alias = "grayName")]
-/// The `gray_name` value.
+    /// The `gray_name` value.
     pub gray_name: Option<String>,
     #[serde(alias = "grayRuleExp")]
-/// The `gray_rule_exp` value.
+    /// The `gray_rule_exp` value.
     pub gray_rule_exp: Option<String>,
     #[serde(alias = "grayVersion")]
-/// The `gray_version` value.
+    /// The `gray_version` value.
     pub gray_version: Option<String>,
     #[serde(alias = "grayPriority")]
-/// The `gray_priority` value.
+    /// The `gray_priority` value.
     pub gray_priority: Option<i32>,
-/// The `desc` value.
+    /// The `desc` value.
     pub desc: String,
-/// The usage description of the configuration.
+    /// The usage description of the configuration.
     pub r#use: Option<String>,
-/// The `effect` value.
+    /// The `effect` value.
     pub effect: Option<String>,
-/// The configuration type (for example, `yaml`, `json`, or `properties`).
+    /// The configuration type (for example, `yaml`, `json`, or `properties`).
     pub r#type: String,
-/// The `schema` value.
+    /// The `schema` value.
     pub schema: Option<String>,
 }
 
@@ -71,19 +71,19 @@ pub struct ConfigForm {
 #[serde(rename_all = "camelCase")]
 /// `ConfigRequestInfo` data model.
 pub struct ConfigRequestInfo {
-/// The `src_ip` value.
+    /// The `src_ip` value.
     pub src_ip: String,
-/// The `src_type` value.
+    /// The `src_type` value.
     pub src_type: String,
-/// The `request_ip_app` value.
+    /// The `request_ip_app` value.
     pub request_ip_app: String,
-/// The `beta_ips` value.
+    /// The `beta_ips` value.
     pub beta_ips: String,
-/// The `cas_md5` value.
+    /// The `cas_md5` value.
     pub cas_md5: String,
-/// The `namespace_transferred` value.
+    /// The `namespace_transferred` value.
     pub namespace_transferred: String,
-/// The `update_for_exist` value.
+    /// The `update_for_exist` value.
     pub update_for_exist: bool,
 }
 
@@ -92,17 +92,17 @@ pub struct ConfigRequestInfo {
 #[serde(rename_all = "camelCase")]
 /// `ConfigInfoBase` data model.
 pub struct ConfigInfoBase {
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `group` value.
+    /// The `group` value.
     pub group: String,
-/// The `content` value.
+    /// The `content` value.
     pub content: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: String,
-/// The `encrypted_data_key` value.
+    /// The `encrypted_data_key` value.
     pub encrypted_data_key: String,
 }
 
@@ -111,13 +111,13 @@ pub struct ConfigInfoBase {
 /// `ConfigInfo` data model.
 pub struct ConfigInfo {
     #[serde(flatten)]
-/// The `config_info_base` value.
+    /// The `config_info_base` value.
     pub config_info_base: ConfigInfoBase,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: String,
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
-/// The configuration type (for example, `yaml`, `json`, or `properties`).
+    /// The configuration type (for example, `yaml`, `json`, or `properties`).
     pub r#type: String,
 }
 
@@ -126,25 +126,25 @@ pub struct ConfigInfo {
 /// `ConfigAllInfo` data model.
 pub struct ConfigAllInfo {
     #[serde(flatten)]
-/// The `config_info` value.
+    /// The `config_info` value.
     pub config_info: ConfigInfo,
-/// The `create_time` value.
+    /// The `create_time` value.
     pub create_time: i64,
-/// The `modify_time` value.
+    /// The `modify_time` value.
     pub modify_time: i64,
-/// The `create_user` value.
+    /// The `create_user` value.
     pub create_user: String,
-/// The `create_ip` value.
+    /// The `create_ip` value.
     pub create_ip: String,
-/// The `desc` value.
+    /// The `desc` value.
     pub desc: String,
-/// The usage description of the configuration.
+    /// The usage description of the configuration.
     pub r#use: String,
-/// The `effect` value.
+    /// The `effect` value.
     pub effect: String,
-/// The `schema` value.
+    /// The `schema` value.
     pub schema: String,
-/// The `config_tags` value.
+    /// The `config_tags` value.
     pub config_tags: String,
 }
 
@@ -219,15 +219,15 @@ impl From<batata_persistence::ConfigStorageData> for ConfigAllInfo {
 /// `ConfigInfoGrayWrapper` data model.
 pub struct ConfigInfoGrayWrapper {
     #[serde(flatten)]
-/// The `config_info` value.
+    /// The `config_info` value.
     pub config_info: ConfigInfo,
-/// The `last_modified` value.
+    /// The `last_modified` value.
     pub last_modified: i64,
-/// The `gray_name` value.
+    /// The `gray_name` value.
     pub gray_name: String,
-/// The `gray_rule` value.
+    /// The `gray_rule` value.
     pub gray_rule: String,
-/// The `src_user` value.
+    /// The `src_user` value.
     pub src_user: String,
 }
 
@@ -259,9 +259,9 @@ impl From<entity::config_info_gray::Model> for ConfigInfoGrayWrapper {
 #[serde(rename_all = "camelCase")]
 /// `ConfigListenerInfo` data model.
 pub struct ConfigListenerInfo {
-/// The `query_type` value.
+    /// The `query_type` value.
     pub query_type: String,
-/// The `listeners_status` value.
+    /// The `listeners_status` value.
     pub listeners_status: HashMap<String, String>,
 }
 
@@ -278,39 +278,39 @@ impl ConfigListenerInfo {
 /// `ConfigHistoryInfo` data model.
 pub struct ConfigHistoryInfo {
     #[serde_as(as = "DisplayFromStr")]
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `last_id` value.
+    /// The `last_id` value.
     pub last_id: i64,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `group` value.
+    /// The `group` value.
     pub group: String,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: String,
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: String,
-/// The `content` value.
+    /// The `content` value.
     pub content: String,
-/// The `src_ip` value.
+    /// The `src_ip` value.
     pub src_ip: String,
-/// The `src_user` value.
+    /// The `src_user` value.
     pub src_user: String,
-/// The `op_type` value.
+    /// The `op_type` value.
     pub op_type: String,
-/// The `publish_type` value.
+    /// The `publish_type` value.
     pub publish_type: String,
-/// The `gray_name` value.
+    /// The `gray_name` value.
     pub gray_name: String,
-/// The `ext_info` value.
+    /// The `ext_info` value.
     pub ext_info: String,
-/// The `created_time` value.
+    /// The `created_time` value.
     pub created_time: i64,
-/// The `last_modified_time` value.
+    /// The `last_modified_time` value.
     pub last_modified_time: i64,
-/// The `encrypted_data_key` value.
+    /// The `encrypted_data_key` value.
     pub encrypted_data_key: String,
 }
 
@@ -368,23 +368,23 @@ impl From<&entity::his_config_info::Model> for ConfigHistoryInfo {
 /// `ConfigInfoWrapper` data model.
 pub struct ConfigInfoWrapper {
     #[serde_as(as = "DisplayFromStr")]
-/// The `id` value.
+    /// The `id` value.
     pub id: Option<u64>,
-/// The `namespace_id` value.
+    /// The `namespace_id` value.
     pub namespace_id: String,
-/// The `group_name` value.
+    /// The `group_name` value.
     pub group_name: String,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: Option<String>,
-/// The configuration type (for example, `yaml`, `json`, or `properties`).
+    /// The configuration type (for example, `yaml`, `json`, or `properties`).
     pub r#type: String,
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
-/// The `create_time` value.
+    /// The `create_time` value.
     pub create_time: i64,
-/// The `modify_time` value.
+    /// The `modify_time` value.
     pub modify_time: i64,
 }
 
@@ -449,7 +449,7 @@ pub enum ConfigType {
 }
 
 impl ConfigType {
-/// `as_str` operation.
+    /// `as_str` operation.
     pub fn as_str(&self) -> &'static str {
         match self {
             ConfigType::Properties => "properties",
@@ -490,23 +490,23 @@ impl FromStr for ConfigType {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `namespace_id` value.
+    /// The `namespace_id` value.
     pub namespace_id: String,
-/// The `group_name` value.
+    /// The `group_name` value.
     pub group_name: String,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: String,
-/// The configuration type (for example, `yaml`, `json`, or `properties`).
+    /// The configuration type (for example, `yaml`, `json`, or `properties`).
     pub r#type: String,
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
-/// The `create_time` value.
+    /// The `create_time` value.
     pub create_time: i64,
-/// The `modify_time` value.
+    /// The `modify_time` value.
     pub modify_time: i64,
 }
 
@@ -536,25 +536,25 @@ impl From<entity::config_info::Model> for ConfigBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `group` value.
+    /// The `group` value.
     pub group: String,
-/// The `content` value.
+    /// The `content` value.
     pub content: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: String,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: String,
-/// The `gray_name` value.
+    /// The `gray_name` value.
     pub gray_name: String,
-/// The `gray_rule` value.
+    /// The `gray_rule` value.
     pub gray_rule: String,
-/// The `src_user` value.
+    /// The `src_user` value.
     pub src_user: String,
-/// The configuration type (for example, `yaml`, `json`, or `properties`).
+    /// The configuration type (for example, `yaml`, `json`, or `properties`).
     pub r#type: String,
 }
 
@@ -596,27 +596,27 @@ impl From<ConfigInfoGrayWrapper> for ConfigGrayInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `group` value.
+    /// The `group` value.
     pub group: String,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: String,
-/// The `op_type` value.
+    /// The `op_type` value.
     pub op_type: String,
-/// The `publish_type` value.
+    /// The `publish_type` value.
     pub publish_type: String,
-/// The `gray_name` value.
+    /// The `gray_name` value.
     pub gray_name: String,
-/// The `src_user` value.
+    /// The `src_user` value.
     pub src_user: String,
-/// The `src_ip` value.
+    /// The `src_ip` value.
     pub src_ip: String,
-/// The `created_time` value.
+    /// The `created_time` value.
     pub created_time: i64,
-/// The `last_modified_time` value.
+    /// The `last_modified_time` value.
     pub last_modified_time: i64,
 }
 
@@ -648,38 +648,38 @@ impl From<entity::his_config_info::Model> for ConfigHistoryBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
-/// The `id` value.
+    /// The `id` value.
     pub id: i64,
-/// The `data_id` value.
+    /// The `data_id` value.
     pub data_id: String,
-/// The `group` value.
+    /// The `group` value.
     pub group: String,
-/// The `tenant` value.
+    /// The `tenant` value.
     pub tenant: String,
-/// The `content` value.
+    /// The `content` value.
     pub content: String,
-/// The `md5` value.
+    /// The `md5` value.
     pub md5: String,
-/// The `app_name` value.
+    /// The `app_name` value.
     pub app_name: String,
-/// The `op_type` value.
+    /// The `op_type` value.
     pub op_type: String,
-/// The `publish_type` value.
+    /// The `publish_type` value.
     pub publish_type: String,
-/// The `gray_name` value.
-pub gray_name: String,
-/// Extended information for the config.
-pub ext_info: String,
-/// The user who created the config.
-pub src_user: String,
-/// The source IP of the request.
-pub src_ip: String,
-/// The creation time in milliseconds.
-pub created_time: i64,
-/// The last modification time in milliseconds.
-pub last_modified_time: i64,
-/// The encrypted data key.
-pub encrypted_data_key: String,
+    /// The `gray_name` value.
+    pub gray_name: String,
+    /// Extended information for the config.
+    pub ext_info: String,
+    /// The user who created the config.
+    pub src_user: String,
+    /// The source IP of the request.
+    pub src_ip: String,
+    /// The creation time in milliseconds.
+    pub created_time: i64,
+    /// The last modification time in milliseconds.
+    pub last_modified_time: i64,
+    /// The encrypted data key.
+    pub encrypted_data_key: String,
 }
 
 impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {

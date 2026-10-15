@@ -167,7 +167,7 @@ impl TraceContext {
 pub struct TracingMiddleware;
 
 impl TracingMiddleware {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new() -> Self {
         Self
     }

@@ -16,7 +16,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, delete, post, web};
 use serde::Deserialize;
 
 use batata_auth::service::visibility_grant::{
-    DefaultVisibilityGrantService, VisibilityGrantService, VISIBILITY_RESOURCE,
+    DefaultVisibilityGrantService, VISIBILITY_RESOURCE, VisibilityGrantService,
 };
 use batata_core::service::GrpcAuthService;
 

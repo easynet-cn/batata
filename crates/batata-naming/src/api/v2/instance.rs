@@ -189,16 +189,16 @@ pub async fn register_instance(
 
         // Trigger distro sync only for ephemeral — persistent uses Raft.
         if form.ephemeral.unwrap_or(true)
-            && let Some(ref distro) = distro_protocol {
-                let service_key =
-                    format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
-                let distro = distro.get_ref().clone();
-                tokio::spawn(async move {
-                    distro
-                        .sync_data(DistroDataType::NamingInstance, &service_key)
-                        .await;
-                });
-            }
+            && let Some(ref distro) = distro_protocol
+        {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
 
         Result::<String>::http_success("ok".to_string())
     } else {
@@ -296,16 +296,16 @@ pub async fn deregister_instance(
 
         // Trigger distro sync only for ephemeral — persistent uses Raft.
         if params.ephemeral.unwrap_or(true)
-            && let Some(ref distro) = distro_protocol {
-                let service_key =
-                    format!("{}@@{}@@{}", namespace_id, group_name, params.service_name);
-                let distro = distro.get_ref().clone();
-                tokio::spawn(async move {
-                    distro
-                        .sync_data(DistroDataType::NamingInstance, &service_key)
-                        .await;
-                });
-            }
+            && let Some(ref distro) = distro_protocol
+        {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, params.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
 
         Result::<String>::http_success("ok".to_string())
     } else {
@@ -402,16 +402,16 @@ pub async fn update_instance(
 
         // Trigger distro sync only for ephemeral — persistent uses Raft.
         if form.ephemeral.unwrap_or(true)
-            && let Some(ref distro) = distro_protocol {
-                let service_key =
-                    format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
-                let distro = distro.get_ref().clone();
-                tokio::spawn(async move {
-                    distro
-                        .sync_data(DistroDataType::NamingInstance, &service_key)
-                        .await;
-                });
-            }
+            && let Some(ref distro) = distro_protocol
+        {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
 
         Result::<String>::http_success("ok".to_string())
     } else {

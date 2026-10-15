@@ -24,7 +24,7 @@ pub struct TrafficReviseFilter {
 }
 
 impl TrafficReviseFilter {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new(status_manager: Arc<ServerStatusManager>) -> Self {
         Self { status_manager }
     }

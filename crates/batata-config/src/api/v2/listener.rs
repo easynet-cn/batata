@@ -189,15 +189,15 @@ pub async fn config_listener(
     let result = loop {
         let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
         if !changed_configs.is_empty() {
-            info!(
-                count = changed_configs.len(),
-                "Config changes detected"
-            );
+            info!(count = changed_configs.len(), "Config changes detected");
             break Result::<HashMap<String, String>>::http_success(changed_configs);
         }
 
         // Register waiters, then re-read generations to catch a missed wakeup.
-        let notified_futures = entries.iter().map(|e| e.notify.notified()).collect::<Vec<_>>();
+        let notified_futures = entries
+            .iter()
+            .map(|e| e.notify.notified())
+            .collect::<Vec<_>>();
         let current_generations: Vec<u64> = entries.iter().map(|e| e.generation()).collect();
         if current_generations != last_generations {
             last_generations = current_generations;

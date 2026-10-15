@@ -549,8 +549,9 @@ data:
     # Access Log
     # =============================================================================
 
-    # HTTP access log (per-request logging). Disable for better performance.
-    #batata.server.http.access_log.enabled: true
+    # HTTP access log (per-request logging). Disabled by default for better
+    # performance; enable at runtime by uncommenting the line below.
+    #batata.server.http.access_log.enabled: false
 
     # Access log automatic cleaning time (days)
     #batata.server.http.access_log.max_days: 30

@@ -697,11 +697,19 @@ async fn import_config(
     }
 
     // Execute ConfigChangePluginV2 Before hook for Import
-    let operator = if src_user.is_empty() { "anonymous" } else { &src_user };
+    let operator = if src_user.is_empty() {
+        "anonymous"
+    } else {
+        &src_user
+    };
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req = ConfigChangeRequest::new(
-            "*", "*", &namespace_id, "",
-            ConfigPointcut::Import, ExecuteType::Before,
+            "*",
+            "*",
+            &namespace_id,
+            "",
+            ConfigPointcut::Import,
+            ExecuteType::Before,
             operator,
         );
         req.client_ip = Some(src_ip.to_string());
@@ -747,8 +755,12 @@ async fn import_config(
     // Execute ConfigChangePluginV2 After hook for Import
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req = ConfigChangeRequest::new(
-            "*", "*", &namespace_id, "",
-            ConfigPointcut::Import, ExecuteType::After,
+            "*",
+            "*",
+            &namespace_id,
+            "",
+            ConfigPointcut::Import,
+            ExecuteType::After,
             operator,
         );
         req.client_ip = Some(src_ip.to_string());
@@ -797,11 +809,19 @@ async fn export_config(
         .realip_remote_addr()
         .unwrap_or_default()
         .to_owned();
-    let operator_export = if src_user_export.is_empty() { "anonymous" } else { &src_user_export };
+    let operator_export = if src_user_export.is_empty() {
+        "anonymous"
+    } else {
+        &src_user_export
+    };
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req_plugin = ConfigChangeRequest::new(
-            "*", "*", &namespace_id, "",
-            ConfigPointcut::Export, ExecuteType::Before,
+            "*",
+            "*",
+            &namespace_id,
+            "",
+            ConfigPointcut::Export,
+            ExecuteType::Before,
             operator_export,
         );
         req_plugin.client_ip = Some(src_ip_export.to_string());
@@ -865,8 +885,12 @@ async fn export_config(
     // Execute ConfigChangePluginV2 After hook for Export
     if let Some(plugin_mgr) = data.try_plugin_manager() {
         let mut req_plugin = ConfigChangeRequest::new(
-            "*", "*", &namespace_id, "",
-            ConfigPointcut::Export, ExecuteType::After,
+            "*",
+            "*",
+            &namespace_id,
+            "",
+            ConfigPointcut::Export,
+            ExecuteType::After,
             operator_export,
         );
         req_plugin.client_ip = Some(src_ip_export.to_string());

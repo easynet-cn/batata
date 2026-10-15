@@ -31,13 +31,13 @@ impl Default for FuzzyWatchLimits {
 /// Config fuzzy watch pattern
 #[derive(Clone, Debug)]
 pub struct ConfigFuzzyWatchPattern {
-/// The `namespace` value.
+    /// The `namespace` value.
     pub namespace: String,
-/// The `group_pattern` value.
+    /// The `group_pattern` value.
     pub group_pattern: String,
-/// The `data_id_pattern` value.
+    /// The `data_id_pattern` value.
     pub data_id_pattern: String,
-/// The `watch_type` value.
+    /// The `watch_type` value.
     pub watch_type: String,
 }
 
@@ -104,7 +104,7 @@ pub enum ConfigChangeType {
 }
 
 impl ConfigChangeType {
-/// `as_str` operation.
+    /// `as_str` operation.
     pub fn as_str(&self) -> &'static str {
         match self {
             ConfigChangeType::Add => "add",
@@ -189,9 +189,9 @@ pub struct ConfigWatchNotification {
 /// Error type for fuzzy watch limit violations
 #[derive(Debug, Clone)]
 pub struct FuzzyWatchLimitError {
-/// The `code` value.
+    /// The `code` value.
     pub code: i32,
-/// The `message` value.
+    /// The `message` value.
     pub message: String,
 }
 
@@ -229,7 +229,7 @@ impl ConfigFuzzyWatchManager {
     /// Default channel capacity for config change events
     const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
-/// `new` operation.
+    /// `new` operation.
     pub fn new() -> Self {
         Self::with_capacity(Self::DEFAULT_CHANNEL_CAPACITY)
     }

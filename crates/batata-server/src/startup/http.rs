@@ -271,7 +271,9 @@ pub fn mcp_registry_server(
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
         App::new()
-            .wrap(crate::middleware::http_tracing::access_log_layer(access_log_enabled))
+            .wrap(crate::middleware::http_tracing::access_log_layer(
+                access_log_enabled,
+            ))
             .app_data(web::Data::from(mcp_registry.clone()))
             .configure(configure_mcp_registry)
     })

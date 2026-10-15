@@ -10,7 +10,7 @@ pub mod v3 {
     pub mod oidc;
     mod permission;
     mod role;
-/// Provides the `route` module.
+    /// Provides the `route` module.
     pub mod route;
     mod user;
     mod visibility;

@@ -226,7 +226,8 @@ async fn register_instance(
             return Result::<bool>::http_response(
                 400,
                 error::PARAMETER_VALIDATE_ERROR.code,
-                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid"
+                    .to_string(),
                 false,
             );
         }
@@ -345,7 +346,8 @@ async fn deregister_instance(
             return Result::<bool>::http_response(
                 400,
                 error::PARAMETER_VALIDATE_ERROR.code,
-                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid"
+                    .to_string(),
                 false,
             );
         }
@@ -456,7 +458,8 @@ async fn update_instance(
             return Result::<bool>::http_response(
                 400,
                 error::PARAMETER_VALIDATE_ERROR.code,
-                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid"
+                    .to_string(),
                 false,
             );
         }
@@ -807,7 +810,8 @@ async fn partial_update_instance(
             return Result::<bool>::http_response(
                 400,
                 error::PARAMETER_VALIDATE_ERROR.code,
-                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+                "Required parameters 'serviceName', 'ip', 'port' are missing or invalid"
+                    .to_string(),
                 false,
             );
         }

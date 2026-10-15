@@ -8,6 +8,12 @@ import com.alibaba.nacos.api.naming.pojo.Instance;
 import org.junit.jupiter.api.*;
 
 import java.util.*;
+import java.util.stream.Collectors;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -61,15 +67,28 @@ public class NacosClusterTest {
                     "Cluster tests require -Dnacos.cluster.node2 and -Dnacos.cluster.node3");
         }
 
+        // The three addresses must identify three *distinct* and *reachable*
+        // nodes. Both checks are required: a single-node deployment is a valid
+        // one-member cluster, but it cannot exercise replication, so the tests
+        // must be reported as skipped rather than as failures.
+        List<String> addrs = Arrays.asList(node1Addr, node2Addr, node3Addr);
+        if (new HashSet<>(addrs).size() != addrs.size()) {
+            Assumptions.assumeTrue(false,
+                    "Cluster tests require three distinct node addresses, got: " + addrs);
+        }
+
+        List<String> unreachable = addrs.stream()
+                .filter(addr -> !isNodeUp(addr))
+                .collect(Collectors.toList());
+        if (!unreachable.isEmpty()) {
+            Assumptions.assumeTrue(false,
+                    "Cluster tests require all three nodes to be up; unreachable: " + unreachable);
+        }
+
         try {
             configNode1 = createConfigService(node1Addr);
             configNode2 = createConfigService(node2Addr);
             configNode3 = createConfigService(node3Addr);
-
-            // Verify all 3 nodes are actually reachable by doing a real request
-            configNode1.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
-            configNode2.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
-            configNode3.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
 
             namingNode1 = createNamingService(node1Addr);
             namingNode2 = createNamingService(node2Addr);
@@ -77,6 +96,35 @@ public class NacosClusterTest {
         } catch (Exception e) {
             Assumptions.assumeTrue(false,
                     "Cluster not available, skipping cluster tests: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Probes a node's liveness endpoint.
+     *
+     * NOTE: do <b>not</b> probe with {@code ConfigService.getConfig(...)} on a
+     * made-up dataId. A missing dataId returns {@code null} instead of raising,
+     * and an unreachable node behaves the same way, so such a probe reports
+     * success for nodes that do not exist and only surfaces the problem later
+     * inside the assertions (as "expected: not &lt;null&gt;" or "Client not
+     * connected"). A real HTTP liveness check fails fast and lets the tests be
+     * skipped instead of failed.
+     */
+    private static boolean isNodeUp(String addr) {
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(3))
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("http://" + addr + "/nacos/v3/admin/core/state/liveness"))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+            HttpResponse<String> response =
+                    client.send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -417,6 +465,19 @@ public class NacosClusterTest {
         String config = configNode2.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertNotNull(config, "Node 2 should see config written on Node 1");
         assertEquals("concurrent=true", config);
+
+        // Distro replication is eventual: wait for the instance registered on
+        // Node 3 to reach Node 2 before asserting, same as the other naming
+        // tests. Without this the poll below races the sync task (which, on
+        // deregister, would carry the already-emptied instance list).
+        TestSupport.waitFor(() -> {
+            try {
+                return namingNode2.getAllInstances(serviceName).stream()
+                        .anyMatch(i -> "10.0.4.1".equals(i.getIp()));
+            } catch (NacosException e) {
+                return false;
+            }
+        }, 10_000);
 
         List<Instance> instances = namingNode2.getAllInstances(serviceName);
         assertTrue(instances.size() >= 1,

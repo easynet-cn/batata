@@ -8,8 +8,8 @@ use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuth
 use batata_consistency::RaftNode;
 use batata_core::service::remote::ConnectionManager;
 use batata_persistence::PersistenceService;
-use batata_plugin::{ControlPlugin, PluginStateProvider};
 use batata_plugin::spi::PluginManager;
+use batata_plugin::{ControlPlugin, PluginStateProvider};
 
 use crate::console::datasource::ConsoleDataSource;
 
@@ -96,7 +96,10 @@ impl std::fmt::Debug for AppState {
             .field("encryption_service", &self.encryption_service.is_some())
             .field("plugin_state_providers", &self.plugin_state_providers.len())
             .field("plugin_manager", &self.plugin_manager.is_some())
-            .field("connection_manager", &self.connection_manager.get().is_some())
+            .field(
+                "connection_manager",
+                &self.connection_manager.get().is_some(),
+            )
             .finish()
     }
 }

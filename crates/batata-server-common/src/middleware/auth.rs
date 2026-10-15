@@ -10,13 +10,13 @@
 // - Unprotected endpoints (no secured! macro) have no auth overhead
 
 use actix_service::forward_ready;
-use core::future::Ready;
 use actix_web::{
     Error, HttpMessage,
     body::EitherBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::Method,
 };
+use core::future::Ready;
 
 use batata_common::RequestToken;
 use futures::future::LocalBoxFuture;

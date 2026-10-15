@@ -127,7 +127,10 @@ impl CheckType {
 
     /// Whether this check type requires active (outbound) checking
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Tcp | Self::Http | Self::Grpc | Self::Mysql | Self::Script | Self::Docker)
+        matches!(
+            self,
+            Self::Tcp | Self::Http | Self::Grpc | Self::Mysql | Self::Script | Self::Docker
+        )
     }
 }
 

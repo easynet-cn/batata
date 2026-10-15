@@ -51,12 +51,12 @@ impl From<anyhow::Error> for AppError {
 }
 
 impl AppError {
-/// Performs the `inner` operation.
+    /// Performs the `inner` operation.
     pub fn inner(&self) -> &anyhow::Error {
         &self.inner
     }
 
-/// Performs the `downcast_ref` operation.
+    /// Performs the `downcast_ref` operation.
     pub fn downcast_ref<E: std::error::Error + Send + Sync + 'static>(&self) -> Option<&E> {
         self.inner.downcast_ref::<E>()
     }

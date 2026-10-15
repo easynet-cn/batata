@@ -31,11 +31,11 @@ pub use http::{AIServices, console_server, main_server, mcp_registry_server};
 pub use logging::{LogRotation, LoggingConfig, LoggingGuard, init_file_logging, init_logging};
 /// Re-exported item.
 pub use shutdown::{GracefulShutdown, ShutdownSignal, run_with_shutdown, wait_for_shutdown_signal};
+#[cfg(feature = "http-tracing")]
+pub use telemetry::shutdown_tracer_provider;
 /// Re-exported item.
 pub use telemetry::{
     OtelConfig, OtelGuard, get_subscriber, init_subscriber, init_tracing_with_otel,
 };
-#[cfg(feature = "http-tracing")]
-pub use telemetry::shutdown_tracer_provider;
 /// Re-exported item.
 pub use xds::{XdsServerHandle, start_xds_service};

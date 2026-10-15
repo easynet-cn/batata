@@ -45,13 +45,33 @@ sdk_run_nacos() {
     local filter="${1:-}"
     local test_flag=""
     [ -n "$filter" ] && test_flag="-Dtest=Nacos${filter}*"
+
+    # Only advertise the cluster peers that are actually listening.
+    #
+    # NacosClusterTest skips itself unless -Dnacos.cluster.node2/node3 are set, so
+    # these properties are what distinguish "cluster" from "standalone" for the
+    # suite. Passing them unconditionally makes a single-node deployment *run* the
+    # cross-node tests instead of skipping them, which shows up as 8 failures that
+    # are really just "there is no node2/node3". Probing first keeps standalone
+    # runs clean (skipped, not failed) without touching the cluster runs.
+    local cluster_peers=""
+    local peers_up=0
+    local code
+    for peer in 8858 8868; do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+            "http://127.0.0.1:${peer}/nacos/v3/admin/core/state/liveness" 2>/dev/null || echo 000)
+        [ "${code}" = "200" ] && peers_up=$((peers_up + 1))
+    done
+    if [ "${peers_up}" -eq 2 ]; then
+        cluster_peers="-Dnacos.cluster.node2=127.0.0.1:8858 -Dnacos.cluster.node3=127.0.0.1:8868"
+    fi
+
     ( cd "${SDK_PROJECT_ROOT}/sdk-tests/nacos-java-tests" && \
         mvn ${MVN_QUIET:+-q} test \
             -Dnacos.server=127.0.0.1:8848 \
             -Dnacos.username=nacos -Dnacos.password=nacos \
             -Dnacos.cluster.node1=127.0.0.1:8848 \
-            -Dnacos.cluster.node2=127.0.0.1:8858 \
-            -Dnacos.cluster.node3=127.0.0.1:8868 \
+            ${cluster_peers} \
             $test_flag )
 }
 

@@ -13,8 +13,8 @@
 //! - `accessToken` and `username` cookies are `HttpOnly=false` (frontend-readable)
 //! - Cookies expire after 60 seconds (frontend syncs to localStorage then clears)
 
-use actix_web::cookie::time::Duration as CookieDuration;
 use actix_web::cookie::Cookie;
+use actix_web::cookie::time::Duration as CookieDuration;
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
@@ -78,9 +78,7 @@ struct OidcConfigResponse {
 ///
 /// Uses the first enabled provider. If an OIDC-type provider is configured
 /// it should appear first in the provider list so it is picked automatically.
-fn get_primary_provider(
-    oauth_service: &dyn batata_common::OAuthProvider,
-) -> Option<String> {
+fn get_primary_provider(oauth_service: &dyn batata_common::OAuthProvider) -> Option<String> {
     oauth_service.get_enabled_providers().into_iter().next()
 }
 
