@@ -393,7 +393,6 @@ impl AiResourcePersistence for DistributedPersistService {
         name: &str,
         resource_type: &str,
     ) -> anyhow::Result<Option<AiResourceInfo>> {
-        self.ensure_consistent_read().await?;
         let key = Self::ai_resource_key(namespace_id, resource_type, name);
         self.get_ai_resource(&key)
     }
@@ -582,7 +581,6 @@ impl AiResourcePersistence for DistributedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AiResourceInfo>> {
-        self.ensure_consistent_read().await?;
         let prefix = format!("{}:{}:", namespace_id, resource_type);
         let mut items = self.scan_ai_resources(&prefix)?;
 
@@ -637,7 +635,6 @@ impl AiResourcePersistence for DistributedPersistService {
         namespace_id: &str,
         resource_type: &str,
     ) -> anyhow::Result<Vec<AiResourceInfo>> {
-        self.ensure_consistent_read().await?;
         let prefix = format!("{}:{}:", namespace_id, resource_type);
         self.scan_ai_resources(&prefix)
     }
@@ -653,7 +650,6 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_type: &str,
         version: &str,
     ) -> anyhow::Result<Option<AiResourceVersionInfo>> {
-        self.ensure_consistent_read().await?;
         let key = Self::ai_resource_version_key(namespace_id, resource_type, name, version);
         self.get_ai_resource_version(&key)
     }
@@ -767,7 +763,6 @@ impl AiResourcePersistence for DistributedPersistService {
         name: &str,
         resource_type: &str,
     ) -> anyhow::Result<Vec<AiResourceVersionInfo>> {
-        self.ensure_consistent_read().await?;
         let prefix = Self::ai_resource_version_prefix(namespace_id, resource_type, name);
         self.scan_ai_resource_versions(&prefix)
     }
@@ -779,7 +774,6 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_type: &str,
         status: &str,
     ) -> anyhow::Result<u64> {
-        self.ensure_consistent_read().await?;
         let prefix = Self::ai_resource_version_prefix(namespace_id, resource_type, name);
         let versions = self.scan_ai_resource_versions(&prefix)?;
         Ok(versions.iter().filter(|v| v.status == status).count() as u64)
@@ -885,7 +879,6 @@ impl AiResourcePersistence for DistributedPersistService {
         &self,
         execution_id: &str,
     ) -> anyhow::Result<Option<PipelineExecutionInfo>> {
-        self.ensure_consistent_read().await?;
         let db = self.reader.db();
         let cf = db.cf_handle(CF_PIPELINE_EXECUTION).ok_or_else(|| {
             anyhow::anyhow!("Column family '{}' not found", CF_PIPELINE_EXECUTION)
@@ -908,7 +901,6 @@ impl AiResourcePersistence for DistributedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<PipelineExecutionInfo>> {
-        self.ensure_consistent_read().await?;
         let db = self.reader.db();
         let cf = db.cf_handle(CF_PIPELINE_EXECUTION).ok_or_else(|| {
             anyhow::anyhow!("Column family '{}' not found", CF_PIPELINE_EXECUTION)

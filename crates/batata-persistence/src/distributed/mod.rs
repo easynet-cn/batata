@@ -91,21 +91,6 @@ impl DistributedPersistService {
         self.invalidate_config_cache(data_id, group, tenant);
     }
 
-    /// Ensure read consistency.
-    ///
-    /// On the leader, uses OpenRaft's `ensure_linearizable()` for strict consistency.
-    /// On followers, `ensure_linearizable()` will fail. In that case, we are still
-    /// safe because `raft_write()` (via `write_with_index()`) already waits for the
-    /// local state machine to apply up to the leader's committed index before returning.
-    /// So by the time we read, the local state machine is up-to-date for our writes.
-    async fn ensure_consistent_read(&self) -> anyhow::Result<()> {
-        // On the leader this provides linearizable reads.
-        // On followers this may fail, which is acceptable because follower writes
-        // already wait for local apply in RaftNode::write_with_index().
-        let _ = self.raft_node.linearizable_read().await;
-        Ok(())
-    }
-
     /// Local, non-linearizable auth read, executed inline on the async worker.
     ///
     /// Auth data (users / roles / permissions) is replicated through Raft and
@@ -167,14 +152,12 @@ impl ConfigPersistence for DistributedPersistService {
             if let Some(cached) = cache.get(&cache_key) {
                 return Ok(cached);
             }
-            // Cache miss — read from RocksDB
-            self.ensure_consistent_read().await?;
+            // Cache miss — read from RocksDB (local read; raft-replicated, rarely changes)
             let json = self.reader.get_config(data_id, group, namespace_id)?;
             let result = json.as_ref().map(EmbeddedPersistService::json_to_config);
             cache.insert(cache_key, result.clone());
             return Ok(result);
         }
-        self.ensure_consistent_read().await?;
         let json = self.reader.get_config(data_id, group, namespace_id)?;
         Ok(json.as_ref().map(EmbeddedPersistService::json_to_config))
     }
@@ -191,7 +174,6 @@ impl ConfigPersistence for DistributedPersistService {
         types: Vec<String>,
         content: &str,
     ) -> anyhow::Result<Page<ConfigStorageData>> {
-        self.ensure_consistent_read().await?;
         let (items, total) = self.reader.search_configs(
             namespace_id,
             data_id,
@@ -337,7 +319,6 @@ impl ConfigPersistence for DistributedPersistService {
         group: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigGrayStorageData>> {
-        self.ensure_consistent_read().await?;
         let json = self.reader.get_config_gray(data_id, group, namespace_id)?;
         Ok(json.as_ref().map(EmbeddedPersistService::json_to_gray))
     }
@@ -381,7 +362,6 @@ impl ConfigPersistence for DistributedPersistService {
         group: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigGrayStorageData>> {
-        self.ensure_consistent_read().await?;
         let jsons = self
             .reader
             .get_all_config_grays(data_id, group, namespace_id)?;
@@ -427,7 +407,6 @@ impl ConfigPersistence for DistributedPersistService {
         &self,
         nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
-        self.ensure_consistent_read().await?;
         let json = self.reader.get_config_history_by_id(nid)?;
         Ok(json.as_ref().map(EmbeddedPersistService::json_to_history))
     }
@@ -440,7 +419,6 @@ impl ConfigPersistence for DistributedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
-        self.ensure_consistent_read().await?;
         let (items, total) =
             self.reader
                 .search_config_history(data_id, group, namespace_id, page_no, page_size)?;
@@ -453,12 +431,10 @@ impl ConfigPersistence for DistributedPersistService {
     }
 
     async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i64> {
-        self.ensure_consistent_read().await?;
         self.reader.count_configs(namespace_id).map(|v| v as i64)
     }
 
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>> {
-        self.ensure_consistent_read().await?;
         self.reader.find_all_group_names(namespace_id)
     }
 
@@ -469,7 +445,6 @@ impl ConfigPersistence for DistributedPersistService {
         namespace_id: &str,
         current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
-        self.ensure_consistent_read().await?;
         let (entries, _) =
             self.reader
                 .search_config_history(data_id, group, namespace_id, 1, u64::MAX)?;
@@ -501,8 +476,6 @@ impl ConfigPersistence for DistributedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
-        self.ensure_consistent_read().await?;
-
         let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
         let (items, total) = self.reader.search_config_history_with_filters(
             &prefix, op_type, src_user, start_time, end_time, page_no, page_size,
@@ -519,7 +492,6 @@ impl ConfigPersistence for DistributedPersistService {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigStorageData>> {
-        self.ensure_consistent_read().await?;
         let configs = self.reader.list_configs(namespace_id)?;
         Ok(configs
             .iter()
@@ -534,7 +506,6 @@ impl ConfigPersistence for DistributedPersistService {
         data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<ConfigStorageData>> {
-        self.ensure_consistent_read().await?;
         let all_configs = self.reader.list_configs(namespace_id)?;
 
         let filtered: Vec<ConfigStorageData> = all_configs
@@ -616,7 +587,6 @@ impl ConfigPersistence for DistributedPersistService {
 #[async_trait]
 impl NamespacePersistence for DistributedPersistService {
     async fn namespace_find_all(&self) -> anyhow::Result<Vec<NamespaceInfo>> {
-        self.ensure_consistent_read().await?;
         let namespaces = self.reader.list_namespaces()?;
         let mut result = Vec::with_capacity(namespaces.len());
 
@@ -633,7 +603,6 @@ impl NamespacePersistence for DistributedPersistService {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Option<NamespaceInfo>> {
-        self.ensure_consistent_read().await?;
         let json = self.reader.get_namespace(namespace_id)?;
         match json {
             Some(ref v) => {
@@ -685,7 +654,6 @@ impl NamespacePersistence for DistributedPersistService {
     }
 
     async fn namespace_check(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        self.ensure_consistent_read().await?;
         Ok(self.reader.get_namespace(namespace_id)?.is_some())
     }
 }
