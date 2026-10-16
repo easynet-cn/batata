@@ -10,7 +10,7 @@
 use crate::bincode;
 use std::hash::Hasher;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use openraft::storage::{RaftSnapshotBuilder, RaftStateMachine, Snapshot};
@@ -39,6 +39,24 @@ fn compute_checksum(data: &[u8]) -> u64 {
 const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
 /// Magic header for bincode-format snapshots (backward-compatible with legacy JSON)
 const SNAPSHOT_MAGIC: &[u8] = b"BSNA";
+
+// On-disk snapshot layout, mirroring JRaft's `LocalSnapshotStorage`:
+//
+//   {snapshot_dir}/temp/                  snapshot being written
+//   {snapshot_dir}/snapshot_{index}/      committed snapshot (latest one wins)
+//
+// Each of those directories holds `__raft_snapshot_meta` (serialized
+// `SnapshotMeta`) plus `data` (the snapshot body). Writing goes through `temp`
+// and is published with a single `rename`, so a crash mid-write can never
+// expose a half-written snapshot.
+/// Directory a snapshot is staged in before it is published by rename.
+const SNAPSHOT_TEMP_DIR: &str = "temp";
+/// Prefix of a committed snapshot directory, suffixed with the last applied index.
+const SNAPSHOT_DIR_PREFIX: &str = "snapshot_";
+/// File holding the serialized `SnapshotMeta` of a snapshot.
+const SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
+/// File holding the snapshot body.
+const SNAPSHOT_DATA_FILE: &str = "data";
 
 /// Helper to create StorageError for state machine operations
 fn sm_error(
@@ -185,6 +203,9 @@ pub struct RocksStateMachine {
     health_check_hook: SharedHealthCheckHook,
     /// Pre-configured WriteOptions for state-machine writes (sync, WAL settings).
     pub(super) write_opts: rocksdb::WriteOptions,
+    /// Directory snapshots are persisted to, using JRaft's `LocalSnapshotStorage`
+    /// layout. `None` keeps snapshots memory-only (no restart recovery).
+    snapshot_dir: Option<PathBuf>,
 }
 
 /// Serialize a JSON value directly to bytes, avoiding intermediate String allocation.
@@ -205,6 +226,184 @@ pub use records::{
 };
 
 impl RocksStateMachine {
+    /// Index a snapshot is filed under: the last applied log index, or 0 for a
+    /// state machine that has not applied anything yet.
+    fn snapshot_index(meta: &SnapshotMeta<NodeId, openraft::BasicNode>) -> u64 {
+        meta.last_log_id.map(|l| l.index).unwrap_or(0)
+    }
+
+    /// Publish `data` as this node's current snapshot on disk.
+    ///
+    /// Stages everything under `temp/` and publishes with a single `rename`, so
+    /// a crash mid-write never leaves a readable but incomplete snapshot. This
+    /// is the same staging policy JRaft's `LocalSnapshotStorage` uses.
+    async fn persist_snapshot(
+        &self,
+        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
+        data: &[u8],
+    ) -> Result<(), StorageError<NodeId>> {
+        let Some(dir) = self.snapshot_dir.as_ref() else {
+            return Ok(());
+        };
+
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        let temp = dir.join(SNAPSHOT_TEMP_DIR);
+        if temp.exists() {
+            tokio::fs::remove_dir_all(&temp)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        }
+        tokio::fs::create_dir_all(&temp)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        let meta_bytes = bincode::serialize(meta).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        tokio::fs::write(temp.join(SNAPSHOT_META_FILE), &meta_bytes)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        tokio::fs::write(temp.join(SNAPSHOT_DATA_FILE), data)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        let target = dir.join(format!(
+            "{}{}",
+            SNAPSHOT_DIR_PREFIX,
+            Self::snapshot_index(meta)
+        ));
+        if target.exists() {
+            tokio::fs::remove_dir_all(&target)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        }
+        tokio::fs::rename(&temp, &target)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        self.prune_snapshots(&target).await
+    }
+
+    /// Drop every committed snapshot except `keep`.
+    ///
+    /// JRaft keeps only the newest snapshot too -- older ones are pure disk
+    /// cost once the corresponding log entries have been purged.
+    async fn prune_snapshots(&self, keep: &Path) -> Result<(), StorageError<NodeId>> {
+        let Some(dir) = self.snapshot_dir.as_ref() else {
+            return Ok(());
+        };
+
+        let mut entries = tokio::fs::read_dir(dir)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+        {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with(SNAPSHOT_DIR_PREFIX) {
+                continue;
+            }
+
+            let path = entry.path();
+            if path.as_path() == keep || !path.is_dir() {
+                continue;
+            }
+
+            if let Err(e) = tokio::fs::remove_dir_all(&path).await {
+                warn!("Failed to remove stale snapshot {}: {}", name, e);
+            } else {
+                info!("Removed stale snapshot {}", name);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Locate the newest committed snapshot directory, if any.
+    async fn latest_snapshot_dir(&self) -> Option<PathBuf> {
+        let dir = self.snapshot_dir.as_ref()?;
+        let mut entries = tokio::fs::read_dir(dir).await.ok()?;
+        let mut best: Option<(u64, PathBuf)> = None;
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(index) = name
+                .strip_prefix(SNAPSHOT_DIR_PREFIX)
+                .and_then(|suffix| suffix.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            if best.as_ref().map(|(b, _)| index > *b).unwrap_or(true) {
+                best = Some((index, entry.path()));
+            }
+        }
+
+        best.map(|(_, path)| path)
+    }
+
+    /// Hand the post-install set of persistent instances to the naming hook.
+    ///
+    /// Snapshot install bypasses the normal apply path, so no `on_register` /
+    /// `on_deregister` ever fires for the replaced entries. Without this the
+    /// in-memory naming view diverges from `CF_INSTANCES` in both directions:
+    /// it keeps serving instances the cluster deleted, and it misses the ones
+    /// the snapshot added.
+    ///
+    /// The hook is invoked with the full authoritative set rather than a diff
+    /// because a snapshot replaces state wholesale -- there is no cheap way to
+    /// know what changed, and the receiving side owns the in-memory view so it
+    /// can compute the difference itself.
+    async fn reconcile_naming_view(&self) {
+        let hook = {
+            let guard = self.naming_hook.read().await;
+            match guard.as_ref() {
+                Some(hook) => hook.clone(),
+                None => return,
+            }
+        };
+
+        let Some(cf) = self.db.cf_handle(CF_INSTANCES) else {
+            return;
+        };
+
+        let mut instances = Vec::new();
+        let mut malformed = 0usize;
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            match item {
+                Ok((_key, value)) => match bincode::deserialize::<StoredInstance>(&value) {
+                    Ok(stored) => instances.push(stored),
+                    Err(e) => {
+                        malformed += 1;
+                        warn!("Undecodable instance after snapshot install: {}", e);
+                    }
+                },
+                Err(e) => warn!("Unreadable instance after snapshot install: {}", e),
+            }
+        }
+
+        info!(
+            "Reconciling {} persistent instances after snapshot install ({} undecodable)",
+            instances.len(),
+            malformed
+        );
+        hook.on_snapshot_loaded(instances);
+    }
+
+    /// Enable on-disk snapshot persistence under `dir`.
+    ///
+    /// Without this, snapshots stay memory-only: a node whose log has been
+    /// purged cannot rebuild its state machine after a restart. The on-disk
+    /// layout mirrors JRaft's `LocalSnapshotStorage`.
+    pub fn with_snapshot_dir(mut self, dir: PathBuf) -> Self {
+        self.snapshot_dir = Some(dir);
+        self
+    }
+
     /// Get a reference to the underlying RocksDB instance
     pub fn db(&self) -> Arc<DB> {
         self.db.clone()
@@ -402,6 +601,7 @@ impl RocksStateMachine {
             naming_hook: new_shared_naming_hook(),
             health_check_hook: new_shared_health_check_hook(),
             write_opts: custom_write_opts.unwrap_or_default(),
+            snapshot_dir: None,
         };
 
         // Load cached values asynchronously
@@ -1481,6 +1681,10 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
 
         info!("Built snapshot {} with {} bytes", snapshot_id, data.len());
 
+        // Persist before handing the bytes to openraft so the node can recover
+        // from this snapshot after a restart instead of replaying a purged log.
+        self.persist_snapshot(&meta, &data).await?;
+
         Ok(Snapshot {
             meta,
             snapshot: Box::new(Cursor::new(data)),
@@ -1542,9 +1746,44 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
-        // For now, return None as we don't persist snapshots
-        // In production, this would load the latest snapshot from disk
-        Ok(None)
+        let Some(path) = self.latest_snapshot_dir().await else {
+            return Ok(None);
+        };
+
+        let meta_bytes = match tokio::fs::read(path.join(SNAPSHOT_META_FILE)).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!("Unreadable snapshot meta at {:?}: {}", path, e);
+                return Ok(None);
+            }
+        };
+        let meta: SnapshotMeta<NodeId, openraft::BasicNode> =
+            match bincode::deserialize(&meta_bytes) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    warn!("Corrupt snapshot meta at {:?}: {}", path, e);
+                    return Ok(None);
+                }
+            };
+
+        let data = match tokio::fs::read(path.join(SNAPSHOT_DATA_FILE)).await {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("Unreadable snapshot data at {:?}: {}", path, e);
+                return Ok(None);
+            }
+        };
+
+        info!(
+            "Loaded snapshot {} from disk ({} bytes)",
+            meta.snapshot_id,
+            data.len()
+        );
+
+        Ok(Some(Snapshot {
+            meta,
+            snapshot: Box::new(Cursor::new(data)),
+        }))
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
@@ -1557,6 +1796,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             naming_hook: self.naming_hook.clone(),
             health_check_hook: self.health_check_hook.clone(),
             write_opts: rocksdb::WriteOptions::default(),
+            snapshot_dir: self.snapshot_dir.clone(),
         }
     }
 
@@ -1641,6 +1881,17 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             self.save_last_applied(log_id).await?;
         }
         self.save_membership(meta.last_membership.clone()).await?;
+
+        // A snapshot received from the leader is just as good as one we built,
+        // so persist it too -- otherwise this node would have nothing to recover
+        // from until it manages to build a snapshot of its own.
+        self.persist_snapshot(meta, &data).await?;
+
+        // The install rewrote every column family directly, so the apply-back
+        // hook never ran for the replaced entries. Hand the new authoritative
+        // set to the hook so the in-memory view cannot keep serving instances
+        // the rest of the cluster already deleted.
+        self.reconcile_naming_view().await;
 
         info!("Snapshot installed: {:?}", meta.snapshot_id);
         Ok(())

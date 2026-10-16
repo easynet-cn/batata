@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 
+use super::state_machine::StoredInstance;
+
 /// Callback invoked by `RocksStateMachine` after a persistent instance
 /// apply succeeds. Implementations must be idempotent — the state machine
 /// may replay an apply during snapshot install or cold-start recovery.
@@ -52,6 +54,26 @@ pub trait NamingApplyHook: Send + Sync {
         enabled: Option<bool>,
         metadata: Option<&str>,
     );
+
+    /// Reconcile the in-memory view after a snapshot install replaced the
+    /// whole state machine.
+    ///
+    /// `instances` is the authoritative full set read back from
+    /// `CF_INSTANCES` right after the install. Implementations must make
+    /// their in-memory view match it: register new entries, update changed
+    /// ones, and **remove** any persistent instance the snapshot does not
+    /// contain. A snapshot can delete state as well as add it, which is why
+    /// the incremental `on_deregister` alone cannot cover this path -- a
+    /// purely additive replay leaves instances the rest of the cluster
+    /// already deleted still being served by this node.
+    ///
+    /// Mirrors Nacos' `PersistentInstanceSnapshotOperation.loadSnapshot()`,
+    /// which updates existing clients, adds new ones, and then calls
+    /// `removeDeadClient()` for everything the snapshot omits.
+    ///
+    /// Defaults to a no-op so hook implementations that keep no derived
+    /// in-memory state are unaffected.
+    fn on_snapshot_loaded(&self, _instances: Vec<StoredInstance>) {}
 }
 
 /// Shared slot holding the optional hook. Registration happens after both

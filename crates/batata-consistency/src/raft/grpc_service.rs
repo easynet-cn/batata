@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use batata_server_api::raft::{
     AddLearnerRequest, AddLearnerResponse, AppendEntriesRequest as ProtoAppendEntriesRequest,
@@ -17,8 +17,7 @@ use batata_server_api::raft::{
     InstallSnapshotResponse as ProtoInstallSnapshotResponse, LogId as ProtoLogId,
     RaftNodeInfo as ProtoRaftNodeInfo, TriggerElectionRequest, TriggerElectionResponse,
     VoteRequest as ProtoVoteRequest, VoteResponse as ProtoVoteResponse,
-    raft_management_service_server::RaftManagementService,
-    raft_service_server::RaftService,
+    raft_management_service_server::RaftManagementService, raft_service_server::RaftService,
 };
 
 use super::node::RaftNode;
@@ -46,9 +45,7 @@ impl RaftGrpcService {
     }
 
     /// Convert proto Entry to openraft Entry using bincode deserialization.
-    fn from_proto_entry(
-        entry: ProtoEntry,
-    ) -> anyhow::Result<openraft::Entry<TypeConfig>> {
+    fn from_proto_entry(entry: ProtoEntry) -> anyhow::Result<openraft::Entry<TypeConfig>> {
         let log_id = super::proto_convert::from_proto_log_id(entry.log_id)
             .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
 
@@ -188,10 +185,13 @@ impl RaftService for RaftGrpcService {
         let raft_node = self.get_raft().await?;
         let mut stream = request.into_inner();
 
-        // Collect all chunks from the stream
-        let mut total_bytes: usize = 0;
+        // Collect every chunk into one contiguous buffer. The leader streams
+        // the snapshot body over gRPC; openraft only sees it once it is
+        // reassembled into a `Snapshot` and handed to `install_full_snapshot`.
+        let mut data: Vec<u8> = Vec::new();
         let mut chunk_count: usize = 0;
-        let mut snapshot_id = String::new();
+        let mut meta: Option<batata_server_api::raft::SnapshotMeta> = None;
+        let mut vote: Option<openraft::Vote<NodeId>> = None;
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| {
@@ -199,12 +199,16 @@ impl RaftService for RaftGrpcService {
                 Status::internal(format!("Failed to receive snapshot chunk: {}", e))
             })?;
 
-            // Extract metadata from first chunk
-            if let Some(ref meta) = chunk.meta {
-                snapshot_id = meta.snapshot_id.clone();
+            // Metadata and vote are attached to the first chunk; later chunks
+            // leave them unset to save bandwidth.
+            if meta.is_none() {
+                meta = chunk.meta.clone();
+            }
+            if vote.is_none() {
+                vote = super::proto_convert::from_proto_vote(chunk.vote.clone());
             }
 
-            total_bytes += chunk.data.len();
+            data.extend_from_slice(&chunk.data);
             chunk_count += 1;
 
             if chunk.done {
@@ -212,20 +216,52 @@ impl RaftService for RaftGrpcService {
             }
         }
 
-        // Note: In this implementation, snapshot data is transferred via the full_snapshot
-        // method in RaftNetworkV2. This gRPC endpoint receives the data but the actual
-        // state machine update is handled by openraft's internal mechanisms when the
-        // snapshot is fully received.
-        //
-        // The full_snapshot() method in network.rs sends the data, and openraft
-        // coordinates the state machine update through its storage traits.
+        if data.is_empty() {
+            warn!(
+                "Ignoring empty snapshot stream from leader (chunks={})",
+                chunk_count
+            );
+            let metrics = raft_node.metrics();
+            let fallback_vote = metrics.vote;
+            return Ok(Response::new(ProtoInstallSnapshotResponse {
+                term: fallback_vote.leader_id().term,
+                vote: Some(super::proto_convert::to_proto_vote(&fallback_vote)),
+            }));
+        }
+
+        let Some(meta) = super::proto_convert::from_proto_snapshot_meta(meta) else {
+            error!("Snapshot stream without metadata, refusing to install");
+            return Err(Status::invalid_argument(
+                "Snapshot metadata missing from stream",
+            ));
+        };
+
+        // Fall back to the local vote when the leader did not attach one:
+        // installing with a stale vote would be rejected by openraft anyway,
+        // but replying with our own vote lets the leader step down correctly.
+        let vote = vote.unwrap_or_else(|| raft_node.metrics().vote);
+
+        let snapshot_id = meta.snapshot_id.clone();
+        let total_bytes = data.len();
+        let snapshot = openraft::Snapshot {
+            meta,
+            snapshot: Box::new(std::io::Cursor::new(data)),
+        };
+
+        raft_node
+            .raft()
+            .install_full_snapshot(vote, snapshot)
+            .await
+            .map_err(|e| {
+                error!("Failed to install snapshot {}: {}", snapshot_id, e);
+                Status::internal(format!("Failed to install snapshot: {}", e))
+            })?;
 
         info!(
-            "Snapshot stream received: id={}, chunks={}, bytes={}",
+            "Snapshot installed: id={}, chunks={}, bytes={}",
             snapshot_id, chunk_count, total_bytes
         );
 
-        // Return response with current vote
         let metrics = raft_node.metrics();
         let vote = metrics.vote;
 

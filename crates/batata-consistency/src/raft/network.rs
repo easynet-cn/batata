@@ -340,12 +340,12 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             return Err(StreamingError::Unreachable(Unreachable::new(&e)));
         }
 
-        // Create snapshot metadata
-        let meta = Some(batata_server_api::raft::SnapshotMeta {
-            last_log_id: Self::to_proto_log_id(snapshot.meta.last_log_id),
-            last_membership: None, // Membership is serialized separately in the snapshot data
-            snapshot_id: snapshot.meta.snapshot_id.clone(),
-        });
+        // Create snapshot metadata.
+        //
+        // The membership must ride along: the receiving side calls
+        // `save_membership(meta.last_membership)` after installing, so a
+        // missing membership would wipe the config on the follower.
+        let meta = Some(super::proto_convert::to_proto_snapshot_meta(&snapshot.meta));
 
         // Split data into chunks and create streaming requests
         const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
@@ -355,15 +355,17 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         let requests: Vec<batata_server_api::raft::InstallSnapshotRequest> = chunks
             .into_iter()
             .enumerate()
-            .map(|(i, chunk)| batata_server_api::raft::InstallSnapshotRequest {
-                term: vote.leader_id().term,
-                leader_id: vote.leader_id().node_id,
-                meta: if i == 0 { meta.clone() } else { None },
-                offset: (i * CHUNK_SIZE) as u64,
-                data: chunk.to_vec(),
-                done: i == total_chunks - 1,
-                vote: Some(Self::to_proto_vote(&vote)),
-            })
+            .map(
+                |(i, chunk)| batata_server_api::raft::InstallSnapshotRequest {
+                    term: vote.leader_id().term,
+                    leader_id: vote.leader_id().node_id,
+                    meta: if i == 0 { meta.clone() } else { None },
+                    offset: (i * CHUNK_SIZE) as u64,
+                    data: chunk.to_vec(),
+                    done: i == total_chunks - 1,
+                    vote: Some(Self::to_proto_vote(&vote)),
+                },
+            )
             .collect();
 
         // Send snapshot stream with cancellation support

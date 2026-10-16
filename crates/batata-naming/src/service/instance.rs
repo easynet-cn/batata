@@ -7,7 +7,10 @@ use std::{
 
 use crate::model::{Instance, Service};
 
-use super::{NamingService, build_instance_key, build_instance_key_parts, build_service_key};
+use super::{
+    NamingService, build_instance_key, build_instance_key_parts, build_service_key,
+    parse_service_key,
+};
 
 impl NamingService {
     /// Lookup a single instance by its storage key (`ip#port#cluster`).
@@ -744,6 +747,37 @@ impl NamingService {
             .get(&service_key)
             .map(|instances| instances.len())
             .unwrap_or(0)
+    }
+
+    /// Keys of every in-memory **persistent** instance.
+    ///
+    /// Returns `(namespace, group, service, instance_key)` tuples, where
+    /// `instance_key` is the `ip#port#cluster` storage key. Ephemeral
+    /// instances are deliberately excluded: they come from Distro heartbeats
+    /// rather than the Raft state machine, so a snapshot install must not
+    /// touch them.
+    ///
+    /// Used by the Raft apply-back hook to reconcile the in-memory view after
+    /// a snapshot install replaces `CF_INSTANCES` wholesale.
+    pub fn persistent_instance_keys(&self) -> Vec<(String, String, String, String)> {
+        let mut keys = Vec::new();
+        for entry in self.services.iter() {
+            let Some((ns, group, service)) = parse_service_key(entry.key()) else {
+                continue;
+            };
+            for instance in entry.value().iter() {
+                if instance.value().ephemeral {
+                    continue;
+                }
+                keys.push((
+                    ns.to_string(),
+                    group.to_string(),
+                    service.to_string(),
+                    instance.key().clone(),
+                ));
+            }
+        }
+        keys
     }
 
     /// Get healthy instance count for a service
