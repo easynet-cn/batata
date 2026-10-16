@@ -36,6 +36,19 @@ const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_BLOCK_CACHE_SIZE: usize = 256 * 1024 * 1024;
 const DEFAULT_BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
 
+/// Write options for Raft votes and log entries.
+///
+/// openraft requires these writes to reach stable storage before the call
+/// returns. A vote that only made it to the page cache is lost on power
+/// failure, and the node may then vote again in the same term, which elects
+/// two leaders; log entries that were acknowledged to the leader but not
+/// flushed are lost the same way.
+fn sync_write_options() -> rocksdb::WriteOptions {
+    let mut opts = rocksdb::WriteOptions::default();
+    opts.set_sync(true);
+    opts
+}
+
 /// Helper to create StorageError for vote operations
 fn vote_error(
     e: impl std::error::Error + Send + Sync + 'static,
@@ -293,7 +306,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
     async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
         let bytes = bincode::serialize(vote).map_err(|e| vote_error(e, ErrorVerb::Write))?;
         self.db
-            .put_cf(self.cf_state(), KEY_VOTE, &bytes)
+            .put_cf_opt(self.cf_state(), KEY_VOTE, &bytes, &sync_write_options())
             .map_err(|e| vote_error(e, ErrorVerb::Write))?;
 
         *self.vote.write().await = Some(*vote);
@@ -342,7 +355,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         }
 
         self.db
-            .write(batch)
+            .write_opt(batch, &sync_write_options())
             .map_err(|e| logs_error(e, ErrorVerb::Write))?;
 
         if let Some(log_id) = last_log_id {
@@ -372,7 +385,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         }
 
         self.db
-            .write(batch)
+            .write_opt(batch, &sync_write_options())
             .map_err(|e| logs_error(e, ErrorVerb::Write))?;
 
         // Update cached last log ID
@@ -406,7 +419,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         batch.put_cf(self.cf_state(), KEY_LAST_PURGED, &last_purged_bytes);
 
         self.db
-            .write(batch)
+            .write_opt(batch, &sync_write_options())
             .map_err(|e| logs_error(e, ErrorVerb::Write))?;
 
         *self.last_purged.write().await = Some(log_id);

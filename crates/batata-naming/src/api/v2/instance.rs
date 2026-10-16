@@ -18,7 +18,7 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, put, web};
 use batata_core::service::distro::{DistroDataType, DistroProtocol};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::debug;
 
 use batata_api::naming::model::Instance;
 use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
@@ -178,7 +178,7 @@ pub async fn register_instance(
     .await;
 
     if result {
-        info!(
+        debug!(
             namespace_id = %namespace_id,
             group_name = %group_name,
             service_name = %form.service_name,
@@ -273,7 +273,7 @@ pub async fn deregister_instance(
     .await;
 
     if result {
-        info!(
+        debug!(
             namespace_id = %namespace_id,
             group_name = %group_name,
             service_name = %params.service_name,
@@ -391,7 +391,7 @@ pub async fn update_instance(
     .await;
 
     if result {
-        info!(
+        debug!(
             namespace_id = %namespace_id,
             group_name = %group_name,
             service_name = %form.service_name,
@@ -731,7 +731,7 @@ pub async fn batch_update_metadata(
         }
     }
 
-    info!(
+    debug!(
         namespace_id = %namespace_id,
         group_name = %group_name,
         service_name = %form.service_name,
@@ -866,7 +866,7 @@ pub async fn batch_delete_metadata(
         }
     }
 
-    info!(
+    debug!(
         namespace_id = %namespace_id,
         group_name = %group_name,
         service_name = %params.service_name,

@@ -161,8 +161,14 @@ data:
     # Enable datasource SQL logging
     #batata.plugin.datasource.log.enabled: true
 
-    # Base data directory (for embedded modes only)
-    #batata.persistence.embedded.data_dir: data
+    # Batata home directory (mirrors Nacos `nacos.home`).
+    # Defaults to ${user.home}/batata; can also be set via the BATATA_HOME env var.
+    #batata.home: /opt/batata
+
+    # Base data directory (for embedded modes only).
+    # Defaults to ${batata.home}/data. In containers, pin this to the PVC mount
+    # path so data survives pod restarts.
+    #batata.persistence.embedded.data_dir: /batata-data
     # RocksDB database name (subdirectory under data_dir, default: batata_rocksdb)
     #batata.persistence.embedded.db_name: batata_rocksdb
 
@@ -290,10 +296,17 @@ data:
     # Control Plugin (TPS Rate Limiting & Connection Control)
     # =============================================================================
 
-    # Enable TPS rate limiting and connection control
+    # Enable TPS rate limiting and connection control.
+    # Disabled by default, matching Nacos: upstream ships the `noLimit`
+    # TpsControlManager, whose check() always skips, so a fresh node never
+    # rate-limits until an operator opts in.
     batata.plugin.control.enabled: false
     # Default TPS limit per control point when no specific rule matches
     batata.plugin.control.default_tps: 10000
+    # Rules are persisted on the local disk, the only built-in storage
+    # backend (same as Nacos LocalDiskRuleStorage), under
+    # ${batata.persistence.embedded.data_dir}/control/rules.json.
+    # Mount a PVC at the data directory, otherwise rules are lost on restart.
     # Maximum concurrent gRPC connections
     batata.plugin.control.max_connections: 50000
 

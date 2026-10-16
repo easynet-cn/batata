@@ -466,24 +466,34 @@ impl DistroProtocol {
         self.start_verify_task().await;
     }
 
-    /// Refresh the mapper with current healthy members from the server list
+    /// Refresh the mapper with the current member list.
+    ///
+    /// Only `Down` members are excluded. Nacos keeps every node in the hash
+    /// ring unless it is really gone, so a single failed health check (which
+    /// flips a member to `Suspicious`) must not shrink the ring: shrinking
+    /// redistributes responsibility and would make healthy replicas look
+    /// "not responsible" for keys they still hold.
     pub fn refresh_mapper(&self) {
         let healthy: Vec<String> = self
             .members
             .iter()
-            .filter(|e| matches!(e.value().state, batata_api::model::NodeState::Up))
+            .filter(|e| !matches!(e.value().state, batata_api::model::NodeState::Down))
             .map(|e| e.key().clone())
             .collect();
         self.mapper.update_members(healthy);
     }
 
     /// Subscribe to cluster member change events and immediately trigger
-    /// `refresh_mapper` + `cleanup_non_responsible_keys` whenever the
-    /// membership changes. The verify loop still runs its own periodic
-    /// refresh as a safety net (so single missed events do not stall
-    /// reconciliation), but event-driven refresh drops the typical
-    /// convergence time from up to one verify_interval (~5s) down to
+    /// `refresh_mapper` whenever the membership changes. The verify loop still
+    /// runs its own periodic refresh as a safety net (so single missed events
+    /// do not stall reconciliation), but event-driven refresh drops the
+    /// typical convergence time from up to one verify_interval (~5s) down to
     /// milliseconds.
+    ///
+    /// Unlike the mapper refresh, this never deletes data. Nacos keeps a full
+    /// replica set on every node, so a key that this node is no longer
+    /// responsible for must still be served until the responsible node
+    /// overwrites it.
     ///
     /// Safe to call from any context — spawns a background listener task.
     pub fn subscribe_member_changes(
@@ -513,13 +523,6 @@ impl DistroProtocol {
                             evt.change_type
                         );
                         this.refresh_mapper();
-                        let removed = this.cleanup_non_responsible_keys().await;
-                        if removed > 0 {
-                            info!(
-                                "Distro event-driven cleanup: removed {} non-responsible keys",
-                                removed
-                            );
-                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         warn!(
@@ -538,13 +541,19 @@ impl DistroProtocol {
     }
 
     /// Drop all locally-stored keys that the local node is no longer
-    /// responsible for after the most recent mapper refresh.
+    /// responsible for.
     ///
-    /// Called after `refresh_mapper` (cluster membership changed). Without
-    /// this, nodes keep stale data for keys now owned by other nodes —
-    /// causing duplicate writes and inconsistent query results. Nacos 3.x
-    /// achieves the same outcome via `DistroVerifyTimedTask` filtering on
-    /// the current responsible set.
+    /// Not called automatically any more. Nacos keeps a full replica set on
+    /// every node: a node serves every key it has, and `is_responsible()` is
+    /// only used to decide who answers verification and who acts as the sync
+    /// source. Deleting "non-responsible" replicas therefore removes data
+    /// that is still being served, which makes instances disappear from query
+    /// results whenever the hash ring shrinks (for example when one member is
+    /// briefly unreachable). Both former call sites (the verify loop and the
+    /// member-change listener) now only refresh the mapper.
+    ///
+    /// Kept as an explicit maintenance operation: it is the right tool when a
+    /// member is permanently removed and its data must be reclaimed.
     ///
     /// Returns the total number of keys removed across all registered
     /// handlers.

@@ -718,6 +718,30 @@ impl Configuration {
         )
     }
 
+    /// Fallback Batata home directory: `${user.home}/batata`.
+    ///
+    /// Mirrors Nacos `EnvUtils.getNacosHome()`, which falls back to
+    /// `${user.home}/nacos` when `nacos.home` is not set.
+    fn default_batata_home() -> String {
+        let user_home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{user_home}/batata")
+    }
+
+    /// Get the Batata home directory.
+    ///
+    /// Resolution order: the `batata.home` config key (also settable with the
+    /// `BATATA_HOME` environment variable) and, when absent,
+    /// `${user.home}/batata`. Every relative data path is anchored here so the
+    /// server no longer depends on the process working directory.
+    pub fn batata_home(&self) -> String {
+        self.typed
+            .home
+            .clone()
+            .unwrap_or_else(Self::default_batata_home)
+    }
+
     /// Get the base data directory for embedded modes.
     /// This is the root directory for all persistent data (RocksDB, node-id, etc.)
     pub fn embedded_data_dir(&self) -> String {
@@ -726,7 +750,7 @@ impl Configuration {
             .embedded
             .data_dir
             .clone()
-            .unwrap_or_else(|| "data".to_string())
+            .unwrap_or_else(|| format!("{}/data", self.batata_home()))
     }
 
     /// Get the RocksDB database name (subdirectory under data_dir).
@@ -1017,13 +1041,26 @@ impl Configuration {
     }
 
     /// Create ControlPluginConfig from configuration
+    ///
+    /// `storage_type` is pinned to the local disk backend: like Nacos, the
+    /// local disk is the only built-in rule storage and an in-memory backend
+    /// is meaningless because rules would vanish on restart.
     pub fn control_plugin_config(&self) -> batata_plugin::ControlPluginConfig {
         batata_plugin::ControlPluginConfig {
             enabled: self.control_plugin_enabled(),
             default_tps: self.control_plugin_default_tps(),
             default_max_connections: self.control_plugin_max_connections(),
+            storage_type: batata_plugin::RuleStorageType::File,
             ..Default::default()
         }
+    }
+
+    /// Path of the file holding control rules (TPS + connection limits).
+    ///
+    /// Lives under the configured data directory, mirroring Nacos which keeps
+    /// its rules under `${nacos.home}/data/`.
+    pub fn control_rule_file(&self) -> String {
+        format!("{}/control/rules.json", self.embedded_data_dir())
     }
 
     /// Create RateLimitConfig from configuration
@@ -2744,7 +2781,7 @@ mod tests {
     #[test]
     fn test_typed_control_plugin_defaults() {
         let cfg = build_config(vec![]);
-        assert!(cfg.control_plugin_enabled());
+        assert!(!cfg.control_plugin_enabled());
         assert_eq!(cfg.control_plugin_default_tps(), 10000);
         assert_eq!(cfg.control_plugin_max_connections(), 50000);
     }
@@ -2757,6 +2794,14 @@ mod tests {
         ]);
         assert!(!cfg.control_plugin_enabled());
         assert_eq!(cfg.control_plugin_default_tps(), 5000);
+    }
+
+    #[test]
+    fn test_typed_control_plugin_opt_in() {
+        // Disabled by default (Nacos parity), but an explicit opt-in must win.
+        let cfg = build_config(vec![("batata.plugin.control.enabled", true.into())]);
+        assert!(cfg.control_plugin_enabled());
+        assert_eq!(cfg.control_plugin_default_tps(), 10000);
     }
 
     #[test]
@@ -3003,9 +3048,35 @@ mod tests {
     #[test]
     fn test_typed_persistence_defaults() {
         let cfg = build_config(vec![]);
-        assert_eq!(cfg.embedded_data_dir(), "data");
+        assert_eq!(
+            cfg.embedded_data_dir(),
+            format!("{}/data", cfg.batata_home())
+        );
         assert_eq!(cfg.embedded_db_name(), "batata_rocksdb");
-        assert_eq!(cfg.embedded_rocksdb_dir(), "data/batata_rocksdb");
+        assert_eq!(
+            cfg.embedded_rocksdb_dir(),
+            format!("{}/data/batata_rocksdb", cfg.batata_home())
+        );
+    }
+
+    #[test]
+    fn test_typed_persistence_home_anchors_data_dir() {
+        let cfg = build_config(vec![("batata.home", "/opt/batata".into())]);
+        assert_eq!(cfg.batata_home(), "/opt/batata");
+        assert_eq!(cfg.embedded_data_dir(), "/opt/batata/data");
+        assert_eq!(
+            cfg.embedded_rocksdb_dir(),
+            "/opt/batata/data/batata_rocksdb"
+        );
+    }
+
+    #[test]
+    fn test_typed_home_env_var_key() {
+        // `collect_env_overrides("BATATA")` turns `BATATA_HOME` into the
+        // `batata.home` config key, mirroring Nacos `nacos.home`. Keep this
+        // pinned so a rename of the constant does not silently break the
+        // environment-variable path.
+        assert_eq!(crate::model::constants::HOME_KEY, "batata.home");
     }
 
     #[test]
@@ -3298,7 +3369,7 @@ batata.server.main.port: 8888
         assert!(!typed.ratelimit.enabled);
         assert_eq!(typed.ratelimit.max_requests, 100);
         // Plugin
-        assert!(typed.plugin.control.enabled);
+        assert!(!typed.plugin.control.enabled);
         assert!(typed.plugin.consul.enabled);
         assert!(typed.plugin.apollo.enabled);
         assert!(typed.plugin.visibility.enabled);

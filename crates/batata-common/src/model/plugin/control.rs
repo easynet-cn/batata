@@ -434,7 +434,7 @@ impl Default for ControlPluginConfig {
             enabled: true,
             default_tps: 1000,
             default_max_connections: 10000,
-            storage_type: RuleStorageType::Memory,
+            storage_type: RuleStorageType::File,
             refresh_interval_seconds: 30,
             metrics_enabled: true,
         }
@@ -442,17 +442,25 @@ impl Default for ControlPluginConfig {
 }
 
 /// Rule storage type
+///
+/// Mirrors Nacos, where the local disk is the only built-in rule storage and
+/// the external storage is an optional SPI extension:
+/// `LocalDiskRuleStorage` is always constructed, while
+/// `ExternalRuleStorage` ships with no built-in implementation.
+///
+/// `File` is therefore the default and the only backend implemented here.
+/// The remaining variants are placeholders for a future external storage
+/// backend; until one is wired up they fall back to the local disk store.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleStorageType {
-    /// In-memory storage (default)
+    /// File-based storage on the local disk (default, matches Nacos)
     #[default]
-    Memory,
-    /// Database storage
-    Database,
-    /// File-based storage
     File,
-    /// Raft-based distributed storage
+    /// Database storage (external storage extension point, not implemented)
+    Database,
+    /// Raft-based distributed storage (external storage extension point,
+    /// not implemented)
     Raft,
 }
 

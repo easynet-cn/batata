@@ -4,7 +4,7 @@ use crate::model::plugin::cmdb::{
     CmdbEntity, CmdbEntityType, CmdbStats, CmdbSyncResult, LabelMapping,
 };
 use crate::model::plugin::control::{
-    ConnectionLimitResult, ControlContext, ControlStats, RateLimitResult,
+    ConnectionLimitResult, ControlContext, ControlStats, RateLimitResult, RateLimitRule,
 };
 
 /// Plugin trait for extensibility
@@ -37,6 +37,26 @@ pub trait ControlPlugin: Plugin {
 
     /// Reload rules from storage
     async fn reload_rules(&self) -> anyhow::Result<()>;
+
+    /// Persist a rate limit rule and refresh the in-memory rule cache.
+    ///
+    /// Returns the ID the rule was stored under; implementations that assign
+    /// IDs themselves should fill in an empty `rule.id` and return it.
+    /// The default is a no-op for backends that do not support runtime
+    /// rule management.
+    async fn save_rate_rule(&self, rule: RateLimitRule) -> anyhow::Result<String> {
+        Ok(rule.id)
+    }
+
+    /// Delete a rate limit rule by ID, returning whether one was removed.
+    async fn delete_rate_rule(&self, _id: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    /// List all configured rate limit rules.
+    async fn list_rate_rules(&self) -> anyhow::Result<Vec<RateLimitRule>> {
+        Ok(Vec::new())
+    }
 }
 
 /// CMDB Plugin SPI for label sync and entity mapping

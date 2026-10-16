@@ -1093,7 +1093,22 @@ async fn init_control_plugin(
         return None;
     }
 
-    let plugin = batata_plugin::DefaultControlPlugin::new(control_config);
+    let rule_file = configuration.control_rule_file();
+    let rule_store = match batata_plugin::control::create_rule_store(
+        &control_config.storage_type,
+        Some(&rule_file),
+    )
+    .await
+    {
+        Ok(store) => store,
+        Err(e) => {
+            tracing::warn!("Failed to load control rules from {}: {}", rule_file, e);
+            return None;
+        }
+    };
+
+    let plugin =
+        batata_plugin::DefaultControlPlugin::new(control_config).with_rule_store(rule_store);
 
     if let Err(e) = plugin.init().await {
         tracing::warn!("Failed to initialize control plugin: {}", e);

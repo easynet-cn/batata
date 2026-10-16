@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use super::model::*;
-use super::rule_store::{MemoryRuleStore, RuleStore};
+use super::rule_store::{DEFAULT_RULE_FILE, FileRuleStore, RuleStore};
 use crate::Plugin;
 
 /// Token bucket for TPS rate limiting (PLG-002)
@@ -349,7 +349,11 @@ pub struct DefaultControlPlugin {
 impl DefaultControlPlugin {
     /// Create a new default control plugin with the given configuration.
     pub fn new(config: ControlPluginConfig) -> Self {
-        let rule_store: Arc<dyn RuleStore> = Arc::new(MemoryRuleStore::new());
+        // Local disk is the default and only built-in backend (matches Nacos).
+        // Callers should inject a store rooted at the configured data
+        // directory via `with_rule_store`; this fallback keeps the plugin
+        // functional when none is supplied.
+        let rule_store: Arc<dyn RuleStore> = Arc::new(FileRuleStore::new(DEFAULT_RULE_FILE));
 
         Self {
             connection_limiter: ConnectionLimiter::new(config.default_max_connections, 100, 10),
@@ -570,6 +574,11 @@ impl ControlPlugin for DefaultControlPlugin {
     }
 
     async fn reload_rules(&self) -> anyhow::Result<()> {
+        // Pull the durable state in first, otherwise a restarted node would
+        // serve an empty rule set and overwrite the persisted rules on the
+        // next write.
+        self.rule_store.reload_from_disk().await?;
+
         let rate_rules = self.rule_store.list_rate_rules().await?;
         let connection_rules = self.rule_store.list_connection_rules().await?;
 
@@ -578,6 +587,38 @@ impl ControlPlugin for DefaultControlPlugin {
 
         tracing::debug!("Control rules reloaded");
         Ok(())
+    }
+
+    async fn save_rate_rule(&self, mut rule: RateLimitRule) -> anyhow::Result<String> {
+        // The rule ID is the key of both the store and the per-rule limiter,
+        // so it must never be left empty.
+        if rule.id.is_empty() {
+            rule.id = uuid::Uuid::new_v4().to_string();
+        }
+
+        self.rule_store.save_rate_rule(rule.clone()).await?;
+        // Refresh the cache so the rule takes effect on the next request
+        // instead of waiting for the next reload tick.
+        self.reload_rules().await?;
+
+        Ok(rule.id)
+    }
+
+    async fn delete_rate_rule(&self, id: &str) -> anyhow::Result<bool> {
+        let deleted = self.rule_store.delete_rate_rule(id).await?;
+
+        if deleted {
+            // Drop the cached limiter; otherwise a re-created rule with the
+            // same ID would inherit the old bucket state.
+            self.rate_limiters.remove(id);
+            self.reload_rules().await?;
+        }
+
+        Ok(deleted)
+    }
+
+    async fn list_rate_rules(&self) -> anyhow::Result<Vec<RateLimitRule>> {
+        self.rule_store.list_rate_rules().await
     }
 }
 
@@ -681,7 +722,15 @@ mod tests {
             ..Default::default()
         };
 
-        let plugin = DefaultControlPlugin::new(config);
+        // Use a throwaway rule file so the test never reads or writes
+        // `control_rules.json` in the working directory.
+        let rule_file = std::env::temp_dir()
+            .join(format!("batata-ctrl-test-{}.json", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+
+        let plugin = DefaultControlPlugin::new(config)
+            .with_rule_store(Arc::new(FileRuleStore::new(rule_file.clone())));
         plugin.init().await.unwrap();
 
         let ctx = ControlContext::new().with_ip("192.168.1.1");
@@ -700,6 +749,61 @@ mod tests {
         assert_eq!(stats.total_requests, 6);
         assert_eq!(stats.allowed_requests, 5);
         assert_eq!(stats.rate_limited_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn test_rate_rule_crud_is_persisted_and_matched() {
+        use crate::control::model::{RuleMatchType, RuleTargetType};
+
+        let rule_file = std::env::temp_dir()
+            .join(format!("batata-ctrl-crud-{}.json", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+
+        let plugin = DefaultControlPlugin::new(ControlPluginConfig {
+            default_tps: 100_000,
+            ..Default::default()
+        })
+        .with_rule_store(Arc::new(FileRuleStore::new(rule_file.clone())));
+        plugin.init().await.unwrap();
+
+        assert!(plugin.list_rate_rules().await.unwrap().is_empty());
+
+        // No ID supplied: the plugin must assign one instead of storing the
+        // rule under an empty key.
+        let id = plugin
+            .save_rate_rule(RateLimitRule {
+                name: "limit-ip".to_string(),
+                target_type: RuleTargetType::Ip,
+                match_type: RuleMatchType::Exact,
+                target_value: "10.0.0.5".to_string(),
+                max_tps: 3,
+                burst_size: 3,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(!id.is_empty());
+
+        let rules = plugin.list_rate_rules().await.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, id);
+
+        // The rule must reach the cache used by the request path, not just
+        // the backing store.
+        let ctx = ControlContext::new().with_ip("10.0.0.5");
+        let result = plugin.check_rate_limit(&ctx).await;
+        assert_eq!(result.matched_rule, Some(id.clone()));
+        assert_eq!(result.limit, 3);
+
+        assert!(plugin.delete_rate_rule(&id).await.unwrap());
+        assert!(plugin.list_rate_rules().await.unwrap().is_empty());
+        assert!(!plugin.delete_rate_rule(&id).await.unwrap());
+
+        let result = plugin.check_rate_limit(&ctx).await;
+        assert_eq!(result.matched_rule, None);
+
+        let _ = tokio::fs::remove_file(rule_file).await;
     }
 
     #[test]

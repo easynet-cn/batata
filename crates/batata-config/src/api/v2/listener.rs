@@ -13,7 +13,7 @@ use batata_server_common::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::service::notifier::{ConfigChangeNotifier, NotifyEntry};
 
@@ -127,7 +127,7 @@ pub async fn config_listener(
 
     if configs.is_empty() {
         // Empty config list (heartbeat) - just return success
-        info!("Config listener heartbeat");
+        debug!("Config listener heartbeat");
         return Result::<String>::http_success(String::new());
     }
 
@@ -223,7 +223,7 @@ pub async fn config_listener(
         }
 
         // Timeout - return empty result
-        info!(
+        debug!(
             timeout_ms = max_timeout,
             "Config listener timeout, no changes"
         );

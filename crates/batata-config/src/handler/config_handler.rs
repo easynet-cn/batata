@@ -845,7 +845,7 @@ impl ConfigPublishHandler {
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
 
-        info!(
+        debug!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
             tenant,
             group,
@@ -1187,7 +1187,7 @@ impl ConfigRemoveHandler {
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
 
-        info!(
+        debug!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
             tenant,
             group,
@@ -1311,7 +1311,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let connection_id = &_connection.meta_info.connection_id;
         let client_ip = &_connection.meta_info.remote_ip;
 
-        info!(
+        debug!(
             "ConfigBatchListen: listen={}, contexts={}, connection_id={}, client_ip={}",
             request.listen,
             request.config_listen_contexts.len(),
@@ -1432,7 +1432,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
             );
         }
 
-        info!(
+        debug!(
             "ConfigBatchListen: returning {} changed configs",
             changed_configs.len()
         );
@@ -1602,7 +1602,7 @@ impl ConfigChangeClusterSyncHandler {
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
 
-        info!(
+        debug!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
             tenant,
             group,

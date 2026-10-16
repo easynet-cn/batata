@@ -491,6 +491,14 @@ fn default_rocksdb_data_block_hash_ratio() -> f64 {
 /// Configuration for `BatataTypedConfig`.
 pub struct BatataTypedConfig {
     #[serde(default)]
+    /// Base directory of the Batata installation.
+    ///
+    /// Mirrors Nacos `nacos.home`, which anchors every on-disk artifact
+    /// (config data, TPS rules, logs). When unset it falls back to
+    /// `${user.home}/batata`. Set it through the `BATATA_HOME`
+    /// environment variable or the `batata.home` config key.
+    pub home: Option<String>,
+    #[serde(default)]
     /// Whether the server runs in standalone mode.
     pub standalone: bool,
     #[serde(default)]
@@ -1746,8 +1754,13 @@ pub struct PluginConfig {
 #[derive(Debug, Clone, Deserialize)]
 /// Configuration for `PluginControlConfig`.
 pub struct PluginControlConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     /// Whether the traffic control plugin is enabled.
+    ///
+    /// Defaults to `false` for Nacos parity: upstream ships a `noLimit`
+    /// `TpsControlManager` (`DefaultTpsControlManager.check()` always returns
+    /// `CHECK_SKIP`), so a fresh node does not rate-limit anything until an
+    /// operator opts in.
     pub enabled: bool,
     #[serde(default = "default_control_default_tps")]
     /// Default TPS limit applied when no rule matches.
@@ -1766,7 +1779,7 @@ pub struct PluginControlConfig {
 impl Default for PluginControlConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             default_tps: default_control_default_tps(),
             max_connections: default_control_max_connections(),
             manager: PluginControlManagerConfig::default(),

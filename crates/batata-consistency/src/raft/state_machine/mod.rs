@@ -52,6 +52,19 @@ fn sm_error(
     )
 }
 
+/// Write options for state-machine bookkeeping (last applied log id and
+/// membership).
+///
+/// RocksDB appends every write to a single WAL, so syncing the last-applied
+/// marker also flushes the entry data written just before it. Without the
+/// sync, a power failure can leave the marker ahead of the data, and replay
+/// would then skip entries that were never applied.
+fn sync_write_options() -> rocksdb::WriteOptions {
+    let mut opts = rocksdb::WriteOptions::default();
+    opts.set_sync(true);
+    opts
+}
+
 // Column family names for state machine
 /// RocksDB column family holding published configuration entries.
 pub const CF_CONFIG: &str = "batata_config";
@@ -370,7 +383,6 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_APOLLO_INSTANCE_CONFIG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_USER_TOKEN, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_APOLLO_SERVICE_REGISTRY, cf_opts.clone()),
-
             ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
         ];
 
@@ -707,21 +719,22 @@ impl RocksStateMachine {
                     &cluster_name,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
-                        hook.on_register(
-                            &namespace_id,
-                            &group_name,
-                            &service_name,
-                            &instance_id,
-                            &ip,
-                            port,
-                            weight,
-                            healthy,
-                            enabled,
-                            &metadata,
-                            &cluster_name,
-                        );
-                    }
+                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                {
+                    hook.on_register(
+                        &namespace_id,
+                        &group_name,
+                        &service_name,
+                        &instance_id,
+                        &ip,
+                        port,
+                        weight,
+                        healthy,
+                        enabled,
+                        &metadata,
+                        &cluster_name,
+                    );
+                }
                 resp
             }
 
@@ -738,9 +751,10 @@ impl RocksStateMachine {
                     &instance_id,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
-                        hook.on_deregister(&namespace_id, &group_name, &service_name, &instance_id);
-                    }
+                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                {
+                    hook.on_deregister(&namespace_id, &group_name, &service_name, &instance_id);
+                }
                 resp
             }
 
@@ -772,20 +786,21 @@ impl RocksStateMachine {
                     metadata,
                 );
                 if resp.success
-                    && let Some(hook) = self.naming_hook.read().await.as_ref() {
-                        hook.on_update(
-                            &namespace_id,
-                            &group_name,
-                            &service_name,
-                            &instance_id,
-                            ip_c.as_deref(),
-                            port,
-                            weight,
-                            healthy,
-                            enabled,
-                            metadata_c.as_deref(),
-                        );
-                    }
+                    && let Some(hook) = self.naming_hook.read().await.as_ref()
+                {
+                    hook.on_update(
+                        &namespace_id,
+                        &group_name,
+                        &service_name,
+                        &instance_id,
+                        ip_c.as_deref(),
+                        port,
+                        weight,
+                        healthy,
+                        enabled,
+                        metadata_c.as_deref(),
+                    );
+                }
                 resp
             }
 
@@ -1342,7 +1357,12 @@ impl RocksStateMachine {
         let bytes = bincode::serialize(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
-            .put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes)
+            .put_cf_opt(
+                self.cf_meta(),
+                KEY_LAST_APPLIED,
+                &bytes,
+                &sync_write_options(),
+            )
             .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         *self.last_applied.write().await = Some(log_id);
@@ -1357,7 +1377,12 @@ impl RocksStateMachine {
         let bytes = bincode::serialize(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
-            .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)
+            .put_cf_opt(
+                self.cf_meta(),
+                KEY_LAST_MEMBERSHIP,
+                &bytes,
+                &sync_write_options(),
+            )
             .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         *self.last_membership.write().await = membership;

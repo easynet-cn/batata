@@ -50,9 +50,7 @@ pub use encryption::{
     EncryptionPlugin, EncryptionPluginRegistry, NoopEncryptionPlugin, global_encryption_registry,
 };
 
-pub use audit::{
-    AuditLogEntry, AuditLogStore, AuditPlugin, InMemoryAuditLogStore,
-};
+pub use audit::{AuditLogEntry, AuditLogStore, AuditPlugin, InMemoryAuditLogStore};
 
 /// Plugin trait (re-exported from batata-common)
 pub use batata_common::Plugin;

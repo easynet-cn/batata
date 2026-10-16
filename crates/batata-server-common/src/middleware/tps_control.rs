@@ -7,6 +7,7 @@ use std::future::{Ready, ready};
 use std::sync::Arc;
 
 use actix_service::{Service, Transform};
+use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::{Error, HttpResponse};
 use futures::future::LocalBoxFuture;
@@ -146,11 +147,16 @@ where
             .map(|s| s.to_string())
             .unwrap_or_default();
 
+        // Resolve before handing the request over: only rate-limited paths
+        // need the extra request clone used to build the rejection response.
+        let point_name = resolve_tps_point(&method, &path);
+        let http_req = point_name.map(|_| req.request().clone());
+
         let fut = self.service.call(req);
 
         Box::pin(async move {
             // Resolve TPS control point from HTTP method + path
-            if let Some(point_name) = resolve_tps_point(&method, &path) {
+            if let Some(point_name) = point_name {
                 let ctx = ControlContext::new().with_ip(&client_ip).with_path(&path);
 
                 let result = control_plugin.check_rate_limit(&ctx).await;
@@ -170,16 +176,24 @@ where
                             // Log warning but allow through
                         }
                         _ => {
-                            // Reject with 503 (matching Nacos behavior)
+                            // Reject with 503 (matching Nacos behavior).
+                            //
+                            // Drop the inner future instead of awaiting it:
+                            // awaiting would run the whole request (Raft write,
+                            // subscriber notification, ...) and only then
+                            // discard the result, so the limit would not
+                            // protect anything.
+                            drop(fut);
                             let response = HttpResponse::ServiceUnavailable()
                                 .insert_header(("Retry-After", "1"))
                                 .json(serde_json::json!({
                                     "code": 503,
                                     "message": format!("Over threshold: {}", point_name),
                                     "data": serde_json::Value::Null
-                                }));
-                            let res = fut.await?;
-                            return Ok(res.into_response(response).map_into_right_body());
+                                }))
+                                .map_body(|_, body| EitherBody::<B, BoxBody>::right(body));
+                            let http_req = http_req.expect("request cloned for rate-limited path");
+                            return Ok(ServiceResponse::new(http_req, response));
                         }
                     }
                 }

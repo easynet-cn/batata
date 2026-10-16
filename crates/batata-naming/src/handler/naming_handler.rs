@@ -91,7 +91,7 @@ impl PayloadHandler for InstanceRequestHandler {
             .map(|m| m.client_ip.as_str())
             .unwrap_or("");
 
-        info!(
+        debug!(
             req_type = %req_type,
             namespace = %namespace,
             group_name = %group_name,
@@ -304,14 +304,14 @@ impl InstanceRequestHandler {
 
         // Debug: log payload metadata type
         if let Some(meta) = &payload.metadata {
-            info!(
+            debug!(
                 "NotifySubscriberRequest payload type='{}', body_len={}",
                 meta.r#type,
                 payload.body.as_ref().map(|b| b.value.len()).unwrap_or(0)
             );
         }
 
-        info!(
+        debug!(
             "Notifying {} subscribers for service {}@@{}@@{}",
             subscribers.len(),
             namespace,
@@ -365,7 +365,7 @@ impl InstanceRequestHandler {
         notification.changed_type = change_type.to_string();
         let payload = notification.build_server_push_payload();
 
-        info!(
+        debug!(
             "Notifying {} fuzzy watchers for service {} change: {}",
             watchers.len(),
             change_type,
@@ -383,7 +383,7 @@ impl InstanceRequestHandler {
             .push_message_to_many(&watchers, payload)
             .await;
 
-        info!(
+        debug!(
             "Notified {} fuzzy watchers for service {} change: {}",
             watchers.len(),
             change_type,
@@ -601,7 +601,7 @@ impl BatchInstanceRequestHandler {
             NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
         let payload = notification.build_server_push_payload();
 
-        info!(
+        debug!(
             "Notifying {} subscribers for batch service change {}@@{}@@{}",
             subscribers.len(),
             namespace,
@@ -711,7 +711,7 @@ impl PayloadHandler for ServiceQueryRequestHandler {
         let cluster = &request.cluster;
         let healthy_only = request.healthy_only;
 
-        info!(
+        debug!(
             "ServiceQueryRequest: namespace='{}', group='{}', service='{}', cluster='{}', healthy_only={}",
             namespace, group_name, service_name, cluster, healthy_only
         );
@@ -724,7 +724,7 @@ impl PayloadHandler for ServiceQueryRequestHandler {
             healthy_only,
         );
 
-        info!(
+        debug!(
             "ServiceQueryResponse: service='{}', hosts_count={}, clusters='{}'",
             service_name,
             service_info.hosts.len(),
@@ -792,7 +792,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 
         let connection_id = &_connection.meta_info.connection_id;
 
-        info!(
+        debug!(
             "SubscribeServiceRequest: subscribe={}, connection_id={}, namespace='{}', group='{}', service='{}', clusters='{}'",
             subscribe, connection_id, namespace, group_name, service_name, clusters
         );
@@ -810,7 +810,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
             self.naming_service
                 .get_service(namespace, group_name, service_name, clusters, false);
 
-        info!(
+        debug!(
             "SubscribeServiceResponse: service='{}', clusters='{}', hosts_count={}",
             service_name,
             service_info.clusters,
@@ -1039,7 +1039,7 @@ impl PersistentInstanceRequestHandler {
             NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
         let payload = notification.build_server_push_payload();
 
-        info!(
+        debug!(
             "Notifying {} subscribers for persistent instance change {}@@{}@@{}",
             subscribers.len(),
             namespace,
