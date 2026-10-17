@@ -403,58 +403,98 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
     ) -> Result<SnapshotResponse<NodeId>, StreamingError<TypeConfig, openraft::error::Fatal<NodeId>>>
     {
         use futures::stream;
-        use std::io::Read;
+        use tokio::io::{AsyncReadExt, BufReader};
         use tokio::select;
 
         // Read it up front: `client` below holds a mutable borrow of `self`.
         let chunk_size = self.network_config.snapshot_chunk_size.max(1);
+
+        // The membership must ride along: the receiving side calls
+        // `save_membership(meta.last_membership)` after installing, so a
+        // missing membership would wipe the config on the follower.
+        let meta = Some(super::proto_convert::to_proto_snapshot_meta(&snapshot.meta));
+        let vote_proto = Self::to_proto_vote(&vote);
+        let term = vote.leader_id().term;
+        let leader_id = vote.leader_id().node_id;
 
         let client = match self.ensure_snapshot_client().await {
             Ok(c) => c,
             Err(e) => return Err(StreamingError::Unreachable(Unreachable::new(&e))),
         };
 
-        // Read snapshot data
-        let mut snapshot_box = snapshot.snapshot;
-        let mut data = Vec::new();
-        if let Err(e) = snapshot_box.read_to_end(&mut data) {
-            return Err(StreamingError::Unreachable(Unreachable::new(&e)));
-        }
+        // Total size is known up front because the body is a file, so the
+        // stream can report `done` on the last chunk without buffering.
+        let total_bytes = match snapshot.snapshot.len().await {
+            Ok(len) => len,
+            Err(e) => return Err(StreamingError::Unreachable(Unreachable::new(&e))),
+        };
 
-        // Create snapshot metadata.
-        //
-        // The membership must ride along: the receiving side calls
-        // `save_membership(meta.last_membership)` after installing, so a
-        // missing membership would wipe the config on the follower.
-        let meta = Some(super::proto_convert::to_proto_snapshot_meta(&snapshot.meta));
+        // Stream the body chunk by chunk. Every chunk reuses one buffer, so
+        // sending a snapshot costs chunk_size of memory instead of two copies
+        // of the whole body (the old code read it into a Vec and then copied
+        // each chunk out of it).
+        let body = BufReader::with_capacity(chunk_size, *snapshot.snapshot);
+        let requests = stream::unfold(
+            (body, vec![0u8; chunk_size], 0u64, true),
+            move |(mut body, mut buf, mut offset, mut first)| {
+                let meta = meta.clone();
+                let vote_proto = vote_proto.clone();
+                async move {
+                    if total_bytes == 0 {
+                        if first {
+                            first = false;
+                            return Some((
+                                batata_server_api::raft::InstallSnapshotRequest {
+                                    term,
+                                    leader_id,
+                                    meta,
+                                    offset: 0,
+                                    data: Vec::new(),
+                                    done: true,
+                                    vote: Some(vote_proto),
+                                },
+                                (body, buf, offset, first),
+                            ));
+                        }
+                        return None;
+                    }
 
-        // Split data into chunks and create streaming requests.
-        //
-        // The chunk size is configurable: it has to stay below the gRPC
-        // message limit and below the HTTP/2 flow-control window for the
-        // transfer to run at full speed.
-        let chunks: Vec<_> = data.chunks(chunk_size).collect();
-        let total_chunks = chunks.len();
+                    let mut filled = 0usize;
+                    while filled < buf.len() {
+                        match body.read(&mut buf[filled..]).await {
+                            Ok(0) => break,
+                            Ok(n) => filled += n,
+                            Err(e) => {
+                                error!("Failed to read snapshot body: {}", e);
+                                return None;
+                            }
+                        }
+                    }
+                    if filled == 0 {
+                        return None;
+                    }
 
-        let requests: Vec<batata_server_api::raft::InstallSnapshotRequest> = chunks
-            .into_iter()
-            .enumerate()
-            .map(
-                |(i, chunk)| batata_server_api::raft::InstallSnapshotRequest {
-                    term: vote.leader_id().term,
-                    leader_id: vote.leader_id().node_id,
-                    meta: if i == 0 { meta.clone() } else { None },
-                    offset: (i * chunk_size) as u64,
-                    data: chunk.to_vec(),
-                    done: i == total_chunks - 1,
-                    vote: Some(Self::to_proto_vote(&vote)),
-                },
-            )
-            .collect();
+                    let done = offset + filled as u64 >= total_bytes;
+                    let request = batata_server_api::raft::InstallSnapshotRequest {
+                        term,
+                        leader_id,
+                        meta: if first { meta.clone() } else { None },
+                        offset,
+                        data: buf[..filled].to_vec(),
+                        done,
+                        vote: Some(vote_proto.clone()),
+                    };
+                    first = false;
+                    offset += filled as u64;
+
+                    Some((request, (body, buf, offset, first)))
+                }
+            },
+        );
 
         // Send snapshot stream with cancellation support
         let response = select! {
-            result = client.install_snapshot(stream::iter(requests)) => {
+            result = client.install_snapshot(requests) => {
                 match result {
                     Ok(resp) => resp.into_inner(),
                     Err(e) => {

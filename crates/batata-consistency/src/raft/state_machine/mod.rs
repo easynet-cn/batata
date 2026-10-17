@@ -8,8 +8,6 @@
 #![allow(clippy::type_complexity)]
 
 use crate::bincode;
-use std::hash::Hasher;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,6 +17,7 @@ use openraft::{
     StoredMembership,
 };
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
+use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -26,37 +25,126 @@ use super::health_check_hook::{SharedHealthCheckHook, new_shared_health_check_ho
 use super::naming_hook::{SharedNamingHook, new_shared_naming_hook};
 use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
+use super::snapshot_file::SnapshotFile;
+use super::snapshot_format::{self, SnapshotReader, SnapshotWriter};
 use super::types::{NodeId, TypeConfig};
 
-/// Compute a checksum over data bytes using SipHash (stable, in std)
-fn compute_checksum(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(data);
-    hasher.finish()
-}
-
-/// Size of the checksum trailer appended to snapshot data (8 bytes for u64)
-const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
-/// Magic header for bincode-format snapshots (backward-compatible with legacy JSON)
-const SNAPSHOT_MAGIC: &[u8] = b"BSNA";
-
-// On-disk snapshot layout, mirroring JRaft's `LocalSnapshotStorage`:
-//
-//   {snapshot_dir}/temp/                  snapshot being written
-//   {snapshot_dir}/snapshot_{index}/      committed snapshot (latest one wins)
-//
-// Each of those directories holds `__raft_snapshot_meta` (serialized
-// `SnapshotMeta`) plus `data` (the snapshot body). Writing goes through `temp`
-// and is published with a single `rename`, so a crash mid-write can never
-// expose a half-written snapshot.
+/// On-disk snapshot layout, mirroring JRaft's `LocalSnapshotStorage`:
+///
+///   {snapshot_dir}/temp/                  snapshot being written
+///   {snapshot_dir}/incoming/              snapshot streamed in from the leader
+///   {snapshot_dir}/snapshot_{index}/      committed snapshot (latest one wins)
+///
+/// Each of those directories holds `__raft_snapshot_meta` (serialized
+/// `SnapshotMeta`) plus `data` (the snapshot body). Writing goes through `temp`
+/// and is published with a single `rename`, so a crash mid-write can never
+/// expose a half-written snapshot.
 /// Directory a snapshot is staged in before it is published by rename.
 const SNAPSHOT_TEMP_DIR: &str = "temp";
+/// Directory a snapshot streamed in from the leader is written to.
+pub(crate) const SNAPSHOT_INCOMING_DIR: &str = "incoming";
 /// Prefix of a committed snapshot directory, suffixed with the last applied index.
 const SNAPSHOT_DIR_PREFIX: &str = "snapshot_";
 /// File holding the serialized `SnapshotMeta` of a snapshot.
 const SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
 /// File holding the snapshot body.
 const SNAPSHOT_DATA_FILE: &str = "data";
+/// Flush threshold for the restore `WriteBatch`: a snapshot is applied in
+/// batches so memory stays flat no matter how large the snapshot is.
+const RESTORE_BATCH_BYTES: usize = 8 * 1024 * 1024;
+
+/// What a snapshot restore applied.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreStats {
+    /// Number of column families the snapshot touched.
+    pub column_families: usize,
+    /// Number of key/value pairs written.
+    pub entries: usize,
+    /// Sum of key and value bytes written.
+    pub bytes: u64,
+}
+
+/// Column families written into a snapshot, in the order they are streamed.
+const SNAPSHOT_CF_NAMES: &[&str] = &[
+    CF_CONFIG,
+    CF_CONFIG_HISTORY,
+    CF_CONFIG_GRAY,
+    CF_NAMESPACE,
+    CF_USERS,
+    CF_ROLES,
+    CF_PERMISSIONS,
+    CF_INSTANCES,
+    CF_LOCKS,
+    CF_AI_RESOURCE,
+    CF_AI_RESOURCE_VERSION,
+    CF_PIPELINE_EXECUTION,
+    CF_AI_RESOURCE_SEARCH_DOCUMENT,
+    CF_AI_RESOURCE_SEARCH_CHUNK,
+    CF_AI_RESOURCE_TASK,
+    // Apollo plugin column families
+    CF_APOLLO_APP,
+    CF_APOLLO_CLUSTER,
+    CF_APOLLO_NAMESPACE,
+    CF_APOLLO_ITEM,
+    CF_APOLLO_RELEASE,
+    CF_APOLLO_COMMIT,
+    CF_APOLLO_GRAY_RULE,
+    CF_APOLLO_INSTANCE,
+    CF_APOLLO_ACCESS_KEY,
+    CF_APOLLO_RELEASE_MSG,
+    CF_APOLLO_NAMESPACE_LOCK,
+    CF_APOLLO_RELEASE_HISTORY,
+    CF_APOLLO_APP_NAMESPACE,
+    CF_APOLLO_AUDIT,
+    CF_APOLLO_CONSUMER,
+    CF_APOLLO_CONSUMER_TOKEN,
+    CF_APOLLO_CONSUMER_AUDIT,
+    CF_APOLLO_CONSUMER_ROLE,
+    CF_APOLLO_PERMISSION,
+    CF_APOLLO_ROLE,
+    CF_APOLLO_ROLE_PERMISSION,
+    CF_APOLLO_USER_ROLE,
+    CF_APOLLO_USERS,
+    CF_APOLLO_FAVORITE,
+    CF_APOLLO_SERVER_CONFIG,
+    CF_APOLLO_INSTANCE_CONFIG,
+    CF_APOLLO_USER_TOKEN,
+    CF_APOLLO_SERVICE_REGISTRY,
+];
+
+/// Pick a stable scratch file for nodes without a snapshot directory.
+///
+/// A snapshot body has to live somewhere, and openraft's `SnapshotData` is now
+/// a file handle. Without a configured directory we fall back to the system
+/// temp directory with a name derived from the DB path, so repeated builds
+/// overwrite one file instead of leaking a new one each time.
+fn transient_snapshot_path(db_path: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    db_path.hash(&mut hasher);
+    std::env::temp_dir().join(format!("batata-raft-{:016x}.snapshot", hasher.finish()))
+}
+
+/// Copy `src` to `dst` through a fixed-size buffer.
+///
+/// Used to publish a snapshot body: the copy streams, so a multi-gigabyte
+/// snapshot costs constant memory on both sides.
+async fn copy_file_streaming(src: &Path, dst: &Path) -> std::io::Result<u64> {
+    let mut reader = BufReader::with_capacity(
+        snapshot_format::IO_BUFFER_SIZE,
+        tokio::fs::File::open(src).await?,
+    );
+    let mut writer = BufWriter::with_capacity(
+        snapshot_format::IO_BUFFER_SIZE,
+        tokio::fs::File::create(dst).await?,
+    );
+
+    let copied = tokio::io::copy(&mut reader, &mut writer).await?;
+    writer.flush().await?;
+    writer.into_inner().sync_all().await?;
+    Ok(copied)
+}
 
 /// Helper to create StorageError for state machine operations
 fn sm_error(
@@ -206,6 +294,9 @@ pub struct RocksStateMachine {
     /// Directory snapshots are persisted to, using JRaft's `LocalSnapshotStorage`
     /// layout. `None` keeps snapshots memory-only (no restart recovery).
     snapshot_dir: Option<PathBuf>,
+
+    /// Scratch file used when no snapshot directory is configured.
+    transient_snapshot_path: PathBuf,
 }
 
 /// Serialize a JSON value directly to bytes, avoiding intermediate String allocation.
@@ -232,18 +323,23 @@ impl RocksStateMachine {
         meta.last_log_id.map(|l| l.index).unwrap_or(0)
     }
 
-    /// Publish `data` as this node's current snapshot on disk.
+    /// Publish the snapshot body at `src` as this node's current snapshot.
     ///
     /// Stages everything under `temp/` and publishes with a single `rename`, so
     /// a crash mid-write never leaves a readable but incomplete snapshot. This
-    /// is the same staging policy JRaft's `LocalSnapshotStorage` uses.
-    async fn persist_snapshot(
-        &self,
-        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
-        data: &[u8],
-    ) -> Result<(), StorageError<NodeId>> {
+    /// is the same staging policy JRaft's `LocalSnapshotStorage` uses. The body
+    /// is copied in fixed-size chunks, so publishing a large snapshot costs
+    /// constant memory.
+    ///
+    /// Returns the path of the published body, or `None` when no snapshot
+    /// directory is configured.
+    /// Create an empty `temp/` staging directory for the next snapshot.
+    ///
+    /// Returns `None` when no snapshot directory is configured, meaning the
+    /// snapshot stays in the scratch file instead of being published.
+    async fn prepare_staging_dir(&self) -> Result<Option<PathBuf>, StorageError<NodeId>> {
         let Some(dir) = self.snapshot_dir.as_ref() else {
-            return Ok(());
+            return Ok(None);
         };
 
         tokio::fs::create_dir_all(dir)
@@ -260,11 +356,26 @@ impl RocksStateMachine {
             .await
             .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
+        Ok(Some(temp))
+    }
+
+    /// Write `meta` into the staging directory and publish it by rename.
+    ///
+    /// Returns the path of the published snapshot body.
+    async fn commit_staging_dir(
+        &self,
+        temp: &Path,
+        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
+    ) -> Result<PathBuf, StorageError<NodeId>> {
+        let dir = self.snapshot_dir.as_ref().ok_or_else(|| {
+            sm_error(
+                std::io::Error::other("no snapshot directory"),
+                ErrorVerb::Write,
+            )
+        })?;
+
         let meta_bytes = bincode::serialize(meta).map_err(|e| sm_error(e, ErrorVerb::Write))?;
         tokio::fs::write(temp.join(SNAPSHOT_META_FILE), &meta_bytes)
-            .await
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
-        tokio::fs::write(temp.join(SNAPSHOT_DATA_FILE), data)
             .await
             .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
@@ -278,11 +389,143 @@ impl RocksStateMachine {
                 .await
                 .map_err(|e| sm_error(e, ErrorVerb::Write))?;
         }
-        tokio::fs::rename(&temp, &target)
+        tokio::fs::rename(temp, &target)
             .await
             .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
-        self.prune_snapshots(&target).await
+        self.prune_snapshots(&target).await?;
+        Ok(target.join(SNAPSHOT_DATA_FILE))
+    }
+
+    async fn publish_snapshot_file(
+        &self,
+        meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
+        src: &Path,
+    ) -> Result<Option<PathBuf>, StorageError<NodeId>> {
+        let Some(temp) = self.prepare_staging_dir().await? else {
+            return Ok(None);
+        };
+
+        copy_file_streaming(src, &temp.join(SNAPSHOT_DATA_FILE))
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        Ok(Some(self.commit_staging_dir(&temp, meta).await?))
+    }
+
+    /// Path a freshly received snapshot is streamed into before it is installed.
+    fn incoming_snapshot_path(&self) -> Option<PathBuf> {
+        let dir = self.snapshot_dir.as_ref()?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        Some(
+            dir.join(SNAPSHOT_INCOMING_DIR)
+                .join(format!("recv-{stamp}")),
+        )
+    }
+
+    /// Apply the snapshot body at `path` to RocksDB, streaming it record by
+    /// record.
+    ///
+    /// Each column family is cleared with a range delete the first time it
+    /// appears, then filled from the snapshot. Batches are flushed once they
+    /// reach [`RESTORE_BATCH_BYTES`], so peak memory is bounded by that
+    /// threshold rather than by the size of the snapshot.
+    async fn restore_from_file(&self, path: &Path) -> Result<RestoreStats, StorageError<NodeId>> {
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+
+        // An empty body is a valid snapshot: a node with no state at all.
+        if file
+            .metadata()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+            .len()
+            == 0
+        {
+            return Ok(RestoreStats::default());
+        }
+
+        let mut reader = SnapshotReader::new(BufReader::with_capacity(
+            snapshot_format::IO_BUFFER_SIZE,
+            file,
+        ));
+        reader
+            .read_header()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+
+        let mut stats = RestoreStats::default();
+        let mut cf_name = String::new();
+        let mut key = Vec::new();
+        let mut value = Vec::new();
+
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut batch_bytes = 0usize;
+        // Column family currently being filled, plus whether its range delete
+        // has already been queued in a batch that is still pending.
+        let mut current = None;
+        let mut cleared = false;
+
+        while let Some(kind) = reader
+            .next_record(&mut cf_name, &mut key, &mut value)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?
+        {
+            match kind {
+                snapshot_format::RecordKind::ColumnFamily => {
+                    // Flush any pending writes for the previous CF first.
+                    if batch_bytes > 0 {
+                        self.db
+                            .write(std::mem::take(&mut batch))
+                            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                        batch_bytes = 0;
+                    }
+                    current = self.db.cf_handle(&cf_name);
+                    cleared = false;
+                    stats.column_families += 1;
+                }
+                snapshot_format::RecordKind::Entry => {
+                    let Some(cf) = current.as_ref() else {
+                        return Err(sm_error(
+                            std::io::Error::other("snapshot entry before any column family"),
+                            ErrorVerb::Read,
+                        ));
+                    };
+                    if !cleared {
+                        // Keys are UTF-8 strings, so 0xFF as exclusive end
+                        // covers all keys.
+                        batch.delete_range_cf(cf, vec![0u8], vec![0xFFu8, 0xFF, 0xFF, 0xFF]);
+                        cleared = true;
+                    }
+                    batch.put_cf(cf, &key, &value);
+                    batch_bytes += key.len() + value.len();
+                    stats.entries += 1;
+                    stats.bytes += (key.len() + value.len()) as u64;
+
+                    if batch_bytes >= RESTORE_BATCH_BYTES {
+                        self.db
+                            .write(std::mem::take(&mut batch))
+                            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                        batch_bytes = 0;
+                        // The range delete is already durable, do not repeat it.
+                        cleared = true;
+                    }
+                }
+                snapshot_format::RecordKind::End => break,
+            }
+        }
+
+        if batch_bytes > 0 {
+            self.db
+                .write(batch)
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        }
+
+        Ok(stats)
     }
 
     /// Drop every committed snapshot except `keep`.
@@ -590,6 +833,7 @@ impl RocksStateMachine {
             cfs.push(ColumnFamilyDescriptor::new(cf_name, cf_opts.clone()));
         }
 
+        let db_path = path.as_ref().to_path_buf();
         let db = DB::open_cf_descriptors(&db_opts, path, cfs)
             .map_err(|e| sm_error(e, ErrorVerb::Read))?;
 
@@ -602,6 +846,7 @@ impl RocksStateMachine {
             health_check_hook: new_shared_health_check_hook(),
             write_opts: custom_write_opts.unwrap_or_default(),
             snapshot_dir: None,
+            transient_snapshot_path: transient_snapshot_path(&db_path),
         };
 
         // Load cached values asynchronously
@@ -1607,87 +1852,95 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             snapshot_id: snapshot_id.clone(),
         };
 
-        // Serialize all column family data
-        let mut snapshot_data = std::collections::HashMap::new();
+        // Stream every column family straight into the snapshot file. Encoding
+        // while iterating keeps peak memory flat; the previous implementation
+        // collected every CF into a HashMap first, which cost as much memory as
+        // the snapshot itself on top of the encoded bytes.
+        let staged = match self.prepare_staging_dir().await? {
+            Some(temp) => temp.join(SNAPSHOT_DATA_FILE),
+            None => self.transient_snapshot_path.clone(),
+        };
+        if let Some(parent) = staged.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        }
 
-        for cf_name in [
-            CF_CONFIG,
-            CF_CONFIG_HISTORY,
-            CF_CONFIG_GRAY,
-            CF_NAMESPACE,
-            CF_USERS,
-            CF_ROLES,
-            CF_PERMISSIONS,
-            CF_INSTANCES,
-            CF_LOCKS,
-            CF_AI_RESOURCE,
-            CF_AI_RESOURCE_VERSION,
-            CF_PIPELINE_EXECUTION,
-            CF_AI_RESOURCE_SEARCH_DOCUMENT,
-            CF_AI_RESOURCE_SEARCH_CHUNK,
-            CF_AI_RESOURCE_TASK,
-            // Apollo plugin column families
-            CF_APOLLO_APP,
-            CF_APOLLO_CLUSTER,
-            CF_APOLLO_NAMESPACE,
-            CF_APOLLO_ITEM,
-            CF_APOLLO_RELEASE,
-            CF_APOLLO_COMMIT,
-            CF_APOLLO_GRAY_RULE,
-            CF_APOLLO_INSTANCE,
-            CF_APOLLO_ACCESS_KEY,
-            CF_APOLLO_RELEASE_MSG,
-            CF_APOLLO_NAMESPACE_LOCK,
-            CF_APOLLO_RELEASE_HISTORY,
-            CF_APOLLO_APP_NAMESPACE,
-            CF_APOLLO_AUDIT,
-            CF_APOLLO_CONSUMER,
-            CF_APOLLO_CONSUMER_TOKEN,
-            CF_APOLLO_CONSUMER_AUDIT,
-            CF_APOLLO_PERMISSION,
-            CF_APOLLO_ROLE,
-            CF_APOLLO_ROLE_PERMISSION,
-            CF_APOLLO_USER_ROLE,
-            CF_APOLLO_USERS,
-            CF_APOLLO_FAVORITE,
-            CF_APOLLO_SERVER_CONFIG,
-            CF_APOLLO_INSTANCE_CONFIG,
-            CF_APOLLO_USER_TOKEN,
-            CF_APOLLO_SERVICE_REGISTRY,
-        ] {
-            if let Some(cf) = self.db.cf_handle(cf_name) {
-                let mut cf_data = Vec::new();
-                let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                for (key, value) in iter.flatten() {
-                    cf_data.push((key.to_vec(), value.to_vec()));
-                }
-                snapshot_data.insert(cf_name.to_string(), cf_data);
+        let file = tokio::fs::File::create(&staged)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let mut writer = SnapshotWriter::new(BufWriter::with_capacity(
+            snapshot_format::IO_BUFFER_SIZE,
+            file,
+        ));
+        writer
+            .write_header()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        let mut entries = 0usize;
+        let mut bytes = 0u64;
+
+        for cf_name in SNAPSHOT_CF_NAMES {
+            let Some(cf) = self.db.cf_handle(cf_name) else {
+                continue;
+            };
+            writer
+                .start_column_family(cf_name)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+            for (key, value) in self
+                .db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .flatten()
+            {
+                writer
+                    .write_entry(&key, &value)
+                    .await
+                    .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                entries += 1;
+                bytes += (key.len() + value.len()) as u64;
             }
         }
 
-        // Use bincode for compact binary serialization (3-5x smaller than JSON).
-        // Prefix with magic bytes "BSNA" (Batata SNApshot) for format detection
-        // during restore, ensuring backward compatibility with legacy JSON snapshots.
-        let bincode_data =
-            bincode::serialize(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
-        let mut payload = Vec::with_capacity(SNAPSHOT_MAGIC.len() + bincode_data.len());
-        payload.extend_from_slice(SNAPSHOT_MAGIC);
-        payload.extend_from_slice(&bincode_data);
+        writer
+            .finish()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        writer
+            .into_inner()
+            .into_inner()
+            .sync_all()
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
-        // Append a 8-byte checksum trailer (SipHash) for integrity validation
-        let checksum = compute_checksum(&payload);
-        let mut data = payload;
-        data.extend_from_slice(&checksum.to_le_bytes());
+        // Publish under snapshot_{index} so the node can restart from this
+        // snapshot instead of replaying a log that may already be purged.
+        let published = match self.snapshot_dir.as_ref() {
+            Some(_) => {
+                let temp = self
+                    .snapshot_dir
+                    .as_ref()
+                    .expect("checked above")
+                    .join(SNAPSHOT_TEMP_DIR);
+                self.commit_staging_dir(&temp, &meta).await?
+            }
+            None => staged,
+        };
 
-        info!("Built snapshot {} with {} bytes", snapshot_id, data.len());
-
-        // Persist before handing the bytes to openraft so the node can recover
-        // from this snapshot after a restart instead of replaying a purged log.
-        self.persist_snapshot(&meta, &data).await?;
+        info!(
+            "Built snapshot {} with {} entries ({} bytes)",
+            snapshot_id, entries, bytes
+        );
 
         Ok(Snapshot {
             meta,
-            snapshot: Box::new(Cursor::new(data)),
+            snapshot: Box::new(
+                SnapshotFile::open(&published)
+                    .await
+                    .map_err(|e| sm_error(e, ErrorVerb::Read))?,
+            ),
         })
     }
 }
@@ -1766,23 +2019,24 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 }
             };
 
-        let data = match tokio::fs::read(path.join(SNAPSHOT_DATA_FILE)).await {
-            Ok(data) => data,
+        let data_path = path.join(SNAPSHOT_DATA_FILE);
+        let body = match SnapshotFile::open(&data_path).await {
+            Ok(body) => body,
             Err(e) => {
-                warn!("Unreadable snapshot data at {:?}: {}", path, e);
+                warn!("Unreadable snapshot data at {:?}: {}", data_path, e);
                 return Ok(None);
             }
         };
+        let bytes = body.len().await.unwrap_or(0);
 
         info!(
             "Loaded snapshot {} from disk ({} bytes)",
-            meta.snapshot_id,
-            data.len()
+            meta.snapshot_id, bytes
         );
 
         Ok(Some(Snapshot {
             meta,
-            snapshot: Box::new(Cursor::new(data)),
+            snapshot: Box::new(body),
         }))
     }
 
@@ -1797,84 +2051,53 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             health_check_hook: self.health_check_hook.clone(),
             write_opts: rocksdb::WriteOptions::default(),
             snapshot_dir: self.snapshot_dir.clone(),
+            transient_snapshot_path: self.transient_snapshot_path.clone(),
         }
     }
 
     async fn begin_receiving_snapshot(
         &mut self,
-    ) -> Result<Box<Cursor<Vec<u8>>>, StorageError<NodeId>> {
-        Ok(Box::new(Cursor::new(Vec::new())))
+    ) -> Result<Box<SnapshotFile>, StorageError<NodeId>> {
+        // The body is streamed into a file under `incoming/` rather than
+        // buffered in memory: openraft hands this handle back once the
+        // transfer finished, and a file is exactly what `install_snapshot`
+        // wants to read.
+        let path = self
+            .incoming_snapshot_path()
+            .unwrap_or_else(|| self.transient_snapshot_path.clone());
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        }
+
+        Ok(Box::new(
+            SnapshotFile::create(&path)
+                .await
+                .map_err(|e| sm_error(e, ErrorVerb::Write))?,
+        ))
     }
 
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
-        snapshot: Box<Cursor<Vec<u8>>>,
+        snapshot: Box<SnapshotFile>,
     ) -> Result<(), StorageError<NodeId>> {
-        let data = snapshot.into_inner();
+        let source = snapshot.path().to_path_buf();
 
-        if !data.is_empty() {
-            // Validate snapshot integrity checksum
-            let payload = if data.len() > SNAPSHOT_CHECKSUM_SIZE {
-                let (payload, checksum_bytes) = data.split_at(data.len() - SNAPSHOT_CHECKSUM_SIZE);
-                let expected = u64::from_le_bytes(checksum_bytes.try_into().map_err(|_| {
-                    sm_error(
-                        std::io::Error::other("Invalid checksum trailer size"),
-                        ErrorVerb::Read,
-                    )
-                })?);
-                let actual = compute_checksum(payload);
-                if actual != expected {
-                    error!(
-                        "Snapshot checksum mismatch: expected {:#x}, got {:#x}",
-                        expected, actual
-                    );
-                    return Err(sm_error(
-                        std::io::Error::other("Snapshot checksum mismatch — data may be corrupted"),
-                        ErrorVerb::Read,
-                    ));
-                }
-                info!("Snapshot checksum verified ({:#x})", actual);
-                payload
-            } else {
-                // Legacy snapshot without checksum — accept but warn
-                warn!("Snapshot has no checksum trailer, skipping integrity check");
-                &data
-            };
+        // Verify before publishing or applying: a corrupt snapshot must never
+        // become this node's recovery point, and must never half-restore.
+        snapshot_format::verify_file(&source)
+            .await
+            .map_err(|e| sm_error(e, ErrorVerb::Read))?;
 
-            // Deserialize snapshot: detect format by magic header
-            let snapshot_data: std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
-                if payload.starts_with(SNAPSHOT_MAGIC) {
-                    let bincode_payload = &payload[SNAPSHOT_MAGIC.len()..];
-                    bincode::deserialize(bincode_payload)
-                        .map_err(|e| sm_error(e, ErrorVerb::Read))?
-                } else {
-                    // Legacy JSON format (backward compatibility)
-                    info!("Restoring legacy JSON-format snapshot");
-                    serde_json::from_slice(payload).map_err(|e| sm_error(e, ErrorVerb::Read))?
-                };
+        // A snapshot received from the leader is just as good as one we built,
+        // so publish it under snapshot_{index}: without it this node would have
+        // nothing to recover from until it builds one of its own.
+        let published = self.publish_snapshot_file(meta, &source).await?;
+        let body = published.unwrap_or(source);
 
-            // Atomically clear and restore each column family using a single WriteBatch
-            // per CF. Uses delete_range for O(1) clearing instead of per-key deletion.
-            for (cf_name, cf_data) in snapshot_data {
-                if let Some(cf) = self.db.cf_handle(&cf_name) {
-                    let mut batch = rocksdb::WriteBatch::default();
-
-                    // Clear existing data with range delete (much faster than per-key).
-                    // Keys are UTF-8 strings, so 0xFF as exclusive end covers all keys.
-                    batch.delete_range_cf(&cf, vec![0u8], vec![0xFFu8, 0xFF, 0xFF, 0xFF]);
-
-                    // Restore snapshot data in the same batch
-                    for (key, value) in cf_data {
-                        batch.put_cf(cf, &key, &value);
-                    }
-
-                    self.db
-                        .write(batch)
-                        .map_err(|e| sm_error(e, ErrorVerb::Write))?;
-                }
-            }
-        }
+        let stats = self.restore_from_file(&body).await?;
 
         // Update metadata
         if let Some(log_id) = meta.last_log_id {
@@ -1882,18 +2105,16 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         }
         self.save_membership(meta.last_membership.clone()).await?;
 
-        // A snapshot received from the leader is just as good as one we built,
-        // so persist it too -- otherwise this node would have nothing to recover
-        // from until it manages to build a snapshot of its own.
-        self.persist_snapshot(meta, &data).await?;
-
         // The install rewrote every column family directly, so the apply-back
         // hook never ran for the replaced entries. Hand the new authoritative
         // set to the hook so the in-memory view cannot keep serving instances
         // the rest of the cluster already deleted.
         self.reconcile_naming_view().await;
 
-        info!("Snapshot installed: {:?}", meta.snapshot_id);
+        info!(
+            "Snapshot installed: {:?} ({} column families, {} entries, {} bytes)",
+            meta.snapshot_id, stats.column_families, stats.entries, stats.bytes
+        );
         Ok(())
     }
 }

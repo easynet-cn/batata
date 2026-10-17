@@ -13,6 +13,8 @@ pub mod plugin;
 pub mod proto_convert;
 pub mod reader;
 pub mod request;
+pub mod snapshot_file;
+pub mod snapshot_format;
 pub mod state_machine;
 pub mod types;
 
@@ -24,5 +26,6 @@ pub use node::{RaftNode, RaftNodeBuilder};
 pub use plugin::{PluginRegistry, RaftPluginHandler};
 pub use reader::RocksDbReader;
 pub use request::{RaftRequest, RaftResponse};
+pub use snapshot_file::SnapshotFile;
 pub use state_machine::RocksStateMachine;
 pub use types::{NodeId, Raft, RaftMetrics, ServerState, TypeConfig, calculate_node_id};

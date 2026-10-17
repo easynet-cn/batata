@@ -2,50 +2,24 @@
 //!
 //! Defines all the type aliases needed for the Raft consensus implementation.
 
-use std::io::Cursor;
-
-use serde::{Deserialize, Serialize};
-
 use super::request::{RaftRequest, RaftResponse};
+use super::snapshot_file::SnapshotFile;
 
 /// Node ID type - using u64 for efficient storage and comparison
 pub type NodeId = u64;
 
-/// Snapshot data - serialized state machine data
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SnapshotData {
-    /// Serialized state machine data carried by the snapshot.
-    pub data: Vec<u8>,
-}
-
-impl SnapshotData {
-    /// Create a new snapshot data wrapper from the given serialized bytes.
-    pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
-    }
-}
-
-// Implement AsRef<[u8]> for SnapshotData to allow openraft to work with it
-impl AsRef<[u8]> for SnapshotData {
-    fn as_ref(&self) -> &[u8] {
-        &self.data
-    }
-}
-
-// openraft requires the ability to create a cursor from snapshot data
-impl From<SnapshotData> for Cursor<Vec<u8>> {
-    fn from(snapshot: SnapshotData) -> Self {
-        Cursor::new(snapshot.data)
-    }
-}
-
 openraft::declare_raft_types!(
     /// The openraft type configuration used throughout the crate.
+    ///
+    /// `SnapshotData` is a file handle rather than an in-memory buffer so that
+    /// snapshot transfer streams through disk instead of allocating the whole
+    /// snapshot on both the leader and the follower.
     pub TypeConfig:
         D = RaftRequest,
         R = RaftResponse,
         Node = openraft::BasicNode,
         NodeId = NodeId,
+        SnapshotData = SnapshotFile,
 );
 
 /// Type alias for the Raft instance
@@ -107,42 +81,5 @@ mod tests {
         let id1 = calculate_node_id(addr);
         let id2 = calculate_node_id(addr);
         assert_eq!(id1, id2);
-    }
-
-    #[test]
-    fn test_snapshot_data_new() {
-        let data = vec![1, 2, 3, 4, 5];
-        let snapshot = SnapshotData::new(data.clone());
-        assert_eq!(snapshot.data, data);
-    }
-
-    #[test]
-    fn test_snapshot_data_default() {
-        let snapshot = SnapshotData::default();
-        assert!(snapshot.data.is_empty());
-    }
-
-    #[test]
-    fn test_snapshot_data_as_ref() {
-        let data = vec![1, 2, 3];
-        let snapshot = SnapshotData::new(data.clone());
-        assert_eq!(snapshot.as_ref(), &data[..]);
-    }
-
-    #[test]
-    fn test_snapshot_data_into_cursor() {
-        let data = vec![1, 2, 3, 4, 5];
-        let snapshot = SnapshotData::new(data.clone());
-        let cursor: Cursor<Vec<u8>> = snapshot.into();
-        assert_eq!(cursor.into_inner(), data);
-    }
-
-    #[test]
-    fn test_snapshot_data_serialization() {
-        let data = vec![10, 20, 30];
-        let snapshot = SnapshotData::new(data);
-        let serialized = serde_json::to_string(&snapshot).unwrap();
-        let deserialized: SnapshotData = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(snapshot.data, deserialized.data);
     }
 }

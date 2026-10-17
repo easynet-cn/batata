@@ -2,9 +2,9 @@
 //!
 //! Covers the JRaft-style `LocalSnapshotStorage` layout the state machine
 //! writes: `temp/` staged first, published as `snapshot_{index}/`, with only
-//! the newest snapshot kept.
+//! the newest snapshot kept. The body is a file (`SnapshotFile`) rather than an
+//! in-memory buffer, so these tests move paths around instead of byte vectors.
 
-use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use openraft::storage::RaftStateMachine;
@@ -16,6 +16,7 @@ use batata_consistency::raft::NamingApplyHook;
 use batata_consistency::raft::state_machine::{
     CF_CONFIG, CF_INSTANCES, RocksStateMachine, StoredInstance,
 };
+use batata_consistency::raft::{SnapshotFile, snapshot_format};
 
 /// Build a `SnapshotMeta` at the given log index, the way openraft would hand
 /// it to `install_snapshot`.
@@ -36,6 +37,11 @@ async fn open_sm(
         .await
         .unwrap()
         .with_snapshot_dir(snapshots.to_path_buf())
+}
+
+/// An empty snapshot body, standing in for a node that has no state yet.
+async fn empty_snapshot(dir: &std::path::Path, name: &str) -> SnapshotFile {
+    SnapshotFile::create(dir.join(name)).await.unwrap()
 }
 
 fn committed_snapshot_dirs(snapshots: &std::path::Path) -> Vec<String> {
@@ -80,7 +86,7 @@ async fn built_snapshot_is_persisted_and_reloadable() {
         .expect("snapshot should be readable from disk");
     assert_eq!(loaded.meta.snapshot_id, expected_id);
 
-    // The recovered bytes must actually restore the state machine.
+    // The recovered body must actually restore the state machine.
     let mut restored = open_sm(dir.path(), "state3", &snapshots).await;
     restored
         .install_snapshot(&loaded.meta, loaded.snapshot)
@@ -105,14 +111,14 @@ async fn installed_snapshot_is_persisted_too() {
     let cf = source_db.cf_handle(CF_CONFIG).unwrap();
     source_db.put_cf(&cf, b"cfg:shared", b"v1").unwrap();
     let snapshot = source.build_snapshot().await.unwrap();
-    let bytes = snapshot.snapshot.into_inner();
+    let body = snapshot.snapshot.path().to_path_buf();
 
     // Node B installs it. The install must also land on disk, otherwise B has
     // nothing to recover from until it builds a snapshot itself.
     let meta = meta_at(11);
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     target
-        .install_snapshot(&meta, Box::new(Cursor::new(bytes)))
+        .install_snapshot(&meta, Box::new(SnapshotFile::open(&body).await.unwrap()))
         .await
         .unwrap();
 
@@ -133,7 +139,8 @@ async fn only_the_newest_snapshot_is_kept() {
     let mut sm = open_sm(dir.path(), "state", &snapshots).await;
 
     for index in [5u64, 9] {
-        sm.install_snapshot(&meta_at(index), Box::new(Cursor::new(Vec::new())))
+        let empty = empty_snapshot(dir.path(), &format!("empty-{index}")).await;
+        sm.install_snapshot(&meta_at(index), Box::new(empty))
             .await
             .unwrap();
     }
@@ -153,8 +160,97 @@ async fn missing_snapshot_dir_means_no_snapshot() {
         .await
         .unwrap();
 
-    // Without `with_snapshot_dir` the behaviour is unchanged: memory only.
+    // Without `with_snapshot_dir` the behaviour is unchanged: nothing on disk.
     assert!(sm.get_current_snapshot().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn corrupted_snapshot_body_is_refused() {
+    let dir = tempdir().unwrap();
+    let snapshots = dir.path().join("snapshots");
+
+    let mut source = open_sm(dir.path(), "source", &dir.path().join("source_snaps")).await;
+    let source_db = source.db();
+    let cf = source_db.cf_handle(CF_CONFIG).unwrap();
+    source_db.put_cf(&cf, b"cfg:key", b"cfg:value").unwrap();
+    let snapshot = source.build_snapshot().await.unwrap();
+    let body = snapshot.snapshot.path().to_path_buf();
+
+    // The untouched body installs cleanly.
+    let mut good = open_sm(dir.path(), "good", &snapshots).await;
+    good.install_snapshot(
+        &meta_at(4),
+        Box::new(SnapshotFile::open(&body).await.unwrap()),
+    )
+    .await
+    .expect("a healthy snapshot must install");
+
+    // Flip one byte in the middle: the checksum must catch it before anything
+    // is written to the database.
+    let mut bytes = tokio::fs::read(&body).await.unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid] ^= 0xFF;
+    let corrupted = dir.path().join("corrupted");
+    tokio::fs::write(&corrupted, &bytes).await.unwrap();
+    snapshot_format::verify_file(&corrupted)
+        .await
+        .expect_err("checksum must reject a corrupted body");
+
+    let mut target = open_sm(dir.path(), "target", &snapshots).await;
+    let result = target
+        .install_snapshot(
+            &meta_at(5),
+            Box::new(SnapshotFile::open(&corrupted).await.unwrap()),
+        )
+        .await;
+    assert!(result.is_err(), "a corrupted snapshot must be refused");
+}
+
+/// A snapshot body far larger than one restore batch must round-trip exactly.
+///
+/// This is the regression guard for the streaming rewrite: the body is written
+/// and applied in fixed-size batches, so correctness must not depend on the
+/// snapshot fitting into a single batch.
+#[tokio::test]
+async fn large_snapshot_round_trips_in_batches() {
+    let dir = tempdir().unwrap();
+    let snapshots = dir.path().join("snapshots");
+
+    let mut source = open_sm(dir.path(), "source", &dir.path().join("source_snaps")).await;
+    let source_db = source.db();
+    let cf = source_db.cf_handle(CF_CONFIG).unwrap();
+    let entries = 5_000u32;
+    for i in 0..entries {
+        source_db
+            .put_cf(&cf, format!("cfg:key-{i}"), format!("value-{i}"))
+            .unwrap();
+    }
+    let snapshot = source.build_snapshot().await.unwrap();
+    let body = snapshot.snapshot.path().to_path_buf();
+    let body_len = tokio::fs::metadata(&body).await.unwrap().len();
+    assert!(body_len > 0, "snapshot body must have been written");
+
+    let mut target = open_sm(dir.path(), "target", &snapshots).await;
+    target
+        .install_snapshot(
+            &meta_at(20),
+            Box::new(SnapshotFile::open(&body).await.unwrap()),
+        )
+        .await
+        .expect("large snapshot must install");
+
+    let target_db = target.db();
+    let target_cf = target_db.cf_handle(CF_CONFIG).unwrap();
+    for i in 0..entries {
+        assert_eq!(
+            target_db
+                .get_cf(&target_cf, format!("cfg:key-{i}"))
+                .unwrap()
+                .as_deref(),
+            Some(format!("value-{i}").as_bytes()),
+            "entry {i} did not survive the round trip"
+        );
+    }
 }
 
 /// Records the instance id sets handed to `on_snapshot_loaded`.
@@ -242,7 +338,13 @@ async fn install_hands_restored_instances_to_the_naming_hook() {
             &bincode::serialize(&stored).unwrap(),
         )
         .unwrap();
-    let bytes = source.build_snapshot().await.unwrap().snapshot.into_inner();
+    let body = source
+        .build_snapshot()
+        .await
+        .unwrap()
+        .snapshot
+        .path()
+        .to_path_buf();
 
     // Target installs it with a hook registered.
     let hook = Arc::new(RecordingHook {
@@ -252,7 +354,10 @@ async fn install_hands_restored_instances_to_the_naming_hook() {
     *target.naming_hook().write().await = Some(hook.clone());
 
     target
-        .install_snapshot(&meta_at(7), Box::new(Cursor::new(bytes)))
+        .install_snapshot(
+            &meta_at(7),
+            Box::new(SnapshotFile::open(&body).await.unwrap()),
+        )
         .await
         .unwrap();
 
@@ -272,8 +377,9 @@ async fn install_without_a_naming_hook_still_succeeds() {
 
     let mut target = open_sm(dir.path(), "target", &snapshots).await;
     // No hook registered: the default no-op must keep the install working.
+    let empty = empty_snapshot(dir.path(), "empty").await;
     target
-        .install_snapshot(&meta_at(3), Box::new(Cursor::new(Vec::new())))
+        .install_snapshot(&meta_at(3), Box::new(empty))
         .await
         .unwrap();
 

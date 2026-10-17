@@ -42,7 +42,6 @@ pub struct RaftNode {
     raft: Raft<TypeConfig>,
 
     /// Configuration (reserved for future dynamic reconfiguration)
-    #[allow(dead_code)]
     config: RaftConfig,
 
     /// Shared RocksDB handle (same instance used by the state machine)
@@ -298,6 +297,12 @@ impl RaftNode {
     /// Get current metrics
     pub fn metrics(&self) -> RaftMetrics {
         self.raft.metrics().borrow().clone()
+    }
+
+    /// Directory snapshots live in, including the `incoming/` staging area used
+    /// while a snapshot streams in from the leader.
+    pub fn snapshot_dir(&self) -> std::path::PathBuf {
+        self.config.snapshot_dir()
     }
 
     /// Check if this node is the leader

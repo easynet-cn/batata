@@ -6,7 +6,6 @@
 //! does not lose its cluster config.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +19,9 @@ use tonic::transport::Server;
 use batata_consistency::bincode;
 use batata_consistency::raft::network::RaftNetworkConnection;
 use batata_consistency::raft::state_machine::{CF_NAMESPACE, RocksStateMachine};
-use batata_consistency::raft::{RaftConfig, RaftGrpcService, RaftNode, RaftRequest, ServerState};
+use batata_consistency::raft::{
+    RaftConfig, RaftGrpcService, RaftNode, RaftRequest, ServerState, SnapshotFile,
+};
 use batata_server_api::raft::raft_service_server::RaftServiceServer;
 
 /// Reserve a free localhost port. The listener is dropped immediately; the
@@ -182,10 +183,14 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
         .expect("read snapshot meta");
     let meta: openraft::SnapshotMeta<u64, BasicNode> =
         bincode::deserialize(&meta_bytes).expect("decode snapshot meta");
-    let data = tokio::fs::read(snapshot_path.join("data"))
+    // The body stays on disk: the sender streams it from the file, so nothing
+    // has to be read into memory to start the transfer.
+    let data_path = snapshot_path.join("data");
+    let data_len = tokio::fs::metadata(&data_path)
         .await
-        .expect("read snapshot data");
-    assert!(!data.is_empty(), "snapshot body must not be empty");
+        .expect("stat snapshot data")
+        .len();
+    assert!(data_len > 0, "snapshot body must not be empty");
 
     // A fresh, uninitialized node stands in for a follower that has fallen so
     // far behind that only a snapshot can bring it back. Its state machine is
@@ -197,7 +202,11 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
     let vote: Vote<u64> = leader.node.metrics().vote;
     let snapshot = Snapshot {
         meta: meta.clone(),
-        snapshot: Box::new(Cursor::new(data)),
+        snapshot: Box::new(
+            SnapshotFile::open(&data_path)
+                .await
+                .expect("open snapshot body"),
+        ),
     };
 
     let mut connection = RaftNetworkConnection::new(fresh.addr.clone());

@@ -1,9 +1,8 @@
-use std::io::Cursor;
-
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use tempfile::tempdir;
 
+use batata_consistency::raft::SnapshotFile;
 use batata_consistency::raft::state_machine::{CF_APOLLO_SERVER_CONFIG, RocksStateMachine};
 
 #[tokio::test]
@@ -22,13 +21,13 @@ async fn apollo_cf_survives_snapshot_round_trip() {
     // build snapshot from sm1
     let snapshot = sm1.build_snapshot().await.unwrap();
     let meta = snapshot.meta;
-    let bytes = snapshot.snapshot.into_inner();
+    let body = snapshot.snapshot.path().to_path_buf();
 
     // install into a fresh state machine sm2
     let mut sm2 = RocksStateMachine::with_options_and_cfs(dir2.path(), None, None, &[])
         .await
         .unwrap();
-    sm2.install_snapshot(&meta, Box::new(Cursor::new(bytes)))
+    sm2.install_snapshot(&meta, Box::new(SnapshotFile::open(&body).await.unwrap()))
         .await
         .unwrap();
 

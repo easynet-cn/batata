@@ -181,15 +181,34 @@ impl RaftService for RaftGrpcService {
         request: Request<Streaming<ProtoInstallSnapshotRequest>>,
     ) -> Result<Response<ProtoInstallSnapshotResponse>, Status> {
         use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
 
         let raft_node = self.get_raft().await?;
         let mut stream = request.into_inner();
 
-        // Collect every chunk into one contiguous buffer. The leader streams
-        // the snapshot body over gRPC; openraft only sees it once it is
-        // reassembled into a `Snapshot` and handed to `install_full_snapshot`.
-        let mut data: Vec<u8> = Vec::new();
+        // Write the body to disk as the chunks arrive. Buffering it in memory
+        // costs as much RAM as the snapshot is large, which is exactly what
+        // made large snapshots dangerous before.
+        let staging_dir = raft_node
+            .snapshot_dir()
+            .join(super::state_machine::SNAPSHOT_INCOMING_DIR);
+        tokio::fs::create_dir_all(&staging_dir).await.map_err(|e| {
+            error!("Failed to create snapshot staging dir: {}", e);
+            Status::internal(format!("Failed to stage snapshot: {}", e))
+        })?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let staging_path = staging_dir.join(format!("recv-{stamp}"));
+
+        let mut file = tokio::fs::File::create(&staging_path).await.map_err(|e| {
+            error!("Failed to create snapshot staging file: {}", e);
+            Status::internal(format!("Failed to stage snapshot: {}", e))
+        })?;
+
         let mut chunk_count: usize = 0;
+        let mut total_bytes: u64 = 0;
         let mut meta: Option<batata_server_api::raft::SnapshotMeta> = None;
         let mut vote: Option<openraft::Vote<NodeId>> = None;
 
@@ -208,19 +227,34 @@ impl RaftService for RaftGrpcService {
                 vote = super::proto_convert::from_proto_vote(chunk.vote.clone());
             }
 
-            data.extend_from_slice(&chunk.data);
+            file.write_all(&chunk.data).await.map_err(|e| {
+                error!("Error writing snapshot chunk: {}", e);
+                Status::internal(format!("Failed to write snapshot chunk: {}", e))
+            })?;
             chunk_count += 1;
+            total_bytes += chunk.data.len() as u64;
 
             if chunk.done {
                 break;
             }
         }
 
-        if data.is_empty() {
+        file.flush().await.map_err(|e| {
+            error!("Error flushing snapshot: {}", e);
+            Status::internal(format!("Failed to flush snapshot: {}", e))
+        })?;
+        file.sync_all().await.map_err(|e| {
+            error!("Error syncing snapshot: {}", e);
+            Status::internal(format!("Failed to sync snapshot: {}", e))
+        })?;
+        drop(file);
+
+        if total_bytes == 0 {
             warn!(
                 "Ignoring empty snapshot stream from leader (chunks={})",
                 chunk_count
             );
+            let _ = tokio::fs::remove_file(&staging_path).await;
             let metrics = raft_node.metrics();
             let fallback_vote = metrics.vote;
             return Ok(Response::new(ProtoInstallSnapshotResponse {
@@ -231,6 +265,7 @@ impl RaftService for RaftGrpcService {
 
         let Some(meta) = super::proto_convert::from_proto_snapshot_meta(meta) else {
             error!("Snapshot stream without metadata, refusing to install");
+            let _ = tokio::fs::remove_file(&staging_path).await;
             return Err(Status::invalid_argument(
                 "Snapshot metadata missing from stream",
             ));
@@ -242,10 +277,15 @@ impl RaftService for RaftGrpcService {
         let vote = vote.unwrap_or_else(|| raft_node.metrics().vote);
 
         let snapshot_id = meta.snapshot_id.clone();
-        let total_bytes = data.len();
+        let body = super::snapshot_file::SnapshotFile::open(&staging_path)
+            .await
+            .map_err(|e| {
+                error!("Failed to reopen staged snapshot: {}", e);
+                Status::internal(format!("Failed to install snapshot: {}", e))
+            })?;
         let snapshot = openraft::Snapshot {
             meta,
-            snapshot: Box::new(std::io::Cursor::new(data)),
+            snapshot: Box::new(body),
         };
 
         raft_node
@@ -256,6 +296,10 @@ impl RaftService for RaftGrpcService {
                 error!("Failed to install snapshot {}: {}", snapshot_id, e);
                 Status::internal(format!("Failed to install snapshot: {}", e))
             })?;
+
+        // Installing published the body into the snapshot directory, so the
+        // staging file is ours to clean up.
+        let _ = tokio::fs::remove_file(&staging_path).await;
 
         info!(
             "Snapshot installed: id={}, chunks={}, bytes={}",
