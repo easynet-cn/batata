@@ -194,12 +194,17 @@ impl ConsulPlugin {
     }
 
     /// Build inner services with in-memory storage (standalone mode).
+    ///
+    /// `index_provider` must be the same instance handed to
+    /// `ConsulResultHandler`: health-check state transitions bump the index on
+    /// that instance, and blocking queries observe the index on this one. Two
+    /// separate instances would silently break `WaitIndex` on `/v1/health/*`.
     fn build_inner_standalone(
         &self,
         naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         registry: Arc<InstanceCheckRegistry>,
+        index_provider: ConsulIndexProvider,
     ) -> ConsulPluginInner {
-        let index_provider = ConsulIndexProvider::new();
         let session = ConsulSessionService::new().with_node_name(self.dc_config.node_name.clone());
         let kv = ConsulKVService::new();
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
@@ -390,7 +395,8 @@ impl ConsulPlugin {
             inner: std::sync::OnceLock::new(),
         };
 
-        let inner = plugin.build_inner_standalone(naming_store, registry);
+        let inner =
+            plugin.build_inner_standalone(naming_store, registry, ConsulIndexProvider::new());
         let _ = plugin.inner.set(inner);
         plugin
     }
@@ -504,6 +510,13 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             CF_CONSUL_NAMESPACES.to_string(),
             CF_CONSUL_PARTITIONS.to_string(),
             CF_CONSUL_CATALOG.to_string(),
+            // Health check *definitions*. Consul keeps them in the agent's
+            // local DataDir, but batata has no agent/server split — every node
+            // serves the catalog, so a definition that only lived on the node
+            // that accepted the registration would be invisible to the rest of
+            // the cluster once that node restarted. Replicating them through
+            // Raft is the deliberate divergence; see `snapshot_column_families`.
+            CF_CONSUL_HEALTH_CHECKS.to_string(),
         ]
     }
 
@@ -533,7 +546,14 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .get::<Arc<dyn batata_common::ClusterManager>>("cluster_manager")
             .map(|arc_arc| (*arc_arc).clone());
 
-        // Create Consul naming store and result handler
+        // Create Consul naming store and result handler.
+        //
+        // The index provider is created exactly once and threaded into both the
+        // result handler and the inner services. Health-check state changes bump
+        // the index on the result handler's instance; blocking queries observe
+        // the index on `inner.index_provider`. They must be the same instance,
+        // otherwise `X-Consul-Index` never advances for health changes and
+        // `WaitIndex` watchers on `/v1/health/*` never wake.
         let consul_naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
         let consul_index_provider = Arc::new(ConsulIndexProvider::new());
         let consul_result_handler = Arc::new(crate::result_handler::ConsulResultHandler::new(
@@ -545,11 +565,20 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         ));
 
         let mut inner = if is_cluster {
-            self.init_cluster(raft_node, consul_naming_store, consul_registry)
-                .await
+            self.init_cluster(
+                raft_node,
+                consul_naming_store,
+                consul_registry,
+                (*consul_index_provider).clone(),
+            )
+            .await
         } else {
             tracing::info!("Consul services using in-memory storage (standalone/console mode)");
-            self.build_inner_standalone(consul_naming_store, consul_registry)
+            self.build_inner_standalone(
+                consul_naming_store,
+                consul_registry,
+                (*consul_index_provider).clone(),
+            )
         };
 
         // Set cluster manager for cluster-aware Consul endpoints
@@ -907,16 +936,22 @@ impl ConsulPlugin {
         raft_node: Option<Arc<batata_consistency::RaftNode>>,
         consul_naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         consul_registry: Arc<InstanceCheckRegistry>,
+        index_provider: ConsulTableIndex,
     ) -> ConsulPluginInner {
         let Some(core_raft) = raft_node else {
             tracing::error!(
                 "Core Raft node not available for Consul cluster mode, falling back to in-memory"
             );
-            return self.build_inner_standalone(consul_naming_store, consul_registry);
+            return self.build_inner_standalone(
+                consul_naming_store,
+                consul_registry,
+                index_provider,
+            );
         };
 
-        // Create a table index for blocking query notifications
-        let table_index = ConsulTableIndex::new();
+        // Reuse the caller-supplied table index so it stays shared with the
+        // ConsulResultHandler (see `build_inner_standalone`).
+        let table_index = index_provider;
 
         // Create the plugin handler and capture its apply-hook slot before
         // the handler is moved into the Raft state machine. The slot is a
@@ -931,7 +966,7 @@ impl ConsulPlugin {
                 "Failed to register Consul Raft plugin: {}, falling back to in-memory",
                 e
             );
-            return self.build_inner_standalone(consul_naming_store, consul_registry);
+            return self.build_inner_standalone(consul_naming_store, consul_registry, table_index);
         }
         tracing::info!("Consul Raft plugin handler registered with core Raft");
 
@@ -1017,6 +1052,7 @@ impl PluginStateProvider for ConsulPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_plugin::HealthCheckResultHandler;
 
     #[test]
     fn test_consul_plugin_trait_impl() {
@@ -1072,6 +1108,44 @@ mod tests {
         // Services are accessible
         let inner = plugin.inner();
         assert_eq!(inner.dc_config.datacenter, "dc1");
+    }
+
+    #[test]
+    fn standalone_inner_shares_caller_index_provider() {
+        // Regression: `build_inner_standalone` used to create its own
+        // `ConsulIndexProvider`, so the index that `ConsulResultHandler`
+        // bumps on health transitions was a *different* instance from the one
+        // HTTP handlers read. `X-Consul-Index` then never advanced for health
+        // changes and `WaitIndex` watchers on /v1/health/* never woke.
+        let plugin = ConsulPlugin::from_plugin_config(ConsulPluginConfig {
+            enabled: true,
+            dc_config: ConsulDatacenterConfig::new("dc1".to_string()),
+            ..ConsulPluginConfig::default()
+        });
+        let index = ConsulIndexProvider::new();
+        let store = Arc::new(crate::naming_store::ConsulNamingStore::new());
+        let handler = Arc::new(crate::result_handler::ConsulResultHandler::new(
+            store.clone(),
+            Arc::new(index.clone()),
+        ));
+        let registry = Arc::new(InstanceCheckRegistry::new(
+            handler.clone() as Arc<dyn batata_plugin::HealthCheckResultHandler>
+        ));
+
+        let inner = plugin.build_inner_standalone(store, registry, index.clone());
+
+        let before = inner
+            .index_provider
+            .current_index(crate::index_provider::ConsulTable::Catalog);
+        handler.on_health_changed("", "", "", "10.0.0.1", 8080, "", false);
+        let after = inner
+            .index_provider
+            .current_index(crate::index_provider::ConsulTable::Catalog);
+
+        assert!(
+            after > before,
+            "health change must advance the index observed by HTTP blocking queries"
+        );
     }
 
     #[tokio::test]

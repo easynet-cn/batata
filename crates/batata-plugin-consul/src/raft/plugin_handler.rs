@@ -109,6 +109,18 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
         ]
     }
 
+    /// Every Consul CF goes into the snapshot, health checks included.
+    ///
+    /// Leaving a CF out is only safe while the log still holds the entries that
+    /// produced it, and the log is purged precisely once a snapshot exists. A
+    /// follower that falls behind then recovers from the snapshot alone and
+    /// would lose that CF's contents outright, so the default (all owned CFs)
+    /// is also the correct answer here — it is spelled out only to record that
+    /// health checks were considered rather than inherited by accident.
+    fn snapshot_column_families(&self) -> Vec<String> {
+        self.column_families()
+    }
+
     fn apply(&self, db: &DB, op_type: &str, payload: &[u8], log_index: u64) -> RaftResponse {
         let request: ConsulRaftRequest = match serde_json::from_slice(payload) {
             Ok(r) => r,

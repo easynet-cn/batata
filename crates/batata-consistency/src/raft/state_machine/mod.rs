@@ -64,8 +64,13 @@ pub struct RestoreStats {
     pub bytes: u64,
 }
 
-/// Column families written into a snapshot, in the order they are streamed.
-const SNAPSHOT_CF_NAMES: &[&str] = &[
+/// Column families owned by the core, in the order they are streamed into a
+/// snapshot.
+///
+/// Plugin-owned CFs are *not* listed here — plugins declare them through
+/// [`RaftPluginHandler::snapshot_column_families`] and the builder appends
+/// them, so a plugin's data can never be silently omitted from snapshots.
+const CORE_SNAPSHOT_CF_NAMES: &[&str] = &[
     CF_CONFIG,
     CF_CONFIG_HISTORY,
     CF_CONFIG_GRAY,
@@ -81,35 +86,6 @@ const SNAPSHOT_CF_NAMES: &[&str] = &[
     CF_AI_RESOURCE_SEARCH_DOCUMENT,
     CF_AI_RESOURCE_SEARCH_CHUNK,
     CF_AI_RESOURCE_TASK,
-    // Apollo plugin column families
-    CF_APOLLO_APP,
-    CF_APOLLO_CLUSTER,
-    CF_APOLLO_NAMESPACE,
-    CF_APOLLO_ITEM,
-    CF_APOLLO_RELEASE,
-    CF_APOLLO_COMMIT,
-    CF_APOLLO_GRAY_RULE,
-    CF_APOLLO_INSTANCE,
-    CF_APOLLO_ACCESS_KEY,
-    CF_APOLLO_RELEASE_MSG,
-    CF_APOLLO_NAMESPACE_LOCK,
-    CF_APOLLO_RELEASE_HISTORY,
-    CF_APOLLO_APP_NAMESPACE,
-    CF_APOLLO_AUDIT,
-    CF_APOLLO_CONSUMER,
-    CF_APOLLO_CONSUMER_TOKEN,
-    CF_APOLLO_CONSUMER_AUDIT,
-    CF_APOLLO_CONSUMER_ROLE,
-    CF_APOLLO_PERMISSION,
-    CF_APOLLO_ROLE,
-    CF_APOLLO_ROLE_PERMISSION,
-    CF_APOLLO_USER_ROLE,
-    CF_APOLLO_USERS,
-    CF_APOLLO_FAVORITE,
-    CF_APOLLO_SERVER_CONFIG,
-    CF_APOLLO_INSTANCE_CONFIG,
-    CF_APOLLO_USER_TOKEN,
-    CF_APOLLO_SERVICE_REGISTRY,
 ];
 
 /// Pick a stable scratch file for nodes without a snapshot directory.
@@ -1833,10 +1809,39 @@ impl RocksStateMachine {
         *self.last_membership.write().await = membership;
         Ok(())
     }
+
+    /// Column families to stream into a snapshot, in the order they are
+    /// written.
+    ///
+    /// Core CFs first, then the CFs each registered plugin declares. The core
+    /// does not know which plugins exist, so listing plugin CFs here would
+    /// mean every new plugin has to remember to edit this crate — and
+    /// forgetting it silently drops that plugin's data from snapshots, which
+    /// only shows up when a follower falls far enough behind to need one.
+    ///
+    /// Duplicates are dropped and the order is stable (plugins are iterated by
+    /// id), so every replica writes the same CF sequence and produces
+    /// byte-identical snapshot bodies for the same state.
+    async fn snapshot_cf_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = CORE_SNAPSHOT_CF_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        let mut seen: std::collections::HashSet<String> = names.iter().cloned().collect();
+
+        let registry = self.plugin_registry.read().await;
+        for name in registry.all_snapshot_column_families() {
+            if seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+        names
+    }
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<NodeId>> {
+        let cf_names = self.snapshot_cf_names().await;
         let last_applied = *self.last_applied.read().await;
         let last_membership = self.last_membership.read().await.clone();
 
@@ -1881,7 +1886,7 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
         let mut entries = 0usize;
         let mut bytes = 0u64;
 
-        for cf_name in SNAPSHOT_CF_NAMES {
+        for cf_name in &cf_names {
             let Some(cf) = self.db.cf_handle(cf_name) else {
                 continue;
             };
