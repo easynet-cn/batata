@@ -22,7 +22,11 @@ impl InstanceSqlPersistence {
 impl From<StoredInstance> for apollo_instance::ActiveModel {
     fn from(instance: StoredInstance) -> Self {
         Self {
-            id: if instance.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(instance.id) },
+            id: if instance.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(instance.id)
+            },
             app_id: Set(instance.app_id),
             cluster_name: Set(instance.cluster_name),
             data_center: Set(instance.data_center),
@@ -32,9 +36,9 @@ impl From<StoredInstance> for apollo_instance::ActiveModel {
             )
             .unwrap_or_default()
             .naive_utc()),
-            data_change_last_time: Set(instance.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(instance
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -48,7 +52,9 @@ impl From<apollo_instance::Model> for StoredInstance {
             data_center: model.data_center,
             ip: model.ip,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -77,12 +83,12 @@ impl InstancePersistence for InstanceSqlPersistence {
                 // Create new instance
                 let active_model: apollo_instance::ActiveModel = instance.into();
                 let result = apollo_instance::Entity::insert(active_model)
-            .exec(&self.db)
-            .await?;
-        let model = apollo_instance::Entity::find_by_id(result.last_insert_id)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to fetch created instance"))?;
+                    .exec(&self.db)
+                    .await?;
+                let model = apollo_instance::Entity::find_by_id(result.last_insert_id)
+                    .one(&self.db)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Failed to fetch created instance"))?;
                 Ok(model.into())
             }
         }
@@ -93,8 +99,8 @@ impl InstancePersistence for InstanceSqlPersistence {
         app_id: &str,
         cluster_name: Option<&str>,
     ) -> anyhow::Result<Vec<StoredInstance>> {
-        let mut query = apollo_instance::Entity::find()
-            .filter(apollo_instance::Column::AppId.eq(app_id));
+        let mut query =
+            apollo_instance::Entity::find().filter(apollo_instance::Column::AppId.eq(app_id));
 
         if let Some(cluster) = cluster_name {
             query = query.filter(apollo_instance::Column::ClusterName.eq(cluster));
@@ -108,8 +114,8 @@ impl InstancePersistence for InstanceSqlPersistence {
     }
 
     async fn delete_expired(&self, before_timestamp: i64) -> anyhow::Result<usize> {
-        let before_time = chrono::DateTime::from_timestamp_millis(before_timestamp)
-            .unwrap_or_default();
+        let before_time =
+            chrono::DateTime::from_timestamp_millis(before_timestamp).unwrap_or_default();
 
         let results = apollo_instance::Entity::find()
             .filter(apollo_instance::Column::DataChangeLastTime.lt(before_time))

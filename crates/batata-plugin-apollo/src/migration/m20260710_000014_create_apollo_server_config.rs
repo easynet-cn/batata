@@ -15,13 +15,28 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloServerConfig::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloServerConfig::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloServerConfig::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloServerConfig::Key, 64, "default"))
-                    .col(string_len_default(ApolloServerConfig::Value, 2048, "default"))
+                    .col(string_len_default(
+                        ApolloServerConfig::Value,
+                        2048,
+                        "default",
+                    ))
                     .col(string_len_null(ApolloServerConfig::Comment, 1024))
-                    .col(string_len_default(ApolloServerConfig::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloServerConfig::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloServerConfig::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloServerConfig::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloServerConfig::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloServerConfig::DataChangeLastTime))
                     .to_owned(),
             )

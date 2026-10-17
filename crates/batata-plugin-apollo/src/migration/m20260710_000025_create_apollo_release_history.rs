@@ -15,21 +15,50 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloReleaseHistory::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloReleaseHistory::Id, backend).auto_increment().primary_key())
-                    .col(string_len_default(ApolloReleaseHistory::AppId, 64, "default"))
-                    .col(string_len_default(ApolloReleaseHistory::ClusterName, 32, "default"))
-                    .col(string_len_default(ApolloReleaseHistory::NamespaceName, 32, "default"))
-                    .col(string_len_default(ApolloReleaseHistory::BranchName, 32, "default"))
+                    .col(
+                        unsigned_int(ApolloReleaseHistory::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(string_len_default(
+                        ApolloReleaseHistory::AppId,
+                        64,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloReleaseHistory::ClusterName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloReleaseHistory::NamespaceName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloReleaseHistory::BranchName,
+                        32,
+                        "default",
+                    ))
                     .col(unsigned_int(ApolloReleaseHistory::ReleaseId, backend).default(0))
                     .col(unsigned_int(ApolloReleaseHistory::PreviousReleaseId, backend).default(0))
                     .col(signed_int(ApolloReleaseHistory::Operation, backend).default(0))
                     .col(long_text(ApolloReleaseHistory::OperationContext, backend))
                     .col(bit(ApolloReleaseHistory::IsDeleted, None))
                     .col(unsigned_big_int(ApolloReleaseHistory::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloReleaseHistory::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloReleaseHistory::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloReleaseHistory::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloReleaseHistory::DataChangeLastModifiedBy, 64))
-                    .col(date_time_on_update(ApolloReleaseHistory::DataChangeLastTime))
+                    .col(string_len_null(
+                        ApolloReleaseHistory::DataChangeLastModifiedBy,
+                        64,
+                    ))
+                    .col(date_time_on_update(
+                        ApolloReleaseHistory::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

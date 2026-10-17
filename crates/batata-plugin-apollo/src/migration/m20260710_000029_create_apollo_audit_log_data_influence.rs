@@ -15,19 +15,56 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloAuditLogDataInfluence::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloAuditLogDataInfluence::Id, backend).auto_increment().primary_key())
-                    .col(char_len_default(ApolloAuditLogDataInfluence::SpanId, 32, "", backend))
-                    .col(string_len_default(ApolloAuditLogDataInfluence::InfluenceEntityId, 50, "0"))
-                    .col(string_len_default(ApolloAuditLogDataInfluence::InfluenceEntityName, 50, "default"))
+                    .col(
+                        unsigned_int(ApolloAuditLogDataInfluence::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(char_len_default(
+                        ApolloAuditLogDataInfluence::SpanId,
+                        32,
+                        "",
+                        backend,
+                    ))
+                    .col(string_len_default(
+                        ApolloAuditLogDataInfluence::InfluenceEntityId,
+                        50,
+                        "0",
+                    ))
+                    .col(string_len_default(
+                        ApolloAuditLogDataInfluence::InfluenceEntityName,
+                        50,
+                        "default",
+                    ))
                     .col(string_len_null(ApolloAuditLogDataInfluence::FieldName, 50))
-                    .col(string_len_null(ApolloAuditLogDataInfluence::FieldOldValue, 500))
-                    .col(string_len_null(ApolloAuditLogDataInfluence::FieldNewValue, 500))
+                    .col(string_len_null(
+                        ApolloAuditLogDataInfluence::FieldOldValue,
+                        500,
+                    ))
+                    .col(string_len_null(
+                        ApolloAuditLogDataInfluence::FieldNewValue,
+                        500,
+                    ))
                     .col(bit(ApolloAuditLogDataInfluence::IsDeleted, None))
-                    .col(unsigned_big_int(ApolloAuditLogDataInfluence::DeletedAt, backend).default(0))
-                    .col(string_len_null(ApolloAuditLogDataInfluence::DataChangeCreatedBy, 64))
-                    .col(date_time(ApolloAuditLogDataInfluence::DataChangeCreatedTime))
-                    .col(string_len_default(ApolloAuditLogDataInfluence::DataChangeLastModifiedBy, 64, ""))
-                    .col(date_time_on_update(ApolloAuditLogDataInfluence::DataChangeLastTime))
+                    .col(
+                        unsigned_big_int(ApolloAuditLogDataInfluence::DeletedAt, backend)
+                            .default(0),
+                    )
+                    .col(string_len_null(
+                        ApolloAuditLogDataInfluence::DataChangeCreatedBy,
+                        64,
+                    ))
+                    .col(date_time(
+                        ApolloAuditLogDataInfluence::DataChangeCreatedTime,
+                    ))
+                    .col(string_len_default(
+                        ApolloAuditLogDataInfluence::DataChangeLastModifiedBy,
+                        64,
+                        "",
+                    ))
+                    .col(date_time_on_update(
+                        ApolloAuditLogDataInfluence::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;
@@ -70,7 +107,11 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(ApolloAuditLogDataInfluence::Table).to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(ApolloAuditLogDataInfluence::Table)
+                    .to_owned(),
+            )
             .await
     }
 }

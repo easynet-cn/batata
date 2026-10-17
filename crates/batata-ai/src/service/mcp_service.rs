@@ -663,14 +663,9 @@ impl McpServerOperationService {
             }
         };
 
-        let (entries, total) = self.index.search_by_name(
-            namespace,
-            name,
-            search_type,
-            offset,
-            limit,
-            Some(&visible),
-        );
+        let (entries, total) =
+            self.index
+                .search_by_name(namespace, name, search_type, offset, limit, Some(&visible));
 
         let page_items: Vec<McpServerBasicInfo> = entries
             .into_iter()
@@ -1460,7 +1455,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.submit_mcp_server_version(namespace, name, version).await
+        self.submit_mcp_server_version(namespace, name, version)
+            .await
     }
 
     async fn publish_mcp_server_version(
@@ -1469,7 +1465,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.publish_mcp_server_version(namespace, name, version).await
+        self.publish_mcp_server_version(namespace, name, version)
+            .await
     }
 
     async fn force_publish_mcp_server_version(
@@ -1488,7 +1485,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.redraft_mcp_server_version(namespace, name, version).await
+        self.redraft_mcp_server_version(namespace, name, version)
+            .await
     }
 
     async fn online_mcp_server_version(
@@ -1497,7 +1495,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.online_mcp_server_version(namespace, name, version).await
+        self.online_mcp_server_version(namespace, name, version)
+            .await
     }
 
     async fn offline_mcp_server_version(
@@ -1506,7 +1505,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<McpServerVersionDetail> {
-        self.offline_mcp_server_version(namespace, name, version).await
+        self.offline_mcp_server_version(namespace, name, version)
+            .await
     }
 
     async fn update_mcp_server_labels(
@@ -1524,7 +1524,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         enabled: bool,
     ) -> anyhow::Result<()> {
-        self.update_mcp_server_status(namespace, name, enabled).await
+        self.update_mcp_server_status(namespace, name, enabled)
+            .await
     }
 
     async fn update_mcp_server_scope(
@@ -1533,7 +1534,8 @@ impl super::traits::McpServerService for McpServerOperationService {
         name: &str,
         new_scope: &str,
     ) -> anyhow::Result<()> {
-        self.update_mcp_server_scope(namespace, name, new_scope).await
+        self.update_mcp_server_scope(namespace, name, new_scope)
+            .await
     }
 
     async fn search_mcp_servers(

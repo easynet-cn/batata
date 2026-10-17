@@ -6,8 +6,8 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_CLUSTER;
 
-use crate::persistence::shared::StoredCluster;
 use super::id_generator::IdGenerator;
+use crate::persistence::shared::StoredCluster;
 use crate::persistence::traits::ClusterPersistence;
 
 /// Represents the `ClusterEmbedded` entity.

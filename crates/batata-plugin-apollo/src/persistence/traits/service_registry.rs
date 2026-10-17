@@ -23,12 +23,7 @@ pub trait ServiceRegistryPersistence: Send + Sync {
     /// Upstream `ServiceRegistryService.saveIfNotExistByServiceNameAndUri` +
     /// heartbeat: insert when (service_name, uri) is new, otherwise refresh
     /// `last_time` so discovery keeps considering this instance alive.
-    async fn heartbeat(
-        &self,
-        service_name: &str,
-        uri: &str,
-        cluster: &str,
-    ) -> anyhow::Result<()>;
+    async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()>;
 
     /// Remove the registration on graceful shutdown.
     async fn deregister(&self, service_name: &str, uri: &str) -> anyhow::Result<()>;

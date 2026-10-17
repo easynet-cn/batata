@@ -15,17 +15,45 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloInstanceConfig::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloInstanceConfig::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloInstanceConfig::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(unsigned_int(ApolloInstanceConfig::InstanceId, backend))
-                    .col(string_len_default(ApolloInstanceConfig::ConfigAppId, 128, ""))
-                    .col(string_len_default(ApolloInstanceConfig::NamespaceName, 128, "default"))
-                    .col(string_len_default(ApolloInstanceConfig::ClusterName, 32, "default"))
+                    .col(string_len_default(
+                        ApolloInstanceConfig::ConfigAppId,
+                        128,
+                        "",
+                    ))
+                    .col(string_len_default(
+                        ApolloInstanceConfig::NamespaceName,
+                        128,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloInstanceConfig::ClusterName,
+                        32,
+                        "default",
+                    ))
                     .col(string_len_default(ApolloInstanceConfig::ReleaseKey, 64, ""))
-                    .col(long_text_null(ApolloInstanceConfig::Configurations, backend))
-                    .col(string_len_default(ApolloInstanceConfig::DataChangeCreatedBy, 64, "default"))
+                    .col(long_text_null(
+                        ApolloInstanceConfig::Configurations,
+                        backend,
+                    ))
+                    .col(string_len_default(
+                        ApolloInstanceConfig::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloInstanceConfig::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloInstanceConfig::DataChangeLastModifiedBy, 64))
-                    .col(date_time_on_update(ApolloInstanceConfig::DataChangeLastTime))
+                    .col(string_len_null(
+                        ApolloInstanceConfig::DataChangeLastModifiedBy,
+                        64,
+                    ))
+                    .col(date_time_on_update(
+                        ApolloInstanceConfig::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

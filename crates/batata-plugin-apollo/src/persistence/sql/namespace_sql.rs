@@ -22,7 +22,11 @@ impl NamespaceSqlPersistence {
 impl From<StoredNamespace> for apollo_namespace::ActiveModel {
     fn from(namespace: StoredNamespace) -> Self {
         Self {
-            id: if namespace.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(namespace.id) },
+            id: if namespace.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(namespace.id)
+            },
             app_id: Set(namespace.app_id),
             cluster_name: Set(namespace.cluster_name),
             namespace_name: Set(namespace.namespace_name),
@@ -38,9 +42,9 @@ impl From<StoredNamespace> for apollo_namespace::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(namespace.data_change_last_modified_by),
-            data_change_last_time: Set(namespace.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(namespace
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -60,7 +64,9 @@ impl From<apollo_namespace::Model> for StoredNamespace {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -134,9 +140,9 @@ impl NamespacePersistence for NamespaceSqlPersistence {
         active_model.is_public = Set(namespace.is_public);
         active_model.comment = Set(namespace.comment);
         active_model.data_change_last_modified_by = Set(namespace.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(namespace.data_change_last_time.and_then(|t| {
-            chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-        }));
+        active_model.data_change_last_time = Set(namespace
+            .data_change_last_time
+            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())

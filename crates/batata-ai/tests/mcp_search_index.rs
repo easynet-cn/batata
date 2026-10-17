@@ -24,15 +24,15 @@ use batata_ai::model::{
 };
 use batata_ai::search::consumer::{AiResourceIndexConsumer, TaskOutcome};
 use batata_ai::search::query;
-use batata_ai::search::task;
 use batata_ai::search::service::AiResourceSearchService;
+use batata_ai::search::task;
 use batata_ai::{McpServerIndex, McpServerOperationService};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
 use batata_persistence::entity::{
     ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
     ai_resource_version,
 };
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
 
 const NS: &str = "public";
 const NAME: &str = "search-mcp";
@@ -143,7 +143,10 @@ async fn schedule_then_rebuild_then_skip() {
         .await
         .expect("read document")
         .expect("document must exist");
-    assert_eq!(document.status, "enabled", "no vector index: enabled at once");
+    assert_eq!(
+        document.status, "enabled",
+        "no vector index: enabled at once"
+    );
     assert_eq!(document.generate_mode, "auto");
     assert_eq!(document.source_digest.len(), 64);
     assert_eq!(document.display_name, NAME);
@@ -165,7 +168,11 @@ async fn schedule_then_rebuild_then_skip() {
         chunks.iter().all(|c| c.document_id == document.id),
         "chunks must point at their document"
     );
-    println!("ok: rebuilt document {} with {} chunks", document.id, chunks.len());
+    println!(
+        "ok: rebuilt document {} with {} chunks",
+        document.id,
+        chunks.len()
+    );
 
     // ---- rebuild again: incremental short circuit --------------------------
     let rebuilt_again = search
@@ -277,7 +284,10 @@ async fn consumer_removes_task_for_missing_resource() {
         .iter()
         .filter(|o| **o == TaskOutcome::Removed)
         .count();
-    assert!(removed >= 1, "missing resource must remove the task: {outcomes:?}");
+    assert!(
+        removed >= 1,
+        "missing resource must remove the task: {outcomes:?}"
+    );
 
     assert!(
         store.task_find(&key).await.expect("read task").is_none(),

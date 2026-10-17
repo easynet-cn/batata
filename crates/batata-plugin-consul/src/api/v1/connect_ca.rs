@@ -420,7 +420,14 @@ async fn get_service_identity(
     query: web::Query<crate::connect_ca::ServiceIdentityQueryParams>,
 ) -> HttpResponse {
     crate::connect_ca::get_service_identity(
-        req, agent, acl_service, ca_service, dc_config, index_provider, path, query,
+        req,
+        agent,
+        acl_service,
+        ca_service,
+        dc_config,
+        index_provider,
+        path,
+        query,
     )
     .await
 }
@@ -471,7 +478,14 @@ async fn get_service_identity_persistent(
     // modes because leaf cert generation and CA roots are identical regardless
     // of the storage backend.
     crate::connect_ca::get_service_identity(
-        req, agent, acl_service, ca_service, dc_config, index_provider, path, query,
+        req,
+        agent,
+        acl_service,
+        ca_service,
+        dc_config,
+        index_provider,
+        path,
+        query,
     )
     .await
 }

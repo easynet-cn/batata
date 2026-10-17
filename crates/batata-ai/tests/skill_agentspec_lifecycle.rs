@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use batata_ai::{AgentSpecOperationService, SkillOperationService};
-use batata_common::model::ai::agentspec::{AgentSpec, AgentSpecResource, AGENTSPEC_TYPE};
-use batata_common::model::ai::skill::{Skill, SKILL_TYPE};
+use batata_common::model::ai::agentspec::{AGENTSPEC_TYPE, AgentSpec, AgentSpecResource};
+use batata_common::model::ai::skill::{SKILL_TYPE, Skill};
 use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
 
 const NS: &str = "public";
@@ -98,9 +98,7 @@ async fn skill_force_publish_and_redraft() {
     );
     println!("ok: skill force-publish");
 
-    svc.redraft(NS, name, version, None)
-        .await
-        .expect("redraft");
+    svc.redraft(NS, name, version, None).await.expect("redraft");
     assert_eq!(
         status_of(&store, SKILL_TYPE, name, version).await,
         "draft",
@@ -150,9 +148,7 @@ async fn agentspec_force_publish_and_redraft() {
     );
     println!("ok: agentspec force-publish");
 
-    svc.redraft(NS, name, version, None)
-        .await
-        .expect("redraft");
+    svc.redraft(NS, name, version, None).await.expect("redraft");
     assert_eq!(
         status_of(&store, AGENTSPEC_TYPE, name, version).await,
         "draft"

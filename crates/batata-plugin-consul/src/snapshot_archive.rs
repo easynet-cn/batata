@@ -104,7 +104,10 @@ pub fn write_archive<W: Write>(
     // Consul uses the exact format: "<hex>  <filename>\n" (two spaces)
     let sha256sums = format!(
         "{}  {}\n{}  {}\n",
-        hex_digest(meta_hash), META_FILE, hex_digest(state_hash), STATE_FILE
+        hex_digest(meta_hash),
+        META_FILE,
+        hex_digest(state_hash),
+        STATE_FILE
     );
 
     let mut builder = tar::Builder::new(out);
@@ -131,9 +134,9 @@ fn append_file<W: Write>(
 /// A parsed snapshot archive.
 #[derive(Debug, Clone)]
 pub struct ParsedArchive {
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: SnapshotMeta,
-/// The `state` field.
+    /// The `state` field.
     pub state: Vec<u8>,
 }
 
@@ -362,7 +365,10 @@ mod tests {
             };
             let sums = format!(
                 "{}  {}\n{}  {}\n",
-                hex_digest(meta_h), META_FILE, hex_digest(state_h), STATE_FILE
+                hex_digest(meta_h),
+                META_FILE,
+                hex_digest(state_h),
+                STATE_FILE
             );
             append_file(&mut builder, META_FILE, &meta_bytes).unwrap();
             // Append DIFFERENT state bytes but keep the original hash entry

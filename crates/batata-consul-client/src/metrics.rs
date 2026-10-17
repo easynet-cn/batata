@@ -25,39 +25,39 @@ pub struct ConsulClientMetrics {
 }
 
 impl ConsulClientMetrics {
-/// Performs the `new` operation.
+    /// Performs the `new` operation.
     pub fn new() -> Self {
         Self::default()
     }
 
-/// Performs the `record_success` operation.
+    /// Performs the `record_success` operation.
     pub fn record_success(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_success.fetch_add(1, Ordering::Relaxed);
     }
 
-/// Performs the `record_failure` operation.
+    /// Performs the `record_failure` operation.
     pub fn record_failure(&self) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
         self.requests_failed.fetch_add(1, Ordering::Relaxed);
     }
 
-/// Performs the `record_retry` operation.
+    /// Performs the `record_retry` operation.
     pub fn record_retry(&self) {
         self.retries_total.fetch_add(1, Ordering::Relaxed);
     }
 
-/// Performs the `record_rotation` operation.
+    /// Performs the `record_rotation` operation.
     pub fn record_rotation(&self) {
         self.address_rotations.fetch_add(1, Ordering::Relaxed);
     }
 
-/// Performs the `record_not_found` operation.
+    /// Performs the `record_not_found` operation.
     pub fn record_not_found(&self) {
         self.not_found.fetch_add(1, Ordering::Relaxed);
     }
 
-/// Performs the `record_rate_limited` operation.
+    /// Performs the `record_rate_limited` operation.
     pub fn record_rate_limited(&self) {
         self.rate_limited.fetch_add(1, Ordering::Relaxed);
     }

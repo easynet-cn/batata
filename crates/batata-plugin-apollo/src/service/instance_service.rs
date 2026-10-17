@@ -38,21 +38,44 @@ impl InstanceService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, app_id: &str, cluster_name: &str, ip: &str, data_center: &str) -> Result<Option<InstanceDTO>, anyhow::Error> {
-        let instances = self.persistence.get_by_app(app_id, Some(cluster_name)).await?;
-        let found = instances.into_iter()
+    pub async fn get(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        ip: &str,
+        data_center: &str,
+    ) -> Result<Option<InstanceDTO>, anyhow::Error> {
+        let instances = self
+            .persistence
+            .get_by_app(app_id, Some(cluster_name))
+            .await?;
+        let found = instances
+            .into_iter()
             .find(|i| i.ip == ip && i.data_center == data_center);
         Ok(found.map(|s| s.into()))
     }
 
     /// Returns the requested value.
-    pub async fn list_by_app_cluster(&self, app_id: &str, cluster_name: &str) -> Result<Vec<InstanceDTO>, anyhow::Error> {
-        let stored_list = self.persistence.get_by_app(app_id, Some(cluster_name)).await?;
+    pub async fn list_by_app_cluster(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+    ) -> Result<Vec<InstanceDTO>, anyhow::Error> {
+        let stored_list = self
+            .persistence
+            .get_by_app(app_id, Some(cluster_name))
+            .await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
     /// Performs the `heartbeat` operation.
-    pub async fn heartbeat(&self, app_id: &str, cluster_name: &str, ip: &str, data_center: &str) -> Result<(), anyhow::Error> {
+    pub async fn heartbeat(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        ip: &str,
+        data_center: &str,
+    ) -> Result<(), anyhow::Error> {
         let now = Utc::now().timestamp_millis();
 
         let stored = StoredInstance {
@@ -71,8 +94,15 @@ impl InstanceService {
 
     /// Resolves a single `apollo_instance` by id (used to enrich an instance
     /// config with its `ip` / `data_center`).
-    async fn resolve_instance(&self, instance_id: i64) -> Option<crate::persistence::shared::StoredInstance> {
-        self.persistence.get_instance_by_id(instance_id).await.ok().flatten()
+    async fn resolve_instance(
+        &self,
+        instance_id: i64,
+    ) -> Option<crate::persistence::shared::StoredInstance> {
+        self.persistence
+            .get_instance_by_id(instance_id)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Builds an `OpenInstanceDTO` from an instance config joined with its
@@ -94,9 +124,9 @@ impl InstanceService {
             ip,
             release_key: Some(cfg.release_key.clone()),
             release_id: None,
-            last_modified_time: cfg
-                .data_change_last_time
-                .map(|ts| format_timestamp(chrono::DateTime::from_naive_utc_and_offset(ts, chrono::Utc))),
+            last_modified_time: cfg.data_change_last_time.map(|ts| {
+                format_timestamp(chrono::DateTime::from_naive_utc_and_offset(ts, chrono::Utc))
+            }),
         }
     }
 
@@ -115,7 +145,14 @@ impl InstanceService {
     ) -> Result<OpenInstancePageDTO, anyhow::Error> {
         let (content, total) = self
             .persistence
-            .list_instance_config_paged(app_id, cluster_name, namespace_name, instance_app_id, page, size)
+            .list_instance_config_paged(
+                app_id,
+                cluster_name,
+                namespace_name,
+                instance_app_id,
+                page,
+                size,
+            )
             .await?;
         let mut items = Vec::with_capacity(content.len());
         for cfg in content {
@@ -145,7 +182,10 @@ impl InstanceService {
                 None => anyhow::bail!("release not found: {}", rid),
             }
         }
-        let configs = self.persistence.list_instance_config_by_release_keys(&release_keys).await?;
+        let configs = self
+            .persistence
+            .list_instance_config_by_release_keys(&release_keys)
+            .await?;
         let mut items = Vec::with_capacity(configs.len());
         for cfg in configs {
             items.push(self.to_open_instance(cfg).await);
@@ -173,7 +213,12 @@ impl InstanceService {
         }
         let configs = self
             .persistence
-            .list_instance_config_by_release_keys_not_in(app_id, cluster_name, namespace_name, &release_keys)
+            .list_instance_config_by_release_keys_not_in(
+                app_id,
+                cluster_name,
+                namespace_name,
+                &release_keys,
+            )
             .await?;
         let mut items = Vec::with_capacity(configs.len());
         for cfg in configs {
@@ -190,7 +235,9 @@ impl InstanceService {
         cluster_name: &str,
         namespace_name: &str,
     ) -> Result<u64, anyhow::Error> {
-        self.persistence.count_instance_config(app_id, cluster_name, namespace_name).await
+        self.persistence
+            .count_instance_config(app_id, cluster_name, namespace_name)
+            .await
     }
 }
 
@@ -202,7 +249,9 @@ impl From<StoredInstance> for InstanceDTO {
             cluster_name: stored.cluster_name,
             data_center: stored.data_center,
             ip: stored.ip,
-            data_change_created_time: Some(format_timestamp_millis(stored.data_change_created_time)),
+            data_change_created_time: Some(format_timestamp_millis(
+                stored.data_change_created_time,
+            )),
             data_change_last_time: stored.data_change_last_time.map(format_timestamp_millis),
         }
     }

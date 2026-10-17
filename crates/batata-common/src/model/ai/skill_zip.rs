@@ -65,7 +65,11 @@ fn read_zip_entries(zip_bytes: &[u8]) -> anyhow::Result<HashMap<String, Vec<u8>>
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let name = file.name().to_string();
+        // Since zip 9 the entry name is a `Result`: it fails when the raw name
+        // cannot be decoded (invalid UTF-8 without the `cp437` feature). Such an
+        // entry cannot be validated by name, so reject the archive instead of
+        // guessing.
+        let name = file.name()?.to_string();
 
         // Skip directories and macOS metadata
         if file.is_dir() || is_macos_metadata(&name) {

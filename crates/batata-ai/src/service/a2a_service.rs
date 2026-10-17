@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use batata_persistence::model::{AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo};
 use batata_persistence::PersistenceService;
+use batata_persistence::model::{AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo};
 
 use crate::model::*;
 use crate::repository::{meta_status, resource_type, scope, version_status};
@@ -363,12 +363,7 @@ impl A2aServerOperationService {
 
         let stored = match self
             .persistence
-            .ai_resource_version_find(
-                namespace,
-                agent_name,
-                resource_type::AGENT,
-                &target_version,
-            )
+            .ai_resource_version_find(namespace, agent_name, resource_type::AGENT, &target_version)
             .await?
         {
             Some(v) => v,
@@ -464,9 +459,7 @@ impl A2aServerOperationService {
         // The stored index owns the id; fall back to the extension copy if the
         // index could not be parsed.
         let id = if version_info.id.is_empty() {
-            Self::parse_ext(&resource)
-                .map(|e| e.id)
-                .unwrap_or_default()
+            Self::parse_ext(&resource).map(|e| e.id).unwrap_or_default()
         } else {
             version_info.id.clone()
         };
@@ -547,7 +540,12 @@ impl A2aServerOperationService {
         match version.filter(|v| !v.is_empty()) {
             Some(version) => {
                 self.persistence
-                    .ai_resource_version_delete(namespace, agent_name, resource_type::AGENT, version)
+                    .ai_resource_version_delete(
+                        namespace,
+                        agent_name,
+                        resource_type::AGENT,
+                        version,
+                    )
                     .await?;
 
                 let mut version_info = Self::parse_version_info(&resource);
@@ -606,9 +604,7 @@ impl A2aServerOperationService {
 
         let accurate = search_type == "accurate";
         let name_filter = agent_name.filter(|n| !n.is_empty());
-        let filter = self
-            .build_list_filter(user, name_filter, accurate)
-            .await;
+        let filter = self.build_list_filter(user, name_filter, accurate).await;
 
         let page = self
             .persistence
@@ -956,9 +952,10 @@ impl A2aServerOperationService {
         let (_resource, version_info, id, registration_type) =
             self.existing_resource(namespace, name).await?;
 
-        let editing = version_info.editing_version.clone().ok_or_else(|| {
-            anyhow::anyhow!("Agent '{}' has no editing version", name)
-        })?;
+        let editing = version_info
+            .editing_version
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Agent '{}' has no editing version", name))?;
         if editing != *version {
             anyhow::bail!(
                 "Agent '{}' editing version is '{}', not '{}'",
@@ -1227,9 +1224,7 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         version: &str,
     ) -> anyhow::Result<batata_common::model::ai::a2a::ConsoleRuntimeEndpointView> {
         let endpoint_service = self.endpoint_service.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "runtime endpoints are unavailable: no endpoint service is configured"
-            )
+            anyhow::anyhow!("runtime endpoints are unavailable: no endpoint service is configured")
         })?;
 
         let endpoints = endpoint_service.get_agent_endpoints(namespace, agent_name, version);

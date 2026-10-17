@@ -44,7 +44,7 @@ pub struct ConsulNamingStore {
 }
 
 impl ConsulNamingStore {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self {
             entries: Arc::new(DashMap::new()),

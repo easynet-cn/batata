@@ -48,7 +48,11 @@ pub async fn search(
 
     let total_count = ranked.len() as u64;
     let start = ((page_no - 1) * page_size) as usize;
-    let items = ranked.into_iter().skip(start).take(page_size as usize).collect();
+    let items = ranked
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
 
     Ok(batata_common::model::Page::new(
         total_count,
@@ -107,12 +111,7 @@ mod tests {
     use super::*;
     use batata_persistence::model::AiResourceSearchHitInfo;
 
-    fn hit(
-        name: &str,
-        version: &str,
-        chunk_type: &str,
-        score: f64,
-    ) -> AiResourceSearchHitInfo {
+    fn hit(name: &str, version: &str, chunk_type: &str, score: f64) -> AiResourceSearchHitInfo {
         AiResourceSearchHitInfo {
             document_id: 1,
             chunk_id: 1,

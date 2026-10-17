@@ -22,7 +22,11 @@ impl ClusterSqlPersistence {
 impl From<StoredCluster> for apollo_cluster::ActiveModel {
     fn from(cluster: StoredCluster) -> Self {
         Self {
-            id: if cluster.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(cluster.id) },
+            id: if cluster.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(cluster.id)
+            },
             name: Set(cluster.name),
             app_id: Set(cluster.app_id),
             parent_cluster_id: Set(cluster.parent_cluster_id),
@@ -35,9 +39,9 @@ impl From<StoredCluster> for apollo_cluster::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(cluster.data_change_last_modified_by),
-            data_change_last_time: Set(cluster.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(cluster
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -54,7 +58,9 @@ impl From<apollo_cluster::Model> for StoredCluster {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -105,9 +111,9 @@ impl ClusterPersistence for ClusterSqlPersistence {
         let mut active_model: apollo_cluster::ActiveModel = existing.into();
         active_model.parent_cluster_id = Set(cluster.parent_cluster_id);
         active_model.data_change_last_modified_by = Set(cluster.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(cluster.data_change_last_time.and_then(|t| {
-            chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-        }));
+        active_model.data_change_last_time = Set(cluster
+            .data_change_last_time
+            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())

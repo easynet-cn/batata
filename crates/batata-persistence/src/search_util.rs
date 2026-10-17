@@ -104,7 +104,12 @@ mod tests {
     #[test]
     fn chunk_text_only_match_scores_lower() {
         let hits = keyword_hits(
-            vec![chunk(1, "mcp a description nothing", "echo tool", "enabled")],
+            vec![chunk(
+                1,
+                "mcp a description nothing",
+                "echo tool",
+                "enabled",
+            )],
             "echo",
             &[],
             10,
@@ -114,23 +119,13 @@ mod tests {
 
     #[test]
     fn match_is_case_insensitive() {
-        let hits = keyword_hits(
-            vec![chunk(1, "ECHO", "ECHO", "enabled")],
-            "echo",
-            &[],
-            10,
-        );
+        let hits = keyword_hits(vec![chunk(1, "ECHO", "ECHO", "enabled")], "echo", &[], 10);
         assert_eq!(hits.len(), 1);
     }
 
     #[test]
     fn disabled_chunks_are_excluded() {
-        let hits = keyword_hits(
-            vec![chunk(1, "echo", "echo", "disabled")],
-            "echo",
-            &[],
-            10,
-        );
+        let hits = keyword_hits(vec![chunk(1, "echo", "echo", "disabled")], "echo", &[], 10);
         assert!(hits.is_empty());
     }
 
@@ -155,12 +150,6 @@ mod tests {
 
     #[test]
     fn blank_query_returns_nothing() {
-        assert!(keyword_hits(
-            vec![chunk(1, "echo", "echo", "enabled")],
-            "   ",
-            &[],
-            10
-        )
-        .is_empty());
+        assert!(keyword_hits(vec![chunk(1, "echo", "echo", "enabled")], "   ", &[], 10).is_empty());
     }
 }

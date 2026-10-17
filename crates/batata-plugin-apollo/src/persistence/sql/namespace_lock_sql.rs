@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 use crate::entity::apollo_namespace_lock;
 use crate::persistence::shared::StoredNamespaceLock;
@@ -22,7 +20,11 @@ impl NamespaceLockSqlPersistence {
 impl From<StoredNamespaceLock> for apollo_namespace_lock::ActiveModel {
     fn from(lock: StoredNamespaceLock) -> Self {
         Self {
-            id: if lock.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(lock.id) },
+            id: if lock.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(lock.id)
+            },
             app_id: Set(lock.app_id),
             cluster_name: Set(lock.cluster_name),
             namespace_name: Set(lock.namespace_name),
@@ -37,9 +39,9 @@ impl From<StoredNamespaceLock> for apollo_namespace_lock::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(lock.data_change_last_modified_by),
-            data_change_last_time: Set(lock.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(lock
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -56,7 +58,9 @@ impl From<apollo_namespace_lock::Model> for StoredNamespaceLock {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }

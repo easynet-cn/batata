@@ -4,7 +4,7 @@
 
 mod common;
 
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_plugin_apollo::api::dto::{AuditDTO, ConsumerDTO};
 use batata_plugin_apollo::persistence::traits::{
     AuditPersistence, ConsumerPersistence, ConsumerTokenPersistence,
@@ -264,7 +264,10 @@ async fn consumer_tokens_by_app_id_returns_tokens() {
     let resp = test::call_service(
         &app,
         test::TestRequest::get()
-            .uri(&format!("/openapi/v1/consumer-tokens/by-appId?appId={}", app_id))
+            .uri(&format!(
+                "/openapi/v1/consumer-tokens/by-appId?appId={}",
+                app_id
+            ))
             .to_request(),
     )
     .await;
@@ -342,14 +345,19 @@ async fn user_tokens_create_and_list() {
     .await;
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.get("token").is_some(), "create returns plaintext token");
+    assert!(
+        body.get("token").is_some(),
+        "create returns plaintext token"
+    );
     assert!(body.get("model").is_some());
     let token_id = body["model"]["id"].as_i64().unwrap();
 
     // list contains the new token
     let resp = test::call_service(
         &app,
-        test::TestRequest::get().uri("/openapi/v1/user-tokens").to_request(),
+        test::TestRequest::get()
+            .uri("/openapi/v1/user-tokens")
+            .to_request(),
     )
     .await;
     assert!(resp.status().is_success());
@@ -513,17 +521,21 @@ async fn admin_user_tokens_crud() {
     .await;
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|t| t["id"].as_i64() == Some(token_id)));
+    assert!(
+        body.as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"].as_i64() == Some(token_id))
+    );
 
     // revoke
     let resp = test::call_service(
         &app,
         test::TestRequest::put()
-            .uri(&format!("/openapi/v1/users/apollo/tokens/{}/revoke", token_id))
+            .uri(&format!(
+                "/openapi/v1/users/apollo/tokens/{}/revoke",
+                token_id
+            ))
             .to_request(),
     )
     .await;

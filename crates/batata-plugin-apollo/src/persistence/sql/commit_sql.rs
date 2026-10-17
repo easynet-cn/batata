@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::entity::apollo_commit;
 use crate::persistence::shared::StoredCommit;
@@ -22,7 +20,11 @@ impl CommitSqlPersistence {
 impl From<StoredCommit> for apollo_commit::ActiveModel {
     fn from(commit: StoredCommit) -> Self {
         Self {
-            id: if commit.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(commit.id) },
+            id: if commit.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(commit.id)
+            },
             change_sets: Set(commit.change_sets),
             app_id: Set(commit.app_id),
             cluster_name: Set(commit.cluster_name),
@@ -37,9 +39,9 @@ impl From<StoredCommit> for apollo_commit::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(commit.data_change_last_modified_by),
-            data_change_last_time: Set(commit.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(commit
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -58,7 +60,9 @@ impl From<apollo_commit::Model> for StoredCommit {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }

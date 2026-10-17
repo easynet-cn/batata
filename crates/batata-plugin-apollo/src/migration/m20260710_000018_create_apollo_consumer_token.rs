@@ -15,12 +15,23 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloConsumerToken::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloConsumerToken::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloConsumerToken::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(unsigned_int_null(ApolloConsumerToken::ConsumerId, backend))
                     .col(string_len_default(ApolloConsumerToken::Token, 128, ""))
-                    .col(string_len_default(ApolloConsumerToken::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloConsumerToken::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloConsumerToken::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloConsumerToken::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloConsumerToken::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloConsumerToken::DataChangeLastTime))
                     .to_owned(),
             )

@@ -27,7 +27,8 @@ pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem
     // First pass: read all files
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let name = file.name().to_string();
+        // zip 9 returns a `Result` for entry names that fail to decode.
+        let name = file.name()?.to_string();
 
         if file.is_dir() {
             continue;

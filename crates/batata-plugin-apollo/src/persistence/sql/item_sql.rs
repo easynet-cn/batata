@@ -22,7 +22,11 @@ impl ItemSqlPersistence {
 impl From<StoredItem> for apollo_item::ActiveModel {
     fn from(item: StoredItem) -> Self {
         Self {
-            id: if item.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(item.id) },
+            id: if item.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(item.id)
+            },
             namespace_id: Set(item.namespace_id),
             key: Set(item.key),
             r#type: Set(item.r#type),
@@ -38,9 +42,9 @@ impl From<StoredItem> for apollo_item::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(item.data_change_last_modified_by),
-            data_change_last_time: Set(item.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(item
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -60,7 +64,9 @@ impl From<apollo_item::Model> for StoredItem {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -121,9 +127,9 @@ impl ItemPersistence for ItemSqlPersistence {
         active_model.comment = Set(item.comment);
         active_model.line_num = Set(item.line_num);
         active_model.data_change_last_modified_by = Set(item.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(item.data_change_last_time.and_then(|t| {
-            chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-        }));
+        active_model.data_change_last_time = Set(item
+            .data_change_last_time
+            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())
@@ -157,7 +163,11 @@ impl ItemPersistence for ItemSqlPersistence {
 
         // Fetch all created items
         let created_items = apollo_item::Entity::find()
-            .filter(apollo_item::Column::Id.gte(results.last_insert_id.unwrap_or(0) as i32 - results.last_insert_id.unwrap_or(0) as i32 + 1))
+            .filter(apollo_item::Column::Id.gte(
+                results.last_insert_id.unwrap_or(0) as i32
+                    - results.last_insert_id.unwrap_or(0) as i32
+                    + 1,
+            ))
             .filter(apollo_item::Column::Id.lte(results.last_insert_id.unwrap_or(0) as i32))
             .filter(apollo_item::Column::IsDeleted.eq(false))
             .all(&self.db)

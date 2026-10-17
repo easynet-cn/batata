@@ -199,7 +199,14 @@ async fn get_proxy_config_handler(
     query: web::Query<ProxyConfigQueryParams>,
 ) -> HttpResponse {
     crate::connect::get_proxy_config(
-        req, agent, acl_service, connect_service, dc_config, index_provider, path, query,
+        req,
+        agent,
+        acl_service,
+        connect_service,
+        dc_config,
+        index_provider,
+        path,
+        query,
     )
     .await
 }

@@ -58,7 +58,11 @@ impl ConfigChangePluginV2 for WebhookConfigChangePlugin {
     }
 
     fn interested_pointcuts(&self) -> Vec<ConfigPointcut> {
-        vec![ConfigPointcut::Publish, ConfigPointcut::Remove, ConfigPointcut::Import]
+        vec![
+            ConfigPointcut::Publish,
+            ConfigPointcut::Remove,
+            ConfigPointcut::Import,
+        ]
     }
 
     fn interested_execute_types(&self) -> Vec<ExecuteType> {
@@ -67,13 +71,14 @@ impl ConfigChangePluginV2 for WebhookConfigChangePlugin {
 
     async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult {
         if let Some(event) = self.build_event(ctx)
-            && let Err(e) = self.webhook_plugin.trigger(event).await {
-                tracing::warn!(
-                    target: "webhook_config_plugin",
-                    "Failed to trigger webhook for config change: {}",
-                    e
-                );
-            }
+            && let Err(e) = self.webhook_plugin.trigger(event).await
+        {
+            tracing::warn!(
+                target: "webhook_config_plugin",
+                "Failed to trigger webhook for config change: {}",
+                e
+            );
+        }
         ConfigChangeResult::allow()
     }
 }

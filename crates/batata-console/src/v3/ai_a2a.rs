@@ -198,7 +198,10 @@ async fn update_agent(
         ai_trace::outcome_of(&result),
     );
     match result {
-        Ok(()) => match svc.get_agent_card(&namespace, &name, None, Some(&user)).await {
+        Ok(()) => match svc
+            .get_agent_card(&namespace, &name, None, Some(&user))
+            .await
+        {
             Ok(Some(agent)) => common_response::Result::<RegisteredAgent>::http_success(agent),
             _ => common_response::Result::<bool>::http_success(true),
         },

@@ -43,7 +43,7 @@ impl ExternalDbApolloPersistence {
 impl ApolloPersistence for ExternalDbApolloPersistence {
     async fn health_check(&self) -> anyhow::Result<()> {
         use crate::entity::prelude::ApolloApp;
-        use sea_orm::{EntityTrait, prelude::Expr, QuerySelect};
+        use sea_orm::{EntityTrait, QuerySelect, prelude::Expr};
 
         ApolloApp::find()
             .select_only()

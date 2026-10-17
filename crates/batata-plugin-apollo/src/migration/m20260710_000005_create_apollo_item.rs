@@ -9,13 +9,17 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
-        
+
         manager
             .create_table(
                 Table::create()
                     .table(ApolloItem::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloItem::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloItem::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(unsigned_int(ApolloItem::NamespaceId, backend).default(0))
                     .col(string_len_default(ApolloItem::Key, 128, "default"))
                     .col(signed_int(ApolloItem::Type, backend).default(0))
@@ -24,7 +28,11 @@ impl MigrationTrait for Migration {
                     .col(signed_int(ApolloItem::LineNum, backend).default(0))
                     .col(bit(ApolloItem::IsDeleted, None))
                     .col(unsigned_big_int(ApolloItem::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloItem::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloItem::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloItem::DataChangeCreatedTime))
                     .col(string_len_null(ApolloItem::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloItem::DataChangeLastTime))

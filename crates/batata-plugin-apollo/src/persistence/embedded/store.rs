@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rocksdb::DB;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A typed view over one RocksDB column family storing JSON values.
 pub struct JsonStore {

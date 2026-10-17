@@ -17,7 +17,9 @@ use crate::acl::{AclService, ResourceType};
 use crate::agent::ConsulAgentService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
+use crate::model::{
+    AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 // ============================================================================
@@ -29,17 +31,17 @@ use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 #[serde(rename_all = "PascalCase")]
 pub struct CARoot {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
-/// The `root_cert` field.
+    /// The `root_cert` field.
     pub root_cert: String,
-/// The `active` field.
+    /// The `active` field.
     pub active: bool,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -48,11 +50,11 @@ pub struct CARoot {
 #[serde(rename_all = "PascalCase")]
 pub struct CARootList {
     #[serde(rename = "ActiveRootID")]
-/// The `active_root_id` field.
+    /// The `active_root_id` field.
     pub active_root_id: String,
-/// The `trust_domain` field.
+    /// The `trust_domain` field.
     pub trust_domain: String,
-/// The `roots` field.
+    /// The `roots` field.
     pub roots: Vec<CARoot>,
 }
 
@@ -73,26 +75,26 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CAConfig {
-/// The `provider` field.
+    /// The `provider` field.
     pub provider: String,
     #[serde(default, deserialize_with = "deserialize_map_or_null")]
-/// The `config` field.
+    /// The `config` field.
     pub config: std::collections::HashMap<String, serde_json::Value>,
     #[serde(
         default,
         deserialize_with = "deserialize_map_or_null",
         skip_serializing_if = "std::collections::HashMap::is_empty"
     )]
-/// The `state` field.
+    /// The `state` field.
     pub state: std::collections::HashMap<String, String>,
     #[serde(default)]
-/// The `force_without_cross_signing` field.
+    /// The `force_without_cross_signing` field.
     pub force_without_cross_signing: bool,
     #[serde(default)]
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
     #[serde(default)]
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -100,26 +102,26 @@ pub struct CAConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LeafCert {
-/// The `serial_number` field.
+    /// The `serial_number` field.
     pub serial_number: String,
     #[serde(rename = "CertPEM")]
-/// The `cert_pem` field.
+    /// The `cert_pem` field.
     pub cert_pem: String,
     #[serde(rename = "PrivateKeyPEM")]
-/// The `private_key_pem` field.
+    /// The `private_key_pem` field.
     pub private_key_pem: String,
-/// The `service` field.
+    /// The `service` field.
     pub service: String,
     #[serde(rename = "ServiceURI")]
-/// The `service_uri` field.
+    /// The `service_uri` field.
     pub service_uri: String,
-/// The `valid_after` field.
+    /// The `valid_after` field.
     pub valid_after: String,
-/// The `valid_before` field.
+    /// The `valid_before` field.
     pub valid_before: String,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -130,33 +132,33 @@ pub struct LeafCert {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceIdentity {
-/// The `service_name` field.
+    /// The `service_name` field.
     pub service_name: String,
     #[serde(rename = "ServiceID")]
-/// The `service_id` field.
+    /// The `service_id` field.
     pub service_id: String,
     #[serde(rename = "ServiceURI")]
-/// The `service_uri` field — SPIFFE ID (e.g. `spiffe://consul/ns/default/dc/dc1/svc/web`).
+    /// The `service_uri` field — SPIFFE ID (e.g. `spiffe://consul/ns/default/dc/dc1/svc/web`).
     pub service_uri: String,
     #[serde(rename = "CertPEM")]
-/// The `cert_pem` field — leaf certificate in PEM format.
+    /// The `cert_pem` field — leaf certificate in PEM format.
     pub cert_pem: String,
     #[serde(rename = "PrivateKeyPEM")]
-/// The `private_key_pem` field — private key in PEM format.
+    /// The `private_key_pem` field — private key in PEM format.
     pub private_key_pem: String,
-/// The `roots` field — list of CA root certificates.
+    /// The `roots` field — list of CA root certificates.
     pub roots: Vec<CARoot>,
-/// The `trust_domain` field.
+    /// The `trust_domain` field.
     pub trust_domain: String,
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
-/// The `valid_after` field.
+    /// The `valid_after` field.
     pub valid_after: String,
-/// The `valid_before` field.
+    /// The `valid_before` field.
     pub valid_before: String,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -168,9 +170,9 @@ pub struct ServiceIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IntentionAction {
-/// The `Allow` variant.
+    /// The `Allow` variant.
     Allow,
-/// The `Deny` variant.
+    /// The `Deny` variant.
     Deny,
 }
 
@@ -179,16 +181,16 @@ pub enum IntentionAction {
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionHTTPPermission {
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_exact` field.
+    /// The `path_exact` field.
     pub path_exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_prefix` field.
+    /// The `path_prefix` field.
     pub path_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_regex` field.
+    /// The `path_regex` field.
     pub path_regex: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `methods` field.
+    /// The `methods` field.
     pub methods: Vec<String>,
 }
 
@@ -196,10 +198,10 @@ pub struct IntentionHTTPPermission {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionPermission {
-/// The `action` field.
+    /// The `action` field.
     pub action: IntentionAction,
     #[serde(rename = "HTTP", skip_serializing_if = "Option::is_none")]
-/// The `http` field.
+    /// The `http` field.
     pub http: Option<IntentionHTTPPermission>,
 }
 
@@ -208,38 +210,38 @@ pub struct IntentionPermission {
 #[serde(rename_all = "PascalCase")]
 pub struct Intention {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
     #[serde(default)]
-/// The `description` field.
+    /// The `description` field.
     pub description: String,
     #[serde(rename = "SourceNS", default)]
-/// The `source_ns` field.
+    /// The `source_ns` field.
     pub source_ns: String,
-/// The `source_name` field.
+    /// The `source_name` field.
     pub source_name: String,
     #[serde(rename = "DestinationNS", default)]
-/// The `destination_ns` field.
+    /// The `destination_ns` field.
     pub destination_ns: String,
-/// The `destination_name` field.
+    /// The `destination_name` field.
     pub destination_name: String,
-/// The `action` field.
+    /// The `action` field.
     pub action: IntentionAction,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `permissions` field.
+    /// The `permissions` field.
     pub permissions: Vec<IntentionPermission>,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
-/// The `precedence` field.
+    /// The `precedence` field.
     pub precedence: i32,
-/// The `created_at` field.
+    /// The `created_at` field.
     pub created_at: String,
-/// The `updated_at` field.
+    /// The `updated_at` field.
     pub updated_at: String,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -248,25 +250,25 @@ pub struct Intention {
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionRequest {
     #[serde(default)]
-/// The `description` field.
+    /// The `description` field.
     pub description: String,
     #[serde(rename = "SourceNS", default)]
-/// The `source_ns` field.
+    /// The `source_ns` field.
     pub source_ns: String,
-/// The `source_name` field.
+    /// The `source_name` field.
     pub source_name: String,
     #[serde(rename = "DestinationNS", default)]
-/// The `destination_ns` field.
+    /// The `destination_ns` field.
     pub destination_ns: String,
-/// The `destination_name` field.
+    /// The `destination_name` field.
     pub destination_name: String,
-/// The `action` field.
+    /// The `action` field.
     pub action: IntentionAction,
     #[serde(default)]
-/// The `permissions` field.
+    /// The `permissions` field.
     pub permissions: Vec<IntentionPermission>,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
 }
 
@@ -294,28 +296,28 @@ pub struct IntentionCheckResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct IntentionCheckResponse {
-/// The `allowed` field.
+    /// The `allowed` field.
     pub allowed: bool,
     #[serde(skip_serializing_if = "String::is_empty")]
-/// The `reason` field.
+    /// The `reason` field.
     pub reason: String,
 }
 
 /// Intention match query
 #[derive(Debug, Deserialize)]
 pub struct IntentionMatchQuery {
-/// The `by` field.
+    /// The `by` field.
     pub by: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
 }
 
 /// Query parameters for exact intention lookup
 #[derive(Debug, Deserialize)]
 pub struct IntentionExactQuery {
-/// The `source` field.
+    /// The `source` field.
     pub source: Option<String>,
-/// The `destination` field.
+    /// The `destination` field.
     pub destination: Option<String>,
 }
 
@@ -323,13 +325,13 @@ pub struct IntentionExactQuery {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AgentAuthorizeRequest {
-/// The `target` field.
+    /// The `target` field.
     pub target: String,
     #[serde(rename = "ClientCertURI")]
-/// The `client_cert_uri` field.
+    /// The `client_cert_uri` field.
     pub client_cert_uri: String,
     #[serde(default)]
-/// The `client_cert_serial` field.
+    /// The `client_cert_serial` field.
     pub client_cert_serial: String,
     /// Optional HTTP method for L7 intention evaluation.
     #[serde(default)]
@@ -343,20 +345,20 @@ pub struct AgentAuthorizeRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AgentAuthorizeResponse {
-/// The `authorized` field.
+    /// The `authorized` field.
     pub authorized: bool,
-/// The `reason` field.
+    /// The `reason` field.
     pub reason: String,
 }
 
 /// Query parameters for intentions
 #[derive(Debug, Deserialize)]
 pub struct IntentionQueryParams {
-/// The `filter` field.
+    /// The `filter` field.
     pub filter: Option<String>,
-/// The `source` field.
+    /// The `source` field.
     pub source: Option<String>,
-/// The `destination` field.
+    /// The `destination` field.
     pub destination: Option<String>,
     /// Optional HTTP method for L7 intention evaluation.
     pub method: Option<String>,
@@ -367,7 +369,7 @@ pub struct IntentionQueryParams {
 /// Query parameters for CA root
 #[derive(Debug, Deserialize)]
 pub struct CARootQueryParams {
-/// The `pem` field.
+    /// The `pem` field.
     pub pem: Option<bool>,
     /// Blocking query: minimum index to wait for
     pub index: Option<u64>,
@@ -429,7 +431,7 @@ pub struct ConsulConnectCAService {
 }
 
 impl ConsulConnectCAService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         let root_id = uuid::Uuid::new_v4().to_string();
 
@@ -639,7 +641,7 @@ impl ConsulConnectCAService {
         svc
     }
 
-/// The `with_datacenter` method.
+    /// The `with_datacenter` method.
     pub fn with_datacenter(mut self, datacenter: String) -> Self {
         self.datacenter = datacenter;
         self
@@ -769,7 +771,7 @@ impl ConsulConnectCAService {
     // CA operations
     // ========================================================================
 
-/// The `get_roots` method.
+    /// The `get_roots` method.
     pub async fn get_roots(&self) -> CARootList {
         let active_id = self.active_root_id.read().await.clone();
         let roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
@@ -780,12 +782,12 @@ impl ConsulConnectCAService {
         }
     }
 
-/// The `get_ca_config` method.
+    /// The `get_ca_config` method.
     pub async fn get_ca_config(&self) -> CAConfig {
         self.ca_config.read().await.clone()
     }
 
-/// The `set_ca_config` method.
+    /// The `set_ca_config` method.
     pub async fn set_ca_config(&self, mut config: CAConfig) -> Result<(), String> {
         if config.provider.is_empty() {
             return Err("Provider is required".to_string());
@@ -813,7 +815,7 @@ impl ConsulConnectCAService {
         Ok(())
     }
 
-/// The `get_leaf_cert` method.
+    /// The `get_leaf_cert` method.
     pub fn get_leaf_cert(&self, service: &str) -> LeafCert {
         let now = Utc::now();
         let valid_before = now + chrono::Duration::hours(72);
@@ -905,7 +907,7 @@ impl ConsulConnectCAService {
     // Intention operations
     // ========================================================================
 
-/// The `create_intention` method.
+    /// The `create_intention` method.
     pub async fn create_intention(&self, req: IntentionRequest) -> Intention {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
@@ -962,12 +964,12 @@ impl ConsulConnectCAService {
         intention
     }
 
-/// The `get_intention` method.
+    /// The `get_intention` method.
     pub fn get_intention(&self, id: &str) -> Option<Intention> {
         self.intentions.get(id).map(|r| r.value().clone())
     }
 
-/// The `update_intention` method.
+    /// The `update_intention` method.
     pub async fn update_intention(&self, id: &str, req: IntentionRequest) -> Option<Intention> {
         if let Some(mut entry) = self.intentions.get_mut(id) {
             let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1017,7 +1019,7 @@ impl ConsulConnectCAService {
         }
     }
 
-/// The `delete_intention` method.
+    /// The `delete_intention` method.
     pub async fn delete_intention(&self, id: &str) -> bool {
         let removed = self.intentions.remove(id).is_some();
         if removed {
@@ -1041,7 +1043,7 @@ impl ConsulConnectCAService {
         removed
     }
 
-/// The `list_intentions` method.
+    /// The `list_intentions` method.
     pub fn list_intentions(&self) -> Vec<Intention> {
         let mut intentions: Vec<Intention> =
             self.intentions.iter().map(|r| r.value().clone()).collect();
@@ -1050,7 +1052,7 @@ impl ConsulConnectCAService {
         intentions
     }
 
-/// The `check_intention` method.
+    /// The `check_intention` method.
     pub fn check_intention(
         &self,
         source: &str,
@@ -1100,7 +1102,7 @@ impl ConsulConnectCAService {
         }
     }
 
-/// The `match_intentions` method.
+    /// The `match_intentions` method.
     pub fn match_intentions(&self, by: &str, name: &str) -> Vec<Intention> {
         let mut matched: Vec<Intention> = self
             .intentions
@@ -1190,7 +1192,7 @@ impl ConsulConnectCAService {
         }
     }
 
-/// The `authorize` method.
+    /// The `authorize` method.
     pub fn authorize(
         &self,
         target: &str,
@@ -1327,9 +1329,7 @@ fn evaluate_http_permission(http: &IntentionHTTPPermission, l7: Option<&L7Reques
 ///
 /// Returns an error message describing the first validation failure, or
 /// `Ok(())` if all permissions are valid.
-fn validate_intention_permissions(
-    permissions: &[IntentionPermission],
-) -> Result<(), String> {
+fn validate_intention_permissions(permissions: &[IntentionPermission]) -> Result<(), String> {
     const VALID_METHODS: &[&str] = &[
         "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
     ];
@@ -1340,10 +1340,7 @@ fn validate_intention_permissions(
         };
 
         for method in &http.methods {
-            if !VALID_METHODS
-                .iter()
-                .any(|m| m.eq_ignore_ascii_case(method))
-            {
+            if !VALID_METHODS.iter().any(|m| m.eq_ignore_ascii_case(method)) {
                 return Err(format!(
                     "permission[{}] has invalid HTTP method: {}",
                     idx, method
@@ -1514,9 +1511,14 @@ pub async fn get_service_identity(
     }
 
     // Resolve the service registration by ID to obtain its service name.
-    let Some(data) = agent.naming_store().get_by_service_id(&namespace, &service_id) else {
-        return HttpResponse::NotFound()
-            .consul_error(ConsulError::new(format!("Service not found: {}", service_id)));
+    let Some(data) = agent
+        .naming_store()
+        .get_by_service_id(&namespace, &service_id)
+    else {
+        return HttpResponse::NotFound().consul_error(ConsulError::new(format!(
+            "Service not found: {}",
+            service_id
+        )));
     };
     let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) else {
         return HttpResponse::InternalServerError()
@@ -2451,7 +2453,11 @@ mod tests {
             })
             .await;
 
-        let result = service.authorize("api", "spiffe://consul/ns/default/dc/dc1/svc/malicious", None);
+        let result = service.authorize(
+            "api",
+            "spiffe://consul/ns/default/dc/dc1/svc/malicious",
+            None,
+        );
         assert!(!result.authorized);
         assert!(result.reason.contains("denies"));
     }
@@ -2749,7 +2755,11 @@ mod tests {
         // Request to /public does not match the /admin-only permission → deny
         let req = l7_req("GET", "/public");
         let result = service.check_intention("web", "api", Some(&req));
-        assert!(!result.allowed, "no matching permission should deny: {}", result.reason);
+        assert!(
+            !result.allowed,
+            "no matching permission should deny: {}",
+            result.reason
+        );
         assert!(result.reason.contains("none matched"));
     }
 

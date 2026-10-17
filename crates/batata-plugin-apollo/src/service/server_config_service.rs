@@ -34,8 +34,15 @@ impl ServerConfigService {
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, key: &str, value: &str, operator: &str) -> Result<(), anyhow::Error> {
-        self.persistence.update_server_config(key, value, operator).await?;
+    pub async fn update(
+        &self,
+        key: &str,
+        value: &str,
+        operator: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .update_server_config(key, value, operator)
+            .await?;
         Ok(())
     }
 
@@ -51,7 +58,12 @@ impl ServerConfigService {
             value: model.value.clone(),
             comment: model.comment.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(model.data_change_created_time.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
+            data_change_created_time: Some(
+                model
+                    .data_change_created_time
+                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
+                    .to_string(),
+            ),
         }
     }
 }

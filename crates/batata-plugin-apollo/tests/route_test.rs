@@ -2,10 +2,12 @@ mod common;
 
 use std::sync::Arc;
 
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_plugin_apollo::api::dto::{AppNamespaceDTO, ItemDTO, NamespaceDTO, ServerConfigDTO};
 use batata_plugin_apollo::persistence::traits::ApolloPersistenceService;
-use batata_plugin_apollo::service::{AppNamespaceService, ItemService, NamespaceService, ReleaseService};
+use batata_plugin_apollo::service::{
+    AppNamespaceService, ItemService, NamespaceService, ReleaseService,
+};
 
 #[actix_web::test]
 async fn b1_metaservice_returns_real_host() {
@@ -55,7 +57,9 @@ async fn tier2_server_config_crud_via_http() {
     let resp = test::call_service(&app, create).await;
     assert_eq!(resp.status(), 200, "server config create should succeed");
 
-    let get = test::TestRequest::get().uri("/serverconfigs/sc1").to_request();
+    let get = test::TestRequest::get()
+        .uri("/serverconfigs/sc1")
+        .to_request();
     let resp = test::call_service(&app, get).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
@@ -73,7 +77,9 @@ async fn tier2_server_config_crud_via_http() {
     let resp = test::call_service(&app, del).await;
     assert_eq!(resp.status(), 200);
 
-    let get = test::TestRequest::get().uri("/serverconfigs/sc1").to_request();
+    let get = test::TestRequest::get()
+        .uri("/serverconfigs/sc1")
+        .to_request();
     let resp = test::call_service(&app, get).await;
     assert_eq!(resp.status(), 404);
 }
@@ -162,18 +168,48 @@ async fn a2_public_namespace_merges_private_over_public() {
         })
         .await
         .unwrap();
-    NamespaceService::new(p.clone()).create("owner", "default", ns_dto("owner", true)).await.unwrap();
+    NamespaceService::new(p.clone())
+        .create("owner", "default", ns_dto("owner", true))
+        .await
+        .unwrap();
     let item_svc = ItemService::new(p.clone());
-    item_svc.create("owner", "default", "shared-ns", item_dto("pub.only", "from-public")).await.unwrap();
-    item_svc.create("owner", "default", "shared-ns", item_dto("overlap", "public-value")).await.unwrap();
+    item_svc
+        .create(
+            "owner",
+            "default",
+            "shared-ns",
+            item_dto("pub.only", "from-public"),
+        )
+        .await
+        .unwrap();
+    item_svc
+        .create(
+            "owner",
+            "default",
+            "shared-ns",
+            item_dto("overlap", "public-value"),
+        )
+        .await
+        .unwrap();
     ReleaseService::new(p.clone())
         .publish("owner", "default", "shared-ns", "r1", None, "t", false)
         .await
         .unwrap();
 
     // Consumer app owns the SAME namespace privately with its own release.
-    NamespaceService::new(p.clone()).create("consumer", "default", ns_dto("consumer", false)).await.unwrap();
-    item_svc.create("consumer", "default", "shared-ns", item_dto("overlap", "private-wins")).await.unwrap();
+    NamespaceService::new(p.clone())
+        .create("consumer", "default", ns_dto("consumer", false))
+        .await
+        .unwrap();
+    item_svc
+        .create(
+            "consumer",
+            "default",
+            "shared-ns",
+            item_dto("overlap", "private-wins"),
+        )
+        .await
+        .unwrap();
     ReleaseService::new(p.clone())
         .publish("consumer", "default", "shared-ns", "c1", None, "t", false)
         .await
@@ -211,8 +247,22 @@ async fn b1_metaservice_serves_registry_instances() {
     let p: Arc<dyn ApolloPersistenceService> = common::make_embedded_persistence().await;
 
     // Two live configservice instances + one stale row (outside 61s window).
-    ServiceRegistryPersistence::heartbeat(&*p, "apollo-configservice", "http://10.0.0.1:8080", "default").await.unwrap();
-    ServiceRegistryPersistence::heartbeat(&*p, "apollo-configservice", "http://10.0.0.2:8080", "default").await.unwrap();
+    ServiceRegistryPersistence::heartbeat(
+        &*p,
+        "apollo-configservice",
+        "http://10.0.0.1:8080",
+        "default",
+    )
+    .await
+    .unwrap();
+    ServiceRegistryPersistence::heartbeat(
+        &*p,
+        "apollo-configservice",
+        "http://10.0.0.2:8080",
+        "default",
+    )
+    .await
+    .unwrap();
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(p.clone()))
@@ -220,26 +270,35 @@ async fn b1_metaservice_serves_registry_instances() {
     )
     .await;
 
-    let req = test::TestRequest::get().uri("/services/config").to_request();
+    let req = test::TestRequest::get()
+        .uri("/services/config")
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
     let arr = body.as_array().unwrap();
     assert_eq!(arr.len(), 2, "both live instances are served");
     assert!(
-        arr.iter().any(|d| d["homepageUrl"] == "http://10.0.0.1:8080"),
+        arr.iter()
+            .any(|d| d["homepageUrl"] == "http://10.0.0.1:8080"),
         "registry uri is surfaced as homepageUrl"
     );
 
     // Deregistration removes the instance from discovery.
-    ServiceRegistryPersistence::deregister(&*p, "apollo-configservice", "http://10.0.0.1:8080").await.unwrap();
-    let req = test::TestRequest::get().uri("/services/config").to_request();
+    ServiceRegistryPersistence::deregister(&*p, "apollo-configservice", "http://10.0.0.1:8080")
+        .await
+        .unwrap();
+    let req = test::TestRequest::get()
+        .uri("/services/config")
+        .to_request();
     let resp = test::call_service(&app, req).await;
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body.as_array().unwrap().len(), 1);
 
     // Empty registry → self fallback (host echo).
-    ServiceRegistryPersistence::deregister(&*p, "apollo-configservice", "http://10.0.0.2:8080").await.unwrap();
+    ServiceRegistryPersistence::deregister(&*p, "apollo-configservice", "http://10.0.0.2:8080")
+        .await
+        .unwrap();
     let req = test::TestRequest::get()
         .uri("/services/config")
         .insert_header(("host", "self:8080"))
@@ -268,9 +327,28 @@ async fn instance_audit_and_queries() {
         data_change_last_time: None,
         data_change_created_time: None,
     };
-    NamespaceService::new(p.clone()).create("app1", "default", ns_dto).await.unwrap();
+    NamespaceService::new(p.clone())
+        .create("app1", "default", ns_dto)
+        .await
+        .unwrap();
     ItemService::new(p.clone())
-        .create("app1", "default", "audit-ns", ItemDTO { id: None, key: "k".into(), value: "v".into(), r#type: None, comment: None, line_num: None, data_change_created_by: Some("t".into()), data_change_last_modified_by: None, data_change_last_time: None, data_change_created_time: None })
+        .create(
+            "app1",
+            "default",
+            "audit-ns",
+            ItemDTO {
+                id: None,
+                key: "k".into(),
+                value: "v".into(),
+                r#type: None,
+                comment: None,
+                line_num: None,
+                data_change_created_by: Some("t".into()),
+                data_change_last_modified_by: None,
+                data_change_last_time: None,
+                data_change_created_time: None,
+            },
+        )
         .await
         .unwrap();
     ReleaseService::new(p.clone())
@@ -319,7 +397,11 @@ async fn instance_audit_and_queries() {
     assert_eq!(body["count"], 1);
 
     // ADMSVC-004: not-in the delivered release → empty; not-in another → 1 row.
-    let other = if release_key.ends_with('x') { format!("{}y", release_key) } else { format!("{}x", release_key) };
+    let other = if release_key.ends_with('x') {
+        format!("{}y", release_key)
+    } else {
+        format!("{}x", release_key)
+    };
     let url = "/instances/by-namespace-and-releases-not-in?appId=app1&clusterName=default&namespaceName=audit-ns&releaseIds=-1".to_string();
     let req = test::TestRequest::get().uri(&url).to_request();
     let resp = test::call_service(&app, req).await;

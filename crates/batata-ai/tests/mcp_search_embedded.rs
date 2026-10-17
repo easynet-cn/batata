@@ -43,9 +43,7 @@ fn open(dir: &std::path::Path) -> Arc<DB> {
         .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
         .collect();
 
-    Arc::new(
-        DB::open_cf_descriptors(&opts, dir, descriptors).expect("open RocksDB with AI CFs"),
-    )
+    Arc::new(DB::open_cf_descriptors(&opts, dir, descriptors).expect("open RocksDB with AI CFs"))
 }
 
 fn registration(version: &str) -> McpServerRegistration {

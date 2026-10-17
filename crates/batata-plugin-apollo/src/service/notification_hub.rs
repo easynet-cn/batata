@@ -59,7 +59,9 @@ impl ApolloNotificationHub {
             return false;
         }
         let notify = self.register(keys);
-        let woken = tokio::time::timeout(timeout, notify.notified()).await.is_ok();
+        let woken = tokio::time::timeout(timeout, notify.notified())
+            .await
+            .is_ok();
         self.unregister(keys, &notify);
         woken
     }

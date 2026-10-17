@@ -53,7 +53,7 @@ pub struct ConsulResultHandler {
 }
 
 impl ConsulResultHandler {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(
         naming_store: Arc<ConsulNamingStore>,
         index_provider: Arc<ConsulIndexProvider>,
@@ -115,66 +115,67 @@ impl ConsulResultHandler {
         let entries = PluginNamingStore::scan(&*self.naming_store, "");
         for (key, data) in &entries {
             if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
-                && reg.service_id() == service_id {
-                    // Cluster mode: leader-only Raft write. Followers
-                    // observe the cascade via `CatalogDeregister` apply
-                    // which runs the naming-store hook installed at
-                    // plugin init. Short-circuit on follower to avoid
-                    // the race where multiple nodes each try to delete.
-                    if let Some(ref writer) = services.raft_writer {
-                        if !writer.is_leader() {
-                            return false;
-                        }
-                        info!(
-                            "Leader deregistering service '{}' (check_id='{}', store_key='{}') via Raft",
-                            service_id, check_id, key
-                        );
-                        let writer = writer.clone();
-                        let key_owned = key.clone();
-                        let service_id_owned = service_id.clone();
-                        let check_id_owned = check_id.to_string();
-                        let check_index = services.check_index.clone();
-                        let idx = self.index_provider.clone();
-                        tokio::spawn(async move {
-                            match writer
-                                .write(ConsulRaftRequest::CatalogDeregister {
-                                    key: key_owned.clone(),
-                                })
-                                .await
-                            {
-                                Ok(r) if r.success => {
-                                    // Hook-driven naming_store update already
-                                    // ran on every node. Clean up ancillary
-                                    // indexes that aren't part of the apply
-                                    // path.
-                                    check_index.remove(&service_id_owned);
-                                    check_index.remove_check(&check_id_owned);
-                                    idx.increment(ConsulTable::Catalog);
-                                }
-                                Ok(r) => {
-                                    warn!(
-                                        "Raft CatalogDeregister rejected during auto-reap: {:?}",
-                                        r.message
-                                    );
-                                }
-                                Err(e) => {
-                                    warn!("Raft CatalogDeregister failed during auto-reap: {}", e);
-                                }
-                            }
-                        });
-                        return true;
+                && reg.service_id() == service_id
+            {
+                // Cluster mode: leader-only Raft write. Followers
+                // observe the cascade via `CatalogDeregister` apply
+                // which runs the naming-store hook installed at
+                // plugin init. Short-circuit on follower to avoid
+                // the race where multiple nodes each try to delete.
+                if let Some(ref writer) = services.raft_writer {
+                    if !writer.is_leader() {
+                        return false;
                     }
-                    // Standalone mode: direct mutation.
                     info!(
-                        "Deregistering service '{}' (check_id='{}', store_key='{}')",
+                        "Leader deregistering service '{}' (check_id='{}', store_key='{}') via Raft",
                         service_id, check_id, key
                     );
-                    let _ = PluginNamingStore::deregister(&*self.naming_store, key);
-                    services.check_index.remove(&service_id);
-                    services.check_index.remove_check(check_id);
-                    self.index_provider.increment(ConsulTable::Catalog);
+                    let writer = writer.clone();
+                    let key_owned = key.clone();
+                    let service_id_owned = service_id.clone();
+                    let check_id_owned = check_id.to_string();
+                    let check_index = services.check_index.clone();
+                    let idx = self.index_provider.clone();
+                    tokio::spawn(async move {
+                        match writer
+                            .write(ConsulRaftRequest::CatalogDeregister {
+                                key: key_owned.clone(),
+                            })
+                            .await
+                        {
+                            Ok(r) if r.success => {
+                                // Hook-driven naming_store update already
+                                // ran on every node. Clean up ancillary
+                                // indexes that aren't part of the apply
+                                // path.
+                                check_index.remove(&service_id_owned);
+                                check_index.remove_check(&check_id_owned);
+                                idx.increment(ConsulTable::Catalog);
+                            }
+                            Ok(r) => {
+                                warn!(
+                                    "Raft CatalogDeregister rejected during auto-reap: {:?}",
+                                    r.message
+                                );
+                            }
+                            Err(e) => {
+                                warn!("Raft CatalogDeregister failed during auto-reap: {}", e);
+                            }
+                        }
+                    });
                     return true;
                 }
+                // Standalone mode: direct mutation.
+                info!(
+                    "Deregistering service '{}' (check_id='{}', store_key='{}')",
+                    service_id, check_id, key
+                );
+                let _ = PluginNamingStore::deregister(&*self.naming_store, key);
+                services.check_index.remove(&service_id);
+                services.check_index.remove_check(check_id);
+                self.index_provider.increment(ConsulTable::Catalog);
+                return true;
+            }
         }
 
         warn!(

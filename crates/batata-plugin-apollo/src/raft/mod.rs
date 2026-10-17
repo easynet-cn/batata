@@ -209,8 +209,8 @@ impl ApolloRaftWriter {
     /// Submit an `ApolloRaftRequest` to the Raft group and wait until it has
     /// been committed and applied to the local state machine.
     pub async fn write(&self, request: ApolloRaftRequest) -> Result<(), String> {
-        let payload = serialize(&request)
-            .map_err(|e| format!("ApolloRaftRequest serialize error: {}", e))?;
+        let payload =
+            serialize(&request).map_err(|e| format!("ApolloRaftRequest serialize error: {}", e))?;
         let raft_req = RaftRequest::PluginWrite {
             plugin_id: APOLLO_PLUGIN_ID.to_string(),
             op_type: request.op_type().to_string(),
@@ -221,7 +221,9 @@ impl ApolloRaftWriter {
                 if resp.success {
                     Ok(())
                 } else {
-                    Err(resp.message.unwrap_or_else(|| "raft apply failed".to_string()))
+                    Err(resp
+                        .message
+                        .unwrap_or_else(|| "raft apply failed".to_string()))
                 }
             }
             Err(e) => Err(format!("raft write error: {}", e)),
@@ -287,7 +289,10 @@ impl RaftPluginHandler for ApolloRaftPluginHandler {
     }
 
     fn column_families(&self) -> Vec<String> {
-        APOLLO_COLUMN_FAMILIES.iter().map(|s| s.to_string()).collect()
+        APOLLO_COLUMN_FAMILIES
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     fn apply(&self, db: &DB, op_type: &str, payload: &[u8], log_index: u64) -> RaftResponse {
@@ -343,10 +348,7 @@ impl RaftPluginHandler for ApolloRaftPluginHandler {
                 .ok_or_else(|| format!("CF {} not found during install_snapshot", cf_name))?;
             // Clear existing CF contents.
             let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-            let keys: Vec<Vec<u8>> = iter
-                .flatten()
-                .map(|(k, _)| k.to_vec())
-                .collect::<Vec<_>>();
+            let keys: Vec<Vec<u8>> = iter.flatten().map(|(k, _)| k.to_vec()).collect::<Vec<_>>();
             for k in keys {
                 db.delete_cf(cf, k)
                     .map_err(|e| format!("delete {} error: {}", cf_name, e))?;
@@ -368,12 +370,12 @@ impl RaftPluginHandler for ApolloRaftPluginHandler {
 fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<(), String> {
     match request {
         // ---- App (no numeric id) ----
-        ApolloRaftRequest::AppCreate(app) => {
-            AppEmbedded::write_raw(db, &app).map(|_| ()).map_err(|e| e.to_string())
-        }
-        ApolloRaftRequest::AppUpdate(app) => {
-            AppEmbedded::write_raw(db, &app).map(|_| ()).map_err(|e| e.to_string())
-        }
+        ApolloRaftRequest::AppCreate(app) => AppEmbedded::write_raw(db, &app)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        ApolloRaftRequest::AppUpdate(app) => AppEmbedded::write_raw(db, &app)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
         ApolloRaftRequest::AppDelete { app_id } => {
             AppEmbedded::delete_raw(db, &app_id).map_err(|e| e.to_string())
         }
@@ -381,13 +383,17 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
         // ---- Namespace ----
         ApolloRaftRequest::NamespaceCreate(mut ns) => {
             ns.id = id;
-            NamespaceEmbedded::write_raw(db, &ns).map(|_| ()).map_err(|e| e.to_string())
+            NamespaceEmbedded::write_raw(db, &ns)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::NamespaceUpdate(mut ns) => {
             if ns.id == 0 {
                 ns.id = id;
             }
-            NamespaceEmbedded::write_raw(db, &ns).map(|_| ()).map_err(|e| e.to_string())
+            NamespaceEmbedded::write_raw(db, &ns)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::NamespaceDelete { id } => {
             NamespaceEmbedded::delete_raw(db, id).map_err(|e| e.to_string())
@@ -396,13 +402,17 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
         // ---- Cluster ----
         ApolloRaftRequest::ClusterCreate(mut c) => {
             c.id = id;
-            ClusterEmbedded::write_raw(db, &c).map(|_| ()).map_err(|e| e.to_string())
+            ClusterEmbedded::write_raw(db, &c)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ClusterUpdate(mut c) => {
             if c.id == 0 {
                 c.id = id;
             }
-            ClusterEmbedded::write_raw(db, &c).map(|_| ()).map_err(|e| e.to_string())
+            ClusterEmbedded::write_raw(db, &c)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ClusterDelete { id } => {
             ClusterEmbedded::delete_raw(db, id).map_err(|e| e.to_string())
@@ -411,13 +421,17 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
         // ---- Item ----
         ApolloRaftRequest::ItemCreate(mut it) => {
             it.id = id;
-            ItemEmbedded::write_raw(db, &it).map(|_| ()).map_err(|e| e.to_string())
+            ItemEmbedded::write_raw(db, &it)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ItemUpdate(mut it) => {
             if it.id == 0 {
                 it.id = id;
             }
-            ItemEmbedded::write_raw(db, &it).map(|_| ()).map_err(|e| e.to_string())
+            ItemEmbedded::write_raw(db, &it)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ItemDelete { id } => {
             ItemEmbedded::delete_raw(db, id).map_err(|e| e.to_string())
@@ -426,13 +440,17 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
         // ---- Release ----
         ApolloRaftRequest::ReleaseCreate(mut r) => {
             r.id = id;
-            ReleaseEmbedded::write_raw(db, &r).map(|_| ()).map_err(|e| e.to_string())
+            ReleaseEmbedded::write_raw(db, &r)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ReleaseUpdate(mut r) => {
             if r.id == 0 {
                 r.id = id;
             }
-            ReleaseEmbedded::write_raw(db, &r).map(|_| ()).map_err(|e| e.to_string())
+            ReleaseEmbedded::write_raw(db, &r)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::ReleaseDelete { id } => {
             ReleaseEmbedded::delete_raw(db, id).map_err(|e| e.to_string())
@@ -441,19 +459,25 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
         // ---- Commit ----
         ApolloRaftRequest::CommitCreate(mut c) => {
             c.id = id;
-            CommitEmbedded::write_raw(db, &c).map(|_| ()).map_err(|e| e.to_string())
+            CommitEmbedded::write_raw(db, &c)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
 
         // ---- AccessKey ----
         ApolloRaftRequest::AccessKeyCreate(mut ak) => {
             ak.id = id;
-            AccessKeyEmbedded::write_raw(db, &ak).map(|_| ()).map_err(|e| e.to_string())
+            AccessKeyEmbedded::write_raw(db, &ak)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::AccessKeyUpdate(mut ak) => {
             if ak.id == 0 {
                 ak.id = id;
             }
-            AccessKeyEmbedded::write_raw(db, &ak).map(|_| ()).map_err(|e| e.to_string())
+            AccessKeyEmbedded::write_raw(db, &ak)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         }
         ApolloRaftRequest::AccessKeyDelete { id } => {
             AccessKeyEmbedded::delete_raw(db, id).map_err(|e| e.to_string())
@@ -490,5 +514,7 @@ fn apply_apollo_request(db: &DB, request: ApolloRaftRequest, id: i64) -> Result<
 
 /// Convenience: register the Apollo Raft handler with a running Raft node.
 pub async fn register_apollo_raft(raft_node: &Arc<RaftNode>) -> Result<(), String> {
-    raft_node.register_plugin(ApolloRaftPluginHandler::new_arc()).await
+    raft_node
+        .register_plugin(ApolloRaftPluginHandler::new_arc())
+        .await
 }

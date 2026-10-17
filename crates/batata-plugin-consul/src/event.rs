@@ -142,7 +142,7 @@ pub struct ConsulEventService {
 }
 
 impl ConsulEventService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(index_provider: ConsulIndexProvider) -> Self {
         Self {
             buffer: Arc::new(RwLock::new(EventRingBuffer::new())),
@@ -236,24 +236,31 @@ impl ConsulEventService {
             .filter(|e| {
                 // Filter by name (exact match)
                 if let Some(n) = name
-                    && e.name != n {
-                        return false;
-                    }
+                    && e.name != n
+                {
+                    return false;
+                }
                 // Filter by node: match if the event's NodeFilter matches the query
                 if let Some(n) = node
-                    && !e.node_filter.is_empty() && e.node_filter != n {
-                        return false;
-                    }
+                    && !e.node_filter.is_empty()
+                    && e.node_filter != n
+                {
+                    return false;
+                }
                 // Filter by service
                 if let Some(s) = service
-                    && !e.service_filter.is_empty() && e.service_filter != s {
-                        return false;
-                    }
+                    && !e.service_filter.is_empty()
+                    && e.service_filter != s
+                {
+                    return false;
+                }
                 // Filter by tag
                 if let Some(t) = tag
-                    && !e.tag_filter.is_empty() && e.tag_filter != t {
-                        return false;
-                    }
+                    && !e.tag_filter.is_empty()
+                    && e.tag_filter != t
+                {
+                    return false;
+                }
                 true
             })
             .cloned()

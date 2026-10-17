@@ -109,11 +109,16 @@ impl InstanceAuditService {
             .await?;
 
         // 2) skip redundant writes when the same release was already audited.
-        let rk_key = format!("{}+{}+{}", instance_id, config_app_id, config_namespace_name);
+        let rk_key = format!(
+            "{}+{}+{}",
+            instance_id, config_app_id, config_namespace_name
+        );
         if let Some(hit) = self.release_key_cache.lock().unwrap().get(&rk_key)
-            && hit.fresh(RELEASE_KEY_CACHE_TTL) && hit.value == release_key {
-                return Ok(());
-            }
+            && hit.fresh(RELEASE_KEY_CACHE_TTL)
+            && hit.value == release_key
+        {
+            return Ok(());
+        }
 
         self.persistence
             .create_or_update_instance_config(InstanceConfigDTO {
@@ -132,7 +137,10 @@ impl InstanceAuditService {
 
         self.release_key_cache.lock().unwrap().insert(
             rk_key,
-            CachedEntry { value: release_key, inserted: Instant::now() },
+            CachedEntry {
+                value: release_key,
+                inserted: Instant::now(),
+            },
         );
         Ok(())
     }
@@ -146,14 +154,16 @@ impl InstanceAuditService {
     ) -> anyhow::Result<i64> {
         let cache_key = format!("{}|{}|{}|{}", app_id, cluster_name, ip, data_center);
         if let Some(hit) = self.instance_cache.lock().unwrap().get(&cache_key)
-            && hit.fresh(INSTANCE_CACHE_TTL) {
-                return Ok(hit.value);
-            }
+            && hit.fresh(INSTANCE_CACHE_TTL)
+        {
+            return Ok(hit.value);
+        }
 
-        let existing = InstancePersistence::get_by_app(&self.persistence, app_id, Some(cluster_name))
-            .await?
-            .into_iter()
-            .find(|i| i.ip == ip && i.data_center == data_center);
+        let existing =
+            InstancePersistence::get_by_app(&self.persistence, app_id, Some(cluster_name))
+                .await?
+                .into_iter()
+                .find(|i| i.ip == ip && i.data_center == data_center);
 
         let instance_id = match existing {
             Some(i) => i.id,
@@ -178,7 +188,10 @@ impl InstanceAuditService {
 
         self.instance_cache.lock().unwrap().insert(
             cache_key,
-            CachedEntry { value: instance_id, inserted: Instant::now() },
+            CachedEntry {
+                value: instance_id,
+                inserted: Instant::now(),
+            },
         );
         Ok(instance_id)
     }

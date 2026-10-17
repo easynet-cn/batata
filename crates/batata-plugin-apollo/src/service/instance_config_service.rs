@@ -16,26 +16,48 @@ impl InstanceConfigService {
     }
 
     /// Creates a new resource.
-    pub async fn create_or_update(&self, dto: InstanceConfigDTO) -> Result<InstanceConfigDTO, anyhow::Error> {
-        let model = self.persistence.create_or_update_instance_config(dto).await?;
+    pub async fn create_or_update(
+        &self,
+        dto: InstanceConfigDTO,
+    ) -> Result<InstanceConfigDTO, anyhow::Error> {
+        let model = self
+            .persistence
+            .create_or_update_instance_config(dto)
+            .await?;
         Ok(self.model_to_dto(&model))
     }
 
     /// Returns the requested value.
-    pub async fn get_by_instance(&self, instance_id: i64) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
-        let models = self.persistence.get_instance_config_by_instance(instance_id).await?;
+    pub async fn get_by_instance(
+        &self,
+        instance_id: i64,
+    ) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
+        let models = self
+            .persistence
+            .get_instance_config_by_instance(instance_id)
+            .await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
     /// Returns the requested value.
-    pub async fn list_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
-        let models = self.persistence.list_instance_config_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+    pub async fn list_by_app_cluster(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<InstanceConfigDTO>, anyhow::Error> {
+        let models = self
+            .persistence
+            .list_instance_config_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
     /// Deletes the specified resource.
     pub async fn delete_by_instance(&self, instance_id: i64) -> Result<(), anyhow::Error> {
-        self.persistence.delete_instance_config_by_instance(instance_id).await?;
+        self.persistence
+            .delete_instance_config_by_instance(instance_id)
+            .await?;
         Ok(())
     }
 
@@ -49,8 +71,15 @@ impl InstanceConfigService {
             release_key: model.release_key.clone(),
             configurations: model.configurations.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(model.data_change_created_time.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
-            data_change_last_time: model.data_change_last_time.map(|t| t.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
+            data_change_created_time: Some(
+                model
+                    .data_change_created_time
+                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
+                    .to_string(),
+            ),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
         }
     }
 }

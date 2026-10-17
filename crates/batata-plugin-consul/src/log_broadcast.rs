@@ -16,13 +16,13 @@ static LOG_SENDER: OnceLock<broadcast::Sender<LogEntry>> = OnceLock::new();
 /// A formatted log entry for streaming.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-/// The `timestamp` field.
+    /// The `timestamp` field.
     pub timestamp: String,
-/// The `level` field.
+    /// The `level` field.
     pub level: String,
-/// The `module` field.
+    /// The `module` field.
     pub module: String,
-/// The `message` field.
+    /// The `message` field.
     pub message: String,
 }
 

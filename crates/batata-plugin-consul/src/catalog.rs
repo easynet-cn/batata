@@ -32,39 +32,39 @@ use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, ConsulErro
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogService {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
 
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
 
     #[serde(rename = "Address")]
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
 
     #[serde(rename = "Datacenter")]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
 
     #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
-/// The `tagged_addresses` field.
+    /// The `tagged_addresses` field.
     pub tagged_addresses: Option<HashMap<String, String>>,
 
     #[serde(rename = "NodeMeta", skip_serializing_if = "Option::is_none")]
-/// The `node_meta` field.
+    /// The `node_meta` field.
     pub node_meta: Option<HashMap<String, String>>,
 
     #[serde(rename = "ServiceKind", skip_serializing_if = "Option::is_none")]
-/// The `service_kind` field.
+    /// The `service_kind` field.
     pub service_kind: Option<String>,
 
     #[serde(rename = "ServiceID")]
-/// The `service_id` field.
+    /// The `service_id` field.
     pub service_id: String,
 
     #[serde(rename = "ServiceName")]
-/// The `service_name` field.
+    /// The `service_name` field.
     pub service_name: String,
 
     /// Consul always returns `[]` for empty tags, never `null`.
@@ -72,23 +72,23 @@ pub struct CatalogService {
     pub service_tags: Vec<String>,
 
     #[serde(rename = "ServiceAddress")]
-/// The `service_address` field.
+    /// The `service_address` field.
     pub service_address: String,
 
     #[serde(rename = "ServiceWeights")]
-/// The `service_weights` field.
+    /// The `service_weights` field.
     pub service_weights: Weights,
 
     #[serde(rename = "ServiceMeta", skip_serializing_if = "Option::is_none")]
-/// The `service_meta` field.
+    /// The `service_meta` field.
     pub service_meta: Option<HashMap<String, String>>,
 
     #[serde(rename = "ServicePort")]
-/// The `service_port` field.
+    /// The `service_port` field.
     pub service_port: u16,
 
     #[serde(rename = "ServiceEnableTagOverride")]
-/// The `service_enable_tag_override` field.
+    /// The `service_enable_tag_override` field.
     pub service_enable_tag_override: bool,
 
     /// Proxy configuration (populated when MergeCentralConfig is requested
@@ -103,11 +103,11 @@ pub struct CatalogService {
     pub service_connect: Option<serde_json::Value>,
 
     #[serde(rename = "CreateIndex")]
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
 
     #[serde(rename = "ModifyIndex")]
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -243,35 +243,35 @@ impl CatalogService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogNode {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
 
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
 
     #[serde(rename = "Address")]
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
 
     #[serde(rename = "Datacenter")]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
 
     #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
-/// The `tagged_addresses` field.
+    /// The `tagged_addresses` field.
     pub tagged_addresses: Option<HashMap<String, String>>,
 
     #[serde(rename = "Meta", skip_serializing_if = "Option::is_none")]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
 
     #[serde(rename = "CreateIndex")]
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
 
     #[serde(rename = "ModifyIndex")]
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -279,23 +279,23 @@ pub struct CatalogNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceKind {
-/// The `Typical` variant.
+    /// The `Typical` variant.
     Typical,
-/// The `ConnectProxy` variant.
+    /// The `ConnectProxy` variant.
     ConnectProxy,
-/// The `ConnectGateway` variant.
+    /// The `ConnectGateway` variant.
     ConnectGateway,
-/// The `ConnectSidecar` variant.
+    /// The `ConnectSidecar` variant.
     ConnectSidecar,
-/// The `TerminatingGateway` variant.
+    /// The `TerminatingGateway` variant.
     TerminatingGateway,
-/// The `IngressGateway` variant.
+    /// The `IngressGateway` variant.
     IngressGateway,
-/// The `MeshGateway` variant.
+    /// The `MeshGateway` variant.
     MeshGateway,
-/// The `ApiGateway` variant.
+    /// The `ApiGateway` variant.
     ApiGateway,
-/// The `ConnectNative` variant.
+    /// The `ConnectNative` variant.
     ConnectNative,
 }
 
@@ -303,7 +303,7 @@ pub enum ServiceKind {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GatewayConfig {
     #[serde(rename = "AssociatedServiceCount")]
-/// The `associated_service_count` field.
+    /// The `associated_service_count` field.
     pub associated_service_count: i32,
 }
 
@@ -311,31 +311,31 @@ pub struct GatewayConfig {
 #[derive(Debug, Clone, Serialize)]
 pub struct GatewayServiceEntry {
     #[serde(rename = "Gateway")]
-/// The `gateway` field.
+    /// The `gateway` field.
     pub gateway: GatewayServiceName,
     #[serde(rename = "Service")]
-/// The `service` field.
+    /// The `service` field.
     pub service: GatewayServiceName,
     #[serde(rename = "GatewayKind")]
-/// The `gateway_kind` field.
+    /// The `gateway_kind` field.
     pub gateway_kind: String,
     #[serde(rename = "Port", skip_serializing_if = "Option::is_none")]
-/// The `port` field.
+    /// The `port` field.
     pub port: Option<i32>,
     #[serde(rename = "Protocol")]
-/// The `protocol` field.
+    /// The `protocol` field.
     pub protocol: String,
     #[serde(rename = "Hosts", skip_serializing_if = "Option::is_none")]
-/// The `hosts` field.
+    /// The `hosts` field.
     pub hosts: Option<Vec<String>>,
     #[serde(rename = "FromWildcard")]
-/// The `from_wildcard` field.
+    /// The `from_wildcard` field.
     pub from_wildcard: bool,
     #[serde(rename = "CreateIndex")]
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
     #[serde(rename = "ModifyIndex")]
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -343,13 +343,13 @@ pub struct GatewayServiceEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct GatewayServiceName {
     #[serde(rename = "Name")]
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -357,51 +357,51 @@ pub struct GatewayServiceName {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceSummary {
     #[serde(rename = "Kind", skip_serializing_if = "Option::is_none")]
-/// The `kind` field.
+    /// The `kind` field.
     pub kind: Option<ServiceKind>,
 
     #[serde(rename = "Name")]
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
 
     #[serde(rename = "Datacenter")]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
 
     #[serde(rename = "Tags")]
-/// The `tags` field.
+    /// The `tags` field.
     pub tags: Vec<String>,
 
     #[serde(rename = "Nodes")]
-/// The `nodes` field.
+    /// The `nodes` field.
     pub nodes: Vec<String>,
 
     #[serde(rename = "ExternalSources")]
-/// The `external_sources` field.
+    /// The `external_sources` field.
     pub external_sources: Vec<String>,
 
     #[serde(rename = "InstanceCount")]
-/// The `instance_count` field.
+    /// The `instance_count` field.
     pub instance_count: i32,
 
     #[serde(rename = "ChecksPassing")]
-/// The `checks_passing` field.
+    /// The `checks_passing` field.
     pub checks_passing: i32,
 
     #[serde(rename = "ChecksWarning")]
-/// The `checks_warning` field.
+    /// The `checks_warning` field.
     pub checks_warning: i32,
 
     #[serde(rename = "ChecksCritical")]
-/// The `checks_critical` field.
+    /// The `checks_critical` field.
     pub checks_critical: i32,
 
     #[serde(rename = "GatewayConfig")]
-/// The `gateway_config` field.
+    /// The `gateway_config` field.
     pub gateway_config: GatewayConfig,
 
     #[serde(rename = "TransparentProxy")]
-/// The `transparent_proxy` field.
+    /// The `transparent_proxy` field.
     pub transparent_proxy: bool,
 }
 
@@ -409,15 +409,15 @@ pub struct ServiceSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceListingSummary {
     #[serde(flatten)]
-/// The `service_summary` field.
+    /// The `service_summary` field.
     pub service_summary: ServiceSummary,
 
     #[serde(rename = "ConnectedWithProxy")]
-/// The `connected_with_proxy` field.
+    /// The `connected_with_proxy` field.
     pub connected_with_proxy: bool,
 
     #[serde(rename = "ConnectedWithGateway")]
-/// The `connected_with_gateway` field.
+    /// The `connected_with_gateway` field.
     pub connected_with_gateway: bool,
 }
 
@@ -425,11 +425,11 @@ pub struct ServiceListingSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeServices {
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: CatalogNode,
 
     #[serde(rename = "Services")]
-/// The `services` field.
+    /// The `services` field.
     pub services: HashMap<String, AgentService>,
 }
 
@@ -437,11 +437,11 @@ pub struct NodeServices {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeServiceList {
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: CatalogNode,
 
     #[serde(rename = "Services")]
-/// The `services` field.
+    /// The `services` field.
     pub services: Vec<AgentService>,
 }
 
@@ -449,43 +449,43 @@ pub struct NodeServiceList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogRegistration {
     #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
-/// The `id` field.
+    /// The `id` field.
     pub id: Option<String>,
 
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
 
     #[serde(rename = "Address")]
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
 
     #[serde(rename = "Datacenter", skip_serializing_if = "Option::is_none")]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: Option<String>,
 
     #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
-/// The `tagged_addresses` field.
+    /// The `tagged_addresses` field.
     pub tagged_addresses: Option<HashMap<String, String>>,
 
     #[serde(rename = "NodeMeta", skip_serializing_if = "Option::is_none")]
-/// The `node_meta` field.
+    /// The `node_meta` field.
     pub node_meta: Option<HashMap<String, String>>,
 
     #[serde(rename = "Service", skip_serializing_if = "Option::is_none")]
-/// The `service` field.
+    /// The `service` field.
     pub service: Option<CatalogServiceRegistration>,
 
     #[serde(rename = "Check", skip_serializing_if = "Option::is_none")]
-/// The `check` field.
+    /// The `check` field.
     pub check: Option<CatalogCheck>,
 
     #[serde(rename = "Checks", skip_serializing_if = "Option::is_none")]
-/// The `checks` field.
+    /// The `checks` field.
     pub checks: Option<Vec<CatalogCheck>>,
 
     #[serde(rename = "SkipNodeUpdate", skip_serializing_if = "Option::is_none")]
-/// The `skip_node_update` field.
+    /// The `skip_node_update` field.
     pub skip_node_update: Option<bool>,
 }
 
@@ -493,31 +493,31 @@ pub struct CatalogRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogServiceRegistration {
     #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
-/// The `id` field.
+    /// The `id` field.
     pub id: Option<String>,
 
     #[serde(rename = "Service")]
-/// The `service` field.
+    /// The `service` field.
     pub service: String,
 
     #[serde(rename = "Tags", skip_serializing_if = "Option::is_none")]
-/// The `tags` field.
+    /// The `tags` field.
     pub tags: Option<Vec<String>>,
 
     #[serde(rename = "Address", skip_serializing_if = "Option::is_none")]
-/// The `address` field.
+    /// The `address` field.
     pub address: Option<String>,
 
     #[serde(rename = "Meta", skip_serializing_if = "Option::is_none")]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
 
     #[serde(rename = "Port", skip_serializing_if = "Option::is_none")]
-/// The `port` field.
+    /// The `port` field.
     pub port: Option<u16>,
 
     #[serde(rename = "Weights", skip_serializing_if = "Option::is_none")]
-/// The `weights` field.
+    /// The `weights` field.
     pub weights: Option<Weights>,
 }
 
@@ -525,23 +525,23 @@ pub struct CatalogServiceRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogCheck {
     #[serde(rename = "CheckID", skip_serializing_if = "Option::is_none")]
-/// The `check_id` field.
+    /// The `check_id` field.
     pub check_id: Option<String>,
 
     #[serde(rename = "Name")]
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
 
     #[serde(rename = "Status", skip_serializing_if = "Option::is_none")]
-/// The `status` field.
+    /// The `status` field.
     pub status: Option<String>,
 
     #[serde(rename = "Notes", skip_serializing_if = "Option::is_none")]
-/// The `notes` field.
+    /// The `notes` field.
     pub notes: Option<String>,
 
     #[serde(rename = "ServiceID", skip_serializing_if = "Option::is_none")]
-/// The `service_id` field.
+    /// The `service_id` field.
     pub service_id: Option<String>,
 }
 
@@ -549,19 +549,19 @@ pub struct CatalogCheck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogDeregistration {
     #[serde(rename = "Node")]
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
 
     #[serde(rename = "Datacenter", skip_serializing_if = "Option::is_none")]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: Option<String>,
 
     #[serde(rename = "CheckID", skip_serializing_if = "Option::is_none")]
-/// The `check_id` field.
+    /// The `check_id` field.
     pub check_id: Option<String>,
 
     #[serde(rename = "ServiceID", skip_serializing_if = "Option::is_none")]
-/// The `service_id` field.
+    /// The `service_id` field.
     pub service_id: Option<String>,
 }
 
@@ -627,7 +627,7 @@ pub struct ConsulCatalogService {
 }
 
 impl ConsulCatalogService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(naming_store: Arc<crate::naming_store::ConsulNamingStore>) -> Self {
         Self {
             naming_store,
@@ -675,7 +675,7 @@ impl ConsulCatalogService {
         }
     }
 
-/// The `with_index_provider` method.
+    /// The `with_index_provider` method.
     pub fn with_index_provider(mut self, index_provider: ConsulIndexProvider) -> Self {
         self.index_provider = index_provider;
         self

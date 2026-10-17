@@ -105,8 +105,8 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
 
         let persistence: Arc<dyn ApolloPersistenceService> = match storage_mode {
             Some(mode) if *mode == batata_persistence::model::StorageMode::ExternalDb => {
-                let db_conn = db
-                    .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+                let db_conn =
+                    db.ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
                 tracing::info!("Running Apollo database migrations...");
                 crate::migration::run_apollo_migrations_with_lock(db_conn.as_ref()).await?;
@@ -115,8 +115,7 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                 Arc::new(SqlApolloPersistence::new((*db_conn).clone()))
             }
             _ => {
-                let db = rocks_db
-                    .ok_or_else(|| anyhow::anyhow!("RocksDB not available"))?;
+                let db = rocks_db.ok_or_else(|| anyhow::anyhow!("RocksDB not available"))?;
                 let mut embedded = EmbeddedApolloPersistence::new(db);
                 // In cluster mode the server hands us a running Raft node
                 // through the plugin context. Register the Apollo Raft handler
@@ -124,11 +123,14 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
                 // deterministically from the Raft log index and replicated to
                 // every replica (instead of the standalone local AtomicI64).
                 if let Some(raft_node) = ctx.get::<batata_consistency::RaftNode>("raft_node") {
-                    use crate::raft::{register_apollo_raft, ApolloRaftWriter};
-                    register_apollo_raft(&raft_node).await
+                    use crate::raft::{ApolloRaftWriter, register_apollo_raft};
+                    register_apollo_raft(&raft_node)
+                        .await
                         .map_err(|e| anyhow::anyhow!("register apollo raft handler: {}", e))?;
                     embedded = embedded.with_raft_writer(ApolloRaftWriter::new_arc(raft_node));
-                    tracing::info!("Apollo plugin running in cluster mode (Raft-replicated writes)");
+                    tracing::info!(
+                        "Apollo plugin running in cluster mode (Raft-replicated writes)"
+                    );
                 } else {
                     tracing::info!("Apollo plugin running in standalone mode (local RocksDB)");
                 }
@@ -136,7 +138,9 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             }
         };
 
-        let inner = ApolloPluginInner { persistence: persistence.clone() };
+        let inner = ApolloPluginInner {
+            persistence: persistence.clone(),
+        };
         self.inner
             .set(inner)
             .map_err(|_| anyhow::anyhow!("ApolloPlugin::init() called more than once"))?;
@@ -153,8 +157,13 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             use crate::persistence::traits::ServiceRegistryPersistence;
             loop {
                 for svc in ["apollo-configservice", "apollo-adminservice"] {
-                    if let Err(e) =
-                        ServiceRegistryPersistence::heartbeat(&*hb_persistence, svc, &uri, "default").await
+                    if let Err(e) = ServiceRegistryPersistence::heartbeat(
+                        &*hb_persistence,
+                        svc,
+                        &uri,
+                        "default",
+                    )
+                    .await
                     {
                         tracing::warn!("service registry heartbeat failed for {}: {}", svc, e);
                     }
@@ -176,7 +185,8 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
                 .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
             for svc in ["apollo-configservice", "apollo-adminservice"] {
-                let _ = ServiceRegistryPersistence::deregister(&*inner.persistence, svc, &uri).await;
+                let _ =
+                    ServiceRegistryPersistence::deregister(&*inner.persistence, svc, &uri).await;
             }
         }
         Ok(())
@@ -271,6 +281,9 @@ mod tests {
             state.get("apollo_version"),
             Some(&Some("2.5.1".to_string()))
         );
-        assert_eq!(state.get("apollo_http_workers"), Some(&Some("4".to_string())));
+        assert_eq!(
+            state.get("apollo_http_workers"),
+            Some(&Some("4".to_string()))
+        );
     }
 }

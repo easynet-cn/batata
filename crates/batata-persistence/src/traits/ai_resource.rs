@@ -7,7 +7,8 @@ use async_trait::async_trait;
 
 use crate::model::{
     AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo,
-    AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page, PipelineExecutionInfo,
+    AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
+    PipelineExecutionInfo,
 };
 
 /// Error returned by backends that do not implement the AI search index yet.

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
-use batata_common::DEFAULT_NAMESPACE_ID;
 use batata_common::A2aAgentService;
+use batata_common::DEFAULT_NAMESPACE_ID;
 use batata_common::model::ai::a2a::{AgentCapabilities, AgentCard};
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;

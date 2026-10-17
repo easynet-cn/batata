@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::api::dto::AppDTO;
 use crate::persistence::shared::{StoredApp, StoredCluster, StoredNamespace};
-use crate::persistence::traits::{ApolloPersistenceService, AppPersistence, ClusterPersistence, NamespacePersistence};
+use crate::persistence::traits::{
+    ApolloPersistenceService, AppPersistence, ClusterPersistence, NamespacePersistence,
+};
 use chrono::Utc;
 
 /// Represents the `AppService` entity.
@@ -18,9 +20,16 @@ impl AppService {
 
     /// Upstream adminservice createApp bootstraps the default Cluster row and
     /// the `application` Namespace so clients can consume immediately.
-    pub async fn bootstrap_default_namespace(&self, app_id: &str, operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn bootstrap_default_namespace(
+        &self,
+        app_id: &str,
+        operator: &str,
+    ) -> Result<(), anyhow::Error> {
         let now = Utc::now().timestamp_millis();
-        if ClusterPersistence::get(&self.persistence, app_id, "default").await?.is_none() {
+        if ClusterPersistence::get(&self.persistence, app_id, "default")
+            .await?
+            .is_none()
+        {
             ClusterPersistence::create(
                 &self.persistence,
                 StoredCluster {
@@ -95,8 +104,12 @@ impl AppService {
 
         let created = AppPersistence::create(&*self.persistence, stored).await?;
         // Upstream: app creation bootstraps default cluster + application ns.
-        let operator = dto.data_change_created_by.clone().unwrap_or_else(|| "apollo".into());
-        self.bootstrap_default_namespace(&dto.app_id, &operator).await?;
+        let operator = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "apollo".into());
+        self.bootstrap_default_namespace(&dto.app_id, &operator)
+            .await?;
         Ok(created.into())
     }
 
@@ -120,18 +133,39 @@ impl AppService {
 
     /// Performs the `update` operation.
     pub async fn update(&self, app_id: &str, dto: AppDTO) -> Result<(), anyhow::Error> {
-        let existing = AppPersistence::get(&*self.persistence, app_id).await?
+        let existing = AppPersistence::get(&*self.persistence, app_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("App not found: {}", app_id))?;
 
         let now = Utc::now().timestamp_millis();
 
         let stored = StoredApp {
             app_id: app_id.to_string(),
-            name: if dto.name.is_empty() { existing.name } else { dto.name },
-            org_id: if dto.org_id.is_empty() { existing.org_id } else { dto.org_id },
-            org_name: if dto.org_name.is_empty() { existing.org_name } else { dto.org_name },
-            owner_name: if dto.owner_name.is_empty() { existing.owner_name } else { dto.owner_name },
-            owner_email: if dto.owner_email.is_empty() { existing.owner_email } else { dto.owner_email },
+            name: if dto.name.is_empty() {
+                existing.name
+            } else {
+                dto.name
+            },
+            org_id: if dto.org_id.is_empty() {
+                existing.org_id
+            } else {
+                dto.org_id
+            },
+            org_name: if dto.org_name.is_empty() {
+                existing.org_name
+            } else {
+                dto.org_name
+            },
+            owner_name: if dto.owner_name.is_empty() {
+                existing.owner_name
+            } else {
+                dto.owner_name
+            },
+            owner_email: if dto.owner_email.is_empty() {
+                existing.owner_email
+            } else {
+                dto.owner_email
+            },
             is_deleted: existing.is_deleted,
             deleted_at: existing.deleted_at,
             data_change_created_by: existing.data_change_created_by,

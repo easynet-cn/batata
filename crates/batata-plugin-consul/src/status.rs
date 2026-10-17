@@ -19,7 +19,7 @@ use crate::model::{ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
 /// Query parameters for status endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StatusQueryParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
 }
 

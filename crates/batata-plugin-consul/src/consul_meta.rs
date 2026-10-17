@@ -23,7 +23,10 @@ pub enum LinearizableReadError {
     /// this to the leader's Consul HTTP address via its own discovery
     /// (cluster config, DNS, etc.) since batata does not currently track
     /// per-node Consul HTTP ports in shared state.
-    NotLeader { #[doc = "The `leader_addr` field."] leader_addr: Option<String> },
+    NotLeader {
+        #[doc = "The `leader_addr` field."]
+        leader_addr: Option<String>,
+    },
     /// Any other failure (e.g. Raft read-index timeout, storage error).
     Other(String),
 }
@@ -86,7 +89,7 @@ impl ConsistencyMode {
 /// Mirrors the Go `structs.QueryOptions`.
 #[derive(Debug, Clone)]
 pub struct ConsulQueryOptions {
-/// The `consistency` field.
+    /// The `consistency` field.
     pub consistency: ConsistencyMode,
     /// Blocking query: minimum index to wait for (`?index`).
     pub min_query_index: Option<u64>,
@@ -407,12 +410,14 @@ fn simple_url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
-            && let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2]))
+        {
+            out.push((h << 4) | l);
+            i += 3;
+            continue;
+        }
         if bytes[i] == b'+' {
             out.push(b' ');
         } else {
@@ -475,14 +480,16 @@ pub fn should_translate_wan(
         && h.to_str()
             .map(|s| s.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
-        {
-            return true;
-        }
+    {
+        return true;
+    }
     // Different DC requested (forwarded query)
     if let Some(dc) = requested_dc
-        && !dc.is_empty() && dc != local_dc {
-            return true;
-        }
+        && !dc.is_empty()
+        && dc != local_dc
+    {
+        return true;
+    }
     false
 }
 

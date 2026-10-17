@@ -15,10 +15,22 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloInstance::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloInstance::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloInstance::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloInstance::AppId, 64, "default"))
-                    .col(string_len_default(ApolloInstance::ClusterName, 32, "default"))
-                    .col(string_len_default(ApolloInstance::DataCenter, 64, "default"))
+                    .col(string_len_default(
+                        ApolloInstance::ClusterName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloInstance::DataCenter,
+                        64,
+                        "default",
+                    ))
                     .col(string_len_default(ApolloInstance::Ip, 32, ""))
                     .col(date_time(ApolloInstance::DataChangeCreatedTime))
                     .col(date_time_on_update(ApolloInstance::DataChangeLastTime))

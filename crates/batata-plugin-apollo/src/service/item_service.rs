@@ -20,9 +20,25 @@ impl ItemService {
     }
 
     /// Performs the `create` operation.
-    pub async fn create(&self, app_id: &str, cluster_name: &str, namespace_name: &str, dto: ItemDTO) -> Result<ItemDTO, anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn create(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        dto: ItemDTO,
+    ) -> Result<ItemDTO, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
         let existing = self.persistence.get_by_key(namespace.id, &dto.key).await?;
 
@@ -54,14 +70,26 @@ impl ItemService {
     }
 
     /// Returns the requested value.
-    pub async fn get_by_key(&self, app_id: &str, cluster_name: &str, namespace_name: &str, key: &str) -> Result<Option<ItemDTO>, anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+    pub async fn get_by_key(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        key: &str,
+    ) -> Result<Option<ItemDTO>, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?;
 
         if namespace.is_none() {
             return Ok(None);
         }
 
-        let stored = self.persistence.get_by_key(namespace.unwrap().id, key).await?;
+        let stored = self
+            .persistence
+            .get_by_key(namespace.unwrap().id, key)
+            .await?;
         Ok(stored.map(|s| s.into()))
     }
 
@@ -72,23 +100,47 @@ impl ItemService {
     }
 
     /// Performs the `list` operation.
-    pub async fn list(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ItemDTO>, anyhow::Error> {
-        let namespace = <dyn NamespacePersistence>::get_by_app_cluster(&self.persistence, app_id, cluster_name, namespace_name).await?;
+    pub async fn list(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<ItemDTO>, anyhow::Error> {
+        let namespace = <dyn NamespacePersistence>::get_by_app_cluster(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
 
         if namespace.is_none() {
             return Ok(vec![]);
         }
 
-        let stored_list = <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.unwrap().id).await?;
+        let stored_list =
+            <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.unwrap().id)
+                .await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, item_id: i64, dto: ItemDTO) -> Result<ItemDTO, anyhow::Error> {
-        let stored = <dyn ItemPersistence>::get_by_id(&self.persistence, item_id).await?
+    pub async fn update(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        item_id: i64,
+        dto: ItemDTO,
+    ) -> Result<ItemDTO, anyhow::Error> {
+        let stored = <dyn ItemPersistence>::get_by_id(&self.persistence, item_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Item not found: {}", item_id))?;
 
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Namespace not found"))?;
 
         if namespace.id != stored.namespace_id {
@@ -102,7 +154,11 @@ impl ItemService {
             namespace_id: stored.namespace_id,
             key: stored.key,
             r#type: dto.r#type.unwrap_or(stored.r#type),
-            value: if dto.value.is_empty() { stored.value } else { dto.value },
+            value: if dto.value.is_empty() {
+                stored.value
+            } else {
+                dto.value
+            },
             comment: dto.comment.or(stored.comment),
             line_num: stored.line_num,
             is_deleted: stored.is_deleted,
@@ -118,11 +174,31 @@ impl ItemService {
     }
 
     /// Updates an existing resource.
-    pub async fn update_by_key(&self, app_id: &str, cluster_name: &str, namespace_name: &str, key: &str, dto: ItemDTO) -> Result<ItemDTO, anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn update_by_key(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        key: &str,
+        dto: ItemDTO,
+    ) -> Result<ItemDTO, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
-        let stored = self.persistence.get_by_key(namespace.id, key).await?
+        let stored = self
+            .persistence
+            .get_by_key(namespace.id, key)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Item not found: {}", key))?;
 
         let now = Utc::now().timestamp_millis();
@@ -132,7 +208,11 @@ impl ItemService {
             namespace_id: stored.namespace_id,
             key: stored.key,
             r#type: dto.r#type.unwrap_or(stored.r#type),
-            value: if dto.value.is_empty() { stored.value } else { dto.value },
+            value: if dto.value.is_empty() {
+                stored.value
+            } else {
+                dto.value
+            },
             comment: dto.comment.or(stored.comment),
             line_num: stored.line_num,
             is_deleted: stored.is_deleted,
@@ -154,11 +234,31 @@ impl ItemService {
     }
 
     /// Deletes the specified resource.
-    pub async fn delete_by_key(&self, app_id: &str, cluster_name: &str, namespace_name: &str, key: &str, _operator: &str) -> Result<(), anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn delete_by_key(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        key: &str,
+        _operator: &str,
+    ) -> Result<(), anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
-        let stored = self.persistence.get_by_key(namespace.id, key).await?
+        let stored = self
+            .persistence
+            .get_by_key(namespace.id, key)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Item not found: {}", key))?;
 
         ItemPersistence::delete(&self.persistence, stored.id).await?;
@@ -166,8 +266,16 @@ impl ItemService {
     }
 
     /// List items that have been soft-deleted for the namespace.
-    pub async fn list_deleted(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ItemDTO>, anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+    pub async fn list_deleted(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<ItemDTO>, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?;
         let namespace_id = match namespace {
             Some(n) => n.id,
             None => return Ok(vec![]),
@@ -232,9 +340,10 @@ impl ItemService {
             // Upstream narrows the commits to those created at or after the
             // latest release (`commitService.find(..., releaseTime, null)`).
             if let Some(since) = since
-                && commit.data_change_created_time < since {
-                    continue;
-                }
+                && commit.data_change_created_time < since
+            {
+                continue;
+            }
 
             // A commit persisted in an older (or empty) format contributes no
             // deleted items rather than failing the whole request.

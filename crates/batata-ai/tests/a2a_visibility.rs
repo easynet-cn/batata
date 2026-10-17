@@ -19,11 +19,11 @@ mod common;
 
 use std::sync::Arc;
 
-use batata_ai::model::{AgentCard, AgentCapabilities, AgentSkill};
 use batata_ai::A2aServerOperationService;
+use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
+use batata_persistence::ExternalDbPersistService;
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::ExternalDbPersistService;
 
 const NS: &str = "public";
 const NAME: &str = "vis-agent";

@@ -15,8 +15,8 @@ use crate::entity::apollo_user_token;
 use crate::persistence::traits::ApolloPersistenceService;
 
 use crate::api::dto::{
-    AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, RoleDTO, ServerConfigDTO,
-    InstanceConfigDTO, UserDTO,
+    AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, InstanceConfigDTO,
+    RoleDTO, ServerConfigDTO, UserDTO,
 };
 use crate::entity::{
     apollo_app_namespace, apollo_audit, apollo_consumer, apollo_consumer_role,
@@ -28,15 +28,30 @@ use crate::entity::{
 /// Defines the `AppNamespacePersistence` trait.
 pub trait AppNamespacePersistence {
     /// Creates a new resource.
-    async fn create_app_namespace(&self, dto: AppNamespaceDTO) -> anyhow::Result<apollo_app_namespace::Model>;
+    async fn create_app_namespace(
+        &self,
+        dto: AppNamespaceDTO,
+    ) -> anyhow::Result<apollo_app_namespace::Model>;
     /// Returns the requested value.
-    async fn get_app_namespace(&self, app_id: &str, name: &str) -> anyhow::Result<Option<apollo_app_namespace::Model>>;
+    async fn get_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<apollo_app_namespace::Model>>;
     /// Returns the requested value.
-    async fn list_app_namespace_by_app(&self, app_id: &str) -> anyhow::Result<Vec<apollo_app_namespace::Model>>;
+    async fn list_app_namespace_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Vec<apollo_app_namespace::Model>>;
     /// Returns the requested value.
     async fn list_public_app_namespace(&self) -> anyhow::Result<Vec<apollo_app_namespace::Model>>;
     /// Deletes the specified resource.
-    async fn delete_app_namespace(&self, app_id: &str, name: &str, operator: &str) -> anyhow::Result<()>;
+    async fn delete_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+        operator: &str,
+    ) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -45,9 +60,17 @@ pub trait AuditPersistence {
     /// Creates a new resource.
     async fn create_audit(&self, dto: AuditDTO) -> anyhow::Result<apollo_audit::Model>;
     /// Returns the requested value.
-    async fn list_audit(&self, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)>;
+    async fn list_audit(
+        &self,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)>;
     /// Returns the requested value.
-    async fn list_audit_by_entity(&self, entity_name: &str, entity_id: &str) -> anyhow::Result<Vec<apollo_audit::Model>>;
+    async fn list_audit_by_entity(
+        &self,
+        entity_name: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<Vec<apollo_audit::Model>>;
 }
 
 #[async_trait]
@@ -58,7 +81,10 @@ pub trait ConsumerPersistence {
     /// Returns the requested value.
     async fn get_consumer(&self, id: i64) -> anyhow::Result<Option<apollo_consumer::Model>>;
     /// Returns the requested value.
-    async fn get_consumer_by_app(&self, app_id: &str) -> anyhow::Result<Option<apollo_consumer::Model>>;
+    async fn get_consumer_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Option<apollo_consumer::Model>>;
     /// Returns the requested value.
     async fn list_consumers(&self) -> anyhow::Result<Vec<apollo_consumer::Model>>;
 }
@@ -67,13 +93,23 @@ pub trait ConsumerPersistence {
 /// Defines the `ConsumerTokenPersistence` trait.
 pub trait ConsumerTokenPersistence: Send + Sync {
     /// Creates a new resource.
-    async fn create_consumer_token(&self, consumer_id: i64, created_by: &str) -> anyhow::Result<apollo_consumer_token::Model>;
+    async fn create_consumer_token(
+        &self,
+        consumer_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_consumer_token::Model>;
     /// Returns the requested value.
-    async fn list_tokens_by_consumer(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_consumer_token::Model>>;
+    async fn list_tokens_by_consumer(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_token::Model>>;
     /// Deletes the specified resource.
     async fn delete_consumer_token(&self, id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
-    async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>>;
+    async fn get_consumer_token_by_token(
+        &self,
+        token: &str,
+    ) -> anyhow::Result<Option<apollo_consumer_token::Model>>;
 }
 
 #[async_trait]
@@ -89,7 +125,11 @@ pub trait UserPersistence {
     /// Lists every user.
     async fn list_users(&self) -> anyhow::Result<Vec<apollo_users::Model>>;
     /// Updates an existing user, returning the refreshed row.
-    async fn update_user(&self, username: &str, dto: UserDTO) -> anyhow::Result<apollo_users::Model>;
+    async fn update_user(
+        &self,
+        username: &str,
+        dto: UserDTO,
+    ) -> anyhow::Result<apollo_users::Model>;
     /// Deletes the specified user.
     async fn delete_user(&self, username: &str) -> anyhow::Result<()>;
 }
@@ -119,7 +159,10 @@ pub trait UserTokenPersistence {
         token_prefix: &str,
     ) -> anyhow::Result<Option<apollo_user_token::Model>>;
     /// Lists every (non-deleted) token of a user.
-    async fn list_user_tokens(&self, user_id: &str) -> anyhow::Result<Vec<apollo_user_token::Model>>;
+    async fn list_user_tokens(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token::Model>>;
     /// Soft-deletes a token by id.
     async fn delete_user_token(&self, id: i64) -> anyhow::Result<()>;
 }
@@ -140,9 +183,12 @@ pub trait ConsumerRolePersistence {
     ) -> anyhow::Result<()>;
     /// Revokes a role from a consumer.
     async fn remove_role_from_consumer(&self, consumer_id: i64, role_id: i64)
-        -> anyhow::Result<()>;
+    -> anyhow::Result<()>;
     /// Lists every role granted to a consumer.
-    async fn list_consumer_roles(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_role::Model>>;
+    async fn list_consumer_roles(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_role::Model>>;
     /// Lists every stored consumer-role link.
     async fn list_consumer_role_links(&self) -> anyhow::Result<Vec<apollo_consumer_role::Model>>;
     /// Creates a consumer-role link from a DTO, returning the stored row.
@@ -156,13 +202,27 @@ pub trait ConsumerRolePersistence {
 /// Defines the `PermissionPersistence` trait.
 pub trait PermissionPersistence {
     /// Creates a new resource.
-    async fn create_permission(&self, permission_type: i32, target_id: &str, created_by: &str) -> anyhow::Result<apollo_permission::Model>;
+    async fn create_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model>;
     /// Returns the requested value.
-    async fn list_permission_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_permission::Model>>;
+    async fn list_permission_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>>;
     /// Returns the requested value.
-    async fn list_permission_by_type(&self, permission_type: i32) -> anyhow::Result<Vec<apollo_permission::Model>>;
+    async fn list_permission_by_type(
+        &self,
+        permission_type: i32,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>>;
     /// Looks up a single permission by its primary key.
-    async fn get_permission_by_id(&self, id: i64) -> anyhow::Result<Option<apollo_permission::Model>>;
+    async fn get_permission_by_id(
+        &self,
+        id: i64,
+    ) -> anyhow::Result<Option<apollo_permission::Model>>;
 }
 
 #[async_trait]
@@ -173,22 +233,34 @@ pub trait RolePersistence {
     /// Returns the requested value.
     async fn get_role(&self, id: i64) -> anyhow::Result<Option<apollo_role::Model>>;
     /// Returns the requested value.
-    async fn list_role_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_role::Model>>;
+    async fn list_role_by_target(&self, target_id: &str)
+    -> anyhow::Result<Vec<apollo_role::Model>>;
     /// Looks a role up by its name.
     ///
     /// Upstream `roleService.findRoleByRoleName`; role names are the join point
     /// between `RoleUtils` naming rules and the stored rows.
-    async fn get_role_by_name(&self, role_name: &str) -> anyhow::Result<Option<apollo_role::Model>>;
+    async fn get_role_by_name(&self, role_name: &str)
+    -> anyhow::Result<Option<apollo_role::Model>>;
     /// Deletes the specified resource.
     async fn delete_role(&self, id: i64) -> anyhow::Result<()>;
     /// Performs the `assign_role_permission` operation.
-    async fn assign_role_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> anyhow::Result<()>;
+    async fn assign_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()>;
     /// Deletes the specified resource.
     async fn remove_role_permission(&self, role_id: i64, permission_id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
     async fn list_role_permissions(&self, role_id: i64) -> anyhow::Result<Vec<i64>>;
     /// Performs the `assign_role_to_user` operation.
-    async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> anyhow::Result<()>;
+    async fn assign_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()>;
     /// Deletes the specified resource.
     async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
@@ -201,7 +273,10 @@ pub trait FavoritePersistence {
     /// Creates a new resource.
     async fn create_favorite(&self, dto: FavoriteDTO) -> anyhow::Result<apollo_favorite::Model>;
     /// Returns the requested value.
-    async fn list_favorite_by_user(&self, user_id: &str) -> anyhow::Result<Vec<apollo_favorite::Model>>;
+    async fn list_favorite_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_favorite::Model>>;
     /// Deletes the specified resource.
     async fn delete_favorite(&self, id: i64, user_id: &str) -> anyhow::Result<()>;
 }
@@ -210,13 +285,24 @@ pub trait FavoritePersistence {
 /// Defines the `ServerConfigPersistence` trait.
 pub trait ServerConfigPersistence {
     /// Returns the requested value.
-    async fn get_server_config(&self, key: &str) -> anyhow::Result<Option<apollo_server_config::Model>>;
+    async fn get_server_config(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<apollo_server_config::Model>>;
     /// Returns the requested value.
     async fn list_server_config(&self) -> anyhow::Result<Vec<apollo_server_config::Model>>;
     /// Creates a new resource.
-    async fn create_server_config(&self, dto: ServerConfigDTO) -> anyhow::Result<apollo_server_config::Model>;
+    async fn create_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model>;
     /// Updates an existing resource.
-    async fn update_server_config(&self, key: &str, value: &str, operator: &str) -> anyhow::Result<()>;
+    async fn update_server_config(
+        &self,
+        key: &str,
+        value: &str,
+        operator: &str,
+    ) -> anyhow::Result<()>;
     /// Deletes the specified resource.
     async fn delete_server_config(&self, key: &str, operator: &str) -> anyhow::Result<()>;
 }
@@ -225,11 +311,22 @@ pub trait ServerConfigPersistence {
 /// Defines the `InstanceConfigPersistence` trait.
 pub trait InstanceConfigPersistence {
     /// Creates a new resource.
-    async fn create_or_update_instance_config(&self, dto: InstanceConfigDTO) -> anyhow::Result<apollo_instance_config::Model>;
+    async fn create_or_update_instance_config(
+        &self,
+        dto: InstanceConfigDTO,
+    ) -> anyhow::Result<apollo_instance_config::Model>;
     /// Returns the requested value.
-    async fn get_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
+    async fn get_instance_config_by_instance(
+        &self,
+        instance_id: i64,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
     /// Returns the requested value.
-    async fn list_instance_config_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
+    async fn list_instance_config_by_app_cluster(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
     /// Deletes the specified resource.
     async fn delete_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<()>;
     /// Lists instance configs of a namespace, paged and optionally filtered by
@@ -247,10 +344,18 @@ pub trait InstanceConfigPersistence {
         size: u64,
     ) -> anyhow::Result<(Vec<apollo_instance_config::Model>, u64)>;
     /// Counts the distinct instance configs of a namespace.
-    async fn count_instance_config(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<u64>;
+    async fn count_instance_config(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<u64>;
     /// Lists instance configs whose `release_key` is one of the provided keys
     /// (upstream `findByReleaseKeys`). Used by the `by-release` endpoint.
-    async fn list_instance_config_by_release_keys(&self, release_keys: &[String]) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
+    async fn list_instance_config_by_release_keys(
+        &self,
+        release_keys: &[String],
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>>;
     /// Lists instance configs of a namespace whose `release_key` is NOT one of
     /// the provided keys (upstream `findByReleaseKeysNotIn`). Used by the
     /// `by-release-not-in` endpoint.
@@ -267,26 +372,59 @@ pub trait InstanceConfigPersistence {
 /// Defines the `ReleaseHistoryPersistence` trait.
 pub trait ReleaseHistoryPersistence {
     /// Returns the requested value.
-    async fn find_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)>;
+    async fn find_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)>;
     /// Performs the `record_release_history` operation.
-    async fn record_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, release_id: i64, previous_release_id: i64, operation: i32, operation_context: &str, operator: &str) -> anyhow::Result<apollo_release_history::Model>;
+    async fn record_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        release_id: i64,
+        previous_release_id: i64,
+        operation: i32,
+        operation_context: &str,
+        operator: &str,
+    ) -> anyhow::Result<apollo_release_history::Model>;
 }
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> AppNamespacePersistence for Arc<T> {
-    async fn create_app_namespace(&self, dto: AppNamespaceDTO) -> anyhow::Result<apollo_app_namespace::Model> {
+    async fn create_app_namespace(
+        &self,
+        dto: AppNamespaceDTO,
+    ) -> anyhow::Result<apollo_app_namespace::Model> {
         AppNamespacePersistence::create_app_namespace(&**self, dto).await
     }
-    async fn get_app_namespace(&self, app_id: &str, name: &str) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
+    async fn get_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
         AppNamespacePersistence::get_app_namespace(&**self, app_id, name).await
     }
-    async fn list_app_namespace_by_app(&self, app_id: &str) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
+    async fn list_app_namespace_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
         AppNamespacePersistence::list_app_namespace_by_app(&**self, app_id).await
     }
     async fn list_public_app_namespace(&self) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
         AppNamespacePersistence::list_public_app_namespace(&**self).await
     }
-    async fn delete_app_namespace(&self, app_id: &str, name: &str, operator: &str) -> anyhow::Result<()> {
+    async fn delete_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         AppNamespacePersistence::delete_app_namespace(&**self, app_id, name, operator).await
     }
 }
@@ -296,10 +434,18 @@ impl<T: ApolloPersistenceService + ?Sized> AuditPersistence for Arc<T> {
     async fn create_audit(&self, dto: AuditDTO) -> anyhow::Result<apollo_audit::Model> {
         AuditPersistence::create_audit(&**self, dto).await
     }
-    async fn list_audit(&self, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
+    async fn list_audit(
+        &self,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
         AuditPersistence::list_audit(&**self, page, size).await
     }
-    async fn list_audit_by_entity(&self, entity_name: &str, entity_id: &str) -> anyhow::Result<Vec<apollo_audit::Model>> {
+    async fn list_audit_by_entity(
+        &self,
+        entity_name: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<Vec<apollo_audit::Model>> {
         AuditPersistence::list_audit_by_entity(&**self, entity_name, entity_id).await
     }
 }
@@ -312,7 +458,10 @@ impl<T: ApolloPersistenceService + ?Sized> ConsumerPersistence for Arc<T> {
     async fn get_consumer(&self, id: i64) -> anyhow::Result<Option<apollo_consumer::Model>> {
         ConsumerPersistence::get_consumer(&**self, id).await
     }
-    async fn get_consumer_by_app(&self, app_id: &str) -> anyhow::Result<Option<apollo_consumer::Model>> {
+    async fn get_consumer_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Option<apollo_consumer::Model>> {
         ConsumerPersistence::get_consumer_by_app(&**self, app_id).await
     }
     async fn list_consumers(&self) -> anyhow::Result<Vec<apollo_consumer::Model>> {
@@ -322,16 +471,26 @@ impl<T: ApolloPersistenceService + ?Sized> ConsumerPersistence for Arc<T> {
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> ConsumerTokenPersistence for Arc<T> {
-    async fn create_consumer_token(&self, consumer_id: i64, created_by: &str) -> anyhow::Result<apollo_consumer_token::Model> {
+    async fn create_consumer_token(
+        &self,
+        consumer_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_consumer_token::Model> {
         ConsumerTokenPersistence::create_consumer_token(&**self, consumer_id, created_by).await
     }
-    async fn list_tokens_by_consumer(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
+    async fn list_tokens_by_consumer(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
         ConsumerTokenPersistence::list_tokens_by_consumer(&**self, consumer_id).await
     }
     async fn delete_consumer_token(&self, id: i64) -> anyhow::Result<()> {
         ConsumerTokenPersistence::delete_consumer_token(&**self, id).await
     }
-    async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
+    async fn get_consumer_token_by_token(
+        &self,
+        token: &str,
+    ) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
         ConsumerTokenPersistence::get_consumer_token_by_token(&**self, token).await
     }
 }
@@ -347,7 +506,11 @@ impl<T: ApolloPersistenceService + ?Sized> UserPersistence for Arc<T> {
     async fn list_users(&self) -> anyhow::Result<Vec<apollo_users::Model>> {
         UserPersistence::list_users(&**self).await
     }
-    async fn update_user(&self, username: &str, dto: UserDTO) -> anyhow::Result<apollo_users::Model> {
+    async fn update_user(
+        &self,
+        username: &str,
+        dto: UserDTO,
+    ) -> anyhow::Result<apollo_users::Model> {
         UserPersistence::update_user(&**self, username, dto).await
     }
     async fn delete_user(&self, username: &str) -> anyhow::Result<()> {
@@ -392,16 +555,31 @@ impl<T: ApolloPersistenceService + ?Sized> ConsumerRolePersistence for Arc<T> {
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> PermissionPersistence for Arc<T> {
-    async fn create_permission(&self, permission_type: i32, target_id: &str, created_by: &str) -> anyhow::Result<apollo_permission::Model> {
-        PermissionPersistence::create_permission(&**self, permission_type, target_id, created_by).await
+    async fn create_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
+        PermissionPersistence::create_permission(&**self, permission_type, target_id, created_by)
+            .await
     }
-    async fn list_permission_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         PermissionPersistence::list_permission_by_target(&**self, target_id).await
     }
-    async fn list_permission_by_type(&self, permission_type: i32) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_type(
+        &self,
+        permission_type: i32,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         PermissionPersistence::list_permission_by_type(&**self, permission_type).await
     }
-    async fn get_permission_by_id(&self, id: i64) -> anyhow::Result<Option<apollo_permission::Model>> {
+    async fn get_permission_by_id(
+        &self,
+        id: i64,
+    ) -> anyhow::Result<Option<apollo_permission::Model>> {
         PermissionPersistence::get_permission_by_id(&**self, id).await
     }
 }
@@ -414,16 +592,27 @@ impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     async fn get_role(&self, id: i64) -> anyhow::Result<Option<apollo_role::Model>> {
         RolePersistence::get_role(&**self, id).await
     }
-    async fn list_role_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
+    async fn list_role_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_role::Model>> {
         RolePersistence::list_role_by_target(&**self, target_id).await
     }
-    async fn get_role_by_name(&self, role_name: &str) -> anyhow::Result<Option<apollo_role::Model>> {
+    async fn get_role_by_name(
+        &self,
+        role_name: &str,
+    ) -> anyhow::Result<Option<apollo_role::Model>> {
         RolePersistence::get_role_by_name(&**self, role_name).await
     }
     async fn delete_role(&self, id: i64) -> anyhow::Result<()> {
         RolePersistence::delete_role(&**self, id).await
     }
-    async fn assign_role_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         RolePersistence::assign_role_permission(&**self, role_id, permission_id, created_by).await
     }
     async fn remove_role_permission(&self, role_id: i64, permission_id: i64) -> anyhow::Result<()> {
@@ -432,7 +621,12 @@ impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     async fn list_role_permissions(&self, role_id: i64) -> anyhow::Result<Vec<i64>> {
         RolePersistence::list_role_permissions(&**self, role_id).await
     }
-    async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         RolePersistence::assign_role_to_user(&**self, user_id, role_id, created_by).await
     }
     async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> anyhow::Result<()> {
@@ -448,7 +642,10 @@ impl<T: ApolloPersistenceService + ?Sized> FavoritePersistence for Arc<T> {
     async fn create_favorite(&self, dto: FavoriteDTO) -> anyhow::Result<apollo_favorite::Model> {
         FavoritePersistence::create_favorite(&**self, dto).await
     }
-    async fn list_favorite_by_user(&self, user_id: &str) -> anyhow::Result<Vec<apollo_favorite::Model>> {
+    async fn list_favorite_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_favorite::Model>> {
         FavoritePersistence::list_favorite_by_user(&**self, user_id).await
     }
     async fn delete_favorite(&self, id: i64, user_id: &str) -> anyhow::Result<()> {
@@ -458,16 +655,27 @@ impl<T: ApolloPersistenceService + ?Sized> FavoritePersistence for Arc<T> {
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> ServerConfigPersistence for Arc<T> {
-    async fn get_server_config(&self, key: &str) -> anyhow::Result<Option<apollo_server_config::Model>> {
+    async fn get_server_config(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<apollo_server_config::Model>> {
         ServerConfigPersistence::get_server_config(&**self, key).await
     }
     async fn list_server_config(&self) -> anyhow::Result<Vec<apollo_server_config::Model>> {
         ServerConfigPersistence::list_server_config(&**self).await
     }
-    async fn create_server_config(&self, dto: ServerConfigDTO) -> anyhow::Result<apollo_server_config::Model> {
+    async fn create_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
         ServerConfigPersistence::create_server_config(&**self, dto).await
     }
-    async fn update_server_config(&self, key: &str, value: &str, operator: &str) -> anyhow::Result<()> {
+    async fn update_server_config(
+        &self,
+        key: &str,
+        value: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         ServerConfigPersistence::update_server_config(&**self, key, value, operator).await
     }
     async fn delete_server_config(&self, key: &str, operator: &str) -> anyhow::Result<()> {
@@ -477,14 +685,31 @@ impl<T: ApolloPersistenceService + ?Sized> ServerConfigPersistence for Arc<T> {
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> InstanceConfigPersistence for Arc<T> {
-    async fn create_or_update_instance_config(&self, dto: InstanceConfigDTO) -> anyhow::Result<apollo_instance_config::Model> {
+    async fn create_or_update_instance_config(
+        &self,
+        dto: InstanceConfigDTO,
+    ) -> anyhow::Result<apollo_instance_config::Model> {
         InstanceConfigPersistence::create_or_update_instance_config(&**self, dto).await
     }
-    async fn get_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn get_instance_config_by_instance(
+        &self,
+        instance_id: i64,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         InstanceConfigPersistence::get_instance_config_by_instance(&**self, instance_id).await
     }
-    async fn list_instance_config_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
-        InstanceConfigPersistence::list_instance_config_by_app_cluster(&**self, app_id, cluster_name, namespace_name).await
+    async fn list_instance_config_by_app_cluster(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+        InstanceConfigPersistence::list_instance_config_by_app_cluster(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await
     }
     async fn delete_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<()> {
         InstanceConfigPersistence::delete_instance_config_by_instance(&**self, instance_id).await
@@ -498,7 +723,16 @@ impl<T: ApolloPersistenceService + ?Sized> InstanceConfigPersistence for Arc<T> 
         page: u64,
         size: u64,
     ) -> anyhow::Result<(Vec<apollo_instance_config::Model>, u64)> {
-        InstanceConfigPersistence::list_instance_config_paged(&**self, app_id, cluster_name, namespace_name, config_app_id, page, size).await
+        InstanceConfigPersistence::list_instance_config_paged(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+            config_app_id,
+            page,
+            size,
+        )
+        .await
     }
     async fn count_instance_config(
         &self,
@@ -506,7 +740,13 @@ impl<T: ApolloPersistenceService + ?Sized> InstanceConfigPersistence for Arc<T> 
         cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<u64> {
-        InstanceConfigPersistence::count_instance_config(&**self, app_id, cluster_name, namespace_name).await
+        InstanceConfigPersistence::count_instance_config(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await
     }
     async fn list_instance_config_by_release_keys(
         &self,
@@ -521,16 +761,61 @@ impl<T: ApolloPersistenceService + ?Sized> InstanceConfigPersistence for Arc<T> 
         namespace_name: &str,
         release_keys: &[String],
     ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
-        InstanceConfigPersistence::list_instance_config_by_release_keys_not_in(&**self, app_id, cluster_name, namespace_name, release_keys).await
+        InstanceConfigPersistence::list_instance_config_by_release_keys_not_in(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+            release_keys,
+        )
+        .await
     }
 }
 
 #[async_trait]
 impl<T: ApolloPersistenceService + ?Sized> ReleaseHistoryPersistence for Arc<T> {
-    async fn find_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
-        ReleaseHistoryPersistence::find_release_history(&**self, app_id, cluster_name, namespace_name, page, size).await
+    async fn find_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
+        ReleaseHistoryPersistence::find_release_history(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+            page,
+            size,
+        )
+        .await
     }
-    async fn record_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, release_id: i64, previous_release_id: i64, operation: i32, operation_context: &str, operator: &str) -> anyhow::Result<apollo_release_history::Model> {
-        ReleaseHistoryPersistence::record_release_history(&**self, app_id, cluster_name, namespace_name, branch_name, release_id, previous_release_id, operation, operation_context, operator).await
+    async fn record_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        release_id: i64,
+        previous_release_id: i64,
+        operation: i32,
+        operation_context: &str,
+        operator: &str,
+    ) -> anyhow::Result<apollo_release_history::Model> {
+        ReleaseHistoryPersistence::record_release_history(
+            &**self,
+            app_id,
+            cluster_name,
+            namespace_name,
+            branch_name,
+            release_id,
+            previous_release_id,
+            operation,
+            operation_context,
+            operator,
+        )
+        .await
     }
 }

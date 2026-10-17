@@ -29,19 +29,19 @@ use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 #[derive(Default)]
 pub enum PeeringState {
     #[default]
-/// The `Undefined` variant.
+    /// The `Undefined` variant.
     Undefined,
-/// The `Pending` variant.
+    /// The `Pending` variant.
     Pending,
-/// The `Establishing` variant.
+    /// The `Establishing` variant.
     Establishing,
-/// The `Active` variant.
+    /// The `Active` variant.
     Active,
-/// The `Failing` variant.
+    /// The `Failing` variant.
     Failing,
-/// The `Deleting` variant.
+    /// The `Deleting` variant.
     Deleting,
-/// The `Terminated` variant.
+    /// The `Terminated` variant.
     Terminated,
 }
 
@@ -63,18 +63,18 @@ impl std::fmt::Display for PeeringState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringStreamStatus {
-/// The `imported_services` field.
+    /// The `imported_services` field.
     pub imported_services: Vec<String>,
-/// The `exported_services` field.
+    /// The `exported_services` field.
     pub exported_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `last_heartbeat` field.
+    /// The `last_heartbeat` field.
     pub last_heartbeat: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `last_receive` field.
+    /// The `last_receive` field.
     pub last_receive: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `last_send` field.
+    /// The `last_send` field.
     pub last_send: Option<String>,
 }
 
@@ -83,10 +83,10 @@ pub struct PeeringStreamStatus {
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringRemoteInfo {
     #[serde(default)]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: String,
     #[serde(default)]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
 }
 
@@ -95,41 +95,41 @@ pub struct PeeringRemoteInfo {
 #[serde(rename_all = "PascalCase")]
 pub struct Peering {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(default)]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: String,
-/// The `state` field.
+    /// The `state` field.
     pub state: PeeringState,
     #[serde(rename = "PeerID")]
-/// The `peer_id` field.
+    /// The `peer_id` field.
     pub peer_id: String,
     #[serde(default)]
-/// The `peer_server_name` field.
+    /// The `peer_server_name` field.
     pub peer_server_name: String,
     #[serde(default)]
-/// The `peer_server_addresses` field.
+    /// The `peer_server_addresses` field.
     pub peer_server_addresses: Vec<String>,
     #[serde(default, rename = "PeerCAPems")]
-/// The `peer_ca_pems` field.
+    /// The `peer_ca_pems` field.
     pub peer_ca_pems: Vec<String>,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
-/// The `stream_status` field.
+    /// The `stream_status` field.
     pub stream_status: PeeringStreamStatus,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
     #[serde(default)]
-/// The `remote` field.
+    /// The `remote` field.
     pub remote: PeeringRemoteInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `deleted_at` field.
+    /// The `deleted_at` field.
     pub deleted_at: Option<String>,
 }
 
@@ -142,40 +142,40 @@ pub struct Peering {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringImportedService {
-/// The `service_name` field.
+    /// The `service_name` field.
     pub service_name: String,
-/// The `service_id` field.
+    /// The `service_id` field.
     #[serde(rename = "ServiceID")]
     pub service_id: String,
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
-/// The `port` field.
+    /// The `port` field.
     pub port: u32,
     #[serde(default)]
-/// The `tags` field.
+    /// The `tags` field.
     pub tags: Vec<String>,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
     /// Remote datacenter this instance belongs to.
     #[serde(default)]
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
     /// Remote node name hosting this instance.
     #[serde(default)]
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
     /// Remote node address.
     #[serde(default)]
-/// The `node_address` field.
+    /// The `node_address` field.
     pub node_address: String,
     /// Health checks associated with this instance.
     #[serde(default)]
-/// The `checks` field.
+    /// The `checks` field.
     pub checks: Vec<PeeringImportedCheck>,
     /// When this instance was imported (RFC3339).
     #[serde(default)]
-/// The `imported_at` field.
+    /// The `imported_at` field.
     pub imported_at: String,
 }
 
@@ -183,15 +183,15 @@ pub struct PeeringImportedService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringImportedCheck {
-/// The `check_id` field.
+    /// The `check_id` field.
     #[serde(rename = "CheckID")]
     pub check_id: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
-/// The `status` field.
+    /// The `status` field.
     pub status: String,
     #[serde(default)]
-/// The `output` field.
+    /// The `output` field.
     pub output: String,
 }
 
@@ -199,16 +199,16 @@ pub struct PeeringImportedCheck {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringGenerateTokenRequest {
-/// The `peer_name` field.
+    /// The `peer_name` field.
     pub peer_name: String,
     #[serde(default)]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: String,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
     #[serde(default)]
-/// The `server_external_addresses` field.
+    /// The `server_external_addresses` field.
     pub server_external_addresses: Vec<String>,
 }
 
@@ -216,7 +216,7 @@ pub struct PeeringGenerateTokenRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringGenerateTokenResponse {
-/// The `peering_token` field.
+    /// The `peering_token` field.
     pub peering_token: String,
 }
 
@@ -224,15 +224,15 @@ pub struct PeeringGenerateTokenResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringEstablishRequest {
-/// The `peer_name` field.
+    /// The `peer_name` field.
     pub peer_name: String,
-/// The `peering_token` field.
+    /// The `peering_token` field.
     pub peering_token: String,
     #[serde(default)]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: String,
     #[serde(default)]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: std::collections::HashMap<String, String>,
 }
 
@@ -253,7 +253,7 @@ struct PeeringToken {
 /// Query parameters for peering endpoints
 #[derive(Debug, Deserialize)]
 pub struct PeeringQueryParams {
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -284,12 +284,12 @@ pub struct ConsulPeeringService {
 }
 
 impl ConsulPeeringService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self::with_datacenter("dc1".to_string())
     }
 
-/// The `with_datacenter` associated function.
+    /// The `with_datacenter` associated function.
     pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             peerings: Arc::new(DashMap::new()),
@@ -302,13 +302,13 @@ impl ConsulPeeringService {
         }
     }
 
-/// The `with_consul_port` method.
+    /// The `with_consul_port` method.
     pub fn with_consul_port(mut self, port: u16) -> Self {
         self.consul_port = port;
         self
     }
 
-/// The `with_rocks` associated function.
+    /// The `with_rocks` associated function.
     pub fn with_rocks(db: Arc<DB>, datacenter: String, consul_port: u16) -> Self {
         let peerings = Arc::new(DashMap::new());
         let mut max_index = 1u64;
@@ -361,7 +361,7 @@ impl ConsulPeeringService {
         svc
     }
 
-/// The `generate_token` method.
+    /// The `generate_token` method.
     pub async fn generate_token(
         &self,
         req: PeeringGenerateTokenRequest,
@@ -442,7 +442,7 @@ impl ConsulPeeringService {
         })
     }
 
-/// The `establish` method.
+    /// The `establish` method.
     pub async fn establish(&self, req: PeeringEstablishRequest) -> Result<(), String> {
         if req.peer_name.is_empty() {
             return Err("PeerName is required".to_string());
@@ -512,7 +512,7 @@ impl ConsulPeeringService {
         Ok(())
     }
 
-/// The `get_peering` method.
+    /// The `get_peering` method.
     pub fn get_peering(&self, name: &str) -> Option<Peering> {
         self.peerings
             .get(name)
@@ -520,7 +520,7 @@ impl ConsulPeeringService {
             .map(|p| p.value().clone())
     }
 
-/// The `list_peerings` method.
+    /// The `list_peerings` method.
     pub fn list_peerings(&self) -> Vec<Peering> {
         let mut peerings: Vec<Peering> = self
             .peerings
@@ -532,7 +532,7 @@ impl ConsulPeeringService {
         peerings
     }
 
-/// The `delete_peering` method.
+    /// The `delete_peering` method.
     pub async fn delete_peering(&self, name: &str) -> bool {
         if let Some(mut peering) = self.peerings.get_mut(name) {
             peering.state = PeeringState::Deleting;
@@ -592,10 +592,8 @@ impl ConsulPeeringService {
 
         // Update the peering's stream_status: imported_services list + last_receive.
         if let Some(mut peering) = self.peerings.get_mut(peer_name) {
-            let mut service_names: Vec<String> = services
-                .iter()
-                .map(|s| s.service_name.clone())
-                .collect();
+            let mut service_names: Vec<String> =
+                services.iter().map(|s| s.service_name.clone()).collect();
             service_names.sort();
             service_names.dedup();
 
@@ -876,7 +874,7 @@ pub struct PeeringReplicationClient {
 }
 
 impl PeeringReplicationClient {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -902,8 +900,7 @@ impl PeeringReplicationClient {
                     .await
                 {
                     if !services.is_empty() {
-                        let names: Vec<String> =
-                            services.into_iter().map(|s| s.service).collect();
+                        let names: Vec<String> = services.into_iter().map(|s| s.service).collect();
                         return Ok(names);
                     }
                 }
@@ -1123,7 +1120,7 @@ pub async fn list_peerings(
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PeeringImportResponse {
-/// The `imported` field.
+    /// The `imported` field.
     pub imported: usize,
 }
 
@@ -1171,8 +1168,7 @@ pub async fn import_peering_services(
     let services = body.into_inner();
     match peering_service.import_services(&peer_name, services).await {
         Ok(count) => {
-            let meta =
-                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
             consul_ok(&meta).json(PeeringImportResponse { imported: count })
         }
         Err(e) => HttpResponse::BadRequest().consul_error(ConsulError::new(e)),
@@ -1572,7 +1568,9 @@ mod tests {
             },
             deleted_at: None,
         };
-        service.peerings_for_test().insert(name.to_string(), peering);
+        service
+            .peerings_for_test()
+            .insert(name.to_string(), peering);
     }
 
     fn sample_imported_service(name: &str, id: &str) -> PeeringImportedService {
@@ -1701,8 +1699,7 @@ mod tests {
         // Manually set imported_services on the peering.
         {
             let mut peering = service.peerings_for_test().get_mut("peer-b").unwrap();
-            peering.stream_status.imported_services =
-                vec!["web".to_string(), "api".to_string()];
+            peering.stream_status.imported_services = vec!["web".to_string(), "api".to_string()];
         }
 
         let names = service.list_all_imported_service_names();

@@ -2,9 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::model::{
-    QueryAdvisor, ValidationResult, VisibilityQueryContext, VisibilityResource,
-};
+use crate::model::{QueryAdvisor, ValidationResult, VisibilityQueryContext, VisibilityResource};
 
 /// SPI for resource visibility service.
 ///

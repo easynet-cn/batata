@@ -15,16 +15,28 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloAccessKey::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloAccessKey::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloAccessKey::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloAccessKey::AppId, 64, "default"))
                     .col(string_len_default(ApolloAccessKey::Secret, 128, ""))
                     .col(signed_int(ApolloAccessKey::Mode, backend).default(0))
                     .col(bit(ApolloAccessKey::IsEnabled, None))
                     .col(bit(ApolloAccessKey::IsDeleted, None))
                     .col(unsigned_big_int(ApolloAccessKey::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloAccessKey::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloAccessKey::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloAccessKey::DataChangeCreatedTime))
-                    .col(string_len_default(ApolloAccessKey::DataChangeLastModifiedBy, 64, ""))
+                    .col(string_len_default(
+                        ApolloAccessKey::DataChangeLastModifiedBy,
+                        64,
+                        "",
+                    ))
                     .col(date_time_on_update(ApolloAccessKey::DataChangeLastTime))
                     .to_owned(),
             )

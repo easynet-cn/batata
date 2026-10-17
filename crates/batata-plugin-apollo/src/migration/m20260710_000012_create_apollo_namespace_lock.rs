@@ -15,15 +15,42 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloNamespaceLock::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloNamespaceLock::Id, backend).auto_increment().primary_key())
-                    .col(string_len_default(ApolloNamespaceLock::AppId, 64, "default"))
-                    .col(string_len_default(ApolloNamespaceLock::ClusterName, 32, "default"))
-                    .col(string_len_default(ApolloNamespaceLock::NamespaceName, 128, "default"))
-                    .col(string_len_default(ApolloNamespaceLock::LockedBy, 64, "default"))
+                    .col(
+                        unsigned_int(ApolloNamespaceLock::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(string_len_default(
+                        ApolloNamespaceLock::AppId,
+                        64,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloNamespaceLock::ClusterName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloNamespaceLock::NamespaceName,
+                        128,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloNamespaceLock::LockedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloNamespaceLock::LockedAt))
-                    .col(string_len_default(ApolloNamespaceLock::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloNamespaceLock::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloNamespaceLock::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloNamespaceLock::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloNamespaceLock::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloNamespaceLock::DataChangeLastTime))
                     .to_owned(),
             )

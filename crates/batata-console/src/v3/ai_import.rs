@@ -195,8 +195,7 @@ fn builtin_sources() -> Vec<AiResourceImportSourceInfo> {
         AiResourceImportSourceInfo {
             source_id: "mcp-official".to_string(),
             display_name: "MCP Registry (Official)".to_string(),
-            description: "Import MCP servers from the official MCP Registry."
-                .to_string(),
+            description: "Import MCP servers from the official MCP Registry.".to_string(),
             plugin_name: "mcp-registry".to_string(),
             resource_types: vec!["mcp".to_string()],
             enabled: true,
@@ -209,8 +208,7 @@ fn builtin_sources() -> Vec<AiResourceImportSourceInfo> {
         AiResourceImportSourceInfo {
             source_id: "skills-sh".to_string(),
             display_name: "skills.sh".to_string(),
-            description: "Import AI skills from skills.sh community registry."
-                .to_string(),
+            description: "Import AI skills from skills.sh community registry.".to_string(),
             plugin_name: "skills-sh".to_string(),
             resource_types: vec!["skill".to_string()],
             enabled: true,

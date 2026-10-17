@@ -22,7 +22,11 @@ impl ReleaseSqlPersistence {
 impl From<StoredRelease> for apollo_release::ActiveModel {
     fn from(release: StoredRelease) -> Self {
         Self {
-            id: if release.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(release.id) },
+            id: if release.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(release.id)
+            },
             release_key: Set(release.release_key),
             name: Set(release.name),
             comment: Set(release.comment),
@@ -41,9 +45,9 @@ impl From<StoredRelease> for apollo_release::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(release.data_change_last_modified_by),
-            data_change_last_time: Set(release.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(release
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -66,7 +70,9 @@ impl From<apollo_release::Model> for StoredRelease {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -165,12 +171,10 @@ impl ReleasePersistence for ReleaseSqlPersistence {
         active_model.is_deleted = Set(release.is_deleted);
         active_model.deleted_at = Set(release.deleted_at);
         active_model.data_change_last_modified_by = Set(release.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(
-            chrono::DateTime::from_timestamp_millis(
-                release.data_change_last_time.unwrap_or_default(),
-            )
-            .map(|t| t.naive_utc()),
-        );
+        active_model.data_change_last_time = Set(chrono::DateTime::from_timestamp_millis(
+            release.data_change_last_time.unwrap_or_default(),
+        )
+        .map(|t| t.naive_utc()));
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())
     }

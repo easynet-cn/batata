@@ -17,11 +17,24 @@ impl NamespaceService {
     }
 
     /// Performs the `create` operation.
-    pub async fn create(&self, app_id: &str, cluster_name: &str, dto: NamespaceDTO) -> Result<NamespaceDTO, anyhow::Error> {
-        let existing = self.persistence.get_by_app_cluster(app_id, cluster_name, &dto.namespace_name).await?;
+    pub async fn create(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        dto: NamespaceDTO,
+    ) -> Result<NamespaceDTO, anyhow::Error> {
+        let existing = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, &dto.namespace_name)
+            .await?;
 
         if existing.is_some() {
-            return Err(anyhow::anyhow!("Namespace already exists: {}/{}/{}", app_id, cluster_name, dto.namespace_name));
+            return Err(anyhow::anyhow!(
+                "Namespace already exists: {}/{}/{}",
+                app_id,
+                cluster_name,
+                dto.namespace_name
+            ));
         }
 
         let now = Utc::now().timestamp_millis();
@@ -48,13 +61,25 @@ impl NamespaceService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<NamespaceDTO>, anyhow::Error> {
-        let stored = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?;
+    pub async fn get(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Option<NamespaceDTO>, anyhow::Error> {
+        let stored = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?;
         Ok(stored.map(|s| s.into()))
     }
 
     /// Performs the `list` operation.
-    pub async fn list(&self, app_id: &str, cluster_name: &str) -> Result<Vec<NamespaceDTO>, anyhow::Error> {
+    pub async fn list(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+    ) -> Result<Vec<NamespaceDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         Ok(stored_list
             .into_iter()
@@ -64,9 +89,25 @@ impl NamespaceService {
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, dto: NamespaceDTO) -> Result<(), anyhow::Error> {
-        let existing = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn update(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        dto: NamespaceDTO,
+    ) -> Result<(), anyhow::Error> {
+        let existing = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
         let now = Utc::now().timestamp_millis();
 
@@ -91,9 +132,25 @@ impl NamespaceService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, app_id: &str, cluster_name: &str, namespace_name: &str, _operator: &str) -> Result<(), anyhow::Error> {
-        let existing = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn delete(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        _operator: &str,
+    ) -> Result<(), anyhow::Error> {
+        let existing = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
         self.persistence.delete(existing.id).await?;
         Ok(())

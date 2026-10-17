@@ -24,19 +24,22 @@ use crate::constants::CF_CONSUL_ACL;
 pub enum AclStore {
     /// In-memory storage (for tests and standalone mode without persistence)
     Memory {
-/// The `item` field.
+        /// The `item` field.
         tokens: Arc<DashMap<String, AclToken>>,
-/// The `item` field.
+        /// The `item` field.
         policies: Arc<DashMap<String, AclPolicy>>,
-/// The `item` field.
+        /// The `item` field.
         roles: Arc<DashMap<String, AclRole>>,
-/// The `item` field.
+        /// The `item` field.
         auth_methods: Arc<DashMap<String, AuthMethod>>,
-/// The `item` field.
+        /// The `item` field.
         binding_rules: Arc<DashMap<String, BindingRule>>,
     },
     /// RocksDB as single source of truth (for persistent/cluster mode)
-    Persistent { #[doc = "The `db` field."] db: Arc<DB> },
+    Persistent {
+        #[doc = "The `db` field."]
+        db: Arc<DB>,
+    },
 }
 
 impl AclStore {
@@ -98,17 +101,19 @@ impl AclStore {
     fn rocks_put_raw(&self, key: &str, value: &[u8]) {
         if let Some(db) = self.rocks_db()
             && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-            && let Err(e) = db.put_cf(cf, key.as_bytes(), value) {
-                error!("Failed to persist ACL '{}': {}", key, e);
-            }
+            && let Err(e) = db.put_cf(cf, key.as_bytes(), value)
+        {
+            error!("Failed to persist ACL '{}': {}", key, e);
+        }
     }
 
     fn rocks_delete(&self, key: &str) {
         if let Some(db) = self.rocks_db()
             && let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
-            && let Err(e) = db.delete_cf(cf, key.as_bytes()) {
-                error!("Failed to delete ACL '{}': {}", key, e);
-            }
+            && let Err(e) = db.delete_cf(cf, key.as_bytes())
+        {
+            error!("Failed to delete ACL '{}': {}", key, e);
+        }
     }
 
     /// List all values with a given key prefix, deserializing each as T.
@@ -147,7 +152,7 @@ impl AclStore {
     // Index: token_accessor::<accessor_id> → <secret_id>
     // ========================================================================
 
-/// The `get_token` method.
+    /// The `get_token` method.
     pub fn get_token(&self, secret_id: &str) -> Option<AclToken> {
         match self {
             Self::Memory { tokens, .. } => tokens.get(secret_id).map(|e| e.value().clone()),
@@ -155,7 +160,7 @@ impl AclStore {
         }
     }
 
-/// The `put_token` method.
+    /// The `put_token` method.
     pub fn put_token(&self, secret_id: &str, token: &AclToken) {
         match self {
             Self::Memory { tokens, .. } => {
@@ -172,7 +177,7 @@ impl AclStore {
         }
     }
 
-/// The `delete_token_by_secret` method.
+    /// The `delete_token_by_secret` method.
     pub fn delete_token_by_secret(&self, secret_id: &str) -> Option<AclToken> {
         match self {
             Self::Memory { tokens, .. } => tokens.remove(secret_id).map(|(_, t)| t),
@@ -206,7 +211,7 @@ impl AclStore {
         }
     }
 
-/// The `list_tokens` method.
+    /// The `list_tokens` method.
     pub fn list_tokens(&self) -> Vec<AclToken> {
         match self {
             Self::Memory { tokens, .. } => tokens.iter().map(|e| e.value().clone()).collect(),
@@ -297,7 +302,7 @@ impl AclStore {
     // Index: policy_name::<name> → <id>
     // ========================================================================
 
-/// The `get_policy` method.
+    /// The `get_policy` method.
     pub fn get_policy(&self, id_or_name: &str) -> Option<AclPolicy> {
         match self {
             Self::Memory { policies, .. } => policies.get(id_or_name).map(|e| e.value().clone()),
@@ -315,7 +320,7 @@ impl AclStore {
         }
     }
 
-/// The `put_policy` method.
+    /// The `put_policy` method.
     pub fn put_policy(&self, policy: &AclPolicy) {
         match self {
             Self::Memory { policies, .. } => {
@@ -361,7 +366,7 @@ impl AclStore {
         }
     }
 
-/// The `policy_name_exists` method.
+    /// The `policy_name_exists` method.
     pub fn policy_name_exists(&self, name: &str) -> bool {
         match self {
             Self::Memory { policies, .. } => policies.contains_key(name),
@@ -371,7 +376,7 @@ impl AclStore {
         }
     }
 
-/// The `list_policies` method.
+    /// The `list_policies` method.
     pub fn list_policies(&self) -> Vec<AclPolicy> {
         match self {
             Self::Memory { policies, .. } => {
@@ -399,7 +404,7 @@ impl AclStore {
     // Index: role_name::<name> → <id>
     // ========================================================================
 
-/// The `get_role` method.
+    /// The `get_role` method.
     pub fn get_role(&self, id_or_name: &str) -> Option<AclRole> {
         match self {
             Self::Memory { roles, .. } => roles.get(id_or_name).map(|e| e.value().clone()),
@@ -415,7 +420,7 @@ impl AclStore {
         }
     }
 
-/// The `put_role` method.
+    /// The `put_role` method.
     pub fn put_role(&self, role: &AclRole) {
         match self {
             Self::Memory { roles, .. } => {
@@ -458,7 +463,7 @@ impl AclStore {
         }
     }
 
-/// The `list_roles` method.
+    /// The `list_roles` method.
     pub fn list_roles(&self) -> Vec<AclRole> {
         match self {
             Self::Memory { roles, .. } => {
@@ -485,7 +490,7 @@ impl AclStore {
     // Keys: auth_method::<name> → JSON (keyed by name, no secondary index)
     // ========================================================================
 
-/// The `get_auth_method` method.
+    /// The `get_auth_method` method.
     pub fn get_auth_method(&self, name: &str) -> Option<AuthMethod> {
         match self {
             Self::Memory { auth_methods, .. } => auth_methods.get(name).map(|e| e.value().clone()),
@@ -493,7 +498,7 @@ impl AclStore {
         }
     }
 
-/// The `put_auth_method` method.
+    /// The `put_auth_method` method.
     pub fn put_auth_method(&self, method: &AuthMethod) {
         match self {
             Self::Memory { auth_methods, .. } => {
@@ -505,7 +510,7 @@ impl AclStore {
         }
     }
 
-/// The `remove_auth_method` method.
+    /// The `remove_auth_method` method.
     pub fn remove_auth_method(&self, name: &str) -> bool {
         match self {
             Self::Memory { auth_methods, .. } => auth_methods.remove(name).is_some(),
@@ -520,7 +525,7 @@ impl AclStore {
         }
     }
 
-/// The `list_auth_methods` method.
+    /// The `list_auth_methods` method.
     pub fn list_auth_methods(&self) -> Vec<AuthMethod> {
         match self {
             Self::Memory { auth_methods, .. } => {
@@ -536,7 +541,7 @@ impl AclStore {
     // Keys: binding_rule::<id> → JSON
     // ========================================================================
 
-/// The `get_binding_rule` method.
+    /// The `get_binding_rule` method.
     pub fn get_binding_rule(&self, id: &str) -> Option<BindingRule> {
         match self {
             Self::Memory { binding_rules, .. } => binding_rules.get(id).map(|e| e.value().clone()),
@@ -544,7 +549,7 @@ impl AclStore {
         }
     }
 
-/// The `put_binding_rule` method.
+    /// The `put_binding_rule` method.
     pub fn put_binding_rule(&self, rule: &BindingRule) {
         match self {
             Self::Memory { binding_rules, .. } => {
@@ -556,7 +561,7 @@ impl AclStore {
         }
     }
 
-/// The `remove_binding_rule` method.
+    /// The `remove_binding_rule` method.
     pub fn remove_binding_rule(&self, id: &str) -> bool {
         match self {
             Self::Memory { binding_rules, .. } => binding_rules.remove(id).is_some(),
@@ -571,7 +576,7 @@ impl AclStore {
         }
     }
 
-/// The `list_binding_rules` method.
+    /// The `list_binding_rules` method.
     pub fn list_binding_rules(&self) -> Vec<BindingRule> {
         match self {
             Self::Memory { binding_rules, .. } => {

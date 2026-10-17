@@ -15,16 +15,35 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloConsumer::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloConsumer::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloConsumer::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloConsumer::AppId, 64, "default"))
                     .col(string_len_default(ApolloConsumer::Name, 500, "default"))
                     .col(string_len_default(ApolloConsumer::OrgId, 32, "default"))
                     .col(string_len_default(ApolloConsumer::OrgName, 64, "default"))
-                    .col(string_len_default(ApolloConsumer::OwnerName, 500, "default"))
-                    .col(string_len_default(ApolloConsumer::OwnerEmail, 500, "default"))
-                    .col(string_len_default(ApolloConsumer::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloConsumer::OwnerName,
+                        500,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloConsumer::OwnerEmail,
+                        500,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloConsumer::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloConsumer::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloConsumer::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloConsumer::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloConsumer::DataChangeLastTime))
                     .to_owned(),
             )

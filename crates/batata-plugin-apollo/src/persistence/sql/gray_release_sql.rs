@@ -22,7 +22,11 @@ impl GrayReleaseSqlPersistence {
 impl From<StoredGrayReleaseRule> for apollo_gray_release_rule::ActiveModel {
     fn from(rule: StoredGrayReleaseRule) -> Self {
         Self {
-            id: if rule.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(rule.id) },
+            id: if rule.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(rule.id)
+            },
             app_id: Set(rule.app_id),
             cluster_name: Set(rule.cluster_name),
             namespace_name: Set(rule.namespace_name),
@@ -39,9 +43,9 @@ impl From<StoredGrayReleaseRule> for apollo_gray_release_rule::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(rule.data_change_last_modified_by),
-            data_change_last_time: Set(rule.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(rule
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -62,7 +66,9 @@ impl From<apollo_gray_release_rule::Model> for StoredGrayReleaseRule {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }

@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_NAMESPACE;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredNamespace;
 use crate::persistence::traits::NamespacePersistence;
-use super::id_generator::IdGenerator;
 
 /// Represents the `NamespaceEmbedded` entity.
 pub struct NamespaceEmbedded {
@@ -63,7 +63,11 @@ impl NamespaceEmbedded {
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
         // Store by composite key for lookup by app/cluster/name
-        let key_comp = Self::key(&namespace.app_id, &namespace.cluster_name, &namespace.namespace_name);
+        let key_comp = Self::key(
+            &namespace.app_id,
+            &namespace.cluster_name,
+            &namespace.namespace_name,
+        );
         db.put_cf(cf, key_comp.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
@@ -144,7 +148,8 @@ impl NamespacePersistence for NamespaceEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             // Only iterate over composite keys (ns:{app_id}:...)
             if !key_str.starts_with(&prefix) {
@@ -161,7 +166,8 @@ impl NamespacePersistence for NamespaceEmbedded {
 
     async fn list_all(&self) -> anyhow::Result<Vec<StoredNamespace>> {
         let cf = self.cf()?;
-        let mut seen: std::collections::HashMap<i64, StoredNamespace> = std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<i64, StoredNamespace> =
+            std::collections::HashMap::new();
         for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let ns: StoredNamespace = bincode::deserialize(&value)?;
@@ -184,7 +190,11 @@ impl NamespacePersistence for NamespaceEmbedded {
             .put_cf(cf, key_id.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
-        let key_comp = Self::key(&namespace.app_id, &namespace.cluster_name, &namespace.namespace_name);
+        let key_comp = Self::key(
+            &namespace.app_id,
+            &namespace.cluster_name,
+            &namespace.namespace_name,
+        );
         self.db
             .put_cf(cf, key_comp.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;

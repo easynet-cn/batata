@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 
 use batata_common::model::ai::ResourceVersionInfo;
-use batata_persistence::model::AiResourceInfo;
 use batata_persistence::PersistenceService;
+use batata_persistence::model::AiResourceInfo;
 
 use crate::repository::{resource_type, version_status};
 
@@ -150,7 +150,9 @@ pub async fn refresh_latest(
         None => return Ok(()),
     };
 
-    let rows = persistence.ai_resource_version_list(namespace, name, rt).await?;
+    let rows = persistence
+        .ai_resource_version_list(namespace, name, rt)
+        .await?;
     let mut online: Vec<String> = rows
         .iter()
         .filter(|r| r.status == version_status::ONLINE)
@@ -179,7 +181,12 @@ pub async fn refresh_latest(
 }
 
 /// Assert `version` is in one of `allowed` before a transition.
-fn require_status(version: &str, current: &str, allowed: &[&str], action: &str) -> anyhow::Result<()> {
+fn require_status(
+    version: &str,
+    current: &str,
+    allowed: &[&str],
+    action: &str,
+) -> anyhow::Result<()> {
     if !allowed.contains(&current) {
         anyhow::bail!(
             "Version '{}' must be in {} status to {} (current: '{}')",
@@ -202,7 +209,15 @@ pub async fn submit(
 ) -> anyhow::Result<()> {
     let row = find_version(persistence, namespace, name, rt, version).await?;
     require_status(version, &row.status, &[version_status::DRAFT], "submit")?;
-    transition_status(persistence, namespace, name, rt, version, version_status::REVIEWING).await
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::REVIEWING,
+    )
+    .await
 }
 
 /// Publish a version that passed review (reviewing / reviewed → online).
@@ -226,7 +241,15 @@ pub async fn publish(
         ],
         "publish",
     )?;
-    transition_status(persistence, namespace, name, rt, version, version_status::ONLINE).await
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::ONLINE,
+    )
+    .await
 }
 
 /// Publish a version bypassing the review gate.
@@ -238,7 +261,15 @@ pub async fn force_publish(
     version: &str,
 ) -> anyhow::Result<()> {
     find_version(persistence, namespace, name, rt, version).await?;
-    transition_status(persistence, namespace, name, rt, version, version_status::ONLINE).await
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::ONLINE,
+    )
+    .await
 }
 
 /// Move a version back to draft so it can be edited again.
@@ -250,7 +281,15 @@ pub async fn redraft(
     version: &str,
 ) -> anyhow::Result<()> {
     find_version(persistence, namespace, name, rt, version).await?;
-    transition_status(persistence, namespace, name, rt, version, version_status::DRAFT).await
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::DRAFT,
+    )
+    .await
 }
 
 /// Bring an offline version back online.
@@ -262,8 +301,21 @@ pub async fn online(
     version: &str,
 ) -> anyhow::Result<()> {
     let row = find_version(persistence, namespace, name, rt, version).await?;
-    require_status(version, &row.status, &[version_status::OFFLINE], "bring online")?;
-    transition_status(persistence, namespace, name, rt, version, version_status::ONLINE).await
+    require_status(
+        version,
+        &row.status,
+        &[version_status::OFFLINE],
+        "bring online",
+    )?;
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::ONLINE,
+    )
+    .await
 }
 
 /// Take an online version offline.
@@ -275,8 +327,21 @@ pub async fn offline(
     version: &str,
 ) -> anyhow::Result<()> {
     let row = find_version(persistence, namespace, name, rt, version).await?;
-    require_status(version, &row.status, &[version_status::ONLINE], "take offline")?;
-    transition_status(persistence, namespace, name, rt, version, version_status::OFFLINE).await
+    require_status(
+        version,
+        &row.status,
+        &[version_status::ONLINE],
+        "take offline",
+    )?;
+    transition_status(
+        persistence,
+        namespace,
+        name,
+        rt,
+        version,
+        version_status::OFFLINE,
+    )
+    .await
 }
 
 /// Replace the custom labels, preserving the server-managed `latest` label.
@@ -292,7 +357,9 @@ pub async fn update_labels(
 ) -> anyhow::Result<HashMap<String, String>> {
     let resource = find_resource(persistence, namespace, name, rt).await?;
 
-    let rows = persistence.ai_resource_version_list(namespace, name, rt).await?;
+    let rows = persistence
+        .ai_resource_version_list(namespace, name, rt)
+        .await?;
     let online: std::collections::HashSet<&str> = rows
         .iter()
         .filter(|r| r.status == version_status::ONLINE)
@@ -360,7 +427,10 @@ mod tests {
         assert!(require_status("1.0.0", "online", &["draft"], "submit").is_err());
         assert!(require_status("1.0.0", "draft", &["draft"], "submit").is_ok());
         let err = require_status("1.0.0", "online", &["draft"], "submit").unwrap_err();
-        assert!(err.to_string().contains("must be in draft status to submit"));
+        assert!(
+            err.to_string()
+                .contains("must be in draft status to submit")
+        );
         assert!(err.to_string().contains("current: 'online'"));
     }
 

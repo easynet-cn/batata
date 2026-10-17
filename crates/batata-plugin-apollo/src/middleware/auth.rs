@@ -16,11 +16,11 @@
 //!   login flow; batata issues and validates them through
 //!   [`crate::service::UserTokenService`].
 
-use std::future::{ready, Ready};
+use std::future::{Ready, ready};
 use std::rc::Rc;
 
-use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{web, Error, HttpMessage};
+use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready};
+use actix_web::{Error, HttpMessage, web};
 use futures::future::LocalBoxFuture;
 
 use crate::model::config::AuthConfig;
@@ -71,7 +71,9 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(AdminAuthMiddlewareInner { service: Rc::new(service) }))
+        ready(Ok(AdminAuthMiddlewareInner {
+            service: Rc::new(service),
+        }))
     }
 }
 
@@ -97,22 +99,23 @@ where
         Box::pin(async move {
             let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
             if let Some(cfg) = auth_config
-                && !cfg.is_valid_admin_token("") {
-                    // Access control enabled: a token is required.
-                    let header = req
-                        .headers()
-                        .get("Authorization")
-                        .and_then(|h| h.to_str().ok())
-                        .and_then(bearer_from_header);
-                    match header {
-                        Some(token) if cfg.is_valid_admin_token(&token) => {}
-                        _ => {
-                            return Err(actix_web::error::ErrorUnauthorized(
-                                "Missing or invalid admin-service access token",
-                            ));
-                        }
+                && !cfg.is_valid_admin_token("")
+            {
+                // Access control enabled: a token is required.
+                let header = req
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(bearer_from_header);
+                match header {
+                    Some(token) if cfg.is_valid_admin_token(&token) => {}
+                    _ => {
+                        return Err(actix_web::error::ErrorUnauthorized(
+                            "Missing or invalid admin-service access token",
+                        ));
                     }
                 }
+            }
 
             service.call(req).await
         })
@@ -148,7 +151,9 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(OpenApiAuthMiddlewareInner { service: Rc::new(service) }))
+        ready(Ok(OpenApiAuthMiddlewareInner {
+            service: Rc::new(service),
+        }))
     }
 }
 
@@ -285,7 +290,9 @@ where
                         let consumer = svc_ref
                             .get_consumer(token_model.consumer_id)
                             .await
-                            .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+                            .map_err(|e| {
+                                actix_web::error::ErrorInternalServerError(e.to_string())
+                            })?;
                         match consumer {
                             Some(c) if c.app_id == app_id => {
                                 req.extensions_mut().insert(c);
@@ -319,7 +326,8 @@ fn is_public_openapi_path(path: &str) -> bool {
 }
 
 /// Whether a path is a portal-management endpoint (requires a user token).
-fn is_portal_management_path(path: &str, method: &str) -> bool {    // Token self-management and consumer-token issuance are reached by a logged
+fn is_portal_management_path(path: &str, method: &str) -> bool {
+    // Token self-management and consumer-token issuance are reached by a logged
     // in user, not by a consumer token.
     if path == "/openapi/v1/consumer-tokens" && method.eq_ignore_ascii_case("POST") {
         return true;
@@ -349,7 +357,11 @@ fn is_portal_management_path(path: &str, method: &str) -> bool {    // Token sel
 /// `user-token` header / `token` query parameter, mirroring upstream's
 /// `UserTokenAuthenticationFilter`.
 fn extract_user_token(req: &ServiceRequest) -> Option<String> {
-    if let Some(h) = req.headers().get("Authorization").and_then(|h| h.to_str().ok()) {
+    if let Some(h) = req
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+    {
         let trimmed = h.trim();
         if let Some((scheme, value)) = trimmed.split_once(' ') {
             if !scheme.eq_ignore_ascii_case("Consumer") {
@@ -359,7 +371,11 @@ fn extract_user_token(req: &ServiceRequest) -> Option<String> {
             return Some(trimmed.to_string());
         }
     }
-    if let Some(h) = req.headers().get("user-token").and_then(|h| h.to_str().ok()) {
+    if let Some(h) = req
+        .headers()
+        .get("user-token")
+        .and_then(|h| h.to_str().ok())
+    {
         return Some(h.trim().to_string());
     }
     if let Some(q) = req.query_string().split('&').find_map(|kv| {

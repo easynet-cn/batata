@@ -216,13 +216,18 @@ async fn search_index_persistence_round_trip() {
     // Upsert again with a new stage; must update in place.
     let mut advanced = task("due-task", now - 1_000);
     advanced.task_stage = "llm_enhancement".to_string();
-    db.task_upsert(&advanced).await.expect("task upsert (update)");
+    db.task_upsert(&advanced)
+        .await
+        .expect("task upsert (update)");
     let found = db
         .task_find("due-task")
         .await
         .expect("task find")
         .expect("task must exist");
-    assert_eq!(found.task_stage, "llm_enhancement", "upsert must update stage");
+    assert_eq!(
+        found.task_stage, "llm_enhancement",
+        "upsert must update stage"
+    );
 
     let due = db
         .task_find_due("search_index", now, 100)

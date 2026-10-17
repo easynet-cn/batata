@@ -15,12 +15,20 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloUsers::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloUsers::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloUsers::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloUsers::Username, 64, "default"))
                     .col(string_len_default(ApolloUsers::Password, 64, "default"))
                     .col(string_len_default(ApolloUsers::Email, 256, "default"))
                     .col(bit(ApolloUsers::Enabled, None))
-                    .col(string_len_default(ApolloUsers::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloUsers::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloUsers::DataChangeCreatedTime))
                     .col(string_len_null(ApolloUsers::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloUsers::DataChangeLastTime))

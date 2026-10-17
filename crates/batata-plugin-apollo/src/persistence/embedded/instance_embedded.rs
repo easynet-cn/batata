@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_INSTANCE;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredInstance;
 use crate::persistence::traits::InstancePersistence;
-use super::id_generator::IdGenerator;
 
 /// Embedded Instance persistence using RocksDB
 pub struct InstanceEmbedded {
@@ -75,7 +75,8 @@ impl InstancePersistence for InstanceEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;
@@ -83,9 +84,10 @@ impl InstancePersistence for InstanceEmbedded {
             let instance: StoredInstance = bincode::deserialize(&value)?;
             // Filter by cluster if provided
             if let Some(cluster) = cluster_name
-                && instance.cluster_name != cluster {
-                    continue;
-                }
+                && instance.cluster_name != cluster
+            {
+                continue;
+            }
             results.push(instance);
         }
         Ok(results)
@@ -96,9 +98,12 @@ impl InstancePersistence for InstanceEmbedded {
         let mut keys_to_delete = Vec::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let instance: StoredInstance = bincode::deserialize(&value)?;
-            let last_time = instance.data_change_last_time.unwrap_or(instance.data_change_created_time);
+            let last_time = instance
+                .data_change_last_time
+                .unwrap_or(instance.data_change_created_time);
             if last_time < before_timestamp {
                 keys_to_delete.push(key.to_vec());
             }

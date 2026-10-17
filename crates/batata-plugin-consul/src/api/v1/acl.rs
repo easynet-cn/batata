@@ -12,8 +12,8 @@ use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::{
     AclService, AuthMethodRequest, BindingRuleRequest, CloneTokenRequest, CreatePolicyRequest,
-    CreateTokenRequest, LoginRequest, OidcAuthUrlRequest, OidcCallbackRequest,
-    PolicyUpdateRequest, RoleRequest, TemplatedPolicyVariables, TokenUpdateRequest,
+    CreateTokenRequest, LoginRequest, OidcAuthUrlRequest, OidcCallbackRequest, PolicyUpdateRequest,
+    RoleRequest, TemplatedPolicyVariables, TokenUpdateRequest,
 };
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;

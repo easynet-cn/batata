@@ -62,7 +62,11 @@ async fn publish_then_query_a_version() {
     let svc = PromptOperationService::new(store.clone());
     clean(&svc).await;
 
-    assert!(publish(&svc, "1.0.0", "hello {{name}}").await.expect("publish"));
+    assert!(
+        publish(&svc, "1.0.0", "hello {{name}}")
+            .await
+            .expect("publish")
+    );
 
     let info = svc
         .query_prompt(NS, KEY, Some("1.0.0"), None, None)
@@ -100,7 +104,10 @@ async fn query_prompt_returns_none_when_the_client_md5_matches() {
         .await
         .expect("query")
         .expect("must exist");
-    let md5 = info.md5.clone().expect("a published version carries an md5");
+    let md5 = info
+        .md5
+        .clone()
+        .expect("a published version carries an md5");
 
     // Same md5 → nothing to transfer.
     let unchanged = svc
@@ -128,7 +135,9 @@ async fn publish_rejects_duplicates_and_malformed_versions() {
     let svc = PromptOperationService::new(store.clone());
     clean(&svc).await;
 
-    publish(&svc, "1.0.0", "hello").await.expect("first publish");
+    publish(&svc, "1.0.0", "hello")
+        .await
+        .expect("first publish");
 
     assert!(
         publish(&svc, "1.0.0", "hello again").await.is_err(),
@@ -172,9 +181,7 @@ async fn bind_label_then_query_by_label() {
 
     // An unknown label is an error, not an empty result.
     assert!(
-        svc.query_detail(NS, KEY, None, Some("nope"))
-            .await
-            .is_err(),
+        svc.query_detail(NS, KEY, None, Some("nope")).await.is_err(),
         "an unknown label must be reported"
     );
 
@@ -192,7 +199,11 @@ async fn bind_label_then_query_by_label() {
     assert!(
         prompts.page_items.iter().any(|p| p.prompt_key == KEY),
         "the prompt must appear in the listing: {:?}",
-        prompts.page_items.iter().map(|p| &p.prompt_key).collect::<Vec<_>>()
+        prompts
+            .page_items
+            .iter()
+            .map(|p| &p.prompt_key)
+            .collect::<Vec<_>>()
     );
     println!("ok: prompt listing");
 
@@ -241,7 +252,15 @@ async fn prompt_version_lifecycle() {
     clean(&svc).await;
 
     let version = svc
-        .create_draft(NS, KEY, Some("1.0.0"), "draft body", Some("desc"), None, "tester")
+        .create_draft(
+            NS,
+            KEY,
+            Some("1.0.0"),
+            "draft body",
+            Some("desc"),
+            None,
+            "tester",
+        )
         .await
         .expect("create draft");
     assert_eq!(version, "1.0.0");

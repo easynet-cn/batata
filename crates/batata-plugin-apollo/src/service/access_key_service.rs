@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::api::dto::AccessKeyDTO;
 use crate::persistence::shared::StoredAccessKey;
-use crate::persistence::traits::{ApolloPersistenceService, AccessKeyPersistence};
+use crate::persistence::traits::{AccessKeyPersistence, ApolloPersistenceService};
 use chrono::Utc;
 
 /// Represents the `AccessKeyService` entity.
@@ -17,7 +17,11 @@ impl AccessKeyService {
     }
 
     /// Performs the `create` operation.
-    pub async fn create(&self, app_id: &str, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+    pub async fn create(
+        &self,
+        app_id: &str,
+        operator: &str,
+    ) -> Result<AccessKeyDTO, anyhow::Error> {
         let secret = Self::generate_secret();
         let now = Utc::now().timestamp_millis();
 
@@ -48,13 +52,23 @@ impl AccessKeyService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, _app_id: &str, id: i64, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(
+        &self,
+        _app_id: &str,
+        id: i64,
+        _operator: &str,
+    ) -> Result<(), anyhow::Error> {
         self.persistence.delete(id).await?;
         Ok(())
     }
 
     /// Performs the `enable` operation.
-    pub async fn enable(&self, app_id: &str, id: i64, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+    pub async fn enable(
+        &self,
+        app_id: &str,
+        id: i64,
+        operator: &str,
+    ) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list
             .into_iter()
@@ -68,7 +82,12 @@ impl AccessKeyService {
     }
 
     /// Performs the `disable` operation.
-    pub async fn disable(&self, app_id: &str, id: i64, operator: &str) -> Result<AccessKeyDTO, anyhow::Error> {
+    pub async fn disable(
+        &self,
+        app_id: &str,
+        id: i64,
+        operator: &str,
+    ) -> Result<AccessKeyDTO, anyhow::Error> {
         let stored_list = self.persistence.get_by_app(app_id).await?;
         let mut stored = stored_list
             .into_iter()

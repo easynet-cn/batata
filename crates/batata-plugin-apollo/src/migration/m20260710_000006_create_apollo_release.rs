@@ -9,25 +9,41 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
-        
+
         manager
             .create_table(
                 Table::create()
                     .table(ApolloRelease::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloRelease::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloRelease::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloRelease::ReleaseKey, 256, ""))
                     .col(string_len_default(ApolloRelease::Name, 64, "default"))
                     .col(string_len_null(ApolloRelease::Comment, 256))
                     .col(string_len_default(ApolloRelease::AppId, 64, "default"))
-                    .col(string_len_default(ApolloRelease::ClusterName, 500, "default"))
-                    .col(string_len_default(ApolloRelease::NamespaceName, 500, "default"))
+                    .col(string_len_default(
+                        ApolloRelease::ClusterName,
+                        500,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloRelease::NamespaceName,
+                        500,
+                        "default",
+                    ))
                     .col(long_text(ApolloRelease::Configurations, backend))
                     .col(unsigned_big_int_null(ApolloRelease::ReleaseId, backend))
                     .col(bit(ApolloRelease::IsAbandoned, None))
                     .col(bit(ApolloRelease::IsDeleted, None))
                     .col(unsigned_big_int(ApolloRelease::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloRelease::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloRelease::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloRelease::DataChangeCreatedTime))
                     .col(string_len_null(ApolloRelease::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloRelease::DataChangeLastTime))

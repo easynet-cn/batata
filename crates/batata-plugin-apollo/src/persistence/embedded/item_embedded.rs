@@ -9,9 +9,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_ITEM;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredItem;
 use crate::persistence::traits::ItemPersistence;
-use super::id_generator::IdGenerator;
 
 /// Represents the `ItemEmbedded` entity.
 pub struct ItemEmbedded {
@@ -158,7 +158,8 @@ impl ItemPersistence for ItemEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;
@@ -214,9 +215,17 @@ impl ItemPersistence for ItemEmbedded {
             // Store by id
             batch.put_cf(cf, Self::key_by_id(item.id).as_bytes(), &bytes);
             // Store by namespace and key
-            batch.put_cf(cf, Self::key(item.namespace_id, &item.key).as_bytes(), &bytes);
+            batch.put_cf(
+                cf,
+                Self::key(item.namespace_id, &item.key).as_bytes(),
+                &bytes,
+            );
             // Store reverse index
-            batch.put_cf(cf, Self::index_key(item.namespace_id, item.id).as_bytes(), &bytes);
+            batch.put_cf(
+                cf,
+                Self::index_key(item.namespace_id, item.id).as_bytes(),
+                &bytes,
+            );
             result_items.push(item);
         }
         self.db
@@ -244,7 +253,8 @@ impl ItemPersistence for ItemEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(self.cf()?, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;

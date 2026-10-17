@@ -15,7 +15,11 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloAuthorities::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloAuthorities::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloAuthorities::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len(ApolloAuthorities::Username, 64))
                     .col(string_len(ApolloAuthorities::Authority, 50))
                     .to_owned(),

@@ -67,7 +67,10 @@ async fn test_v3_admin_create_mcp_server() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/mcp",
-            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+            &[
+                ("namespaceId", "default"),
+                ("mcpName", server_name.as_str()),
+            ],
         )
         .await
         .ok()
@@ -97,7 +100,10 @@ async fn test_v3_admin_get_mcp_server() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/ai/mcp",
-            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+            &[
+                ("namespaceId", "default"),
+                ("mcpName", server_name.as_str()),
+            ],
         )
         .await
         .expect("Failed to get MCP server");
@@ -108,7 +114,10 @@ async fn test_v3_admin_get_mcp_server() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/mcp",
-            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+            &[
+                ("namespaceId", "default"),
+                ("mcpName", server_name.as_str()),
+            ],
         )
         .await
         .ok()
@@ -138,7 +147,10 @@ async fn test_v3_admin_delete_mcp_server() {
     let response: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/mcp",
-            &[("namespaceId", "default"), ("mcpName", server_name.as_str())],
+            &[
+                ("namespaceId", "default"),
+                ("mcpName", server_name.as_str()),
+            ],
         )
         .await
         .expect("Failed to delete MCP server");
@@ -182,8 +194,8 @@ async fn test_v3_admin_register_a2a_agent() {
         .post_form(
             "/nacos/v3/admin/ai/a2a",
             &[
-            ("agentName", agent_name.as_str()),
-            ("agentCard", agent_card.as_str()),
+                ("agentName", agent_name.as_str()),
+                ("agentCard", agent_card.as_str()),
             ],
         )
         .await
@@ -195,7 +207,10 @@ async fn test_v3_admin_register_a2a_agent() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/a2a",
-            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+            &[
+                ("namespaceId", "public"),
+                ("agentName", agent_name.as_str()),
+            ],
         )
         .await
         .ok()
@@ -220,8 +235,8 @@ async fn test_v3_admin_get_a2a_agent() {
         .post_form(
             "/nacos/v3/admin/ai/a2a",
             &[
-            ("agentName", agent_name.as_str()),
-            ("agentCard", agent_card.as_str()),
+                ("agentName", agent_name.as_str()),
+                ("agentCard", agent_card.as_str()),
             ],
         )
         .await
@@ -231,7 +246,10 @@ async fn test_v3_admin_get_a2a_agent() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/ai/a2a",
-            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+            &[
+                ("namespaceId", "public"),
+                ("agentName", agent_name.as_str()),
+            ],
         )
         .await
         .expect("Failed to get agent");
@@ -242,7 +260,10 @@ async fn test_v3_admin_get_a2a_agent() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/a2a",
-            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+            &[
+                ("namespaceId", "public"),
+                ("agentName", agent_name.as_str()),
+            ],
         )
         .await
         .ok()
@@ -267,8 +288,8 @@ async fn test_v3_admin_delete_a2a_agent() {
         .post_form(
             "/nacos/v3/admin/ai/a2a",
             &[
-            ("agentName", agent_name.as_str()),
-            ("agentCard", agent_card.as_str()),
+                ("agentName", agent_name.as_str()),
+                ("agentCard", agent_card.as_str()),
             ],
         )
         .await
@@ -278,7 +299,10 @@ async fn test_v3_admin_delete_a2a_agent() {
     let response: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/ai/a2a",
-            &[("namespaceId", "public"), ("agentName", agent_name.as_str())],
+            &[
+                ("namespaceId", "public"),
+                ("agentName", agent_name.as_str()),
+            ],
         )
         .await
         .expect("Failed to delete agent");

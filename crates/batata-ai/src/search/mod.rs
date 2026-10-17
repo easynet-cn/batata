@@ -187,16 +187,18 @@ pub fn build_chunks(document: &SearchDocument) -> Vec<SearchChunk> {
     }
 
     // Metadata-derived chunks: only emitted when the keys are present.
-    if let Some(c) = metadata_chunk(document, search::CHUNK_TYPE_METADATA_IO, &[
-        "inputTypes",
-        "outputTypes",
-    ]) {
+    if let Some(c) = metadata_chunk(
+        document,
+        search::CHUNK_TYPE_METADATA_IO,
+        &["inputTypes", "outputTypes"],
+    ) {
         chunks.push(c);
     }
-    if let Some(c) = metadata_chunk(document, search::CHUNK_TYPE_METADATA_RISK, &[
-        "sideEffects",
-        "riskLevel",
-    ]) {
+    if let Some(c) = metadata_chunk(
+        document,
+        search::CHUNK_TYPE_METADATA_RISK,
+        &["sideEffects", "riskLevel"],
+    ) {
         chunks.push(c);
     }
     if let Some(c) = metadata_chunk(document, search::CHUNK_TYPE_NOT_FOR, &["notFor"]) {
@@ -255,7 +257,12 @@ pub fn build_source_content_chunks(
 ) -> Vec<SearchChunk> {
     let mut chunks = Vec::new();
     for content in contents {
-        if let Some(c) = chunk(document, chunk_type, &content.text, Some(content.path.clone())) {
+        if let Some(c) = chunk(
+            document,
+            chunk_type,
+            &content.text,
+            Some(content.path.clone()),
+        ) {
             chunks.push(c);
         }
     }
@@ -333,7 +340,10 @@ pub fn mcp_document(
 pub fn mcp_server_text(name: &str, description: Option<&str>, protocol: Option<&str>) -> String {
     let mut text = String::from("# MCP server\n");
     text.push_str(&format!("name: {name}\n"));
-    text.push_str(&format!("description: {}\n", description.unwrap_or_default()));
+    text.push_str(&format!(
+        "description: {}\n",
+        description.unwrap_or_default()
+    ));
     text.push_str(&format!("protocol: {}\n", protocol.unwrap_or_default()));
     text
 }
@@ -559,13 +569,8 @@ mod tests {
                 text: "same".to_string(),
             },
         ];
-        let chunks =
-            build_source_content_chunks(&d, &contents, search::CHUNK_TYPE_MCP_CONTENT);
-        assert_eq!(
-            chunks.len(),
-            1,
-            "identical text must collapse to one chunk"
-        );
+        let chunks = build_source_content_chunks(&d, &contents, search::CHUNK_TYPE_MCP_CONTENT);
+        assert_eq!(chunks.len(), 1, "identical text must collapse to one chunk");
     }
 
     #[test]

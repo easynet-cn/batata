@@ -112,8 +112,18 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     .await
     .unwrap();
     assert!(consumer.id > 0);
-    assert!(ConsumerPersistence::get_consumer(&p, consumer.id).await.unwrap().is_some());
-    assert!(!ConsumerPersistence::list_consumers(&p).await.unwrap().is_empty());
+    assert!(
+        ConsumerPersistence::get_consumer(&p, consumer.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        !ConsumerPersistence::list_consumers(&p)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(
         ConsumerPersistence::get_consumer_by_app(&p, &consumer_app_id)
             .await
@@ -183,7 +193,12 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     .await
     .unwrap();
     assert!(role.id > 0);
-    assert!(RolePersistence::get_role(&p, role.id).await.unwrap().is_some());
+    assert!(
+        RolePersistence::get_role(&p, role.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(
         !RolePersistence::list_role_by_target(&p, "app1")
             .await
@@ -313,12 +328,10 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     assert_eq!(ut.token_prefix, "prefix1234567890123456789012345678");
     assert!(!ut.is_deleted);
     // lookup by prefix returns the row
-    let looked_up = UserTokenPersistence::get_user_token_by_prefix(
-        &p,
-        "prefix1234567890123456789012345678",
-    )
-    .await
-    .unwrap();
+    let looked_up =
+        UserTokenPersistence::get_user_token_by_prefix(&p, "prefix1234567890123456789012345678")
+            .await
+            .unwrap();
     assert!(looked_up.is_some());
     assert_eq!(looked_up.unwrap().id, ut.id);
     // list by user returns the token
@@ -327,7 +340,9 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
         .unwrap();
     assert!(user_tokens.iter().any(|t| t.id == ut.id));
     // soft-delete removes it from list and get-by-prefix
-    UserTokenPersistence::delete_user_token(&p, ut.id).await.unwrap();
+    UserTokenPersistence::delete_user_token(&p, ut.id)
+        .await
+        .unwrap();
     assert!(
         UserTokenPersistence::list_user_tokens(&p, "apollo")
             .await
@@ -342,7 +357,7 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
         InstanceConfigDTO {
             id: None,
             config_app_id: None,
-        instance_id: 1,
+            instance_id: 1,
             namespace_name: "ns".into(),
             cluster_name: "default".into(),
             release_key: "rk".into(),

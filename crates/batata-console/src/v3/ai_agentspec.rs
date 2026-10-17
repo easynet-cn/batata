@@ -52,7 +52,10 @@ async fn get_agentspec_detail(
         }
     };
 
-    match agentspec_service.get_detail(ns, name, Some(get_username(&req).as_str())).await {
+    match agentspec_service
+        .get_detail(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(Some(meta)) => HttpResponse::Ok().json(common_response::Result::success(meta)),
         Ok(None) => common_response::Result::<()>::http_not_found(
             &batata_common::error::RESOURCE_NOT_FOUND,
@@ -447,7 +450,12 @@ async fn update_draft(
     }
 
     let result = agentspec_service
-        .update_draft(ns, agent_spec_name, &spec, Some(get_username(&req).as_str()))
+        .update_draft(
+            ns,
+            agent_spec_name,
+            &spec,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -533,7 +541,12 @@ async fn submit_agentspec(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = agentspec_service
-        .submit(ns, &form.agent_spec_name, &form.version, Some(get_username(&req).as_str()))
+        .submit(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -715,7 +728,12 @@ async fn update_labels(
     };
 
     let result = agentspec_service
-        .update_labels(ns, &form.agent_spec_name, labels, Some(get_username(&req).as_str()))
+        .update_labels(
+            ns,
+            &form.agent_spec_name,
+            labels,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -754,7 +772,12 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = agentspec_service
-        .update_biz_tags(ns, &form.agent_spec_name, &form.biz_tags, Some(get_username(&req).as_str()))
+        .update_biz_tags(
+            ns,
+            &form.agent_spec_name,
+            &form.biz_tags,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -885,7 +908,12 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = agentspec_service
-        .update_scope(ns, &form.agent_spec_name, &form.scope, Some(get_username(&req).as_str()))
+        .update_scope(
+            ns,
+            &form.agent_spec_name,
+            &form.scope,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,

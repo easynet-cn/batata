@@ -28,10 +28,10 @@
 //! ```
 
 use batata_migration::{ConnectionTrait, Migrator};
+use sea_orm_migration::MigratorTrait;
 use sea_orm_migration::sea_orm::{
     ConnectOptions, Database, DatabaseBackend, DatabaseConnection, Statement,
 };
-use sea_orm_migration::MigratorTrait;
 
 /// Tables the AI module relies on; all five come from the upstream Nacos schema.
 /// Connect to the test database, failing fast with an actionable message.

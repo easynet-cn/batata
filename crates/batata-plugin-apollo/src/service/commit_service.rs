@@ -47,14 +47,25 @@ impl CommitService {
     }
 
     /// Performs the `list` operation.
-    pub async fn list(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<CommitDTO>, anyhow::Error> {
-        let stored_list = self.persistence.list_by_namespace(app_id, cluster_name, namespace_name).await?;
+    pub async fn list(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<CommitDTO>, anyhow::Error> {
+        let stored_list = self
+            .persistence
+            .list_by_namespace(app_id, cluster_name, namespace_name)
+            .await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
     /// Performs the `delete` operation.
     pub async fn delete(&self, id: i64, _operator: &str) -> Result<(), anyhow::Error> {
-        let stored = self.persistence.get_by_id(id).await?
+        let stored = self
+            .persistence
+            .get_by_id(id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Commit not found: {}", id))?;
 
         let now = Utc::now().timestamp_millis();

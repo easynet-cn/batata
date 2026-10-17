@@ -10,17 +10,17 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use batata_persistence::PersistenceService;
 use batata_persistence::model::{
     AiResourceInfo, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo, AiResourceTaskInfo,
     AiResourceVersionInfo,
 };
-use batata_persistence::PersistenceService;
 
 use crate::model::McpServerStorageInfo;
 use crate::repository::{resource_type, search};
 
 use super::task;
-use super::{project_mcp, SearchChunk, SearchDocument};
+use super::{SearchChunk, SearchDocument, project_mcp};
 
 /// Current time in epoch milliseconds.
 fn now_millis() -> i64 {
@@ -218,9 +218,7 @@ fn project_mcp_from_rows(
 
     let capabilities: Vec<String> = stored
         .as_ref()
-        .map(|reg| {
-            reg.capabilities.iter().map(capability_name).collect()
-        })
+        .map(|reg| reg.capabilities.iter().map(capability_name).collect())
         .unwrap_or_default();
 
     let server_id = resource

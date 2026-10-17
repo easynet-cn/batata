@@ -15,12 +15,20 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloAuditLog::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloAuditLog::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloAuditLog::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloAuditLog::TraceId, 32, ""))
                     .col(string_len_default(ApolloAuditLog::SpanId, 32, ""))
                     .col(string_len_null(ApolloAuditLog::ParentSpanId, 32))
                     .col(string_len_null(ApolloAuditLog::FollowsFromSpanId, 32))
-                    .col(string_len_default(ApolloAuditLog::Operator, 64, "anonymous"))
+                    .col(string_len_default(
+                        ApolloAuditLog::Operator,
+                        64,
+                        "anonymous",
+                    ))
                     .col(string_len_default(ApolloAuditLog::OpType, 50, "default"))
                     .col(string_len_default(ApolloAuditLog::OpName, 150, "default"))
                     .col(string_len_null(ApolloAuditLog::Description, 200))
@@ -28,7 +36,11 @@ impl MigrationTrait for Migration {
                     .col(unsigned_big_int(ApolloAuditLog::DeletedAt, backend).default(0))
                     .col(string_len_null(ApolloAuditLog::DataChangeCreatedBy, 64))
                     .col(date_time(ApolloAuditLog::DataChangeCreatedTime))
-                    .col(string_len_default(ApolloAuditLog::DataChangeLastModifiedBy, 64, ""))
+                    .col(string_len_default(
+                        ApolloAuditLog::DataChangeLastModifiedBy,
+                        64,
+                        "",
+                    ))
                     .col(date_time_on_update(ApolloAuditLog::DataChangeLastTime))
                     .to_owned(),
             )

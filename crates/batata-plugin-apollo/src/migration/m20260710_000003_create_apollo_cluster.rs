@@ -15,13 +15,21 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloCluster::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloCluster::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloCluster::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloCluster::Name, 32, ""))
                     .col(string_len_default(ApolloCluster::AppId, 64, ""))
                     .col(unsigned_int(ApolloCluster::ParentClusterId, backend).default(0))
                     .col(bit(ApolloCluster::IsDeleted, None))
                     .col(unsigned_big_int(ApolloCluster::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloCluster::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloCluster::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloCluster::DataChangeCreatedTime))
                     .col(string_len_null(ApolloCluster::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloCluster::DataChangeLastTime))

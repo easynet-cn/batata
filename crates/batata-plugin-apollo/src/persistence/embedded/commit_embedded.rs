@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_COMMIT;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredCommit;
 use crate::persistence::traits::CommitPersistence;
-use super::id_generator::IdGenerator;
 
 /// Represents the `CommitEmbedded` entity.
 pub struct CommitEmbedded {
@@ -43,7 +43,10 @@ impl CommitEmbedded {
 
     /// Build index key for listing: "commit_by_ns:{app_id}:{cluster}:{namespace}:{commit_id}"
     fn index_key(app_id: &str, cluster: &str, namespace: &str, commit_id: i64) -> String {
-        format!("commit_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, commit_id)
+        format!(
+            "commit_by_ns:{}:{}:{}:{}",
+            app_id, cluster, namespace, commit_id
+        )
     }
 
     /// Writes a fully-formed `StoredCommit` (including its `id`) to RocksDB.
@@ -113,7 +116,8 @@ impl CommitPersistence for CommitEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;
@@ -135,7 +139,9 @@ impl CommitPersistence for CommitEmbedded {
         cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<Option<StoredCommit>> {
-        let commits = self.list_by_namespace(app_id, cluster_name, namespace_name).await?;
+        let commits = self
+            .list_by_namespace(app_id, cluster_name, namespace_name)
+            .await?;
         Ok(commits.into_iter().next())
     }
 

@@ -38,9 +38,9 @@ impl From<StoredApp> for apollo_app::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(app.data_change_last_modified_by),
-            data_change_last_time: Set(app.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(app
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -59,7 +59,9 @@ impl From<apollo_app::Model> for StoredApp {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -120,9 +122,9 @@ impl AppPersistence for AppSqlPersistence {
         active_model.owner_name = Set(app.owner_name);
         active_model.owner_email = Set(app.owner_email);
         active_model.data_change_last_modified_by = Set(app.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(app.data_change_last_time.and_then(|t| {
-            chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-        }));
+        active_model.data_change_last_time = Set(app
+            .data_change_last_time
+            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())

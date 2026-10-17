@@ -23,9 +23,15 @@ impl MigrationTrait for Migration {
                     .col(string_len(ApolloServiceRegistry::ServiceName, 64))
                     .col(string_len(ApolloServiceRegistry::Uri, 64))
                     .col(string_len(ApolloServiceRegistry::Cluster, 64))
-                    .col(string_len_default(ApolloServiceRegistry::Metadata, 1024, "{}"))
+                    .col(string_len_default(
+                        ApolloServiceRegistry::Metadata,
+                        1024,
+                        "{}",
+                    ))
                     .col(date_time(ApolloServiceRegistry::DataChangeCreatedTime))
-                    .col(date_time_on_update(ApolloServiceRegistry::DataChangeLastTime))
+                    .col(date_time_on_update(
+                        ApolloServiceRegistry::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

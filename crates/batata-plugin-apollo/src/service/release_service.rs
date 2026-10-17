@@ -1,11 +1,14 @@
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::api::dto::{ReleaseDTO, ReleaseHistoryDTO};
 use crate::persistence::shared::StoredRelease;
-use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, ReleaseHistoryPersistence, ItemPersistence, NamespacePersistence};
+use crate::persistence::traits::{
+    ApolloPersistenceService, ItemPersistence, NamespacePersistence, ReleaseHistoryPersistence,
+    ReleasePersistence,
+};
 use crate::service::release_message_service::ReleaseMessageService;
 use chrono::Utc;
 
@@ -39,16 +42,35 @@ impl ReleaseService {
     }
 
     /// Performs the `publish` operation.
-    pub async fn publish(&self, app_id: &str, cluster_name: &str, namespace_name: &str, 
-        release_name: &str, release_comment: Option<String>, operator: &str, 
-        _is_emergency_publish: bool) -> Result<ReleaseDTO, anyhow::Error> {
+    pub async fn publish(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        release_name: &str,
+        release_comment: Option<String>,
+        operator: &str,
+        _is_emergency_publish: bool,
+    ) -> Result<ReleaseDTO, anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+        let old_master =
+            ReleasePersistence::get_latest(&self.persistence, app_id, cluster_name, namespace_name)
+                .await?;
 
-        let old_master = ReleasePersistence::get_latest(&self.persistence, app_id, cluster_name, namespace_name).await?;
-
-        let items = <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.id).await?;
+        let items =
+            <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.id).await?;
 
         let mut configurations: HashMap<String, String> = HashMap::new();
         for item in items {
@@ -59,7 +81,10 @@ impl ReleaseService {
 
         let now = Utc::now().timestamp_millis();
         let release_id = now;
-        let release_key = format!("{}+{}+{}+{}", app_id, cluster_name, namespace_name, release_id);
+        let release_key = format!(
+            "{}+{}+{}+{}",
+            app_id, cluster_name, namespace_name, release_id
+        );
 
         let stored = StoredRelease {
             id: 0,
@@ -82,7 +107,18 @@ impl ReleaseService {
 
         let created = <dyn ReleasePersistence>::create(&self.persistence, stored).await?;
         Self::notify_publish(self, app_id, cluster_name, namespace_name).await;
-        self.record_history(app_id, cluster_name, namespace_name, namespace_name, created.id, 0, 0, operator, "").await;
+        self.record_history(
+            app_id,
+            cluster_name,
+            namespace_name,
+            namespace_name,
+            created.id,
+            0,
+            0,
+            operator,
+            "",
+        )
+        .await;
 
         // Upstream mergeFromMasterAndPublishBranch: when an ACTIVE branch
         // exists, keep its own modifications on top of the new master release
@@ -121,7 +157,10 @@ impl ReleaseService {
                     &branch_cluster,
                     namespace_name,
                     expected,
-                    format!("{}-master-normal-release-merge-to-gray", Utc::now().format("%Y%m%d%H%M%S")),
+                    format!(
+                        "{}-master-normal-release-merge-to-gray",
+                        Utc::now().format("%Y%m%d%H%M%S")
+                    ),
                     operator,
                     5,
                 )
@@ -132,18 +171,37 @@ impl ReleaseService {
     }
 
     /// Returns the requested value.
-    pub async fn get_latest_active(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<ReleaseDTO>, anyhow::Error> {
-        let stored = <dyn ReleasePersistence>::get_latest(&self.persistence, app_id, cluster_name, namespace_name).await?;
+    pub async fn get_latest_active(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Option<ReleaseDTO>, anyhow::Error> {
+        let stored = <dyn ReleasePersistence>::get_latest(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
         Ok(stored.map(|s| s.into()))
     }
 
     /// Returns the requested value.
-    pub async fn get_configurations(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        let release = self.get_latest_active(app_id, cluster_name, namespace_name).await?;
+    pub async fn get_configurations(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        let release = self
+            .get_latest_active(app_id, cluster_name, namespace_name)
+            .await?;
 
         match release {
             Some(r) => {
-                let configs: HashMap<String, String> = serde_json::from_str(&r.configurations.unwrap_or_default())?;
+                let configs: HashMap<String, String> =
+                    serde_json::from_str(&r.configurations.unwrap_or_default())?;
                 Ok(Some(configs))
             }
             None => Ok(None),
@@ -151,21 +209,46 @@ impl ReleaseService {
     }
 
     /// Returns the requested value.
-    pub async fn find_active_releases(&self, app_id: &str, cluster_name: &str, namespace_name: &str, _page: u64, _size: u64) -> Result<(Vec<ReleaseDTO>, u64), anyhow::Error> {
-        let stored_list = <dyn ReleasePersistence>::list_by_namespace(&self.persistence, app_id, cluster_name, namespace_name).await?;
-        let active_releases: Vec<_> = stored_list.into_iter()
+    pub async fn find_active_releases(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        _page: u64,
+        _size: u64,
+    ) -> Result<(Vec<ReleaseDTO>, u64), anyhow::Error> {
+        let stored_list = <dyn ReleasePersistence>::list_by_namespace(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
+        let active_releases: Vec<_> = stored_list
+            .into_iter()
             .filter(|s| !s.is_deleted && !s.is_abandoned)
             .map(|s| s.into())
             .collect();
-        
+
         let count = active_releases.len() as u64;
         Ok((active_releases, count))
     }
 
     /// All releases (including abandoned) for a namespace, newest first.
     /// Upstream `/releases/all` used by the release history page.
-    pub async fn find_all_releases(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<ReleaseDTO>, anyhow::Error> {
-        let stored_list = <dyn ReleasePersistence>::list_all_by_namespace(&self.persistence, app_id, cluster_name, namespace_name).await?;
+    pub async fn find_all_releases(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<ReleaseDTO>, anyhow::Error> {
+        let stored_list = <dyn ReleasePersistence>::list_all_by_namespace(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
         Ok(stored_list.into_iter().map(|s| s.into()).collect())
     }
 
@@ -181,12 +264,16 @@ impl ReleaseService {
     /// row pk) and configservice calls findActiveOne(pk). batata's gray
     /// publish returns the row id too, so look up by pk first; fall back to
     /// the timestamp `release_id` column for legacy rows only.
-    pub async fn get_gray_release(&self, release_id: i64) -> Result<Option<ReleaseDTO>, anyhow::Error> {
+    pub async fn get_gray_release(
+        &self,
+        release_id: i64,
+    ) -> Result<Option<ReleaseDTO>, anyhow::Error> {
         let stored = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?;
         if stored.is_some() {
             return Ok(stored.map(|s| s.into()));
         }
-        let stored = <dyn ReleasePersistence>::get_by_release_id(&self.persistence, release_id).await?;
+        let stored =
+            <dyn ReleasePersistence>::get_by_release_id(&self.persistence, release_id).await?;
         Ok(stored.map(|s| s.into()))
     }
 
@@ -208,7 +295,10 @@ impl ReleaseService {
         let now = Utc::now().timestamp_millis();
         let stored = StoredRelease {
             id: 0,
-            release_key: format!("{}+{}+{}+{}+gray", app_id, branch_cluster_name, namespace_name, now),
+            release_key: format!(
+                "{}+{}+{}+{}+gray",
+                app_id, branch_cluster_name, namespace_name, now
+            ),
             name: release_name,
             comment: None,
             app_id: app_id.to_string(),
@@ -245,7 +335,18 @@ impl ReleaseService {
             .await?;
         }
 
-        self.record_history(app_id, parent_cluster_name, namespace_name, branch_cluster_name, created.id, 0, operation, operator, "").await;
+        self.record_history(
+            app_id,
+            parent_cluster_name,
+            namespace_name,
+            branch_cluster_name,
+            created.id,
+            0,
+            operation,
+            operator,
+            "",
+        )
+        .await;
         Self::notify_publish(self, app_id, parent_cluster_name, namespace_name).await;
         Ok(())
     }
@@ -255,20 +356,50 @@ impl ReleaseService {
     /// previously active release becomes effective because all queries filter
     /// abandoned rows. When a gray branch exists, an auto branch release
     /// (op MASTER_ROLLBACK_MERGE_TO_GRAY) keeps gray clients consistent.
-    pub async fn rollback(&self, app_id: &str, cluster_name: &str, namespace_name: &str, release_id: i64, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
-        let actives = ReleasePersistence::list_active(&self.persistence, app_id, cluster_name, namespace_name).await?;
+    pub async fn rollback(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        release_id: i64,
+        operator: &str,
+    ) -> Result<ReleaseDTO, anyhow::Error> {
+        let actives = ReleasePersistence::list_active(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
         if actives.len() < 2 {
-            return Err(anyhow::anyhow!("At least two active releases are required for rollback"));
+            return Err(anyhow::anyhow!(
+                "At least two active releases are required for rollback"
+            ));
         }
         // actives sorted newest-first; index 0 is the one being rolled back.
         if actives[0].id != release_id {
-            return Err(anyhow::anyhow!("Release {} is not the latest active release", release_id));
+            return Err(anyhow::anyhow!(
+                "Release {} is not the latest active release",
+                release_id
+            ));
         }
         let now_effective = self.abandon_release(&actives[0], operator).await?;
 
         Self::notify_publish(self, app_id, cluster_name, namespace_name).await;
-        self.record_history(app_id, cluster_name, namespace_name, namespace_name, now_effective.id, actives[0].id, 1, operator, "").await;
-        self.rollback_child_namespace(app_id, cluster_name, namespace_name, operator, 6).await?;
+        self.record_history(
+            app_id,
+            cluster_name,
+            namespace_name,
+            namespace_name,
+            now_effective.id,
+            actives[0].id,
+            1,
+            operator,
+            "",
+        )
+        .await;
+        self.rollback_child_namespace(app_id, cluster_name, namespace_name, operator, 6)
+            .await?;
         Ok(now_effective.into())
     }
 
@@ -277,17 +408,34 @@ impl ReleaseService {
     /// When `to_release_id` is provided it is treated as the current release to
     /// rollback FROM; otherwise every active release newer than the target is
     /// abandoned.
-    pub async fn rollback_by_id(&self, release_id: i64, to_release_id: Option<i64>, operator: &str) -> Result<ReleaseDTO, anyhow::Error> {
-        let target = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id).await?
+    pub async fn rollback_by_id(
+        &self,
+        release_id: i64,
+        to_release_id: Option<i64>,
+        operator: &str,
+    ) -> Result<ReleaseDTO, anyhow::Error> {
+        let target = <dyn ReleasePersistence>::get_by_id(&self.persistence, release_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Release not found: {}", release_id))?;
-        let actives = ReleasePersistence::list_active(&self.persistence, &target.app_id, &target.cluster_name, &target.namespace_name).await?;
+        let actives = ReleasePersistence::list_active(
+            &self.persistence,
+            &target.app_id,
+            &target.cluster_name,
+            &target.namespace_name,
+        )
+        .await?;
         // If a specific "from" release was given, validate it exists and is
         // newer than the target; otherwise abandon everything above target.
         if let Some(from_id) = to_release_id {
-            let from = <dyn ReleasePersistence>::get_by_id(&self.persistence, from_id).await?
+            let from = <dyn ReleasePersistence>::get_by_id(&self.persistence, from_id)
+                .await?
                 .ok_or_else(|| anyhow::anyhow!("Release not found: {}", from_id))?;
             if from.id <= target.id {
-                return Err(anyhow::anyhow!("Cannot rollback from {} to {}", from_id, release_id));
+                return Err(anyhow::anyhow!(
+                    "Cannot rollback from {} to {}",
+                    from_id,
+                    release_id
+                ));
             }
         }
         // Abandon every active release newer than the target (target stays).
@@ -302,18 +450,49 @@ impl ReleaseService {
             last_abandoned = Some(r.clone());
         }
         if !abandoned_any {
-            return Err(anyhow::anyhow!("No releases newer than {} to abandon", release_id));
+            return Err(anyhow::anyhow!(
+                "No releases newer than {} to abandon",
+                release_id
+            ));
         }
         let _ = last_abandoned;
 
-        Self::notify_publish(self, &target.app_id, &target.cluster_name, &target.namespace_name).await;
-        self.record_history(&target.app_id, &target.cluster_name, &target.namespace_name, &target.namespace_name, target.id, last_abandoned.as_ref().map(|r| r.id).unwrap_or(0), 1, operator, "").await;
-        self.rollback_child_namespace(&target.app_id, &target.cluster_name, &target.namespace_name, operator, 6).await?;
+        Self::notify_publish(
+            self,
+            &target.app_id,
+            &target.cluster_name,
+            &target.namespace_name,
+        )
+        .await;
+        self.record_history(
+            &target.app_id,
+            &target.cluster_name,
+            &target.namespace_name,
+            &target.namespace_name,
+            target.id,
+            last_abandoned.as_ref().map(|r| r.id).unwrap_or(0),
+            1,
+            operator,
+            "",
+        )
+        .await;
+        self.rollback_child_namespace(
+            &target.app_id,
+            &target.cluster_name,
+            &target.namespace_name,
+            operator,
+            6,
+        )
+        .await?;
         Ok(target.into())
     }
 
     /// Upstream abandon step: set IsAbandoned=true on the row itself.
-    async fn abandon_release(&self, release: &StoredRelease, operator: &str) -> Result<StoredRelease, anyhow::Error> {
+    async fn abandon_release(
+        &self,
+        release: &StoredRelease,
+        operator: &str,
+    ) -> Result<StoredRelease, anyhow::Error> {
         let mut abandoned = release.clone();
         abandoned.is_abandoned = true;
         abandoned.data_change_last_modified_by = Some(operator.to_string());
@@ -342,8 +521,13 @@ impl ReleaseService {
         else {
             return Ok(());
         };
-        let Some(master_cfgs) =
-            ReleasePersistence::get_latest(&self.persistence, app_id, parent_cluster_name, namespace_name).await?
+        let Some(master_cfgs) = ReleasePersistence::get_latest(
+            &self.persistence,
+            app_id,
+            parent_cluster_name,
+            namespace_name,
+        )
+        .await?
         else {
             return Ok(());
         };
@@ -365,7 +549,10 @@ impl ReleaseService {
             &branch_cluster,
             namespace_name,
             configurations,
-            format!("{}-master-rollback-merge-to-gray", Utc::now().format("%Y%m%d%H%M%S")),
+            format!(
+                "{}-master-rollback-merge-to-gray",
+                Utc::now().format("%Y%m%d%H%M%S")
+            ),
             operator,
             operation,
         )
@@ -373,14 +560,21 @@ impl ReleaseService {
     }
 
     /// Performs the `compare` operation.
-    pub async fn compare(&self, base_release_id: i64, to_compare_release_id: i64) -> Result<Value, anyhow::Error> {
+    pub async fn compare(
+        &self,
+        base_release_id: i64,
+        to_compare_release_id: i64,
+    ) -> Result<Value, anyhow::Error> {
         let base = <dyn ReleasePersistence>::get_by_id(&self.persistence, base_release_id).await?;
-        let other = <dyn ReleasePersistence>::get_by_id(&self.persistence, to_compare_release_id).await?;
+        let other =
+            <dyn ReleasePersistence>::get_by_id(&self.persistence, to_compare_release_id).await?;
 
-        let base_configs: Value = base.as_ref()
+        let base_configs: Value = base
+            .as_ref()
             .and_then(|b| serde_json::from_str(&b.configurations).ok())
             .unwrap_or_else(|| Value::Object(Default::default()));
-        let other_configs: Value = other.as_ref()
+        let other_configs: Value = other
+            .as_ref()
             .and_then(|o| serde_json::from_str(&o.configurations).ok())
             .unwrap_or_else(|| Value::Object(Default::default()));
 
@@ -406,12 +600,25 @@ impl ReleaseService {
         change_sets: crate::api::dto::ItemChangeSets,
     ) -> Result<ReleaseDTO, anyhow::Error> {
         let item_set_service = crate::service::ItemSetService::new(self.persistence.clone());
-        item_set_service.update_set(app_id, cluster_name, namespace_name, change_sets).await?;
+        item_set_service
+            .update_set(app_id, cluster_name, namespace_name, change_sets)
+            .await?;
 
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
-        let items = <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.id).await?;
+        let items =
+            <dyn ItemPersistence>::list_by_namespace(&self.persistence, namespace.id).await?;
 
         let mut configurations: HashMap<String, String> = HashMap::new();
         for item in items {
@@ -421,7 +628,10 @@ impl ReleaseService {
 
         let now = Utc::now().timestamp_millis();
         let release_id = now;
-        let release_key = format!("{}+{}+{}+{}+merge", app_id, cluster_name, namespace_name, release_id);
+        let release_key = format!(
+            "{}+{}+{}+{}+merge",
+            app_id, cluster_name, namespace_name, release_id
+        );
 
         let stored = StoredRelease {
             id: 0,
@@ -472,11 +682,20 @@ impl ReleaseService {
         change_sets: crate::api::dto::ItemChangeSets,
         delete_branch: bool,
     ) -> Result<ReleaseDTO, anyhow::Error> {
-        use crate::service::namespace_branch_service::{NamespaceBranchService, BRANCH_STATUS_MERGED};
+        use crate::service::namespace_branch_service::{
+            BRANCH_STATUS_MERGED, NamespaceBranchService,
+        };
         let merged = self
             .merge_branch_and_release(
-                app_id, cluster_name, namespace_name, branch_name, release_name,
-                release_comment, operator, is_emergency_publish, change_sets,
+                app_id,
+                cluster_name,
+                namespace_name,
+                branch_name,
+                release_name,
+                release_comment,
+                operator,
+                is_emergency_publish,
+                change_sets,
             )
             .await?;
         if delete_branch {

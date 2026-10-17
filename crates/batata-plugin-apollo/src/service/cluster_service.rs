@@ -45,7 +45,11 @@ impl ClusterService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, app_id: &str, cluster_name: &str) -> Result<Option<ClusterDTO>, anyhow::Error> {
+    pub async fn get(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+    ) -> Result<Option<ClusterDTO>, anyhow::Error> {
         let stored = self.persistence.get(app_id, cluster_name).await?;
         Ok(stored.map(|s| self.stored_to_dto(&s)))
     }
@@ -57,8 +61,16 @@ impl ClusterService {
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, app_id: &str, cluster_name: &str, dto: ClusterDTO) -> Result<(), anyhow::Error> {
-        let existing = self.persistence.get(app_id, cluster_name).await?
+    pub async fn update(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        dto: ClusterDTO,
+    ) -> Result<(), anyhow::Error> {
+        let existing = self
+            .persistence
+            .get(app_id, cluster_name)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Cluster not found: {}", cluster_name))?;
 
         let now = Utc::now().timestamp_millis();
@@ -80,7 +92,12 @@ impl ClusterService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, app_id: &str, cluster_name: &str, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        _operator: &str,
+    ) -> Result<(), anyhow::Error> {
         self.persistence.delete(app_id, cluster_name).await?;
         Ok(())
     }
@@ -93,9 +110,11 @@ impl ClusterService {
             comment: None,
             data_change_created_by: Some(stored.data_change_created_by.clone()),
             data_change_last_modified_by: stored.data_change_last_modified_by.clone(),
-            data_change_created_time: Some(chrono::DateTime::from_timestamp_millis(stored.data_change_created_time)
-                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string())
-                .unwrap_or_default()),
+            data_change_created_time: Some(
+                chrono::DateTime::from_timestamp_millis(stored.data_change_created_time)
+                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string())
+                    .unwrap_or_default(),
+            ),
             data_change_last_time: stored.data_change_last_time.and_then(|t| {
                 chrono::DateTime::from_timestamp_millis(t)
                     .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string())

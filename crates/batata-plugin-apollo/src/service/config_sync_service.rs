@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::api::dto::{ItemChangeSets, ItemDiffs, ItemDTO};
-use crate::persistence::shared::{StoredNamespace, StoredItem};
-use crate::persistence::traits::{ApolloPersistenceService, NamespacePersistence, ItemPersistence};
+use crate::api::dto::{ItemChangeSets, ItemDTO, ItemDiffs};
+use crate::persistence::shared::{StoredItem, StoredNamespace};
+use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, NamespacePersistence};
 use chrono::Utc;
 
 /// Represents the `ConfigSyncService` entity.
@@ -28,10 +28,22 @@ impl ConfigSyncService {
         operator: &str,
         overwrite: bool,
     ) -> Result<SyncResult, anyhow::Error> {
-        let source_ns = <dyn NamespacePersistence>::get_by_app_cluster(&self.persistence,source_app_id, source_cluster, source_namespace).await?
-            .ok_or_else(|| anyhow::anyhow!("Source namespace not found"))?;
+        let source_ns = <dyn NamespacePersistence>::get_by_app_cluster(
+            &self.persistence,
+            source_app_id,
+            source_cluster,
+            source_namespace,
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Source namespace not found"))?;
 
-        let target_ns = <dyn NamespacePersistence>::get_by_app_cluster(&self.persistence,target_app_id, target_cluster, target_namespace).await?;
+        let target_ns = <dyn NamespacePersistence>::get_by_app_cluster(
+            &self.persistence,
+            target_app_id,
+            target_cluster,
+            target_namespace,
+        )
+        .await?;
 
         let target_ns_id = if let Some(ns) = target_ns {
             ns.id
@@ -56,7 +68,8 @@ impl ConfigSyncService {
             created.id
         };
 
-        let source_items = <dyn ItemPersistence>::list_by_namespace(&self.persistence, source_ns.id).await?;
+        let source_items =
+            <dyn ItemPersistence>::list_by_namespace(&self.persistence, source_ns.id).await?;
 
         let total = source_items.len();
         let mut created = 0;
@@ -66,7 +79,9 @@ impl ConfigSyncService {
         let now = Utc::now().timestamp_millis();
 
         for item in source_items {
-            let existing = <dyn ItemPersistence>::get_by_key(&self.persistence, target_ns_id, &item.key).await?;
+            let existing =
+                <dyn ItemPersistence>::get_by_key(&self.persistence, target_ns_id, &item.key)
+                    .await?;
 
             if let Some(mut existing_item) = existing {
                 if !overwrite {
@@ -109,7 +124,10 @@ impl ConfigSyncService {
             updated,
             skipped,
             total,
-            message: format!("Sync completed: {} created, {} updated, {} skipped", created, updated, skipped),
+            message: format!(
+                "Sync completed: {} created, {} updated, {} skipped",
+                created, updated, skipped
+            ),
         })
     }
 
@@ -124,23 +142,26 @@ impl ConfigSyncService {
         overwrite: bool,
     ) -> Result<Vec<NamespaceSyncResult>, anyhow::Error> {
         let source_ns_list = self.persistence.list_by_app(source_app_id).await?;
-        let source_ns_filtered: Vec<_> = source_ns_list.into_iter()
+        let source_ns_filtered: Vec<_> = source_ns_list
+            .into_iter()
             .filter(|s| s.cluster_name == source_cluster && !s.is_deleted)
             .collect();
 
         let mut results = Vec::new();
 
         for ns in source_ns_filtered {
-            let result = self.sync_configs(
-                source_app_id,
-                source_cluster,
-                &ns.namespace_name,
-                target_app_id,
-                target_cluster,
-                &ns.namespace_name,
-                operator,
-                overwrite,
-            ).await;
+            let result = self
+                .sync_configs(
+                    source_app_id,
+                    source_cluster,
+                    &ns.namespace_name,
+                    target_app_id,
+                    target_cluster,
+                    &ns.namespace_name,
+                    operator,
+                    overwrite,
+                )
+                .await;
 
             results.push(NamespaceSyncResult {
                 namespace_name: ns.namespace_name,
@@ -186,7 +207,9 @@ impl ConfigSyncService {
                 .get_by_app_cluster(source_app_id, source_cluster, target_ns_name)
                 .await?;
             let target_items = match &target_ns {
-                Some(ns) => <dyn ItemPersistence>::list_by_namespace(&self.persistence, ns.id).await?,
+                Some(ns) => {
+                    <dyn ItemPersistence>::list_by_namespace(&self.persistence, ns.id).await?
+                }
                 None => Vec::new(),
             };
             let target_map: std::collections::HashMap<String, StoredItem> = target_items
@@ -250,7 +273,8 @@ impl ConfigSyncService {
         let mut results = Vec::with_capacity(sync_to_namespaces.len());
 
         // Flatten the proposed change set into a single keyed map of desired items.
-        let mut desired: std::collections::BTreeMap<String, &ItemDTO> = std::collections::BTreeMap::new();
+        let mut desired: std::collections::BTreeMap<String, &ItemDTO> =
+            std::collections::BTreeMap::new();
         for it in &sync_items.create_items {
             desired.insert(it.key.clone(), it);
         }
@@ -258,7 +282,11 @@ impl ConfigSyncService {
             desired.insert(it.key.clone(), it);
         }
         // Collect keys that are to be deleted (removed from desired).
-        let delete_keys: Vec<String> = sync_items.delete_items.iter().map(|d| d.key.clone()).collect();
+        let delete_keys: Vec<String> = sync_items
+            .delete_items
+            .iter()
+            .map(|d| d.key.clone())
+            .collect();
         for k in &delete_keys {
             desired.remove(k);
         }
@@ -293,9 +321,12 @@ impl ConfigSyncService {
                 created.id
             };
 
-            let existing_items = <dyn ItemPersistence>::list_by_namespace(&self.persistence, target_ns_id).await?;
-            let existing_map: std::collections::HashMap<String, StoredItem> =
-                existing_items.into_iter().map(|i| (i.key.clone(), i)).collect();
+            let existing_items =
+                <dyn ItemPersistence>::list_by_namespace(&self.persistence, target_ns_id).await?;
+            let existing_map: std::collections::HashMap<String, StoredItem> = existing_items
+                .into_iter()
+                .map(|i| (i.key.clone(), i))
+                .collect();
 
             // Create / update desired items.
             for it in desired.values() {
@@ -340,7 +371,8 @@ impl ConfigSyncService {
             }
 
             // Return the resulting item list (excluding soft-deleted).
-            let final_items = <dyn ItemPersistence>::list_by_namespace(&self.persistence, target_ns_id).await?;
+            let final_items =
+                <dyn ItemPersistence>::list_by_namespace(&self.persistence, target_ns_id).await?;
             let dtos: Vec<ItemDTO> = final_items
                 .into_iter()
                 .filter(|i| !i.is_deleted)
@@ -363,8 +395,19 @@ impl ConfigSyncService {
     }
 
     /// Returns the requested value.
-    pub async fn get_sync_status(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<SyncStatus, anyhow::Error> {
-        let target_ns = <dyn NamespacePersistence>::get_by_app_cluster(&self.persistence,app_id, cluster_name, namespace_name).await?;
+    pub async fn get_sync_status(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<SyncStatus, anyhow::Error> {
+        let target_ns = <dyn NamespacePersistence>::get_by_app_cluster(
+            &self.persistence,
+            app_id,
+            cluster_name,
+            namespace_name,
+        )
+        .await?;
 
         if target_ns.is_none() {
             return Ok(SyncStatus {

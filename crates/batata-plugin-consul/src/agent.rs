@@ -42,7 +42,7 @@ pub struct ConsulAgentService {
 }
 
 impl ConsulAgentService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(
         naming_store: Arc<ConsulNamingStore>,
         registry: Arc<InstanceCheckRegistry>,
@@ -425,14 +425,15 @@ pub async fn register_service(
         } else if let Some(ref raft) = agent.raft_node {
             // Persist check config for restart recovery
             if let Some(config) = agent.registry.get_check_config(&check_id)
-                && let Ok(config_json) = serde_json::to_string(&config) {
-                    let _ = raft
-                        .write(ConsulRaftRequest::HealthCheckRegister {
-                            check_id: check_id.clone(),
-                            config_json,
-                        })
-                        .await;
-                }
+                && let Ok(config_json) = serde_json::to_string(&config)
+            {
+                let _ = raft
+                    .write(ConsulRaftRequest::HealthCheckRegister {
+                        check_id: check_id.clone(),
+                        config_json,
+                    })
+                    .await;
+            }
         }
     }
 
@@ -456,49 +457,48 @@ pub async fn register_service(
         && let Some(sidecar_def) = connect
             .get("SidecarService")
             .or(connect.get("sidecar_service"))
-            && let Ok(mut sidecar) =
-                serde_json::from_value::<AgentServiceRegistration>(sidecar_def.clone())
-            {
-                // Auto-populate sidecar defaults
-                if sidecar.name.is_empty() {
-                    sidecar.name = format!("{}-sidecar-proxy", registration.name);
-                }
-                if sidecar.id.is_none() {
-                    sidecar.id = Some(format!("{}-sidecar-proxy", service_id));
-                }
-                if sidecar.port.is_none() {
-                    // Consul auto-assigns a port; use service port + 20000 as convention
-                    sidecar.port = registration.port.map(|p| p.saturating_add(20000));
-                }
-                if sidecar.kind.is_none() {
-                    sidecar.kind = Some("connect-proxy".to_string());
-                }
+        && let Ok(mut sidecar) =
+            serde_json::from_value::<AgentServiceRegistration>(sidecar_def.clone())
+    {
+        // Auto-populate sidecar defaults
+        if sidecar.name.is_empty() {
+            sidecar.name = format!("{}-sidecar-proxy", registration.name);
+        }
+        if sidecar.id.is_none() {
+            sidecar.id = Some(format!("{}-sidecar-proxy", service_id));
+        }
+        if sidecar.port.is_none() {
+            // Consul auto-assigns a port; use service port + 20000 as convention
+            sidecar.port = registration.port.map(|p| p.saturating_add(20000));
+        }
+        if sidecar.kind.is_none() {
+            sidecar.kind = Some("connect-proxy".to_string());
+        }
 
-                let sidecar_id = sidecar.service_id();
-                let sidecar_key =
-                    ConsulNamingStore::build_key(&namespace, &sidecar.name, &sidecar_id);
-                if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
-                    let _ = agent
-                        .naming_store
-                        .register(&sidecar_key, bytes::Bytes::from(sidecar_data.clone()));
+        let sidecar_id = sidecar.service_id();
+        let sidecar_key = ConsulNamingStore::build_key(&namespace, &sidecar.name, &sidecar_id);
+        if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
+            let _ = agent
+                .naming_store
+                .register(&sidecar_key, bytes::Bytes::from(sidecar_data.clone()));
 
-                    if let Some(ref raft) = agent.raft_node {
-                        let sidecar_json = String::from_utf8_lossy(&sidecar_data).to_string();
-                        let _ = raft
-                            .write(ConsulRaftRequest::CatalogRegister {
-                                key: sidecar_key,
-                                registration_json: sidecar_json,
-                            })
-                            .await;
-                    }
-
-                    tracing::info!(
-                        "Sidecar proxy registered: name={}, id={}",
-                        sidecar.name,
-                        sidecar_id
-                    );
-                }
+            if let Some(ref raft) = agent.raft_node {
+                let sidecar_json = String::from_utf8_lossy(&sidecar_data).to_string();
+                let _ = raft
+                    .write(ConsulRaftRequest::CatalogRegister {
+                        key: sidecar_key,
+                        registration_json: sidecar_json,
+                    })
+                    .await;
             }
+
+            tracing::info!(
+                "Sidecar proxy registered: name={}, id={}",
+                sidecar.name,
+                sidecar_id
+            );
+        }
+    }
 
     tracing::info!(
         "Service registered: name={}, id={}",
@@ -1008,10 +1008,11 @@ fn count_known_datacenters(cluster_manager: &dyn ClusterManager, self_dc: &str) 
         for key in DC_METADATA_KEYS {
             if let Some(value) = member.extend_info.get(key)
                 && let Some(name) = value.as_str()
-                    && !name.is_empty() {
-                        dcs.insert(name.to_string());
-                        break;
-                    }
+                && !name.is_empty()
+            {
+                dcs.insert(name.to_string());
+                break;
+            }
         }
     }
     dcs.len()
@@ -1832,10 +1833,10 @@ pub async fn get_agent_metrics(
 #[derive(Debug, serde::Deserialize)]
 pub struct MonitorQueryParams {
     #[serde(default = "default_log_level")]
-/// The `loglevel` field.
+    /// The `loglevel` field.
     pub loglevel: String,
     #[serde(default)]
-/// The `logjson` field.
+    /// The `logjson` field.
     pub logjson: Option<bool>,
 }
 

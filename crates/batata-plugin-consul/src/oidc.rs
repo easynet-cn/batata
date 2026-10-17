@@ -122,7 +122,9 @@ impl OidcConfig {
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect::<Vec<_>>()
             })
-            .ok_or_else(|| "AllowedRedirectURIs is required and must be a non-empty array".to_string())?;
+            .ok_or_else(|| {
+                "AllowedRedirectURIs is required and must be a non-empty array".to_string()
+            })?;
 
         if allowed_redirect_uris.is_empty() {
             return Err("AllowedRedirectURIs must contain at least one URI".to_string());
@@ -231,7 +233,11 @@ impl OidcConfig {
 
     /// Validates whether the `redirect_uri` is in the allowed list.
     pub fn validate_redirect_uri(&self, redirect_uri: &str) -> Result<(), String> {
-        if self.allowed_redirect_uris.iter().any(|uri| uri == redirect_uri) {
+        if self
+            .allowed_redirect_uris
+            .iter()
+            .any(|uri| uri == redirect_uri)
+        {
             Ok(())
         } else {
             Err(format!(
@@ -422,8 +428,7 @@ static DISCOVERY_CACHE: LazyLock<DashMap<String, (OidcDiscoveryDoc, Instant)>> =
 /// Cache for the JWKS, keyed by `jwks_uri`.
 ///
 /// Cache validity is 10 minutes.
-static JWKS_CACHE: LazyLock<DashMap<String, (Jwks, Instant)>> =
-    LazyLock::new(DashMap::new);
+static JWKS_CACHE: LazyLock<DashMap<String, (Jwks, Instant)>> = LazyLock::new(DashMap::new);
 
 /// Discovery document cache duration (5 minutes).
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
@@ -541,7 +546,10 @@ impl OidcAuthenticator {
         );
 
         if self.config.verbose_oidc_logging {
-            debug!("OIDC auth URL generated for method '{}': {}", auth_method, auth_url);
+            debug!(
+                "OIDC auth URL generated for method '{}': {}",
+                auth_method, auth_url
+            );
         }
 
         // 6. Store the state.
@@ -579,11 +587,7 @@ impl OidcAuthenticator {
     /// # Returns
     /// - `Ok(OidcClaims)`: the extracted claims.
     /// - `Err(String)`: an error message.
-    pub async fn exchange_code(
-        &self,
-        state_id: &str,
-        code: &str,
-    ) -> Result<OidcClaims, String> {
+    pub async fn exchange_code(&self, state_id: &str, code: &str) -> Result<OidcClaims, String> {
         // 1. Verify and remove the state (single use).
         let state = self.state_store.verify_and_remove(state_id).ok_or_else(|| {
             "OIDC state not found or expired. The state may have already been used or has timed out".to_string()
@@ -598,9 +602,9 @@ impl OidcAuthenticator {
             .await?;
 
         // 4. Obtain the `id_token`.
-        let id_token = token_response.id_token.ok_or_else(|| {
-            "OIDC token response does not contain id_token".to_string()
-        })?;
+        let id_token = token_response
+            .id_token
+            .ok_or_else(|| "OIDC token response does not contain id_token".to_string())?;
 
         // 5. Verify the JWT signature.
         let jwks = self.fetch_jwks(&discovery.jwks_uri).await?;
@@ -609,7 +613,10 @@ impl OidcAuthenticator {
         // 6. Verify the nonce matches.
         let token_nonce = claims.get("nonce").and_then(|v| v.as_str());
         if token_nonce != Some(state.nonce.as_str()) {
-            return Err("OIDC nonce mismatch: the id_token nonce does not match the expected nonce".to_string());
+            return Err(
+                "OIDC nonce mismatch: the id_token nonce does not match the expected nonce"
+                    .to_string(),
+            );
         }
 
         // 7. Apply `claim_mappings` and `list_claim_mappings`.
@@ -653,7 +660,10 @@ impl OidcAuthenticator {
             let (doc, created_at) = entry.value();
             if created_at.elapsed() < DISCOVERY_CACHE_TTL {
                 if self.config.verbose_oidc_logging {
-                    debug!("OIDC discovery document loaded from cache for {}", discovery_url);
+                    debug!(
+                        "OIDC discovery document loaded from cache for {}",
+                        discovery_url
+                    );
                 }
                 return Ok(doc.clone());
             }
@@ -669,7 +679,12 @@ impl OidcAuthenticator {
             .get(discovery_url)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch OIDC discovery document from '{}': {}", discovery_url, e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to fetch OIDC discovery document from '{}': {}",
+                    discovery_url, e
+                )
+            })?;
 
         if !response.status().is_success() {
             return Err(format!(
@@ -780,10 +795,7 @@ impl OidcAuthenticator {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(format!(
-                "Token endpoint returned HTTP {}: {}",
-                status, body
-            ));
+            return Err(format!("Token endpoint returned HTTP {}: {}", status, body));
         }
 
         let token_response: TokenResponse = response
@@ -925,8 +937,7 @@ fn verify_jwt(
     use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
     // 1. Parse the JWT header to get the `kid` and `alg`.
-    let header = decode_header(token)
-        .map_err(|e| format!("Failed to decode JWT header: {}", e))?;
+    let header = decode_header(token).map_err(|e| format!("Failed to decode JWT header: {}", e))?;
 
     let kid = header.kid.as_deref();
 
@@ -940,12 +951,7 @@ fn verify_jwt(
         }
     });
 
-    let jwk = matching_key.ok_or_else(|| {
-        format!(
-            "No matching JWK found for kid: {:?}",
-            kid
-        )
-    })?;
+    let jwk = matching_key.ok_or_else(|| format!("No matching JWK found for kid: {:?}", kid))?;
 
     // 3. Create the DecodingKey.
     let n = jwk.n.as_deref().ok_or("JWK missing 'n' (modulus) field")?;
@@ -965,8 +971,15 @@ fn verify_jwt(
             if !config.jwt_supported_algs.is_empty() {
                 // Check whether the alg is in the supported list.
                 let alg_str = format!("{:?}", header.alg);
-                if !config.jwt_supported_algs.iter().any(|a| alg_str.contains(a)) {
-                    return Err(format!("JWT algorithm {:?} is not in the supported algorithms list", header.alg));
+                if !config
+                    .jwt_supported_algs
+                    .iter()
+                    .any(|a| alg_str.contains(a))
+                {
+                    return Err(format!(
+                        "JWT algorithm {:?} is not in the supported algorithms list",
+                        header.alg
+                    ));
                 }
             }
             Algorithm::RS256
@@ -1143,13 +1156,25 @@ mod tests {
         assert!(oidc_config.is_ok());
 
         let oidc_config = oidc_config.unwrap();
-        assert_eq!(oidc_config.oidc_discovery_url, "https://example.com/.well-known/openid-configuration");
+        assert_eq!(
+            oidc_config.oidc_discovery_url,
+            "https://example.com/.well-known/openid-configuration"
+        );
         assert_eq!(oidc_config.oidc_client_id, "test-client-id");
         assert_eq!(oidc_config.oidc_client_secret, "test-client-secret");
-        assert_eq!(oidc_config.allowed_redirect_uris, vec!["http://localhost:8500/callback"]);
+        assert_eq!(
+            oidc_config.allowed_redirect_uris,
+            vec!["http://localhost:8500/callback"]
+        );
         assert_eq!(oidc_config.oidc_scopes, vec!["email", "profile"]);
-        assert_eq!(oidc_config.claim_mappings.get("project"), Some(&"project_var".to_string()));
-        assert_eq!(oidc_config.list_claim_mappings.get("groups"), Some(&"groups_var".to_string()));
+        assert_eq!(
+            oidc_config.claim_mappings.get("project"),
+            Some(&"project_var".to_string())
+        );
+        assert_eq!(
+            oidc_config.list_claim_mappings.get("groups"),
+            Some(&"groups_var".to_string())
+        );
         // PKCE is enabled by default.
         assert!(oidc_config.oidc_client_use_pkce);
     }
@@ -1175,18 +1200,28 @@ mod tests {
 
         // Test missing AllowedRedirectURIs.
         let mut config = HashMap::new();
-        config.insert("OIDCDiscoveryURL".to_string(), serde_json::json!("https://example.com"));
+        config.insert(
+            "OIDCDiscoveryURL".to_string(),
+            serde_json::json!("https://example.com"),
+        );
         config.insert("OIDCClientID".to_string(), serde_json::json!("test-client"));
         let result = OidcConfig::from_auth_method_config(&Some(config));
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("AllowedRedirectURIs is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("AllowedRedirectURIs is required")
+        );
     }
 
     /// Tests that PKCE can be disabled.
     #[test]
     fn test_oidc_config_pkce_disabled() {
         let mut config = HashMap::new();
-        config.insert("OIDCDiscoveryURL".to_string(), serde_json::json!("https://example.com"));
+        config.insert(
+            "OIDCDiscoveryURL".to_string(),
+            serde_json::json!("https://example.com"),
+        );
         config.insert("OIDCClientID".to_string(), serde_json::json!("test-client"));
         config.insert(
             "AllowedRedirectURIs".to_string(),
@@ -1316,12 +1351,28 @@ mod tests {
         };
 
         // Valid redirect_uri.
-        assert!(config.validate_redirect_uri("http://localhost:8500/callback").is_ok());
-        assert!(config.validate_redirect_uri("http://localhost:8500/ui/login").is_ok());
+        assert!(
+            config
+                .validate_redirect_uri("http://localhost:8500/callback")
+                .is_ok()
+        );
+        assert!(
+            config
+                .validate_redirect_uri("http://localhost:8500/ui/login")
+                .is_ok()
+        );
 
         // Invalid redirect_uri.
-        assert!(config.validate_redirect_uri("http://evil.com/callback").is_err());
-        assert!(config.validate_redirect_uri("http://localhost:8500/evil").is_err());
+        assert!(
+            config
+                .validate_redirect_uri("http://evil.com/callback")
+                .is_err()
+        );
+        assert!(
+            config
+                .validate_redirect_uri("http://localhost:8500/evil")
+                .is_err()
+        );
     }
 
     /// Tests PKCE `code_challenge` computation.
@@ -1333,15 +1384,25 @@ mod tests {
         let challenge = compute_pkce_challenge(verifier);
 
         // Verify the challenge is base64url-encoded with the correct length (SHA256 = 32 bytes -> 43 base64url chars).
-        assert_eq!(challenge.len(), 43, "PKCE challenge should be 43 characters (32 bytes base64url no padding)");
+        assert_eq!(
+            challenge.len(),
+            43,
+            "PKCE challenge should be 43 characters (32 bytes base64url no padding)"
+        );
 
         // Verify results are deterministic across calls.
         let challenge2 = compute_pkce_challenge(verifier);
-        assert_eq!(challenge, challenge2, "Same verifier should produce same challenge");
+        assert_eq!(
+            challenge, challenge2,
+            "Same verifier should produce same challenge"
+        );
 
         // Verify different verifiers produce different challenges.
         let different_challenge = compute_pkce_challenge("different-verifier-1234567890");
-        assert_ne!(challenge, different_challenge, "Different verifiers should produce different challenges");
+        assert_ne!(
+            challenge, different_challenge,
+            "Different verifiers should produce different challenges"
+        );
     }
 
     /// Tests random string generation.
@@ -1376,7 +1437,10 @@ mod tests {
         assert!(url.contains("client_id=test-client-id"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8500%2Fcallback"));
         assert!(url.contains("response_type=code"));
-        assert!(url.contains("scope=openid+email+profile") || url.contains("scope=openid%20email%20profile"));
+        assert!(
+            url.contains("scope=openid+email+profile")
+                || url.contains("scope=openid%20email%20profile")
+        );
         assert!(url.contains("state=test-state"));
         assert!(url.contains("nonce=test-nonce"));
         assert!(url.contains("code_challenge=test-challenge"));
@@ -1454,8 +1518,14 @@ mod tests {
 
         let result = apply_claim_mappings(&raw_claims, &config);
 
-        assert_eq!(result.get("project_var"), Some(&serde_json::json!("my-project")));
-        assert_eq!(result.get("display_name"), Some(&serde_json::json!("John Doe")));
+        assert_eq!(
+            result.get("project_var"),
+            Some(&serde_json::json!("my-project"))
+        );
+        assert_eq!(
+            result.get("display_name"),
+            Some(&serde_json::json!("John Doe"))
+        );
 
         // List-type claims should be converted to an array.
         let groups = result.get("groups_var").unwrap().as_array().unwrap();

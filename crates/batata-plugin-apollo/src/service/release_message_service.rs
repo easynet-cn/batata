@@ -30,7 +30,11 @@ impl ReleaseMessageService {
     pub fn generate_message(app_id: &str, cluster: &str, namespace_name: &str) -> String {
         format!(
             "{}{}{}{}{}",
-            app_id, CLUSTER_NAMESPACE_SEPARATOR, cluster, CLUSTER_NAMESPACE_SEPARATOR, namespace_name
+            app_id,
+            CLUSTER_NAMESPACE_SEPARATOR,
+            cluster,
+            CLUSTER_NAMESPACE_SEPARATOR,
+            namespace_name
         )
     }
 

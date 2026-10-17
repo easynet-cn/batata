@@ -55,7 +55,10 @@ async fn get_skill_detail(
         }
     };
 
-    match skill_service.get_skill_detail(ns, name, Some(get_username(&req).as_str())).await {
+    match skill_service
+        .get_skill_detail(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(Some(meta)) => HttpResponse::Ok().json(common_response::Result::success(meta)),
         Ok(None) => common_response::Result::<()>::http_not_found(
             &batata_common::error::SKILL_NOT_FOUND,
@@ -575,7 +578,12 @@ async fn submit_skill(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = skill_service
-        .submit(ns, &form.skill_name, &form.version, Some(get_username(&req).as_str()))
+        .submit(
+            ns,
+            &form.skill_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -833,7 +841,12 @@ async fn update_labels(
     };
 
     let result = skill_service
-        .update_labels(ns, &form.skill_name, labels, Some(get_username(&req).as_str()))
+        .update_labels(
+            ns,
+            &form.skill_name,
+            labels,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -872,7 +885,12 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = skill_service
-        .update_biz_tags(ns, &form.skill_name, &form.biz_tags, Some(get_username(&req).as_str()))
+        .update_biz_tags(
+            ns,
+            &form.skill_name,
+            &form.biz_tags,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,
@@ -1003,7 +1021,12 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     let result = skill_service
-        .update_scope(ns, &form.skill_name, &form.scope, Some(get_username(&req).as_str()))
+        .update_scope(
+            ns,
+            &form.skill_name,
+            &form.scope,
+            Some(get_username(&req).as_str()),
+        )
         .await;
     trace_write(
         &req,

@@ -1,15 +1,17 @@
-use actix_web::{web, HttpResponse, Responder, HttpRequest};
+use crate::api::dto::{
+    ApolloConfig, ErrorResponse, InstanceDTO, NotificationDTO, NotificationMessageDTO,
+};
+use crate::persistence::traits::ApolloPersistenceService;
+use crate::service::AppNamespaceService;
+use crate::service::GrayReleaseRuleService;
+use crate::service::InstanceService;
+use crate::service::ReleaseService;
+use actix_web::{HttpRequest, HttpResponse, Responder, web};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::persistence::traits::ApolloPersistenceService;
-use crate::service::ReleaseService;
-use crate::service::InstanceService;
-use crate::service::GrayReleaseRuleService;
-use crate::service::AppNamespaceService;
-use crate::api::dto::{ApolloConfig, ErrorResponse, InstanceDTO, NotificationDTO, NotificationMessageDTO};
 
 /// A resolved configuration bundle: merged kv map + merged release key.
 #[derive(Debug, Clone)]
@@ -59,9 +61,11 @@ async fn find_release_for_cluster_chain(
         chain.push(cluster_name);
     }
     if let Some(dc) = data_center
-        && !dc.is_empty() && dc != cluster_name {
-            chain.push(dc);
-        }
+        && !dc.is_empty()
+        && dc != cluster_name
+    {
+        chain.push(dc);
+    }
     chain.push(CLUSTER_NAME_DEFAULT);
 
     for cluster in chain {
@@ -83,8 +87,9 @@ async fn find_release_for_cluster_chain(
             }));
         }
         let release_service = ReleaseService::new(persistence.clone());
-        if let Some(configurations) =
-            release_service.get_configurations(app_id, cluster, namespace_name).await?
+        if let Some(configurations) = release_service
+            .get_configurations(app_id, cluster, namespace_name)
+            .await?
         {
             let release_key = release_service
                 .get_latest_active(app_id, cluster, namespace_name)
@@ -134,7 +139,10 @@ async fn find_public_namespace_owner(
 /// Upstream `mergeReleaseConfigurations`: given `[private?, public?]`,
 /// apply them reversed so **private keys override public keys** per-key
 /// (a MERGE — public-only keys survive). Merged releaseKey is "+""-joined.
-fn merge_release_configurations(private: Option<ResolvedConfig>, public: Option<ResolvedConfig>) -> Option<ResolvedConfig> {
+fn merge_release_configurations(
+    private: Option<ResolvedConfig>,
+    public: Option<ResolvedConfig>,
+) -> Option<ResolvedConfig> {
     match (private, public) {
         (None, None) => None,
         (only @ Some(_), None) | (None, only @ Some(_)) => only,
@@ -209,9 +217,13 @@ async fn query_config(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace) = path.into_inner();
 
-    let release_key = query.get("releaseKey").and_then(|v| v.as_str()).unwrap_or("-1");
+    let release_key = query
+        .get("releaseKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("-1");
 
-    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await
+    {
         return resp;
     }
 
@@ -277,9 +289,13 @@ async fn query_config_file(
     req: HttpRequest,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace) = path.into_inner();
-    let release_key = query.get("releaseKey").and_then(|v| v.as_str()).unwrap_or("-1");
+    let release_key = query
+        .get("releaseKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("-1");
 
-    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await
+    {
         return resp;
     }
 
@@ -325,9 +341,13 @@ async fn query_config_file_raw(
     req: HttpRequest,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace) = path.into_inner();
-    let release_key = query.get("releaseKey").and_then(|v| v.as_str()).unwrap_or("-1");
+    let release_key = query
+        .get("releaseKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("-1");
 
-    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await
+    {
         return resp;
     }
 
@@ -401,9 +421,11 @@ fn assemble_watch_keys(
         keys.push(watch_key(app_id, cluster, namespace_name));
     }
     if let Some(dc) = data_center
-        && !dc.is_empty() && dc != cluster {
-            keys.push(watch_key(app_id, dc, namespace_name));
-        }
+        && !dc.is_empty()
+        && dc != cluster
+    {
+        keys.push(watch_key(app_id, dc, namespace_name));
+    }
     keys.push(watch_key(app_id, CLUSTER_NAME_DEFAULT, namespace_name));
     keys
 }
@@ -445,7 +467,10 @@ async fn poll_notifications_v2_impl(
         if ns.is_empty() {
             continue;
         }
-        let id = notif.get("notificationId").and_then(|v| v.as_i64()).unwrap_or(-1);
+        let id = notif
+            .get("notificationId")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1);
         if let Some(existing) = entries.iter_mut().find(|(n, _)| n == ns) {
             if id < existing.1 {
                 existing.1 = id;
@@ -545,7 +570,8 @@ async fn get_notification_v2(
     query: web::Query<Value>,
     req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await
+    {
         return resp;
     }
     poll_notifications_v2_impl(&data, &query).await
@@ -572,8 +598,14 @@ async fn heartbeat(
     let service = InstanceService::new(data.get_ref().clone());
     let app_id = body.get("appId").and_then(|v| v.as_str()).unwrap_or("");
     let ip = body.get("ip").and_then(|v| v.as_str()).unwrap_or("");
-    let cluster = body.get("cluster").and_then(|v| v.as_str()).unwrap_or("default");
-    let data_center = body.get("dataCenter").and_then(|v| v.as_str()).unwrap_or("default");
+    let cluster = body
+        .get("cluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let data_center = body
+        .get("dataCenter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
 
     match service.heartbeat(app_id, cluster, ip, data_center).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({"status": "ok"})),
@@ -610,23 +642,24 @@ fn build_service_dto(req: &HttpRequest, app_name: &str) -> ServiceDTO {
 /// (default 61s) are considered alive. When the registry has no live row
 /// (fresh single-node install), fall back to this node itself so Java
 /// clients keep working out of the box.
-async fn discover(data: &web::Data<Arc<dyn ApolloPersistenceService>>, service_name: &str, req: &HttpRequest) -> Vec<ServiceDTO> {
+async fn discover(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    service_name: &str,
+    req: &HttpRequest,
+) -> Vec<ServiceDTO> {
     use crate::persistence::traits::ServiceRegistryPersistence;
     const HEALTH_WINDOW_SECS: i64 = 61;
-    let mut dtos: Vec<ServiceDTO> = ServiceRegistryPersistence::find_alive(
-        data.get_ref(),
-        service_name,
-        HEALTH_WINDOW_SECS,
-    )
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|e| ServiceDTO {
-        app_name: e.service_name,
-        instance_id: e.uri.clone(),
-        homepage_url: e.uri,
-    })
-    .collect();
+    let mut dtos: Vec<ServiceDTO> =
+        ServiceRegistryPersistence::find_alive(data.get_ref(), service_name, HEALTH_WINDOW_SECS)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| ServiceDTO {
+                app_name: e.service_name,
+                instance_id: e.uri.clone(),
+                homepage_url: e.uri,
+            })
+            .collect();
     if dtos.is_empty() {
         dtos.push(build_service_dto(req, service_name));
     }
@@ -678,7 +711,8 @@ async fn get_notification_v1(
     query: web::Query<Value>,
     req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await {
+    if let Err(resp) = crate::middleware::access_key_auth::authenticate(&req, data.get_ref()).await
+    {
         return resp;
     }
     let app_id = query.get("appId").and_then(|v| v.as_str()).unwrap_or("");
@@ -701,7 +735,10 @@ async fn get_notification_v1(
     }
 
     // Build v2-style entries from v1 query (single notificationId for all).
-    let client_id = query.get("notificationId").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let client_id = query
+        .get("notificationId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
     let entries: Vec<(String, i64)> = namespace_names
         .iter()
         .map(|ns| (ns.clone(), client_id))
@@ -793,30 +830,12 @@ pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
         web::resource("/configfiles/raw/{app_id}/{cluster_name}/{namespace}")
             .route(web::get().to(query_config_file_raw)),
     )
-    .service(
-        web::resource("/services/config")
-            .route(web::get().to(get_config_service)),
-    )
-    .service(
-        web::resource("/services/admin")
-            .route(web::get().to(get_admin_service)),
-    )
-    .service(
-        web::resource("/services/meta")
-            .route(web::get().to(get_meta_service)),
-    )
-    .service(
-        web::resource("/")
-            .route(web::get().to(list_all_services)),
-    )
-    .service(
-        web::resource("/notifications/v2")
-            .route(web::get().to(get_notification_v2)),
-    )
-    .service(
-        web::resource("/notifications")
-            .route(web::get().to(get_notification_v1)),
-    )
+    .service(web::resource("/services/config").route(web::get().to(get_config_service)))
+    .service(web::resource("/services/admin").route(web::get().to(get_admin_service)))
+    .service(web::resource("/services/meta").route(web::get().to(get_meta_service)))
+    .service(web::resource("/").route(web::get().to(list_all_services)))
+    .service(web::resource("/notifications/v2").route(web::get().to(get_notification_v2)))
+    .service(web::resource("/notifications").route(web::get().to(get_notification_v1)))
     .service(
         web::resource("/instances")
             .route(web::post().to(register_instance))
@@ -826,42 +845,70 @@ pub fn configure_config_routes(cfg: &mut actix_web::web::ServiceConfig) {
 
 fn get_client_ip(req: &HttpRequest) -> String {
     if let Some(ip) = req.headers().get("X-Forwarded-For")
-        && let Ok(ip_str) = ip.to_str() {
-            let ips: Vec<&str> = ip_str.split(',').collect();
-            if let Some(first_ip) = ips.first() {
-                return first_ip.trim().to_string();
-            }
+        && let Ok(ip_str) = ip.to_str()
+    {
+        let ips: Vec<&str> = ip_str.split(',').collect();
+        if let Some(first_ip) = ips.first() {
+            return first_ip.trim().to_string();
         }
+    }
     if let Some(ip) = req.headers().get("X-Real-IP")
-        && let Ok(ip_str) = ip.to_str() {
-            return ip_str.trim().to_string();
-        }
-    req.connection_info().peer_addr().unwrap_or("127.0.0.1").to_string()
+        && let Ok(ip_str) = ip.to_str()
+    {
+        return ip_str.trim().to_string();
+    }
+    req.connection_info()
+        .peer_addr()
+        .unwrap_or("127.0.0.1")
+        .to_string()
 }
 
-async fn get_gray_release_configuration(persistence: &Arc<dyn ApolloPersistenceService>, app_id: &str, cluster_name: &str, namespace_name: &str, client_ip: &str, labels: &HashMap<String, String>, client_label: Option<&str>) -> Result<Option<(std::collections::HashMap<String, String>, String)>, anyhow::Error> {
+async fn get_gray_release_configuration(
+    persistence: &Arc<dyn ApolloPersistenceService>,
+    app_id: &str,
+    cluster_name: &str,
+    namespace_name: &str,
+    client_ip: &str,
+    labels: &HashMap<String, String>,
+    client_label: Option<&str>,
+) -> Result<Option<(std::collections::HashMap<String, String>, String)>, anyhow::Error> {
     let gray_service = GrayReleaseRuleService::new(persistence.clone());
     if let Ok(Some(gray_release_id)) = gray_service
-        .match_gray_release_rule_with_context(app_id, cluster_name, namespace_name, client_ip, Some(labels), None, client_label)
+        .match_gray_release_rule_with_context(
+            app_id,
+            cluster_name,
+            namespace_name,
+            client_ip,
+            Some(labels),
+            None,
+            client_label,
+        )
         .await
     {
         let release_service = ReleaseService::new(persistence.clone());
         if let Ok(Some(release)) = release_service.get_gray_release(gray_release_id).await {
-            let configs: std::collections::HashMap<String, String> = serde_json::from_str(&release.configurations.unwrap_or_default()).unwrap_or_default();
+            let configs: std::collections::HashMap<String, String> =
+                serde_json::from_str(&release.configurations.unwrap_or_default())
+                    .unwrap_or_default();
             return Ok(Some((configs, release.release_key)));
         }
     }
     Ok(None)
 }
 
-fn render_config_file(namespace: &str, configurations: &std::collections::HashMap<String, String>) -> String {
+fn render_config_file(
+    namespace: &str,
+    configurations: &std::collections::HashMap<String, String>,
+) -> String {
     if namespace.ends_with(".properties") || !namespace.contains('.') {
-        configurations.iter()
+        configurations
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join("\n")
     } else if namespace.ends_with(".json") {
-        let map: HashMap<&str, &str> = configurations.iter()
+        let map: HashMap<&str, &str> = configurations
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
         serde_json::to_string_pretty(&map).unwrap_or_default()
@@ -879,14 +926,18 @@ fn render_config_file(namespace: &str, configurations: &std::collections::HashMa
         }
         yaml
     } else {
-        configurations.iter()
+        configurations
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join("\n")
     }
 }
 
-fn get_raw_config_content(namespace: &str, configurations: &std::collections::HashMap<String, String>) -> String {
+fn get_raw_config_content(
+    namespace: &str,
+    configurations: &std::collections::HashMap<String, String>,
+) -> String {
     // For .properties namespaces (or namespaces without a dot), behavior is same as regular /configfiles
     if namespace.ends_with(".properties") || !namespace.contains('.') {
         return render_config_file(namespace, configurations);

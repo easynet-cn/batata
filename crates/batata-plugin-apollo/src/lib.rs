@@ -12,28 +12,28 @@
 pub mod bincode {
     pub use batata_common::bincode::{deserialize, serialize};
 }
-/// Apollo plugin registration and configuration.
-pub mod plugin;
-/// Database migrations for the Apollo plugin.
-pub mod migration;
+/// HTTP API DTOs for the Apollo plugin.
+pub mod api;
+/// Authentication and authorization for the Apollo plugin.
+pub mod auth;
 /// SeaORM entities for the Apollo plugin.
 pub mod entity;
+/// HTTP middleware for the Apollo plugin.
+pub mod middleware;
+/// Database migrations for the Apollo plugin.
+pub mod migration;
 /// Data models and DTOs for the Apollo plugin.
 pub mod model;
 /// Persistence layer (embedded and SQL backends).
 pub mod persistence;
-/// HTTP API DTOs for the Apollo plugin.
-pub mod api;
-/// HTTP middleware for the Apollo plugin.
-pub mod middleware;
-/// Business services for the Apollo plugin.
-pub mod service;
-/// HTTP route registration for the Apollo plugin.
-pub mod route;
-/// Authentication and authorization for the Apollo plugin.
-pub mod auth;
+/// Apollo plugin registration and configuration.
+pub mod plugin;
 /// Raft integration for the Apollo plugin.
 pub mod raft;
+/// HTTP route registration for the Apollo plugin.
+pub mod route;
+/// Business services for the Apollo plugin.
+pub mod service;
 
-pub use plugin::ApolloPlugin;
 pub use model::config::ApolloPluginConfig;
+pub use plugin::ApolloPlugin;

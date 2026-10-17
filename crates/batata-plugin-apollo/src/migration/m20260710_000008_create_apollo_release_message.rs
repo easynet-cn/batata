@@ -15,7 +15,11 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloReleaseMessage::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloReleaseMessage::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloReleaseMessage::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloReleaseMessage::Message, 256, ""))
                     .col(date_time(ApolloReleaseMessage::DataChangeCreatedTime))
                     .to_owned(),

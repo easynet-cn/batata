@@ -9,9 +9,9 @@ use batata_consistency::raft::state_machine::{
 };
 
 use crate::model::{
-    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo,
-    AiResourceSearchDocumentInfo, AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo,
-    Page, PipelineExecutionInfo,
+    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo,
+    AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
+    PipelineExecutionInfo,
 };
 use crate::traits::ai_resource::AiResourcePersistence;
 
@@ -214,10 +214,7 @@ impl EmbeddedPersistService {
     /// Get the next auto-increment ID for ai_resource_search_document
     fn next_search_document_id(&self) -> anyhow::Result<i64> {
         let cf = self.cf(CF_AI_RESOURCE_SEARCH_DOCUMENT)?;
-        let current = match self
-            .db
-            .get_cf(cf, KEY_SEARCH_DOCUMENT_NEXT_ID.as_bytes())?
-        {
+        let current = match self.db.get_cf(cf, KEY_SEARCH_DOCUMENT_NEXT_ID.as_bytes())? {
             Some(bytes) => String::from_utf8(bytes.to_vec())?.parse::<i64>()?,
             None => 0,
         };
@@ -908,12 +905,8 @@ impl AiResourcePersistence for EmbeddedPersistService {
         resource_name: &str,
         resource_version: &str,
     ) -> anyhow::Result<Option<AiResourceSearchDocumentInfo>> {
-        let key = Self::search_document_key(
-            namespace_id,
-            resource_type,
-            resource_name,
-            resource_version,
-        );
+        let key =
+            Self::search_document_key(namespace_id, resource_type, resource_name, resource_version);
         self.get_search_document(&key)
     }
 
@@ -957,12 +950,8 @@ impl AiResourcePersistence for EmbeddedPersistService {
         resource_name: &str,
         resource_version: &str,
     ) -> anyhow::Result<u64> {
-        let key = Self::search_document_key(
-            namespace_id,
-            resource_type,
-            resource_name,
-            resource_version,
-        );
+        let key =
+            Self::search_document_key(namespace_id, resource_type, resource_name, resource_version);
         if self.get_search_document(&key)?.is_none() {
             return Ok(0);
         }
@@ -1189,9 +1178,15 @@ mod tests {
         let (svc, _tmp) = create_test_service().await;
 
         // Document insert then upsert-update keeps a stable id.
-        let id = svc.search_document_upsert(&document("digest-1")).await.unwrap();
+        let id = svc
+            .search_document_upsert(&document("digest-1"))
+            .await
+            .unwrap();
         assert!(id > 0);
-        let id2 = svc.search_document_upsert(&document("digest-2")).await.unwrap();
+        let id2 = svc
+            .search_document_upsert(&document("digest-2"))
+            .await
+            .unwrap();
         assert_eq!(id, id2, "upsert must not create a second entry");
 
         let found = svc
@@ -1234,7 +1229,9 @@ mod tests {
         // Tasks: upsert, update in place, find due, delete.
         let now = chrono::Utc::now().timestamp_millis();
         svc.task_upsert(&task("due", now - 1_000)).await.unwrap();
-        svc.task_upsert(&task("future", now + 60_000)).await.unwrap();
+        svc.task_upsert(&task("future", now + 60_000))
+            .await
+            .unwrap();
 
         let stored = svc.task_find("due").await.unwrap().expect("task exists");
         assert_eq!(stored.task_stage, "base_index");
@@ -1259,10 +1256,11 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert!(svc
-            .search_document_find("public", "skill", "probe-skill", "1.0.0")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            svc.search_document_find("public", "skill", "probe-skill", "1.0.0")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

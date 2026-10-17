@@ -69,7 +69,11 @@ impl AppNamespaceService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, app_id: &str, name: &str) -> Result<Option<AppNamespaceDTO>, anyhow::Error> {
+    pub async fn get(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> Result<Option<AppNamespaceDTO>, anyhow::Error> {
         let model = self.persistence.get_app_namespace(app_id, name).await?;
         Ok(model.map(|m| self.model_to_dto(&m)))
     }
@@ -87,8 +91,15 @@ impl AppNamespaceService {
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, app_id: &str, name: &str, operator: &str) -> Result<(), anyhow::Error> {
-        self.persistence.delete_app_namespace(app_id, name, operator).await?;
+    pub async fn delete(
+        &self,
+        app_id: &str,
+        name: &str,
+        operator: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .delete_app_namespace(app_id, name, operator)
+            .await?;
         Ok(())
     }
 
@@ -101,7 +112,12 @@ impl AppNamespaceService {
             is_public: model.is_public,
             comment: model.comment.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(model.data_change_created_time.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
+            data_change_created_time: Some(
+                model
+                    .data_change_created_time
+                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
+                    .to_string(),
+            ),
         }
     }
 }

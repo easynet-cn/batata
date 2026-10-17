@@ -145,7 +145,7 @@ impl ConsulClient {
 // Helper: GET with extra query params beyond QueryOptions
 /// Reads a KV entry and returns it together with response metadata.
 impl ConsulClient {
-/// Reads a KV entry and returns it together with response metadata.
+    /// Reads a KV entry and returns it together with response metadata.
     pub async fn get_with_extra<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,

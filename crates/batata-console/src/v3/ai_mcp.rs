@@ -8,18 +8,18 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 
+use super::ai_trace::{self, get_username, trace_write};
 use batata_common::McpServerService;
 use batata_common::model::Page;
-use batata_common::model::ai::mcp_validation;
 use batata_common::model::ai::mcp::{
-    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery, McpImportExecuteRequest,
-    McpImportValidateRequest, McpImportValidateResponse, McpLabelsRequest, McpListQuery,
-    McpRegistryStats, McpScopeQuery, McpSearchQuery, McpServer, McpServerBasicInfo,
+    CONFLICT_EXISTING, ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpDraftCreateQuery,
+    McpImportExecuteRequest, McpImportValidateRequest, McpImportValidateResponse, McpLabelsRequest,
+    McpListQuery, McpRegistryStats, McpScopeQuery, McpSearchQuery, McpServer, McpServerBasicInfo,
     McpServerImportItem, McpServerImportResponse, McpServerImportResult, McpServerRegistration,
     McpServerVersionDetail, McpServerVersionSummary, McpStatusQuery, McpTool, McpVersionsQuery,
-    CONFLICT_EXISTING, import_result_status,
+    import_result_status,
 };
-use super::ai_trace::{self, get_username, trace_write};
+use batata_common::model::ai::mcp_validation;
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
@@ -473,7 +473,7 @@ async fn import_execute(
         Err(message) => {
             return common_response::Result::<McpServerImportResponse>::http_success(
                 McpServerImportResponse::error(message),
-            )
+            );
         }
     };
 
@@ -493,10 +493,8 @@ async fn import_execute(
         );
     }
 
-    let chosen = mcp_validation::select_importable_items(
-        &validation.servers,
-        &request.selected_servers,
-    );
+    let chosen =
+        mcp_validation::select_importable_items(&validation.servers, &request.selected_servers);
 
     let mut results = Vec::with_capacity(chosen.len());
     let mut success_count = 0u32;
@@ -524,9 +522,13 @@ async fn import_execute(
         match mcp_validation::import_item_to_registration(namespace, &servers[index]) {
             Ok(registration) => {
                 let outcome = if verdict.exists {
-                    svc.update_mcp_server(namespace, &registration).await.map(|_| ())
+                    svc.update_mcp_server(namespace, &registration)
+                        .await
+                        .map(|_| ())
                 } else {
-                    svc.create_mcp_server(namespace, &registration).await.map(|_| ())
+                    svc.create_mcp_server(namespace, &registration)
+                        .await
+                        .map(|_| ())
                 };
                 match outcome {
                     Ok(()) => {
@@ -839,7 +841,8 @@ async fn submit_version(
         batata_common::ai_trace::OP_SUBMIT_REVIEW,
         name,
         version,
-        svc.submit_mcp_server_version(namespace, name, version).await,
+        svc.submit_mcp_server_version(namespace, name, version)
+            .await,
     )
 }
 
@@ -870,7 +873,8 @@ async fn publish_version(
         batata_common::ai_trace::OP_PUBLISH,
         name,
         version,
-        svc.publish_mcp_server_version(namespace, name, version).await,
+        svc.publish_mcp_server_version(namespace, name, version)
+            .await,
     )
 }
 
@@ -933,7 +937,8 @@ async fn redraft_version(
         batata_common::ai_trace::OP_REDRAFT,
         name,
         version,
-        svc.redraft_mcp_server_version(namespace, name, version).await,
+        svc.redraft_mcp_server_version(namespace, name, version)
+            .await,
     )
 }
 
@@ -964,7 +969,8 @@ async fn online_version(
         batata_common::ai_trace::OP_ONLINE_VERSION,
         name,
         version,
-        svc.online_mcp_server_version(namespace, name, version).await,
+        svc.online_mcp_server_version(namespace, name, version)
+            .await,
     )
 }
 
@@ -995,7 +1001,8 @@ async fn offline_version(
         batata_common::ai_trace::OP_OFFLINE_VERSION,
         name,
         version,
-        svc.offline_mcp_server_version(namespace, name, version).await,
+        svc.offline_mcp_server_version(namespace, name, version)
+            .await,
     )
 }
 

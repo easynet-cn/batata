@@ -14,7 +14,8 @@ impl MigrationTrait for Migration {
             sea_orm::DatabaseBackend::MySql => {
                 conn.execute_raw(Statement::from_string(
                     backend,
-                    "ALTER TABLE apollo_release MODIFY COLUMN release_id BIGINT NULL DEFAULT NULL".to_string(),
+                    "ALTER TABLE apollo_release MODIFY COLUMN release_id BIGINT NULL DEFAULT NULL"
+                        .to_string(),
                 ))
                 .await?;
             }

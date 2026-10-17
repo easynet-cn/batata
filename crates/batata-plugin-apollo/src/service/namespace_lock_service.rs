@@ -16,8 +16,17 @@ impl NamespaceLockService {
     }
 
     /// Performs the `lock` operation.
-    pub async fn lock(&self, app_id: &str, cluster_name: &str, namespace_name: &str, locked_by: &str) -> Result<(), anyhow::Error> {
-        let existing = self.persistence.get(app_id, cluster_name, namespace_name).await?;
+    pub async fn lock(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        locked_by: &str,
+    ) -> Result<(), anyhow::Error> {
+        let existing = self
+            .persistence
+            .get(app_id, cluster_name, namespace_name)
+            .await?;
 
         if let Some(lock) = existing {
             if lock.locked_by != locked_by {
@@ -45,25 +54,54 @@ impl NamespaceLockService {
     }
 
     /// Performs the `unlock` operation.
-    pub async fn unlock(&self, app_id: &str, cluster_name: &str, namespace_name: &str, locked_by: &str) -> Result<(), anyhow::Error> {
-        let lock = self.persistence.get(app_id, cluster_name, namespace_name).await?;
+    pub async fn unlock(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        locked_by: &str,
+    ) -> Result<(), anyhow::Error> {
+        let lock = self
+            .persistence
+            .get(app_id, cluster_name, namespace_name)
+            .await?;
 
         if let Some(lock_model) = lock
-            && lock_model.locked_by != locked_by {
-                return Err(anyhow::anyhow!("Namespace is locked by {}", lock_model.locked_by));
-            }
+            && lock_model.locked_by != locked_by
+        {
+            return Err(anyhow::anyhow!(
+                "Namespace is locked by {}",
+                lock_model.locked_by
+            ));
+        }
 
-        self.persistence.unlock(app_id, cluster_name, namespace_name).await?;
+        self.persistence
+            .unlock(app_id, cluster_name, namespace_name)
+            .await?;
         Ok(())
     }
 
     /// Returns the requested value.
-    pub async fn get_lock(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Option<StoredNamespaceLock>, anyhow::Error> {
-        self.persistence.get(app_id, cluster_name, namespace_name).await
+    pub async fn get_lock(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Option<StoredNamespaceLock>, anyhow::Error> {
+        self.persistence
+            .get(app_id, cluster_name, namespace_name)
+            .await
     }
 
     /// Returns whether the condition holds.
-    pub async fn is_locked(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<bool, anyhow::Error> {
-        self.persistence.is_locked(app_id, cluster_name, namespace_name).await
+    pub async fn is_locked(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<bool, anyhow::Error> {
+        self.persistence
+            .is_locked(app_id, cluster_name, namespace_name)
+            .await
     }
 }

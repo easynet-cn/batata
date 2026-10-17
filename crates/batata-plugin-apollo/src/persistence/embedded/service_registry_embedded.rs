@@ -12,7 +12,9 @@ use rocksdb::DB;
 use batata_consistency::raft::state_machine::CF_APOLLO_SERVICE_REGISTRY;
 
 use crate::persistence::embedded::JsonStore;
-use crate::persistence::traits::service_registry::{ServiceRegistryEntry, ServiceRegistryPersistence};
+use crate::persistence::traits::service_registry::{
+    ServiceRegistryEntry, ServiceRegistryPersistence,
+};
 
 const KEY_PREFIX: &str = "sr:";
 
@@ -34,12 +36,7 @@ impl ServiceRegistryEmbedded {
 
 #[async_trait]
 impl ServiceRegistryPersistence for ServiceRegistryEmbedded {
-    async fn heartbeat(
-        &self,
-        service_name: &str,
-        uri: &str,
-        cluster: &str,
-    ) -> anyhow::Result<()> {
+    async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
         let store = JsonStore::new(self.db.clone(), CF_APOLLO_SERVICE_REGISTRY);
         let now = chrono::Utc::now().timestamp_millis();
         let mut entry: Option<ServiceRegistryEntry> =
@@ -60,7 +57,10 @@ impl ServiceRegistryPersistence for ServiceRegistryEmbedded {
                 });
             }
         }
-        store.put(Self::key(service_name, uri).as_bytes(), entry.as_ref().unwrap())?;
+        store.put(
+            Self::key(service_name, uri).as_bytes(),
+            entry.as_ref().unwrap(),
+        )?;
         Ok(())
     }
 

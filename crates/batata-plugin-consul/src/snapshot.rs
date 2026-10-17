@@ -31,7 +31,7 @@ pub struct ConsulSnapshotService {
 }
 
 impl ConsulSnapshotService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self {
             snapshot_data: Arc::new(tokio::sync::RwLock::new(None)),
@@ -197,9 +197,10 @@ impl ConsulSnapshotService {
                                 && let Ok(decoded) = base64::Engine::decode(
                                     &base64::engine::general_purpose::STANDARD,
                                     value_b64,
-                                ) {
-                                    let _ = db.put_cf(cf, key.as_bytes(), &decoded);
-                                }
+                                )
+                            {
+                                let _ = db.put_cf(cf, key.as_bytes(), &decoded);
+                            }
                         }
                     }
 
@@ -256,7 +257,7 @@ pub struct ConsulSnapshotServicePersistent {
 }
 
 impl ConsulSnapshotServicePersistent {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
         Self {
             db,

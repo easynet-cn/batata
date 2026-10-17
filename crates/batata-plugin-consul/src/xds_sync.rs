@@ -22,8 +22,8 @@ use batata_mesh::xds::types::{
 };
 
 use crate::model::AgentServiceRegistration;
-use crate::naming_store::ConsulNamingStore;
 use crate::namespace::DEFAULT_NAMESPACE;
+use crate::naming_store::ConsulNamingStore;
 
 /// Sync bridge that publishes Consul services to the xDS server.
 pub struct ConsulSyncBridge {
@@ -81,7 +81,9 @@ impl ConsulSyncBridge {
     /// clusters/endpoints it needs.
     fn maybe_sync(&self) {
         let current = self.naming_store.revision();
-        let last = self.last_revision.load(std::sync::atomic::Ordering::Relaxed);
+        let last = self
+            .last_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
         let changed = current != last;
 
         // Always refresh per-node snapshots for connected proxies, even when the
@@ -96,7 +98,10 @@ impl ConsulSyncBridge {
         self.xds_server.update_snapshot(snapshot);
         self.last_revision
             .store(current, std::sync::atomic::Ordering::Relaxed);
-        debug!(revision = current, "Published xDS snapshot from Consul naming store");
+        debug!(
+            revision = current,
+            "Published xDS snapshot from Consul naming store"
+        );
     }
 
     /// Build and publish a per-node snapshot for every connected Envoy proxy.
@@ -162,10 +167,7 @@ impl ConsulSyncBridge {
             .unwrap_or_default();
 
         for upstream in upstreams {
-            let Some(dest_name) = upstream
-                .get("DestinationName")
-                .and_then(|v| v.as_str())
-            else {
+            let Some(dest_name) = upstream.get("DestinationName").and_then(|v| v.as_str()) else {
                 continue;
             };
             let Some(bind_port) = upstream
@@ -248,7 +250,10 @@ impl ConsulSyncBridge {
                     if let Some(ref kind) = reg.kind
                         && matches!(
                             kind.as_str(),
-                            "connect-proxy" | "mesh-gateway" | "ingress-gateway" | "terminating-gateway"
+                            "connect-proxy"
+                                | "mesh-gateway"
+                                | "ingress-gateway"
+                                | "terminating-gateway"
                         )
                     {
                         continue;
@@ -351,10 +356,9 @@ pub fn consul_to_endpoint(ip: &str, port: i32, healthy: bool) -> Option<Endpoint
 /// local service cluster via the `envoy.filters.network.tcp_proxy` filter.
 pub fn consul_to_inbound_listener(proxy_port: u16, local_cluster: &str) -> Listener {
     let name = format!("inbound_listener:{}", proxy_port);
-    let filter_chain = FilterChain::new("inbound")
-        .with_filter(NetworkFilter::tcp_proxy(local_cluster));
-    Listener::new(name, ListenerAddress::tcp("0.0.0.0", proxy_port))
-        .with_filter_chain(filter_chain)
+    let filter_chain =
+        FilterChain::new("inbound").with_filter(NetworkFilter::tcp_proxy(local_cluster));
+    Listener::new(name, ListenerAddress::tcp("0.0.0.0", proxy_port)).with_filter_chain(filter_chain)
 }
 
 /// Build an outbound listener for a connect-proxy upstream.
@@ -377,9 +381,9 @@ pub fn create_xds_server() -> Arc<XdsServer> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use batata_plugin::PluginNamingStore;
     use crate::model::AgentServiceRegistration;
     use batata_mesh::xds::types::{DiscoveryType, NetworkFilterType};
+    use batata_plugin::PluginNamingStore;
 
     #[test]
     fn test_consul_to_xds_cluster_defaults() {

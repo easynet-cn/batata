@@ -14,10 +14,10 @@
 
 use std::sync::Arc;
 
+use batata_persistence::PersistenceService;
 use batata_persistence::model::{
     AiResourceInfo, AiResourceListFilter, AiResourceVersionInfo, Page,
 };
-use batata_persistence::PersistenceService;
 use tracing::debug;
 
 use batata_common::model::ai::ResourceVersionInfo;
@@ -537,10 +537,7 @@ impl PromptOperationService {
         let version = match target_version {
             Some(v) => {
                 if !is_valid_version(v) {
-                    anyhow::bail!(
-                        "Invalid version format '{}', must be major.minor.patch",
-                        v
-                    );
+                    anyhow::bail!("Invalid version format '{}', must be major.minor.patch", v);
                 }
                 v.to_string()
             }
@@ -561,7 +558,11 @@ impl PromptOperationService {
         }
 
         // Ensure the prompt exists and load its bookkeeping.
-        if self.find_resource(namespace_id, prompt_key).await?.is_none() {
+        if self
+            .find_resource(namespace_id, prompt_key)
+            .await?
+            .is_none()
+        {
             self.persistence
                 .ai_resource_insert(&AiResourceInfo {
                     name: prompt_key.to_string(),
@@ -660,11 +661,7 @@ impl PromptOperationService {
     }
 
     /// Discard the version currently being edited.
-    pub async fn delete_draft(
-        &self,
-        namespace_id: &str,
-        prompt_key: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn delete_draft(&self, namespace_id: &str, prompt_key: &str) -> anyhow::Result<()> {
         let mut meta = self.require_meta(namespace_id, prompt_key).await?;
         let version = meta
             .editing_version
@@ -869,7 +866,11 @@ impl PromptOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<PromptVersionSummary>> {
-        if self.find_resource(namespace_id, prompt_key).await?.is_none() {
+        if self
+            .find_resource(namespace_id, prompt_key)
+            .await?
+            .is_none()
+        {
             anyhow::bail!("Prompt '{}' not found", prompt_key);
         }
 
@@ -907,7 +908,13 @@ impl PromptOperationService {
 
         let page = self
             .persistence
-            .ai_resource_list(namespace_id, resource_type::PROMPT, &filter, page_no, page_size)
+            .ai_resource_list(
+                namespace_id,
+                resource_type::PROMPT,
+                &filter,
+                page_no,
+                page_size,
+            )
             .await?;
 
         let wanted: Vec<String> = biz_tags
@@ -973,8 +980,15 @@ impl batata_common::PromptService for PromptOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<PromptMetaSummary>> {
-        self.list_prompts(namespace_id, prompt_key, search, biz_tags, page_no, page_size)
-            .await
+        self.list_prompts(
+            namespace_id,
+            prompt_key,
+            search,
+            biz_tags,
+            page_no,
+            page_size,
+        )
+        .await
     }
 
     async fn get_governance(

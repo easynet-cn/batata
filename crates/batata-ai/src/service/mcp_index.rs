@@ -355,8 +355,7 @@ mod tests {
         index.upsert(private);
 
         let visible = |e: &McpServerIndexData| e.scope == batata_visibility::SCOPE_PUBLIC;
-        let (page, total) =
-            index.search_by_name("public", None, "blur", 0, 10, Some(&visible));
+        let (page, total) = index.search_by_name("public", None, "blur", 0, 10, Some(&visible));
 
         assert_eq!(total, 1, "total must exclude non-visible rows");
         assert_eq!(page.len(), 1);

@@ -1,12 +1,10 @@
 use std::io::Cursor;
 
-use openraft::storage::RaftStateMachine;
 use openraft::RaftSnapshotBuilder;
+use openraft::storage::RaftStateMachine;
 use tempfile::tempdir;
 
-use batata_consistency::raft::state_machine::{
-    RocksStateMachine, CF_APOLLO_SERVER_CONFIG,
-};
+use batata_consistency::raft::state_machine::{CF_APOLLO_SERVER_CONFIG, RocksStateMachine};
 
 #[tokio::test]
 async fn apollo_cf_survives_snapshot_round_trip() {

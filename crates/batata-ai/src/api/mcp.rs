@@ -116,14 +116,11 @@ impl McpAdminForm {
             // For the "direct" type the address/port live in `data`.
             if let Some(data) = spec.get("data").and_then(|d| d.as_object()) {
                 let address = data.get("address").and_then(|v| v.as_str());
-                let port = data
-                    .get("port")
-                    .and_then(|v| v.as_u64())
-                    .or_else(|| {
-                        data.get("port")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| s.parse::<u64>().ok())
-                    });
+                let port = data.get("port").and_then(|v| v.as_u64()).or_else(|| {
+                    data.get("port")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<u64>().ok())
+                });
                 if let (Some(address), Some(port)) = (address, port) {
                     reg.endpoint = format!("{address}:{port}");
                 }
@@ -133,7 +130,8 @@ impl McpAdminForm {
                         ..Default::default()
                     };
                 }
-            } else if let Ok(parsed) = serde_json::from_value::<McpServerRegistration>(spec.clone()) {
+            } else if let Ok(parsed) = serde_json::from_value::<McpServerRegistration>(spec.clone())
+            {
                 // Backwards-compatible: {endpoint, transport}
                 if !parsed.endpoint.is_empty() {
                     reg.endpoint = parsed.endpoint;
@@ -495,7 +493,9 @@ async fn delete_draft(
 async fn transition<F, Fut>(query: McpDetailQuery, what: &str, call: F) -> HttpResponse
 where
     F: FnOnce(String, String, String) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<batata_common::model::ai::mcp::McpServerVersionDetail>>,
+    Fut: std::future::Future<
+            Output = anyhow::Result<batata_common::model::ai::mcp::McpServerVersionDetail>,
+        >,
 {
     let ns = normalize_namespace(query.namespace_id.as_deref()).to_string();
     let (Some(name), Some(version)) = (
@@ -534,9 +534,15 @@ async fn submit_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"submit a version", |ns, name, version| async move {
-        mcp_service.submit_mcp_server_version(&ns, &name, &version).await
-    })
+    transition(
+        query.into_inner(),
+        "submit a version",
+        |ns, name, version| async move {
+            mcp_service
+                .submit_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -555,9 +561,15 @@ async fn publish_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"publish a version", |ns, name, version| async move {
-        mcp_service.publish_mcp_server_version(&ns, &name, &version).await
-    })
+    transition(
+        query.into_inner(),
+        "publish a version",
+        |ns, name, version| async move {
+            mcp_service
+                .publish_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -576,11 +588,15 @@ async fn force_publish_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"force publish a version", |ns, name, version| async move {
-        mcp_service
-            .force_publish_mcp_server_version(&ns, &name, &version)
-            .await
-    })
+    transition(
+        query.into_inner(),
+        "force publish a version",
+        |ns, name, version| async move {
+            mcp_service
+                .force_publish_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -599,9 +615,15 @@ async fn redraft_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"redraft a version", |ns, name, version| async move {
-        mcp_service.redraft_mcp_server_version(&ns, &name, &version).await
-    })
+    transition(
+        query.into_inner(),
+        "redraft a version",
+        |ns, name, version| async move {
+            mcp_service
+                .redraft_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -620,9 +642,15 @@ async fn online_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"take a version online", |ns, name, version| async move {
-        mcp_service.online_mcp_server_version(&ns, &name, &version).await
-    })
+    transition(
+        query.into_inner(),
+        "take a version online",
+        |ns, name, version| async move {
+            mcp_service
+                .online_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -641,9 +669,15 @@ async fn offline_version(
             .api_type(ApiType::AdminApi)
             .build()
     );
-    transition(query.into_inner(),"take a version offline", |ns, name, version| async move {
-        mcp_service.offline_mcp_server_version(&ns, &name, &version).await
-    })
+    transition(
+        query.into_inner(),
+        "take a version offline",
+        |ns, name, version| async move {
+            mcp_service
+                .offline_mcp_server_version(&ns, &name, &version)
+                .await
+        },
+    )
     .await
 }
 
@@ -702,7 +736,10 @@ async fn update_status(
     };
     // Upstream treats anything other than an explicit disable as enable.
     let enabled = !matches!(query.status.as_deref(), Some(s) if s.eq_ignore_ascii_case("disabled"));
-    match mcp_service.update_mcp_server_status(ns, name, enabled).await {
+    match mcp_service
+        .update_mcp_server_status(ns, name, enabled)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success("ok")),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,

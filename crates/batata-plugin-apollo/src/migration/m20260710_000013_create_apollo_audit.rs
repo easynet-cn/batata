@@ -15,7 +15,11 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloAudit::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloAudit::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloAudit::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloAudit::AuditKey, 64, "default"))
                     .col(string_len_default(ApolloAudit::EntityName, 50, "default"))
                     .col(string_len_default(ApolloAudit::EntityId, 50, "default"))
@@ -24,7 +28,11 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloAudit::OpBy, 64, "default"))
                     .col(string_len_default(ApolloAudit::OpClientIp, 64, "default"))
                     .col(long_text_null(ApolloAudit::Detail, backend))
-                    .col(string_len_default(ApolloAudit::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloAudit::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloAudit::DataChangeCreatedTime))
                     .col(string_len_null(ApolloAudit::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloAudit::DataChangeLastTime))

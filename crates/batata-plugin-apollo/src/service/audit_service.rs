@@ -28,8 +28,15 @@ impl AuditService {
     }
 
     /// Returns the requested value.
-    pub async fn list_by_entity(&self, entity_name: &str, entity_id: &str) -> Result<Vec<AuditDTO>, anyhow::Error> {
-        let models = self.persistence.list_audit_by_entity(entity_name, entity_id).await?;
+    pub async fn list_by_entity(
+        &self,
+        entity_name: &str,
+        entity_id: &str,
+    ) -> Result<Vec<AuditDTO>, anyhow::Error> {
+        let models = self
+            .persistence
+            .list_audit_by_entity(entity_name, entity_id)
+            .await?;
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
@@ -40,7 +47,10 @@ impl AuditService {
             entity_name: model.entity_name.clone(),
             entity_id: model.entity_id.clone(),
             op_name: model.op_name.clone(),
-            op_time: model.op_time.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string(),
+            op_time: model
+                .op_time
+                .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
+                .to_string(),
             op_by: model.op_by.clone(),
             op_client_ip: model.op_client_ip.clone(),
             detail: model.detail.clone(),

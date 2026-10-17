@@ -418,10 +418,7 @@ async fn get_governance(
     );
 
     let ns = normalize_namespace(&query.namespace_id);
-    match prompt_service
-        .get_governance(ns, &query.prompt_key)
-        .await
-    {
+    match prompt_service.get_governance(ns, &query.prompt_key).await {
         Some(meta) => HttpResponse::Ok().json(Result::success(meta)),
         None => Result::<()>::http_not_found(
             &batata_common::error::RESOURCE_NOT_FOUND,

@@ -63,7 +63,10 @@ async fn get_agentspec_detail(
         }
     };
 
-    match agentspec_service.get_detail(ns, name, Some(get_username(&req).as_str())).await {
+    match agentspec_service
+        .get_detail(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(Some(meta)) => HttpResponse::Ok().json(Result::success(meta)),
         Ok(None) => Result::<()>::http_not_found(
             &batata_common::error::RESOURCE_NOT_FOUND,
@@ -260,7 +263,10 @@ async fn delete_agentspec(
         }
     };
 
-    match agentspec_service.delete(ns, name, Some(get_username(&req).as_str())).await {
+    match agentspec_service
+        .delete(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -417,7 +423,11 @@ fn parse_agentspec_zip(zip_data: &[u8]) -> std::result::Result<AgentSpec, String
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Failed to read ZIP entry: {}", e))?;
-        let name = file.name().to_string();
+        // zip 9 returns a `Result` for entry names that fail to decode.
+        let name = file
+            .name()
+            .map_err(|e| format!("Failed to read ZIP entry name: {}", e))?
+            .to_string();
 
         if name == AGENTSPEC_MAIN_FILE || name.ends_with(&format!("/{}", AGENTSPEC_MAIN_FILE)) {
             let mut content = String::new();
@@ -557,7 +567,12 @@ async fn update_draft(
     }
 
     match agentspec_service
-        .update_draft(ns, agent_spec_name, &spec, Some(get_username(&req).as_str()))
+        .update_draft(
+            ns,
+            agent_spec_name,
+            &spec,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -595,7 +610,10 @@ async fn delete_draft(
         }
     };
 
-    match agentspec_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
+    match agentspec_service
+        .delete_draft(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -624,7 +642,12 @@ async fn submit_agentspec(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .submit(ns, &form.agent_spec_name, &form.version, Some(get_username(&req).as_str()))
+        .submit(
+            ns,
+            &form.agent_spec_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(version) => HttpResponse::Ok().json(Result::success(version)),
@@ -774,7 +797,12 @@ async fn update_labels(
     };
 
     match agentspec_service
-        .update_labels(ns, &form.agent_spec_name, labels, Some(get_username(&req).as_str()))
+        .update_labels(
+            ns,
+            &form.agent_spec_name,
+            labels,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -805,7 +833,12 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .update_biz_tags(ns, &form.agent_spec_name, &form.biz_tags, Some(get_username(&req).as_str()))
+        .update_biz_tags(
+            ns,
+            &form.agent_spec_name,
+            &form.biz_tags,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -912,7 +945,12 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     match agentspec_service
-        .update_scope(ns, &form.agent_spec_name, &form.scope, Some(get_username(&req).as_str()))
+        .update_scope(
+            ns,
+            &form.agent_spec_name,
+            &form.scope,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -987,7 +1025,13 @@ async fn client_search_agentspecs(
     let ns = normalize_namespace(&query.namespace_id);
 
     match agentspec_service
-        .search(ns, query.keyword.as_deref(), query.page_no, query.page_size, Some(get_username(&req).as_str()))
+        .search(
+            ns,
+            query.keyword.as_deref(),
+            query.page_no,
+            query.page_size,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(page) => HttpResponse::Ok().json(Result::success(page)),

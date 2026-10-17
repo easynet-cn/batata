@@ -9,21 +9,37 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
-        
+
         manager
             .create_table(
                 Table::create()
                     .table(ApolloCommit::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloCommit::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloCommit::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(long_text(ApolloCommit::ChangeSets, backend))
                     .col(string_len_default(ApolloCommit::AppId, 64, "default"))
-                    .col(string_len_default(ApolloCommit::ClusterName, 500, "default"))
-                    .col(string_len_default(ApolloCommit::NamespaceName, 500, "default"))
+                    .col(string_len_default(
+                        ApolloCommit::ClusterName,
+                        500,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloCommit::NamespaceName,
+                        500,
+                        "default",
+                    ))
                     .col(string_len_null(ApolloCommit::Comment, 500))
                     .col(bit(ApolloCommit::IsDeleted, None))
                     .col(unsigned_big_int(ApolloCommit::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloCommit::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloCommit::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloCommit::DataChangeCreatedTime))
                     .col(string_len_null(ApolloCommit::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloCommit::DataChangeLastTime))

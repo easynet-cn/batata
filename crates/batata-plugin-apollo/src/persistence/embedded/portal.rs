@@ -7,14 +7,14 @@ use async_trait::async_trait;
 use chrono::Utc;
 use subtle::ConstantTimeEq;
 
+use super::EmbeddedApolloPersistence;
+use crate::persistence::embedded::JsonStore;
 use crate::persistence::traits::{
     AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
-    ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence, PermissionPersistence,
-    ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence, UserPersistence,
-    UserTokenPersistence,
+    ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence,
+    PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
+    UserPersistence, UserTokenPersistence,
 };
-use crate::persistence::embedded::JsonStore;
-use super::EmbeddedApolloPersistence;
 
 use batata_consistency::raft::state_machine::{
     CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_CONSUMER, CF_APOLLO_CONSUMER_ROLE,
@@ -24,8 +24,8 @@ use batata_consistency::raft::state_machine::{
 };
 
 use crate::api::dto::{
-    AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, InstanceConfigDTO, RoleDTO,
-    ServerConfigDTO, UserDTO,
+    AppNamespaceDTO, AuditDTO, ConsumerDTO, ConsumerRoleDTO, FavoriteDTO, InstanceConfigDTO,
+    RoleDTO, ServerConfigDTO, UserDTO,
 };
 use crate::entity::{
     apollo_app_namespace, apollo_audit, apollo_consumer, apollo_consumer_role,
@@ -46,14 +46,23 @@ impl EmbeddedApolloPersistence {
 
 #[async_trait]
 impl AppNamespacePersistence for EmbeddedApolloPersistence {
-    async fn create_app_namespace(&self, dto: AppNamespaceDTO) -> anyhow::Result<apollo_app_namespace::Model> {
+    async fn create_app_namespace(
+        &self,
+        dto: AppNamespaceDTO,
+    ) -> anyhow::Result<apollo_app_namespace::Model> {
         let store = self.store(CF_APOLLO_APP_NAMESPACE);
         let key = format!("{}:{}", dto.app_id, dto.name);
-        if store.get::<apollo_app_namespace::Model>(key.as_bytes())?.is_some() {
+        if store
+            .get::<apollo_app_namespace::Model>(key.as_bytes())?
+            .is_some()
+        {
             anyhow::bail!("AppNamespace already exists: {}/{}", dto.app_id, dto.name);
         }
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let model = apollo_app_namespace::Model {
             id: self.next_id(),
             name: dto.name,
@@ -72,7 +81,11 @@ impl AppNamespacePersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn get_app_namespace(&self, app_id: &str, name: &str) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
+    async fn get_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
         let store = self.store(CF_APOLLO_APP_NAMESPACE);
         let key = format!("{}:{}", app_id, name);
         Ok(store
@@ -80,7 +93,10 @@ impl AppNamespacePersistence for EmbeddedApolloPersistence {
             .filter(|m| !m.is_deleted))
     }
 
-    async fn list_app_namespace_by_app(&self, app_id: &str) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
+    async fn list_app_namespace_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
         let store = self.store(CF_APOLLO_APP_NAMESPACE);
         let mut all: Vec<apollo_app_namespace::Model> = store.scan_all()?;
         all.retain(|m| m.app_id == app_id && !m.is_deleted);
@@ -96,7 +112,12 @@ impl AppNamespacePersistence for EmbeddedApolloPersistence {
         Ok(all)
     }
 
-    async fn delete_app_namespace(&self, app_id: &str, name: &str, operator: &str) -> anyhow::Result<()> {
+    async fn delete_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_APP_NAMESPACE);
         let key = format!("{}:{}", app_id, name);
         let mut model = store
@@ -117,7 +138,10 @@ impl AuditPersistence for EmbeddedApolloPersistence {
     async fn create_audit(&self, dto: AuditDTO) -> anyhow::Result<apollo_audit::Model> {
         let store = self.store(CF_APOLLO_AUDIT);
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "system".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "system".to_string());
         let model = apollo_audit::Model {
             id: self.next_id(),
             audit_key: dto.audit_key,
@@ -138,7 +162,11 @@ impl AuditPersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn list_audit(&self, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
+    async fn list_audit(
+        &self,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
         let store = self.store(CF_APOLLO_AUDIT);
         let mut all: Vec<apollo_audit::Model> = store.scan_all()?;
         all.sort_by(|a, b| b.op_time.cmp(&a.op_time));
@@ -146,11 +174,19 @@ impl AuditPersistence for EmbeddedApolloPersistence {
         let page = page.max(1);
         let size = size.max(1);
         let start = ((page - 1) * size) as usize;
-        let page_items = if start >= all.len() { Vec::new() } else { all.into_iter().skip(start).take(size as usize).collect() };
+        let page_items = if start >= all.len() {
+            Vec::new()
+        } else {
+            all.into_iter().skip(start).take(size as usize).collect()
+        };
         Ok((page_items, total))
     }
 
-    async fn list_audit_by_entity(&self, entity_name: &str, entity_id: &str) -> anyhow::Result<Vec<apollo_audit::Model>> {
+    async fn list_audit_by_entity(
+        &self,
+        entity_name: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<Vec<apollo_audit::Model>> {
         let store = self.store(CF_APOLLO_AUDIT);
         let mut all: Vec<apollo_audit::Model> = store.scan_all()?;
         all.retain(|m| m.entity_name == entity_name && m.entity_id == entity_id);
@@ -164,7 +200,10 @@ impl ConsumerPersistence for EmbeddedApolloPersistence {
     async fn create_consumer(&self, dto: ConsumerDTO) -> anyhow::Result<apollo_consumer::Model> {
         let store = self.store(CF_APOLLO_CONSUMER);
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let model = apollo_consumer::Model {
             id: self.next_id(),
             app_id: dto.app_id,
@@ -188,7 +227,10 @@ impl ConsumerPersistence for EmbeddedApolloPersistence {
         Ok(store.get::<apollo_consumer::Model>(format!("id:{}", id).as_bytes())?)
     }
 
-    async fn get_consumer_by_app(&self, app_id: &str) -> anyhow::Result<Option<apollo_consumer::Model>> {
+    async fn get_consumer_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Option<apollo_consumer::Model>> {
         let store = self.store(CF_APOLLO_CONSUMER);
         let all: Vec<apollo_consumer::Model> = store.scan_all()?;
         Ok(all.into_iter().find(|m| m.app_id == app_id))
@@ -202,7 +244,12 @@ impl ConsumerPersistence for EmbeddedApolloPersistence {
 
 #[async_trait]
 impl PermissionPersistence for EmbeddedApolloPersistence {
-    async fn create_permission(&self, permission_type: i32, target_id: &str, created_by: &str) -> anyhow::Result<apollo_permission::Model> {
+    async fn create_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
         let store = self.store(CF_APOLLO_PERMISSION);
         let now = Utc::now().naive_utc();
         let model = apollo_permission::Model {
@@ -219,21 +266,30 @@ impl PermissionPersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn list_permission_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         let store = self.store(CF_APOLLO_PERMISSION);
         let mut all: Vec<apollo_permission::Model> = store.scan_all()?;
         all.retain(|m| m.target_id == target_id);
         Ok(all)
     }
 
-    async fn list_permission_by_type(&self, permission_type: i32) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_type(
+        &self,
+        permission_type: i32,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         let store = self.store(CF_APOLLO_PERMISSION);
         let mut all: Vec<apollo_permission::Model> = store.scan_all()?;
         all.retain(|m| m.permission_type == permission_type);
         Ok(all)
     }
 
-    async fn get_permission_by_id(&self, id: i64) -> anyhow::Result<Option<apollo_permission::Model>> {
+    async fn get_permission_by_id(
+        &self,
+        id: i64,
+    ) -> anyhow::Result<Option<apollo_permission::Model>> {
         let store = self.store(CF_APOLLO_PERMISSION);
         let all: Vec<apollo_permission::Model> = store.scan_all()?;
         Ok(all.into_iter().find(|m| m.id == id))
@@ -245,7 +301,10 @@ impl RolePersistence for EmbeddedApolloPersistence {
     async fn create_role(&self, dto: RoleDTO) -> anyhow::Result<apollo_role::Model> {
         let store = self.store(CF_APOLLO_ROLE);
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let model = apollo_role::Model {
             id: self.next_id(),
             role_name: dto.role_name,
@@ -270,14 +329,20 @@ impl RolePersistence for EmbeddedApolloPersistence {
             .filter(|m| !m.is_deleted))
     }
 
-    async fn list_role_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
+    async fn list_role_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_role::Model>> {
         let store = self.store(CF_APOLLO_ROLE);
         let mut all: Vec<apollo_role::Model> = store.scan_all()?;
         all.retain(|m| m.target_id == target_id && !m.is_deleted);
         Ok(all)
     }
 
-    async fn get_role_by_name(&self, role_name: &str) -> anyhow::Result<Option<apollo_role::Model>> {
+    async fn get_role_by_name(
+        &self,
+        role_name: &str,
+    ) -> anyhow::Result<Option<apollo_role::Model>> {
         let store = self.store(CF_APOLLO_ROLE);
         Ok(store
             .scan_all::<apollo_role::Model>()?
@@ -297,7 +362,12 @@ impl RolePersistence for EmbeddedApolloPersistence {
         Ok(())
     }
 
-    async fn assign_role_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_ROLE_PERMISSION);
         let now = Utc::now().naive_utc();
         let model = apollo_role_permission::Model {
@@ -328,10 +398,19 @@ impl RolePersistence for EmbeddedApolloPersistence {
     async fn list_role_permissions(&self, role_id: i64) -> anyhow::Result<Vec<i64>> {
         let store = self.store(CF_APOLLO_ROLE_PERMISSION);
         let all: Vec<apollo_role_permission::Model> = store.scan_all()?;
-        Ok(all.into_iter().filter(|m| m.role_id == role_id).map(|m| m.permission_id).collect())
+        Ok(all
+            .into_iter()
+            .filter(|m| m.role_id == role_id)
+            .map(|m| m.permission_id)
+            .collect())
     }
 
-    async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_USER_ROLE);
         let now = Utc::now().naive_utc();
         let model = apollo_user_role::Model {
@@ -362,7 +441,11 @@ impl RolePersistence for EmbeddedApolloPersistence {
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
         let ur_store = self.store(CF_APOLLO_USER_ROLE);
         let all_ur: Vec<apollo_user_role::Model> = ur_store.scan_all()?;
-        let role_ids: Vec<i64> = all_ur.into_iter().filter(|m| m.user_id == user_id).map(|m| m.role_id).collect();
+        let role_ids: Vec<i64> = all_ur
+            .into_iter()
+            .filter(|m| m.user_id == user_id)
+            .map(|m| m.role_id)
+            .collect();
         if role_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -416,7 +499,11 @@ impl UserPersistence for EmbeddedApolloPersistence {
         store.scan_all::<apollo_users::Model>()
     }
 
-    async fn update_user(&self, username: &str, dto: UserDTO) -> anyhow::Result<apollo_users::Model> {
+    async fn update_user(
+        &self,
+        username: &str,
+        dto: UserDTO,
+    ) -> anyhow::Result<apollo_users::Model> {
         let store = self.store(CF_APOLLO_USERS);
         let mut model = store
             .get::<apollo_users::Model>(username.as_bytes())?
@@ -497,7 +584,10 @@ impl ConsumerRolePersistence for EmbeddedApolloPersistence {
         Ok(())
     }
 
-    async fn list_consumer_roles(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_role::Model>> {
+    async fn list_consumer_roles(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_role::Model>> {
         let cr_store = self.store(CF_APOLLO_CONSUMER_ROLE);
         let all_cr: Vec<apollo_consumer_role::Model> = cr_store.scan_all()?;
         let role_ids: Vec<i64> = all_cr
@@ -550,11 +640,17 @@ impl FavoritePersistence for EmbeddedApolloPersistence {
     async fn create_favorite(&self, dto: FavoriteDTO) -> anyhow::Result<apollo_favorite::Model> {
         let store = self.store(CF_APOLLO_FAVORITE);
         let all: Vec<apollo_favorite::Model> = store.scan_all()?;
-        if let Some(existing) = all.into_iter().find(|m| m.user_id == dto.user_id && m.app_id == dto.app_id) {
+        if let Some(existing) = all
+            .into_iter()
+            .find(|m| m.user_id == dto.user_id && m.app_id == dto.app_id)
+        {
             return Ok(existing);
         }
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| dto.user_id.clone());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| dto.user_id.clone());
         let model = apollo_favorite::Model {
             id: self.next_id(),
             user_id: dto.user_id,
@@ -569,7 +665,10 @@ impl FavoritePersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn list_favorite_by_user(&self, user_id: &str) -> anyhow::Result<Vec<apollo_favorite::Model>> {
+    async fn list_favorite_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_favorite::Model>> {
         let store = self.store(CF_APOLLO_FAVORITE);
         let mut all: Vec<apollo_favorite::Model> = store.scan_all()?;
         all.retain(|m| m.user_id == user_id);
@@ -592,7 +691,10 @@ impl FavoritePersistence for EmbeddedApolloPersistence {
 
 #[async_trait]
 impl ServerConfigPersistence for EmbeddedApolloPersistence {
-    async fn get_server_config(&self, key: &str) -> anyhow::Result<Option<apollo_server_config::Model>> {
+    async fn get_server_config(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<apollo_server_config::Model>> {
         let store = self.store(CF_APOLLO_SERVER_CONFIG);
         Ok(store.get::<apollo_server_config::Model>(key.as_bytes())?)
     }
@@ -604,9 +706,15 @@ impl ServerConfigPersistence for EmbeddedApolloPersistence {
         Ok(all)
     }
 
-    async fn create_server_config(&self, dto: ServerConfigDTO) -> anyhow::Result<apollo_server_config::Model> {
+    async fn create_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
         let store = self.store(CF_APOLLO_SERVER_CONFIG);
-        if store.get::<apollo_server_config::Model>(dto.key.as_bytes())?.is_some() {
+        if store
+            .get::<apollo_server_config::Model>(dto.key.as_bytes())?
+            .is_some()
+        {
             anyhow::bail!("ServerConfig already exists: {}", dto.key);
         }
         let now = Utc::now().naive_utc();
@@ -625,7 +733,12 @@ impl ServerConfigPersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn update_server_config(&self, key: &str, value: &str, operator: &str) -> anyhow::Result<()> {
+    async fn update_server_config(
+        &self,
+        key: &str,
+        value: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_SERVER_CONFIG);
         let mut model = store
             .get::<apollo_server_config::Model>(key.as_bytes())?
@@ -640,7 +753,10 @@ impl ServerConfigPersistence for EmbeddedApolloPersistence {
 
     async fn delete_server_config(&self, key: &str, _operator: &str) -> anyhow::Result<()> {
         let store = self.store(CF_APOLLO_SERVER_CONFIG);
-        if store.get::<apollo_server_config::Model>(key.as_bytes())?.is_none() {
+        if store
+            .get::<apollo_server_config::Model>(key.as_bytes())?
+            .is_none()
+        {
             anyhow::bail!("ServerConfig not found: {}", key);
         }
         store.delete(key.as_bytes())?;
@@ -650,13 +766,24 @@ impl ServerConfigPersistence for EmbeddedApolloPersistence {
 
 #[async_trait]
 impl InstanceConfigPersistence for EmbeddedApolloPersistence {
-    async fn create_or_update_instance_config(&self, dto: InstanceConfigDTO) -> anyhow::Result<apollo_instance_config::Model> {
+    async fn create_or_update_instance_config(
+        &self,
+        dto: InstanceConfigDTO,
+    ) -> anyhow::Result<apollo_instance_config::Model> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "system".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "system".to_string());
         let all: Vec<apollo_instance_config::Model> = store.scan_all()?;
         let config_app_id = dto.config_app_id.clone().unwrap_or_default();
-        if let Some(mut model) = all.into_iter().find(|m| m.instance_id == dto.instance_id && m.namespace_name == dto.namespace_name && m.cluster_name == dto.cluster_name && m.config_app_id == config_app_id) {
+        if let Some(mut model) = all.into_iter().find(|m| {
+            m.instance_id == dto.instance_id
+                && m.namespace_name == dto.namespace_name
+                && m.cluster_name == dto.cluster_name
+                && m.config_app_id == config_app_id
+        }) {
             model.release_key = dto.release_key;
             model.configurations = dto.configurations;
             model.data_change_last_modified_by = Some(created_by);
@@ -683,7 +810,10 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn get_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn get_instance_config_by_instance(
+        &self,
+        instance_id: i64,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
         let mut all: Vec<apollo_instance_config::Model> = store.scan_all()?;
         all.retain(|m| m.instance_id == instance_id);
@@ -691,7 +821,12 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
         Ok(all)
     }
 
-    async fn list_instance_config_by_app_cluster(&self, _app_id: &str, cluster_name: &str, _namespace_name: &str) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn list_instance_config_by_app_cluster(
+        &self,
+        _app_id: &str,
+        cluster_name: &str,
+        _namespace_name: &str,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
         let mut all: Vec<apollo_instance_config::Model> = store.scan_all()?;
         all.retain(|m| m.cluster_name == cluster_name);
@@ -740,18 +875,31 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
         Ok((page_items, total))
     }
 
-    async fn count_instance_config(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<u64> {
+    async fn count_instance_config(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<u64> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
         let all: Vec<apollo_instance_config::Model> = store.scan_all()?;
         Ok(all
             .into_iter()
-            .filter(|m| m.config_app_id == app_id && m.cluster_name == cluster_name && m.namespace_name == namespace_name)
+            .filter(|m| {
+                m.config_app_id == app_id
+                    && m.cluster_name == cluster_name
+                    && m.namespace_name == namespace_name
+            })
             .count() as u64)
     }
 
-    async fn list_instance_config_by_release_keys(&self, release_keys: &[String]) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn list_instance_config_by_release_keys(
+        &self,
+        release_keys: &[String],
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
-        let mut all: Vec<apollo_instance_config::Model> = store.scan_all::<apollo_instance_config::Model>()?;
+        let mut all: Vec<apollo_instance_config::Model> =
+            store.scan_all::<apollo_instance_config::Model>()?;
         all.retain(|m| release_keys.iter().any(|r| r == &m.release_key));
         all.sort_by(|a, b| b.data_change_last_time.cmp(&a.data_change_last_time));
         Ok(all)
@@ -765,7 +913,8 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
         release_keys: &[String],
     ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         let store = self.store(CF_APOLLO_INSTANCE_CONFIG);
-        let mut all: Vec<apollo_instance_config::Model> = store.scan_all::<apollo_instance_config::Model>()?;
+        let mut all: Vec<apollo_instance_config::Model> =
+            store.scan_all::<apollo_instance_config::Model>()?;
         all.retain(|m| {
             m.config_app_id == app_id
                 && m.cluster_name == cluster_name
@@ -779,20 +928,47 @@ impl InstanceConfigPersistence for EmbeddedApolloPersistence {
 
 #[async_trait]
 impl ReleaseHistoryPersistence for EmbeddedApolloPersistence {
-    async fn find_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
+    async fn find_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
         let store = self.store(CF_APOLLO_RELEASE_HISTORY);
         let mut all: Vec<apollo_release_history::Model> = store.scan_all()?;
-        all.retain(|m| m.app_id == app_id && m.cluster_name == cluster_name && m.namespace_name == namespace_name && !m.is_deleted);
+        all.retain(|m| {
+            m.app_id == app_id
+                && m.cluster_name == cluster_name
+                && m.namespace_name == namespace_name
+                && !m.is_deleted
+        });
         all.sort_by(|a, b| b.data_change_created_time.cmp(&a.data_change_created_time));
         let total = all.len() as u64;
         let page = page.max(1);
         let size = size.max(1);
         let start = ((page - 1) * size) as usize;
-        let page_items = if start >= all.len() { Vec::new() } else { all.into_iter().skip(start).take(size as usize).collect() };
+        let page_items = if start >= all.len() {
+            Vec::new()
+        } else {
+            all.into_iter().skip(start).take(size as usize).collect()
+        };
         Ok((page_items, total))
     }
 
-    async fn record_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, release_id: i64, previous_release_id: i64, operation: i32, operation_context: &str, operator: &str) -> anyhow::Result<apollo_release_history::Model> {
+    async fn record_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        release_id: i64,
+        previous_release_id: i64,
+        operation: i32,
+        operation_context: &str,
+        operator: &str,
+    ) -> anyhow::Result<apollo_release_history::Model> {
         let store = self.store(CF_APOLLO_RELEASE_HISTORY);
         let now = Utc::now().naive_utc();
         let model = apollo_release_history::Model {
@@ -820,7 +996,11 @@ impl ReleaseHistoryPersistence for EmbeddedApolloPersistence {
 
 #[async_trait]
 impl ConsumerTokenPersistence for EmbeddedApolloPersistence {
-    async fn create_consumer_token(&self, consumer_id: i64, created_by: &str) -> anyhow::Result<apollo_consumer_token::Model> {
+    async fn create_consumer_token(
+        &self,
+        consumer_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_consumer_token::Model> {
         let store = self.store(CF_APOLLO_CONSUMER_TOKEN);
         let now = Utc::now().naive_utc();
         // Upstream ConsumerTokenService.createToken: "{consumerId}-{uuid}".
@@ -838,10 +1018,16 @@ impl ConsumerTokenPersistence for EmbeddedApolloPersistence {
         Ok(model)
     }
 
-    async fn list_tokens_by_consumer(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
+    async fn list_tokens_by_consumer(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
         let store = self.store(CF_APOLLO_CONSUMER_TOKEN);
         let all: Vec<apollo_consumer_token::Model> = store.scan_all()?;
-        Ok(all.into_iter().filter(|m| m.consumer_id == consumer_id).collect())
+        Ok(all
+            .into_iter()
+            .filter(|m| m.consumer_id == consumer_id)
+            .collect())
     }
 
     async fn delete_consumer_token(&self, id: i64) -> anyhow::Result<()> {
@@ -850,7 +1036,10 @@ impl ConsumerTokenPersistence for EmbeddedApolloPersistence {
         Ok(())
     }
 
-    async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
+    async fn get_consumer_token_by_token(
+        &self,
+        token: &str,
+    ) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
         let store = self.store(CF_APOLLO_CONSUMER_TOKEN);
         let all: Vec<apollo_consumer_token::Model> = store.scan_all()?;
         let token_bytes = token.as_bytes();
@@ -904,11 +1093,15 @@ impl UserTokenPersistence for EmbeddedApolloPersistence {
         token_prefix: &str,
     ) -> anyhow::Result<Option<apollo_user_token::Model>> {
         let store = self.store(CF_APOLLO_USER_TOKEN);
-        Ok(store.get::<apollo_user_token::Model>(format!("prefix:{}", token_prefix).as_bytes())?
+        Ok(store
+            .get::<apollo_user_token::Model>(format!("prefix:{}", token_prefix).as_bytes())?
             .filter(|m| !m.is_deleted))
     }
 
-    async fn list_user_tokens(&self, user_id: &str) -> anyhow::Result<Vec<apollo_user_token::Model>> {
+    async fn list_user_tokens(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token::Model>> {
         let store = self.store(CF_APOLLO_USER_TOKEN);
         let all: Vec<apollo_user_token::Model> = store.scan_all()?;
         Ok(all

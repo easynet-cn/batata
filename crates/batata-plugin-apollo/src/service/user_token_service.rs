@@ -11,8 +11,8 @@
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-use crate::persistence::traits::UserTokenPersistence;
 use crate::persistence::traits::ApolloPersistenceService;
+use crate::persistence::traits::UserTokenPersistence;
 
 /// Service for issuing and validating portal user tokens.
 pub struct UserTokenService {
@@ -68,8 +68,9 @@ impl UserTokenService {
             return Ok(None);
         }
         let prefix = &token[..32];
-        let model = <dyn UserTokenPersistence>::get_user_token_by_prefix(&*self.persistence, prefix)
-            .await?;
+        let model =
+            <dyn UserTokenPersistence>::get_user_token_by_prefix(&*self.persistence, prefix)
+                .await?;
         let model = match model {
             Some(m) => m,
             None => return Ok(None),
@@ -82,9 +83,10 @@ impl UserTokenService {
             return Ok(None);
         }
         if let Some(revoked) = model.revoked_at
-            && !revoked.and_utc().timestamp().eq(&0) {
-                return Ok(None);
-            }
+            && !revoked.and_utc().timestamp().eq(&0)
+        {
+            return Ok(None);
+        }
         if model.expires.and_utc().timestamp() < chrono::Utc::now().timestamp() {
             return Ok(None);
         }
@@ -92,7 +94,10 @@ impl UserTokenService {
     }
 
     /// Lists every token of a user (non-deleted).
-    pub async fn list(&self, user_id: &str) -> anyhow::Result<Vec<crate::entity::apollo_user_token::Model>> {
+    pub async fn list(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<crate::entity::apollo_user_token::Model>> {
         <dyn UserTokenPersistence>::list_user_tokens(&*self.persistence, user_id).await
     }
 

@@ -1,22 +1,20 @@
-use actix_web::{web, HttpResponse, Responder};
+use crate::api::dto::{
+    AppDTO, AppNamespaceDTO, ClusterDTO, CommitDTO, ConfigImportDTO, ConsumerDTO, ErrorResponse,
+    FavoriteDTO, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO,
+    NamespaceGrayReleaseDTO, RoleDTO, ServerConfigDTO, UserDTO,
+};
+use crate::persistence::traits::ApolloPersistenceService;
+use crate::service::{
+    AccessKeyService, AppNamespaceService, AppService, AuditService, ClusterService, CommitService,
+    ConsumerService, ConsumerTokenService, FavoriteService, GrayReleaseRuleService,
+    InstanceConfigService, ItemService, ItemSetService, NamespaceBranchService,
+    NamespaceLockService, NamespaceService, PermissionService, ReleaseService, RoleService,
+    SearchService, ServerConfigService,
+};
+use actix_web::{HttpResponse, Responder, web};
 use base64::Engine;
 use serde_json::Value;
 use std::sync::Arc;
-use crate::persistence::traits::ApolloPersistenceService;
-use crate::service::{
-    AppService, NamespaceService, ItemService, ItemSetService, ReleaseService,
-    ClusterService, CommitService, GrayReleaseRuleService, ServerConfigService,
-    AppNamespaceService, NamespaceLockService, InstanceConfigService,
-    AuditService, ConsumerService, ConsumerTokenService,
-    PermissionService, RoleService, FavoriteService, SearchService,
-    AccessKeyService, NamespaceBranchService,
-};
-use crate::api::dto::{
-    AppDTO, NamespaceDTO, ItemDTO, ItemChangeSets, ErrorResponse, ClusterDTO,
-    CommitDTO, GrayReleaseRuleDTO, ServerConfigDTO, AppNamespaceDTO,
-    ConsumerDTO, RoleDTO, FavoriteDTO, ConfigImportDTO, NamespaceGrayReleaseDTO,
-    UserDTO,
-};
 
 async fn list_apps(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
     let service = AppService::new(data.get_ref().clone());
@@ -29,7 +27,10 @@ async fn list_apps(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl R
     }
 }
 
-async fn create_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<AppDTO>) -> impl Responder {
+async fn create_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<AppDTO>,
+) -> impl Responder {
     let service = AppService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(app) => HttpResponse::Ok().json(app),
@@ -40,7 +41,10 @@ async fn create_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: we
     }
 }
 
-async fn get_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>) -> impl Responder {
+async fn get_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
     let service = AppService::new(data.get_ref().clone());
     match service.get(app_id.as_str()).await {
         Ok(Some(app)) => HttpResponse::Ok().json(app),
@@ -55,7 +59,11 @@ async fn get_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web
     }
 }
 
-async fn update_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>, body: web::Json<AppDTO>) -> impl Responder {
+async fn update_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    body: web::Json<AppDTO>,
+) -> impl Responder {
     let service = AppService::new(data.get_ref().clone());
     match service.update(app_id.as_str(), body.into_inner()).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -66,8 +74,15 @@ async fn update_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: 
     }
 }
 
-async fn delete_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>, operator: web::Query<Value>) -> impl Responder {
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+async fn delete_app(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    operator: web::Query<Value>,
+) -> impl Responder {
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AppService::new(data.get_ref().clone());
     match service.delete(app_id.as_str(), op).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -78,10 +93,17 @@ async fn delete_app(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: 
     }
 }
 
-async fn create_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>, body: web::Json<NamespaceDTO>) -> impl Responder {
+async fn create_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    body: web::Json<NamespaceDTO>,
+) -> impl Responder {
     let (app_id, cluster_name) = path.into_inner();
     let service = NamespaceService::new(data.get_ref().clone());
-    match service.create(&app_id, &cluster_name, body.into_inner()).await {
+    match service
+        .create(&app_id, &cluster_name, body.into_inner())
+        .await
+    {
         Ok(ns) => HttpResponse::Ok().json(ns),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -90,14 +112,20 @@ async fn create_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, pa
     }
 }
 
-async fn get_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn get_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = NamespaceService::new(data.get_ref().clone());
     match service.get(&app_id, &cluster_name, &namespace_name).await {
         Ok(Some(ns)) => HttpResponse::Ok().json(ns),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
-            message: format!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name),
+            message: format!(
+                "Namespace not found: {}/{}/{}",
+                app_id, cluster_name, namespace_name
+            ),
         }),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
@@ -106,7 +134,10 @@ async fn get_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path:
     }
 }
 
-async fn list_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>) -> impl Responder {
+async fn list_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name) = path.into_inner();
     let service = NamespaceService::new(data.get_ref().clone());
     match service.list(&app_id, &cluster_name).await {
@@ -118,11 +149,21 @@ async fn list_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>, pat
     }
 }
 
-async fn delete_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, operator: web::Query<Value>) -> impl Responder {
+async fn delete_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    operator: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceService::new(data.get_ref().clone());
-    match service.delete(&app_id, &cluster_name, &namespace_name, op).await {
+    match service
+        .delete(&app_id, &cluster_name, &namespace_name, op)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -131,10 +172,17 @@ async fn delete_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, pa
     }
 }
 
-async fn update_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, body: web::Json<NamespaceDTO>) -> impl Responder {
+async fn update_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    body: web::Json<NamespaceDTO>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = NamespaceService::new(data.get_ref().clone());
-    match service.update(&app_id, &cluster_name, &namespace_name, body.into_inner()).await {
+    match service
+        .update(&app_id, &cluster_name, &namespace_name, body.into_inner())
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -143,10 +191,17 @@ async fn update_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, pa
     }
 }
 
-async fn create_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, body: web::Json<ItemDTO>) -> impl Responder {
+async fn create_item(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    body: web::Json<ItemDTO>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
-    match service.create(&app_id, &cluster_name, &namespace_name, body.into_inner()).await {
+    match service
+        .create(&app_id, &cluster_name, &namespace_name, body.into_inner())
+        .await
+    {
         Ok(item) => HttpResponse::Ok().json(item),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -155,7 +210,10 @@ async fn create_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: w
     }
 }
 
-async fn list_items(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn list_items(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
     match service.list(&app_id, &cluster_name, &namespace_name).await {
@@ -167,10 +225,16 @@ async fn list_items(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: we
     }
 }
 
-async fn get_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>) -> impl Responder {
+async fn get_item(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, key) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
-    match service.get_by_key(&app_id, &cluster_name, &namespace_name, &key).await {
+    match service
+        .get_by_key(&app_id, &cluster_name, &namespace_name, &key)
+        .await
+    {
         Ok(Some(item)) => HttpResponse::Ok().json(item),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -183,17 +247,27 @@ async fn get_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web:
     }
 }
 
-async fn update_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>, body: web::Json<ItemDTO>) -> impl Responder {
+async fn update_item(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    body: web::Json<ItemDTO>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, key) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
     // Upstream ItemController PUT /items/{itemId} addresses items BY ID;
     // keep by-key as primary for compatibility and fall back to numeric id.
     let dto = body.into_inner();
-    match service.update_by_key(&app_id, &cluster_name, &namespace_name, &key, dto.clone()).await {
+    match service
+        .update_by_key(&app_id, &cluster_name, &namespace_name, &key, dto.clone())
+        .await
+    {
         Ok(item) => HttpResponse::Ok().json(item),
         Err(e) => {
             if let Ok(item_id) = key.parse::<i64>() {
-                match service.update(&app_id, &cluster_name, &namespace_name, item_id, dto).await {
+                match service
+                    .update(&app_id, &cluster_name, &namespace_name, item_id, dto)
+                    .await
+                {
                     Ok(item) => return HttpResponse::Ok().json(item),
                     Err(id_err) => {
                         return HttpResponse::BadRequest().json(ErrorResponse {
@@ -211,11 +285,21 @@ async fn update_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: w
     }
 }
 
-async fn delete_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>, operator: web::Query<Value>) -> impl Responder {
+async fn delete_item(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    operator: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, key) = path.into_inner();
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ItemService::new(data.get_ref().clone());
-    match service.delete_by_key(&app_id, &cluster_name, &namespace_name, &key, op).await {
+    match service
+        .delete_by_key(&app_id, &cluster_name, &namespace_name, &key, op)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -224,15 +308,42 @@ async fn delete_item(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: w
     }
 }
 
-async fn publish_release(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, query: web::Query<Value>) -> impl Responder {
+async fn publish_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let release_name = query.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let release_comment = query.get("comment").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
-    let is_emergency_publish = query.get("isEmergencyPublish").and_then(|v| v.as_bool()).unwrap_or(false);
+    let release_name = query
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let release_comment = query
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
+    let is_emergency_publish = query
+        .get("isEmergencyPublish")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.publish(&app_id, &cluster_name, &namespace_name, release_name, release_comment, operator, is_emergency_publish).await {
+    match service
+        .publish(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            release_name,
+            release_comment,
+            operator,
+            is_emergency_publish,
+        )
+        .await
+    {
         Ok(release) => HttpResponse::Ok().json(release),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -241,7 +352,10 @@ async fn publish_release(data: web::Data<Arc<dyn ApolloPersistenceService>>, pat
     }
 }
 
-async fn list_clusters(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>) -> impl Responder {
+async fn list_clusters(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
     let service = ClusterService::new(data.get_ref().clone());
     match service.list(app_id.as_str()).await {
         Ok(list) => HttpResponse::Ok().json(list),
@@ -252,7 +366,11 @@ async fn list_clusters(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_i
     }
 }
 
-async fn create_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>, body: web::Json<ClusterDTO>) -> impl Responder {
+async fn create_cluster(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    body: web::Json<ClusterDTO>,
+) -> impl Responder {
     let service = ClusterService::new(data.get_ref().clone());
     match service.create(app_id.as_str(), body.into_inner()).await {
         Ok(cluster) => HttpResponse::Ok().json(cluster),
@@ -263,7 +381,10 @@ async fn create_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_
     }
 }
 
-async fn get_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>) -> impl Responder {
+async fn get_cluster(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name) = path.into_inner();
     let service = ClusterService::new(data.get_ref().clone());
     match service.get(&app_id, &cluster_name).await {
@@ -279,9 +400,16 @@ async fn get_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: w
     }
 }
 
-async fn delete_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>, operator: web::Query<Value>) -> impl Responder {
+async fn delete_cluster(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    operator: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name) = path.into_inner();
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ClusterService::new(data.get_ref().clone());
     match service.delete(&app_id, &cluster_name, op).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -292,7 +420,10 @@ async fn delete_cluster(data: web::Data<Arc<dyn ApolloPersistenceService>>, path
     }
 }
 
-async fn list_commits(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn list_commits(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = CommitService::new(data.get_ref().clone());
     match service.list(&app_id, &cluster_name, &namespace_name).await {
@@ -304,7 +435,10 @@ async fn list_commits(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: 
     }
 }
 
-async fn create_commit(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<CommitDTO>) -> impl Responder {
+async fn create_commit(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<CommitDTO>,
+) -> impl Responder {
     let service = CommitService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(commit) => HttpResponse::Ok().json(commit),
@@ -315,7 +449,10 @@ async fn create_commit(data: web::Data<Arc<dyn ApolloPersistenceService>>, body:
     }
 }
 
-async fn get_commit(data: web::Data<Arc<dyn ApolloPersistenceService>>, id: web::Path<i64>) -> impl Responder {
+async fn get_commit(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    id: web::Path<i64>,
+) -> impl Responder {
     let commit_id = id.into_inner();
     let service = CommitService::new(data.get_ref().clone());
     match service.get(commit_id).await {
@@ -331,10 +468,16 @@ async fn get_commit(data: web::Data<Arc<dyn ApolloPersistenceService>>, id: web:
     }
 }
 
-async fn list_gray_release_rules(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn list_gray_release_rules(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.list_by_namespace(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .list_by_namespace(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(list) => HttpResponse::Ok().json(list),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
@@ -343,7 +486,10 @@ async fn list_gray_release_rules(data: web::Data<Arc<dyn ApolloPersistenceServic
     }
 }
 
-async fn create_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<GrayReleaseRuleDTO>) -> impl Responder {
+async fn create_gray_release_rule(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<GrayReleaseRuleDTO>,
+) -> impl Responder {
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(rule) => HttpResponse::Ok().json(rule),
@@ -354,10 +500,16 @@ async fn create_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceServi
     }
 }
 
-async fn get_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>) -> impl Responder {
+async fn get_gray_release_rule(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+    match service
+        .get(&app_id, &cluster_name, &namespace_name, &branch_name)
+        .await
+    {
         Ok(Some(rule)) => HttpResponse::Ok().json(rule),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -370,10 +522,23 @@ async fn get_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>
     }
 }
 
-async fn update_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>, body: web::Json<GrayReleaseRuleDTO>) -> impl Responder {
+async fn update_gray_release_rule(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    body: web::Json<GrayReleaseRuleDTO>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.update(&app_id, &cluster_name, &namespace_name, &branch_name, body.into_inner()).await {
+    match service
+        .update(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            &branch_name,
+            body.into_inner(),
+        )
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -382,11 +547,21 @@ async fn update_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceServi
     }
 }
 
-async fn delete_gray_release_rule(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>, operator: web::Query<Value>) -> impl Responder {
+async fn delete_gray_release_rule(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    operator: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.delete(&app_id, &cluster_name, &namespace_name, &branch_name, op).await {
+    match service
+        .delete(&app_id, &cluster_name, &namespace_name, &branch_name, op)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -403,7 +578,10 @@ async fn create_branch_admin(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceBranchService::new(data.get_ref().clone());
     match service
         .create_branch(&app_id, &cluster_name, &namespace_name, operator)
@@ -423,7 +601,10 @@ async fn get_branch_admin(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = NamespaceBranchService::new(data.get_ref().clone());
-    match service.find_branch(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .find_branch(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(ns)) => HttpResponse::Ok().json(ns),
         Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
@@ -439,7 +620,10 @@ async fn get_branch_rules_admin(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+    match service
+        .get(&app_id, &cluster_name, &namespace_name, &branch_name)
+        .await
+    {
         Ok(Some(rule)) => HttpResponse::Ok().json(rule),
         Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
@@ -456,7 +640,16 @@ async fn update_branch_rules_admin(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.update(&app_id, &cluster_name, &namespace_name, &branch_name, body.into_inner()).await {
+    match service
+        .update(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            &branch_name,
+            body.into_inner(),
+        )
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -471,7 +664,10 @@ async fn delete_branch_admin(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name, _branch_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceBranchService::new(data.get_ref().clone());
     match service
         .delete_branch(&app_id, &cluster_name, &namespace_name, operator, false)
@@ -516,7 +712,10 @@ async fn get_all_releases(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_all_releases(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .find_all_releases(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(all) => {
             let total = all.len();
             let content: Vec<_> = all.into_iter().skip(page * size).take(size).collect();
@@ -541,7 +740,10 @@ async fn get_active_release(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.get_latest_active(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .get_latest_active(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(release)) => HttpResponse::Ok().json(release),
         Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
@@ -558,7 +760,10 @@ async fn get_latest_release(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.get_latest_active(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .get_latest_active(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(release)) => HttpResponse::Ok().json(release),
         Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
@@ -576,7 +781,10 @@ async fn gray_del_release(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let release_id = query.get("releaseId").and_then(|v| v.as_i64());
 
     let service = NamespaceBranchService::new(data.get_ref().clone());
@@ -607,7 +815,10 @@ async fn get_release_histories(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_release_history(&app_id, &cluster_name, &namespace_name, page, size).await {
+    match service
+        .find_release_history(&app_id, &cluster_name, &namespace_name, page, size)
+        .await
+    {
         Ok((histories, total)) => HttpResponse::Ok().json(serde_json::json!({
             "content": histories,
             "total": total,
@@ -627,7 +838,10 @@ async fn get_release_history_by_release_id(
     query: web::Query<Value>,
 ) -> impl Responder {
     let release_id = query.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
-    let operation = query.get("operation").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let operation = query
+        .get("operation")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
@@ -661,8 +875,14 @@ async fn get_release_history_by_previous_release_id(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let previous_release_id = query.get("previousReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
-    let operation = query.get("operation").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let previous_release_id = query
+        .get("previousReleaseId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let operation = query
+        .get("operation")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
@@ -717,7 +937,10 @@ async fn delete_item_by_id(
     item_id: web::Path<i64>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let op = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ItemService::new(data.get_ref().clone());
     match service.delete(item_id.into_inner(), op).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -736,8 +959,15 @@ async fn comment_items(
     body: web::Json<Value>,
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let comment = body.get("comment").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let _operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let comment = body
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let _operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
 
     let change_sets = ItemChangeSets {
         create_items: body
@@ -827,22 +1057,26 @@ async fn list_associated_namespaces(
     let name = public_namespace_name.into_inner();
     let all = match NamespacePersistence::list_all(data.get_ref()).await {
         Ok(v) => v,
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     };
     let associated: Vec<_> = all
         .into_iter()
         .filter(|ns| !ns.is_deleted && ns.namespace_name == name)
-        .map(|ns| serde_json::json!({
-            "id": ns.id,
-            "appId": ns.app_id,
-            "clusterName": ns.cluster_name,
-            "namespaceName": ns.namespace_name,
-            "isPublic": ns.is_public,
-            "format": ns.format,
-        }))
+        .map(|ns| {
+            serde_json::json!({
+                "id": ns.id,
+                "appId": ns.app_id,
+                "clusterName": ns.cluster_name,
+                "namespaceName": ns.namespace_name,
+                "isPublic": ns.is_public,
+                "format": ns.format,
+            })
+        })
         .collect();
     HttpResponse::Ok().json(associated)
 }
@@ -856,10 +1090,12 @@ async fn count_associated_namespaces(
     let name = public_namespace_name.into_inner();
     let all = match NamespacePersistence::list_all(data.get_ref()).await {
         Ok(v) => v,
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     };
     let count = all
         .into_iter()
@@ -879,7 +1115,10 @@ async fn list_server_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>)
     }
 }
 
-async fn get_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>, key: web::Path<String>) -> impl Responder {
+async fn get_server_config(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    key: web::Path<String>,
+) -> impl Responder {
     let service = ServerConfigService::new(data.get_ref().clone());
     match service.get(key.as_str()).await {
         Ok(Some(config)) => HttpResponse::Ok().json(config),
@@ -894,7 +1133,10 @@ async fn get_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>, k
     }
 }
 
-async fn create_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<ServerConfigDTO>) -> impl Responder {
+async fn create_server_config(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<ServerConfigDTO>,
+) -> impl Responder {
     let service = ServerConfigService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(config) => HttpResponse::Ok().json(config),
@@ -905,10 +1147,16 @@ async fn create_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn update_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<ServerConfigDTO>) -> impl Responder {
+async fn update_server_config(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<ServerConfigDTO>,
+) -> impl Responder {
     let dto = body.into_inner();
     let service = ServerConfigService::new(data.get_ref().clone());
-    let operator = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+    let operator = dto
+        .data_change_created_by
+        .clone()
+        .unwrap_or_else(|| "admin".to_string());
     match service.update(&dto.key, &dto.value, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
@@ -918,8 +1166,15 @@ async fn update_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn delete_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>, key: web::Path<String>, operator: web::Query<Value>) -> impl Responder {
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+async fn delete_server_config(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    key: web::Path<String>,
+    operator: web::Query<Value>,
+) -> impl Responder {
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ServerConfigService::new(data.get_ref().clone());
     match service.delete(key.as_str(), op).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -930,7 +1185,10 @@ async fn delete_server_config(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn list_app_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>) -> impl Responder {
+async fn list_app_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.list_by_app(app_id.as_str()).await {
         Ok(list) => HttpResponse::Ok().json(list),
@@ -941,7 +1199,10 @@ async fn list_app_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>,
     }
 }
 
-async fn get_app_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>) -> impl Responder {
+async fn get_app_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
     let (app_id, name) = path.into_inner();
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.get(&app_id, &name).await {
@@ -957,7 +1218,10 @@ async fn get_app_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, p
     }
 }
 
-async fn create_app_namespace_admin(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<AppNamespaceDTO>) -> impl Responder {
+async fn create_app_namespace_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<AppNamespaceDTO>,
+) -> impl Responder {
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(ns) => HttpResponse::Ok().json(ns),
@@ -968,9 +1232,16 @@ async fn create_app_namespace_admin(data: web::Data<Arc<dyn ApolloPersistenceSer
     }
 }
 
-async fn delete_app_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>, operator: web::Query<Value>) -> impl Responder {
+async fn delete_app_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+    operator: web::Query<Value>,
+) -> impl Responder {
     let (app_id, name) = path.into_inner();
-    let op = operator.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let op = operator
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.delete(&app_id, &name, op).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -981,11 +1252,21 @@ async fn delete_app_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn lock_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, query: web::Query<Value>) -> impl Responder {
+async fn lock_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let locked_by = query.get("lockedBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let locked_by = query
+        .get("lockedBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceLockService::new(data.get_ref().clone());
-    match service.lock(&app_id, &cluster_name, &namespace_name, locked_by).await {
+    match service
+        .lock(&app_id, &cluster_name, &namespace_name, locked_by)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -994,11 +1275,21 @@ async fn lock_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path
     }
 }
 
-async fn unlock_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, query: web::Query<Value>) -> impl Responder {
+async fn unlock_namespace(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
-    let locked_by = query.get("lockedBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let locked_by = query
+        .get("lockedBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceLockService::new(data.get_ref().clone());
-    match service.unlock(&app_id, &cluster_name, &namespace_name, locked_by).await {
+    match service
+        .unlock(&app_id, &cluster_name, &namespace_name, locked_by)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1007,10 +1298,16 @@ async fn unlock_namespace(data: web::Data<Arc<dyn ApolloPersistenceService>>, pa
     }
 }
 
-async fn get_namespace_lock(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn get_namespace_lock(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = NamespaceLockService::new(data.get_ref().clone());
-    match service.get_lock(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .get_lock(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(lock)) => HttpResponse::Ok().json(serde_json::json!({
             "appId": lock.app_id,
             "clusterName": lock.cluster_name,
@@ -1029,10 +1326,17 @@ async fn get_namespace_lock(data: web::Data<Arc<dyn ApolloPersistenceService>>, 
     }
 }
 
-async fn update_item_set(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, body: web::Json<ItemChangeSets>) -> impl Responder {
+async fn update_item_set(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    body: web::Json<ItemChangeSets>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ItemSetService::new(data.get_ref().clone());
-    match service.update_set(&app_id, &cluster_name, &namespace_name, body.into_inner()).await {
+    match service
+        .update_set(&app_id, &cluster_name, &namespace_name, body.into_inner())
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1041,11 +1345,27 @@ async fn update_item_set(data: web::Data<Arc<dyn ApolloPersistenceService>>, pat
     }
 }
 
-async fn rollback_release_admin(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, i64)>, query: web::Query<Value>) -> impl Responder {
+async fn rollback_release_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, release_id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.rollback(&app_id, &cluster_name, &namespace_name, release_id, operator).await {
+    match service
+        .rollback(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            release_id,
+            operator,
+        )
+        .await
+    {
         Ok(release) => HttpResponse::Ok().json(release),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1054,20 +1374,25 @@ async fn rollback_release_admin(data: web::Data<Arc<dyn ApolloPersistenceService
     }
 }
 
-async fn list_releases(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, query: web::Query<Value>) -> impl Responder {
+async fn list_releases(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(10);
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_active_releases(&app_id, &cluster_name, &namespace_name, page, size).await {
-        Ok((releases, total)) => {
-            HttpResponse::Ok().json(serde_json::json!({
-                "content": releases,
-                "total": total,
-                "page": page,
-                "size": size,
-            }))
-        }
+    match service
+        .find_active_releases(&app_id, &cluster_name, &namespace_name, page, size)
+        .await
+    {
+        Ok((releases, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": releases,
+            "total": total,
+            "page": page,
+            "size": size,
+        })),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -1075,23 +1400,34 @@ async fn list_releases(data: web::Data<Arc<dyn ApolloPersistenceService>>, path:
     }
 }
 
-async fn merge_branch_and_release(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, body: web::Json<NamespaceGrayReleaseDTO>) -> impl Responder {
+async fn merge_branch_and_release(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    body: web::Json<NamespaceGrayReleaseDTO>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let req = body.into_inner();
     let service = ReleaseService::new(data.get_ref().clone());
-    let release_comment = if req.release_comment.is_empty() { None } else { Some(req.release_comment) };
-    match service.merge_branch_and_release_full(
-        &app_id,
-        &cluster_name,
-        &namespace_name,
-        &req.branch_name,
-        &req.release_title,
-        release_comment,
-        &req.released_by,
-        req.is_emergency_publish,
-        req.change_sets,
-        req.delete_branch,
-    ).await {
+    let release_comment = if req.release_comment.is_empty() {
+        None
+    } else {
+        Some(req.release_comment)
+    };
+    match service
+        .merge_branch_and_release_full(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            &req.branch_name,
+            &req.release_title,
+            release_comment,
+            &req.released_by,
+            req.is_emergency_publish,
+            req.change_sets,
+            req.delete_branch,
+        )
+        .await
+    {
         Ok(release) => HttpResponse::Ok().json(release),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1100,8 +1436,14 @@ async fn merge_branch_and_release(data: web::Data<Arc<dyn ApolloPersistenceServi
     }
 }
 
-async fn list_instance_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
-    let instance_id = query.get("instanceId").and_then(|v| v.as_i64()).unwrap_or(0);
+async fn list_instance_configs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let instance_id = query
+        .get("instanceId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let service = InstanceConfigService::new(data.get_ref().clone());
     match service.get_by_instance(instance_id).await {
         Ok(configs) => HttpResponse::Ok().json(configs),
@@ -1120,17 +1462,31 @@ async fn instances_by_release(
 ) -> impl Responder {
     let release_id = query.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
     let release = match <dyn crate::persistence::traits::ReleasePersistence>::get_by_release_id(
-        data.get_ref(), release_id,
-    ).await {
+        data.get_ref(),
+        release_id,
+    )
+    .await
+    {
         Ok(Some(r)) => r,
         Ok(None) => return HttpResponse::Ok().json(Vec::<Value>::new()),
         Err(e) => return internal_error(e),
     };
     let service = InstanceConfigService::new(data.get_ref().clone());
-    let all = match service.list_by_app_cluster(&release.app_id, &release.cluster_name, &release.namespace_name).await {
-        Ok(v) => v, Err(e) => return internal_error(e),
+    let all = match service
+        .list_by_app_cluster(
+            &release.app_id,
+            &release.cluster_name,
+            &release.namespace_name,
+        )
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal_error(e),
     };
-    let matched: Vec<&crate::api::dto::InstanceConfigDTO> = all.iter().filter(|c| c.release_key == release.release_key).collect();
+    let matched: Vec<&crate::api::dto::InstanceConfigDTO> = all
+        .iter()
+        .filter(|c| c.release_key == release.release_key)
+        .collect();
     HttpResponse::Ok().json(with_instances(data, matched).await)
 }
 
@@ -1141,8 +1497,14 @@ async fn instances_not_in_releases(
     query: web::Query<Value>,
 ) -> impl Responder {
     let app_id = query.get("appId").and_then(|v| v.as_str()).unwrap_or("");
-    let cluster = query.get("clusterName").and_then(|v| v.as_str()).unwrap_or("default");
-    let ns = query.get("namespaceName").and_then(|v| v.as_str()).unwrap_or("");
+    let cluster = query
+        .get("clusterName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let ns = query
+        .get("namespaceName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let release_ids = query
         .get("releaseIds")
         .and_then(|v| v.as_str())
@@ -1160,10 +1522,13 @@ async fn instances_not_in_releases(
     }
     let service = InstanceConfigService::new(data.get_ref().clone());
     let all = match service.list_by_app_cluster(app_id, cluster, ns).await {
-        Ok(v) => v, Err(e) => return internal_error(e),
+        Ok(v) => v,
+        Err(e) => return internal_error(e),
     };
-    let matched: Vec<&crate::api::dto::InstanceConfigDTO> =
-        all.iter().filter(|c| !keys.contains(&c.release_key)).collect();
+    let matched: Vec<&crate::api::dto::InstanceConfigDTO> = all
+        .iter()
+        .filter(|c| !keys.contains(&c.release_key))
+        .collect();
     HttpResponse::Ok().json(with_instances(data, matched).await)
 }
 
@@ -1175,9 +1540,14 @@ async fn instances_by_namespace_count(
     let (app_id, cluster, ns) = namespace_params(&query);
     let service = InstanceConfigService::new(data.get_ref().clone());
     let all = match service.list_by_app_cluster(&app_id, &cluster, &ns).await {
-        Ok(v) => v, Err(e) => return internal_error(e),
+        Ok(v) => v,
+        Err(e) => return internal_error(e),
     };
-    let count = all.iter().map(|c| c.instance_id).collect::<std::collections::HashSet<_>>().len();
+    let count = all
+        .iter()
+        .map(|c| c.instance_id)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     HttpResponse::Ok().json(serde_json::json!({ "count": count }))
 }
 
@@ -1189,21 +1559,37 @@ async fn instances_by_namespace(
     let (app_id, cluster, ns) = namespace_params(&query);
     let service = InstanceConfigService::new(data.get_ref().clone());
     let all = match service.list_by_app_cluster(&app_id, &cluster, &ns).await {
-        Ok(v) => v, Err(e) => return internal_error(e),
+        Ok(v) => v,
+        Err(e) => return internal_error(e),
     };
     HttpResponse::Ok().json(with_instances(data, all.iter().collect()).await)
 }
 
 fn namespace_params(query: &web::Query<Value>) -> (String, String, String) {
     (
-        query.get("appId").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        query.get("clusterName").and_then(|v| v.as_str()).unwrap_or("default").to_string(),
-        query.get("namespaceName").and_then(|v| v.as_str()).unwrap_or("application").to_string(),
+        query
+            .get("appId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        query
+            .get("clusterName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default")
+            .to_string(),
+        query
+            .get("namespaceName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("application")
+            .to_string(),
     )
 }
 
 fn internal_error(e: anyhow::Error) -> actix_web::HttpResponse {
-    HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() })
+    HttpResponse::InternalServerError().json(ErrorResponse {
+        status: 500,
+        message: e.to_string(),
+    })
 }
 
 /// Join instance rows so responses carry appId/ip/dataCenter like upstream.
@@ -1244,13 +1630,23 @@ async fn search_apps_by_id_or_name(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let q = query.get("query").and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase();
+    let q = query
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let service = crate::service::AppService::new(data.get_ref().clone());
     let all = match service.list().await {
         Ok(v) => v,
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     };
     let mut filtered: Vec<_> = all
         .into_iter()
@@ -1259,10 +1655,12 @@ async fn search_apps_by_id_or_name(
                 || a.app_id.to_lowercase().contains(&q)
                 || a.name.to_lowercase().contains(&q)
         })
-        .map(|a| serde_json::json!({
-            "appId": a.app_id, "name": a.name, "orgId": a.org_id,
-            "orgName": a.org_name, "ownerName": a.owner_name, "ownerEmail": a.owner_email,
-        }))
+        .map(|a| {
+            serde_json::json!({
+                "appId": a.app_id, "name": a.name, "orgId": a.org_id,
+                "orgName": a.org_name, "ownerName": a.owner_name, "ownerEmail": a.owner_email,
+            })
+        })
         .collect();
     let total = filtered.len();
     let start = (page * size).min(total);
@@ -1303,7 +1701,10 @@ async fn find_namespaces_by_item(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     if item_key.is_empty() {
-        return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: "itemKey is required".into() });
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "itemKey is required".into(),
+        });
     }
     let ns_ids = ItemPersistence::find_namespace_ids_by_item_key(data.get_ref(), item_key)
         .await
@@ -1339,7 +1740,10 @@ async fn namespaces_publish_info(
     let app_id = path.into_inner();
     match publish_info_map(data.get_ref(), &app_id).await {
         Ok(map) => HttpResponse::Ok().json(map),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1348,7 +1752,9 @@ pub(crate) async fn publish_info_map(
     persistence: &Arc<dyn ApolloPersistenceService>,
     app_id: &str,
 ) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
-    use crate::persistence::traits::{ClusterPersistence, ItemPersistence, NamespacePersistence, ReleasePersistence};
+    use crate::persistence::traits::{
+        ClusterPersistence, ItemPersistence, NamespacePersistence, ReleasePersistence,
+    };
     let clusters: Vec<_> = ClusterPersistence::list(persistence, app_id)
         .await?
         .into_iter()
@@ -1360,22 +1766,46 @@ pub(crate) async fn publish_info_map(
     let mut result = serde_json::Map::new();
     for cluster in clusters {
         let mut has_unpublished = false;
-        'outer: for ns in NamespacePersistence::list_by_app(persistence, app_id).await.unwrap_or_default() {
+        'outer: for ns in NamespacePersistence::list_by_app(persistence, app_id)
+            .await
+            .unwrap_or_default()
+        {
             if ns.is_deleted || ns.cluster_name != cluster.name {
                 continue;
             }
-            let latest = ReleasePersistence::get_latest(persistence, app_id, &ns.cluster_name, &ns.namespace_name).await.ok().flatten();
+            let latest = ReleasePersistence::get_latest(
+                persistence,
+                app_id,
+                &ns.cluster_name,
+                &ns.namespace_name,
+            )
+            .await
+            .ok()
+            .flatten();
             match latest {
                 None => {
-                    if !ItemPersistence::list_by_namespace(persistence, ns.id).await.unwrap_or_default().is_empty() {
+                    if !ItemPersistence::list_by_namespace(persistence, ns.id)
+                        .await
+                        .unwrap_or_default()
+                        .is_empty()
+                    {
                         has_unpublished = true;
                         break 'outer;
                     }
                 }
                 Some(rel) => {
-                    let publish_ms = rel.data_change_last_time.unwrap_or(rel.data_change_created_time);
-                    for item in ItemPersistence::list_by_namespace(persistence, ns.id).await.unwrap_or_default() {
-                        if item.data_change_last_time.unwrap_or(item.data_change_created_time) > publish_ms {
+                    let publish_ms = rel
+                        .data_change_last_time
+                        .unwrap_or(rel.data_change_created_time);
+                    for item in ItemPersistence::list_by_namespace(persistence, ns.id)
+                        .await
+                        .unwrap_or_default()
+                    {
+                        if item
+                            .data_change_last_time
+                            .unwrap_or(item.data_change_created_time)
+                            > publish_ms
+                        {
                             has_unpublished = true;
                             break 'outer;
                         }
@@ -1383,11 +1813,13 @@ pub(crate) async fn publish_info_map(
                 }
             }
         }
-        result.insert(cluster.name.clone(), serde_json::Value::Bool(has_unpublished));
+        result.insert(
+            cluster.name.clone(),
+            serde_json::Value::Bool(has_unpublished),
+        );
     }
     Ok(result)
 }
-
 
 /// ADM-018 — findPublicNamespaceForAssociatedNamespace:
 /// default cluster → the owner's namespace; custom cluster without a release
@@ -1424,28 +1856,47 @@ async fn associated_public_namespace(
     };
 
     if cluster_name == "default" {
-        let ns = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+        let ns = data
+            .get_ref()
+            .get_by_app_cluster(&owner_app, &cluster_name, &namespace_name)
+            .await
+            .unwrap_or(None);
         return HttpResponse::Ok().json(ns_json(ns));
     }
 
-    let custom = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+    let custom = data
+        .get_ref()
+        .get_by_app_cluster(&owner_app, &cluster_name, &namespace_name)
+        .await
+        .unwrap_or(None);
     let published = match custom.as_ref() {
-        Some(_) => ReleasePersistence::get_latest(data.get_ref(), &owner_app, &cluster_name, &namespace_name)
-            .await
-            .ok()
-            .flatten()
-            .is_some(),
+        Some(_) => ReleasePersistence::get_latest(
+            data.get_ref(),
+            &owner_app,
+            &cluster_name,
+            &namespace_name,
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_some(),
         None => false,
     };
 
     if published {
         return HttpResponse::Ok().json(ns_json(custom));
     }
-    let fallback = data.get_ref().get_by_app_cluster(&owner_app, "default", &namespace_name).await.unwrap_or(None);
+    let fallback = data
+        .get_ref()
+        .get_by_app_cluster(&owner_app, "default", &namespace_name)
+        .await
+        .unwrap_or(None);
     HttpResponse::Ok().json(ns_json(fallback))
 }
 
-async fn list_public_app_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
+async fn list_public_app_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+) -> impl Responder {
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.list_public().await {
         Ok(list) => HttpResponse::Ok().json(list),
@@ -1456,19 +1907,20 @@ async fn list_public_app_namespaces(data: web::Data<Arc<dyn ApolloPersistenceSer
     }
 }
 
-async fn list_audit(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
+async fn list_audit(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
     let service = AuditService::new(data.get_ref().clone());
     match service.list(page, size).await {
-        Ok((audits, total)) => {
-            HttpResponse::Ok().json(serde_json::json!({
-                "content": audits,
-                "total": total,
-                "page": page,
-                "size": size,
-            }))
-        }
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits,
+            "total": total,
+            "page": page,
+            "size": size,
+        })),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -1476,8 +1928,14 @@ async fn list_audit(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: w
     }
 }
 
-async fn list_audit_by_entity(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
-    let entity_name = query.get("entityName").and_then(|v| v.as_str()).unwrap_or("");
+async fn list_audit_by_entity(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let entity_name = query
+        .get("entityName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let entity_id = query.get("entityId").and_then(|v| v.as_str()).unwrap_or("");
     let service = AuditService::new(data.get_ref().clone());
     match service.list_by_entity(entity_name, entity_id).await {
@@ -1489,7 +1947,10 @@ async fn list_audit_by_entity(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn list_permissions(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
+async fn list_permissions(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let target_id = query.get("targetId").and_then(|v| v.as_str()).unwrap_or("");
     let service = PermissionService::new(data.get_ref().clone());
     match service.list_by_target(target_id).await {
@@ -1501,7 +1962,10 @@ async fn list_permissions(data: web::Data<Arc<dyn ApolloPersistenceService>>, qu
     }
 }
 
-async fn create_role(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<RoleDTO>) -> impl Responder {
+async fn create_role(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<RoleDTO>,
+) -> impl Responder {
     let service = RoleService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(role) => HttpResponse::Ok().json(role),
@@ -1512,7 +1976,10 @@ async fn create_role(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: w
     }
 }
 
-async fn delete_role(data: web::Data<Arc<dyn ApolloPersistenceService>>, id: web::Path<i64>) -> impl Responder {
+async fn delete_role(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    id: web::Path<i64>,
+) -> impl Responder {
     let service = RoleService::new(data.get_ref().clone());
     match service.delete(id.into_inner()).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1523,7 +1990,10 @@ async fn delete_role(data: web::Data<Arc<dyn ApolloPersistenceService>>, id: web
     }
 }
 
-async fn list_user_roles(data: web::Data<Arc<dyn ApolloPersistenceService>>, user_id: web::Path<String>) -> impl Responder {
+async fn list_user_roles(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    user_id: web::Path<String>,
+) -> impl Responder {
     let service = RoleService::new(data.get_ref().clone());
     match service.list_user_roles(user_id.as_str()).await {
         Ok(roles) => HttpResponse::Ok().json(roles),
@@ -1534,11 +2004,21 @@ async fn list_user_roles(data: web::Data<Arc<dyn ApolloPersistenceService>>, use
     }
 }
 
-async fn assign_role_to_user(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, i64)>, query: web::Query<Value>) -> impl Responder {
+async fn assign_role_to_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (user_id, role_id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = RoleService::new(data.get_ref().clone());
-    match service.assign_role_to_user(&user_id, role_id, operator).await {
+    match service
+        .assign_role_to_user(&user_id, role_id, operator)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1547,7 +2027,10 @@ async fn assign_role_to_user(data: web::Data<Arc<dyn ApolloPersistenceService>>,
     }
 }
 
-async fn remove_role_from_user(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, i64)>) -> impl Responder {
+async fn remove_role_from_user(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+) -> impl Responder {
     let (user_id, role_id) = path.into_inner();
     let service = RoleService::new(data.get_ref().clone());
     match service.remove_role_from_user(&user_id, role_id).await {
@@ -1559,7 +2042,10 @@ async fn remove_role_from_user(data: web::Data<Arc<dyn ApolloPersistenceService>
     }
 }
 
-async fn create_consumer(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<ConsumerDTO>) -> impl Responder {
+async fn create_consumer(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<ConsumerDTO>,
+) -> impl Responder {
     let service = ConsumerService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(consumer) => HttpResponse::Ok().json(consumer),
@@ -1570,7 +2056,10 @@ async fn create_consumer(data: web::Data<Arc<dyn ApolloPersistenceService>>, bod
     }
 }
 
-async fn get_consumer(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>) -> impl Responder {
+async fn get_consumer(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
     let service = ConsumerService::new(data.get_ref().clone());
     match service.get_by_app(app_id.as_str()).await {
         Ok(Some(consumer)) => HttpResponse::Ok().json(consumer),
@@ -1585,9 +2074,16 @@ async fn get_consumer(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id
     }
 }
 
-async fn create_consumer_token(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<i64>, query: web::Query<Value>) -> impl Responder {
+async fn create_consumer_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let consumer_id = path.into_inner();
-    let created_by = query.get("createdBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let created_by = query
+        .get("createdBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ConsumerTokenService::new(data.get_ref().clone());
     match service.create(consumer_id, created_by).await {
         Ok(token) => HttpResponse::Ok().json(token),
@@ -1598,7 +2094,10 @@ async fn create_consumer_token(data: web::Data<Arc<dyn ApolloPersistenceService>
     }
 }
 
-async fn list_consumer_tokens(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<i64>) -> impl Responder {
+async fn list_consumer_tokens(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+) -> impl Responder {
     let consumer_id = path.into_inner();
     let service = ConsumerTokenService::new(data.get_ref().clone());
     match service.list_by_consumer(consumer_id).await {
@@ -1610,7 +2109,10 @@ async fn list_consumer_tokens(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn delete_consumer_token(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(i64, i64)>) -> impl Responder {
+async fn delete_consumer_token(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(i64, i64)>,
+) -> impl Responder {
     let (consumer_id, token_id) = path.into_inner();
     let _ = consumer_id;
     let service = ConsumerTokenService::new(data.get_ref().clone());
@@ -1623,10 +2125,16 @@ async fn delete_consumer_token(data: web::Data<Arc<dyn ApolloPersistenceService>
     }
 }
 
-async fn export_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn export_configs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let item_service = ItemService::new(data.get_ref().clone());
-    match item_service.list(&app_id, &cluster_name, &namespace_name).await {
+    match item_service
+        .list(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(items) => {
             let export = crate::api::dto::ConfigExportDTO {
                 app_id,
@@ -1643,7 +2151,10 @@ async fn export_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, path
     }
 }
 
-async fn import_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<ConfigImportDTO>) -> impl Responder {
+async fn import_configs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<ConfigImportDTO>,
+) -> impl Responder {
     let dto = body.into_inner();
     let item_set_service = ItemSetService::new(data.get_ref().clone());
     let change_sets = ItemChangeSets {
@@ -1651,7 +2162,15 @@ async fn import_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, body
         update_items: vec![],
         delete_items: vec![],
     };
-    match item_set_service.update_set(&dto.app_id, &dto.cluster_name, &dto.namespace_name, change_sets).await {
+    match item_set_service
+        .update_set(
+            &dto.app_id,
+            &dto.cluster_name,
+            &dto.namespace_name,
+            change_sets,
+        )
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1660,8 +2179,14 @@ async fn import_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, body
     }
 }
 
-async fn list_favorites(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
-    let user_id = query.get("userId").and_then(|v| v.as_str()).unwrap_or("admin");
+async fn list_favorites(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
+    let user_id = query
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = FavoriteService::new(data.get_ref().clone());
     match service.list_by_user(user_id).await {
         Ok(list) => HttpResponse::Ok().json(list),
@@ -1672,7 +2197,10 @@ async fn list_favorites(data: web::Data<Arc<dyn ApolloPersistenceService>>, quer
     }
 }
 
-async fn create_favorite(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<FavoriteDTO>) -> impl Responder {
+async fn create_favorite(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<FavoriteDTO>,
+) -> impl Responder {
     let service = FavoriteService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(favorite) => HttpResponse::Ok().json(favorite),
@@ -1683,9 +2211,16 @@ async fn create_favorite(data: web::Data<Arc<dyn ApolloPersistenceService>>, bod
     }
 }
 
-async fn delete_favorite(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<i64>, query: web::Query<Value>) -> impl Responder {
+async fn delete_favorite(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<i64>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let id = path.into_inner();
-    let user_id = query.get("userId").and_then(|v| v.as_str()).unwrap_or("admin");
+    let user_id = query
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = FavoriteService::new(data.get_ref().clone());
     match service.delete(id, user_id).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1696,7 +2231,10 @@ async fn delete_favorite(data: web::Data<Arc<dyn ApolloPersistenceService>>, pat
     }
 }
 
-async fn search(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
+async fn search(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let app_id = query.get("appId").and_then(|v| v.as_str());
     let cluster_name = query.get("clusterName").and_then(|v| v.as_str());
     let key = query.get("key").and_then(|v| v.as_str());
@@ -1722,7 +2260,10 @@ async fn search(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::
 // Upstream `ItemController.getItemInfoBySearch` (lines 233-239) wraps the
 // matches in a `PageDTO<ItemInfoDTO>` (`{total, content, page, size}`) rather
 // than returning a bare array, which is what the `/search` alias keeps doing.
-async fn search_key_and_value(data: web::Data<Arc<dyn ApolloPersistenceService>>, query: web::Query<Value>) -> impl Responder {
+async fn search_key_and_value(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let app_id = query.get("appId").and_then(|v| v.as_str());
     let cluster_name = query.get("clusterName").and_then(|v| v.as_str());
     let key = query.get("key").and_then(|v| v.as_str());
@@ -1756,18 +2297,57 @@ async fn search_key_and_value(data: web::Data<Arc<dyn ApolloPersistenceService>>
     }
 }
 
-async fn sync_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<Value>) -> impl Responder {
-    let source_app_id = body.get("sourceAppId").and_then(|v| v.as_str()).unwrap_or("");
-    let source_cluster = body.get("sourceCluster").and_then(|v| v.as_str()).unwrap_or("default");
-    let source_namespace = body.get("sourceNamespace").and_then(|v| v.as_str()).unwrap_or("application");
-    let target_app_id = body.get("targetAppId").and_then(|v| v.as_str()).unwrap_or("");
-    let target_cluster = body.get("targetCluster").and_then(|v| v.as_str()).unwrap_or("default");
-    let target_namespace = body.get("targetNamespace").and_then(|v| v.as_str()).unwrap_or("application");
-    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
-    let overwrite = body.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false);
+async fn sync_configs(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let source_app_id = body
+        .get("sourceAppId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let source_cluster = body
+        .get("sourceCluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let source_namespace = body
+        .get("sourceNamespace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("application");
+    let target_app_id = body
+        .get("targetAppId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let target_cluster = body
+        .get("targetCluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let target_namespace = body
+        .get("targetNamespace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("application");
+    let operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
+    let overwrite = body
+        .get("overwrite")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
-    match service.sync_configs(source_app_id, source_cluster, source_namespace, target_app_id, target_cluster, target_namespace, operator, overwrite).await {
+    match service
+        .sync_configs(
+            source_app_id,
+            source_cluster,
+            source_namespace,
+            target_app_id,
+            target_cluster,
+            target_namespace,
+            operator,
+            overwrite,
+        )
+        .await
+    {
         Ok(result) => HttpResponse::Ok().json(result),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1776,16 +2356,47 @@ async fn sync_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: 
     }
 }
 
-async fn sync_app_all_namespaces(data: web::Data<Arc<dyn ApolloPersistenceService>>, body: web::Json<Value>) -> impl Responder {
-    let source_app_id = body.get("sourceAppId").and_then(|v| v.as_str()).unwrap_or("");
-    let source_cluster = body.get("sourceCluster").and_then(|v| v.as_str()).unwrap_or("default");
-    let target_app_id = body.get("targetAppId").and_then(|v| v.as_str()).unwrap_or("");
-    let target_cluster = body.get("targetCluster").and_then(|v| v.as_str()).unwrap_or("default");
-    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
-    let overwrite = body.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false);
+async fn sync_app_all_namespaces(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<Value>,
+) -> impl Responder {
+    let source_app_id = body
+        .get("sourceAppId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let source_cluster = body
+        .get("sourceCluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let target_app_id = body
+        .get("targetAppId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let target_cluster = body
+        .get("targetCluster")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
+    let overwrite = body
+        .get("overwrite")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
-    match service.sync_app_all_namespaces(source_app_id, source_cluster, target_app_id, target_cluster, operator, overwrite).await {
+    match service
+        .sync_app_all_namespaces(
+            source_app_id,
+            source_cluster,
+            target_app_id,
+            target_cluster,
+            operator,
+            overwrite,
+        )
+        .await
+    {
         Ok(results) => HttpResponse::Ok().json(results),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1795,7 +2406,10 @@ async fn sync_app_all_namespaces(data: web::Data<Arc<dyn ApolloPersistenceServic
 }
 
 // F-APO-ADM-011: Cluster name uniqueness check
-async fn check_cluster_unique(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String)>) -> impl Responder {
+async fn check_cluster_unique(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name) = path.into_inner();
     let service = ClusterService::new(data.get_ref().clone());
     match service.get(&app_id, &cluster_name).await {
@@ -1809,24 +2423,36 @@ async fn check_cluster_unique(data: web::Data<Arc<dyn ApolloPersistenceService>>
 }
 
 // F-APO-ITEM-008: Get item by base64 URL-encoded key
-async fn get_item_encoded(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String, String)>) -> impl Responder {
+async fn get_item_encoded(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name, encoded_key) = path.into_inner();
-    let key = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&encoded_key)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&encoded_key)) {
+    let key = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&encoded_key)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&encoded_key))
+    {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(s) => s,
-            Err(_) => return HttpResponse::BadRequest().json(ErrorResponse {
+            Err(_) => {
+                return HttpResponse::BadRequest().json(ErrorResponse {
+                    status: 400,
+                    message: "Invalid base64 encoded key".to_string(),
+                });
+            }
+        },
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
                 status: 400,
                 message: "Invalid base64 encoded key".to_string(),
-            }),
-        },
-        Err(_) => return HttpResponse::BadRequest().json(ErrorResponse {
-            status: 400,
-            message: "Invalid base64 encoded key".to_string(),
-        }),
+            });
+        }
     };
     let service = ItemService::new(data.get_ref().clone());
-    match service.get_by_key(&app_id, &cluster_name, &namespace_name, &key).await {
+    match service
+        .get_by_key(&app_id, &cluster_name, &namespace_name, &key)
+        .await
+    {
         Ok(Some(item)) => HttpResponse::Ok().json(item),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -1840,7 +2466,11 @@ async fn get_item_encoded(data: web::Data<Arc<dyn ApolloPersistenceService>>, pa
 }
 
 // F-APO-ITEM-009: Paged items listing
-async fn list_items_with_page(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>, query: web::Query<Value>) -> impl Responder {
+async fn list_items_with_page(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     // Upstream `Pageable` defaults to page 0 with a size of 20.
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -1849,7 +2479,8 @@ async fn list_items_with_page(data: web::Data<Arc<dyn ApolloPersistenceService>>
     match service.list(&app_id, &cluster_name, &namespace_name).await {
         Ok(all_items) => {
             let total = all_items.len();
-            let content: Vec<ItemDTO> = all_items.into_iter().skip(page * size).take(size).collect();
+            let content: Vec<ItemDTO> =
+                all_items.into_iter().skip(page * size).take(size).collect();
             HttpResponse::Ok().json(serde_json::json!({
                 "page": page,
                 "size": size,
@@ -1869,10 +2500,16 @@ async fn list_items_with_page(data: web::Data<Arc<dyn ApolloPersistenceService>>
 // Upstream `ItemController.findDeletedItems` (lines 207-231): the result is
 // derived from the commits created at/after the latest release, NOT from the
 // set of currently soft-deleted items.
-async fn get_deleted_items(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, String, String)>) -> impl Responder {
+async fn get_deleted_items(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
-    match service.list_deleted_since_last_release(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .list_deleted_since_last_release(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(items) => HttpResponse::Ok().json(items),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
@@ -1882,9 +2519,16 @@ async fn get_deleted_items(data: web::Data<Arc<dyn ApolloPersistenceService>>, p
 }
 
 // F-APO-ADMSVC-005: Access key CRUD handlers
-async fn create_access_key_admin(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>, body: web::Json<Value>) -> impl Responder {
+async fn create_access_key_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+    body: web::Json<Value>,
+) -> impl Responder {
     let app_id = app_id.into_inner();
-    let operator = body.get("createdBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = body
+        .get("createdBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.create(&app_id, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
@@ -1895,7 +2539,10 @@ async fn create_access_key_admin(data: web::Data<Arc<dyn ApolloPersistenceServic
     }
 }
 
-async fn list_access_keys_admin(data: web::Data<Arc<dyn ApolloPersistenceService>>, app_id: web::Path<String>) -> impl Responder {
+async fn list_access_keys_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: web::Path<String>,
+) -> impl Responder {
     let app_id = app_id.into_inner();
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.list_by_app(&app_id).await {
@@ -1907,9 +2554,16 @@ async fn list_access_keys_admin(data: web::Data<Arc<dyn ApolloPersistenceService
     }
 }
 
-async fn delete_access_key_admin(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, i64)>, query: web::Query<Value>) -> impl Responder {
+async fn delete_access_key_admin(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.delete(&app_id, id, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1921,9 +2575,16 @@ async fn delete_access_key_admin(data: web::Data<Arc<dyn ApolloPersistenceServic
 }
 
 // F-APO-ADMSVC-006: Enable/disable access key handlers
-async fn enable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, i64)>, query: web::Query<Value>) -> impl Responder {
+async fn enable_access_key(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.enable(&app_id, id, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
@@ -1934,9 +2595,16 @@ async fn enable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, p
     }
 }
 
-async fn disable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, path: web::Path<(String, i64)>, query: web::Query<Value>) -> impl Responder {
+async fn disable_access_key(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, i64)>,
+    query: web::Query<Value>,
+) -> impl Responder {
     let (app_id, id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.disable(&app_id, id, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
@@ -1950,9 +2618,7 @@ async fn disable_access_key(data: web::Data<Arc<dyn ApolloPersistenceService>>, 
 // ---- FR-8: Portal auxiliary endpoints ----
 
 /// GET /system-info — upstream SystemInfoController.
-async fn system_info(
-    data: web::Data<Arc<dyn ApolloPersistenceService>>,
-) -> impl Responder {
+async fn system_info(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
     let _ = data;
     HttpResponse::Ok().json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -2009,7 +2675,10 @@ async fn update_user_enabled(
 ) -> impl Responder {
     use crate::persistence::traits::UserPersistence;
     let username = query.get("username").and_then(|v| v.as_str()).unwrap_or("");
-    let enabled = query.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let enabled = query
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     match UserPersistence::get_user(data.get_ref(), username).await {
         Ok(Some(mut user)) => {
@@ -2049,7 +2718,10 @@ async fn init_app_permission(
     body: web::Json<Value>,
 ) -> impl Responder {
     let app_id = app_id.into_inner();
-    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let permission_service = PermissionService::new(data.get_ref().clone());
     // Upstream creates AppMaster + CreateCluster + CreateNamespace per app.
     let target_id = format!("App+{}", app_id);
@@ -2071,7 +2743,10 @@ async fn get_app_permissions(
     let target_id = format!("App+{}", app_id);
     match service.list_by_target(&target_id).await {
         Ok(perms) => {
-            let filtered: Vec<_> = perms.into_iter().filter(|p| p.permission_type == pt).collect();
+            let filtered: Vec<_> = perms
+                .into_iter()
+                .filter(|p| p.permission_type == pt)
+                .collect();
             HttpResponse::Ok().json(filtered)
         }
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {

@@ -151,9 +151,10 @@ impl AuthConfig {
             }
         }
         if let Ok(sig) = std::env::var("APOLLO_PORTAL_SIGNATURE")
-            && !sig.is_empty() {
-                cfg.portal_signature = sig;
-            }
+            && !sig.is_empty()
+        {
+            cfg.portal_signature = sig;
+        }
         if let Ok(flag) = std::env::var("APOLLO_OPENAPI_AUTH_ENABLED") {
             cfg.openapi_auth_enabled = matches!(
                 flag.trim().to_ascii_lowercase().as_str(),

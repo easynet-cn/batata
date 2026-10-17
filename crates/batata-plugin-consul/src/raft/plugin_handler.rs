@@ -64,7 +64,7 @@ pub struct ConsulRaftPluginHandler {
 }
 
 impl ConsulRaftPluginHandler {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(table_index: ConsulTableIndex) -> Self {
         Self {
             table_index,
@@ -72,7 +72,7 @@ impl ConsulRaftPluginHandler {
         }
     }
 
-/// The `new_arc` associated function.
+    /// The `new_arc` associated function.
     pub fn new_arc(table_index: ConsulTableIndex) -> Arc<Self> {
         Arc::new(Self::new(table_index))
     }
@@ -158,19 +158,18 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
         // cold-start recovery refreshes the view anyway.
         if consul_resp.success
             && let Some(dispatch) = hook_dispatch
-                && let Ok(guard) = self.apply_hook.try_read()
-                    && let Some(hook) = guard.as_ref() {
-                        match &dispatch {
-                            HookDispatch::CatalogRegister {
-                                key,
-                                registration_json,
-                            } => hook.on_catalog_register(key, registration_json),
-                            HookDispatch::CatalogDeregister { key } => {
-                                hook.on_catalog_deregister(key)
-                            }
-                            HookDispatch::AclChange => hook.on_acl_change(),
-                        }
-                    }
+            && let Ok(guard) = self.apply_hook.try_read()
+            && let Some(hook) = guard.as_ref()
+        {
+            match &dispatch {
+                HookDispatch::CatalogRegister {
+                    key,
+                    registration_json,
+                } => hook.on_catalog_register(key, registration_json),
+                HookDispatch::CatalogDeregister { key } => hook.on_catalog_deregister(key),
+                HookDispatch::AclChange => hook.on_acl_change(),
+            }
+        }
 
         // Convert ConsulRaftResponse -> RaftResponse
         if consul_resp.success {
@@ -985,11 +984,7 @@ fn apply_acl_token_put(
 
 /// Same as `apply_acl_token_put` but extracts accessor_id from the JSON too
 /// (used by ACLBootstrap where accessor_id is not a separate field).
-fn apply_acl_token_put_from_json(
-    db: &DB,
-    token_json: &str,
-    log_index: u64,
-) -> ConsulRaftResponse {
+fn apply_acl_token_put_from_json(db: &DB, token_json: &str, log_index: u64) -> ConsulRaftResponse {
     let parsed: serde_json::Value = match serde_json::from_str(token_json) {
         Ok(v) => v,
         Err(e) => {
@@ -1000,12 +995,11 @@ fn apply_acl_token_put_from_json(
         .as_str()
         .unwrap_or_default()
         .to_string();
-    let secret_id = parsed["SecretID"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
+    let secret_id = parsed["SecretID"].as_str().unwrap_or_default().to_string();
     if accessor_id.is_empty() || secret_id.is_empty() {
-        return ConsulRaftResponse::failure("missing accessor_id or secret_id in token JSON".to_string());
+        return ConsulRaftResponse::failure(
+            "missing accessor_id or secret_id in token JSON".to_string(),
+        );
     }
     apply_acl_token_put(db, &accessor_id, token_json, log_index)
 }
@@ -1056,10 +1050,7 @@ fn apply_acl_token_delete(db: &DB, accessor_id: &str, _log_index: u64) -> Consul
         Some(sid) => {
             let token_key = format!("token::{}", sid);
             if let Err(e) = db.delete_cf(cf, token_key.as_bytes()) {
-                return ConsulRaftResponse::failure(format!(
-                    "delete ACL token failed: {}",
-                    e
-                ));
+                return ConsulRaftResponse::failure(format!("delete ACL token failed: {}", e));
             }
             let _ = db.delete_cf(cf, index_key.as_bytes());
             debug!("Consul ACL token delete {}", token_key);
@@ -1102,7 +1093,7 @@ pub struct ConsulRaftWriter {
 }
 
 impl ConsulRaftWriter {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(core_raft: Arc<RaftNode>) -> Self {
         Self { core_raft }
     }

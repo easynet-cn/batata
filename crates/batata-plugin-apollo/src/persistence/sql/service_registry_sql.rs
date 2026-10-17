@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use sea_orm::{ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::entity::apollo_service_registry;
-use crate::persistence::traits::service_registry::{ServiceRegistryEntry, ServiceRegistryPersistence};
+use crate::persistence::traits::service_registry::{
+    ServiceRegistryEntry, ServiceRegistryPersistence,
+};
 
 pub struct ServiceRegistrySqlPersistence {
     db: DatabaseConnection,
@@ -30,12 +32,7 @@ fn to_entry(m: apollo_service_registry::Model) -> ServiceRegistryEntry {
 
 #[async_trait]
 impl ServiceRegistryPersistence for ServiceRegistrySqlPersistence {
-    async fn heartbeat(
-        &self,
-        service_name: &str,
-        uri: &str,
-        cluster: &str,
-    ) -> anyhow::Result<()> {
+    async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
         let now = chrono::Utc::now().naive_utc();
         let existing = apollo_service_registry::Entity::find()
             .filter(apollo_service_registry::Column::ServiceName.eq(service_name))
@@ -87,7 +84,9 @@ impl ServiceRegistryPersistence for ServiceRegistrySqlPersistence {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(window_secs);
         let rows = apollo_service_registry::Entity::find()
             .filter(apollo_service_registry::Column::ServiceName.eq(service_name))
-            .filter(apollo_service_registry::Column::DataChangeLastTime.gt(Some(cutoff.naive_utc())))
+            .filter(
+                apollo_service_registry::Column::DataChangeLastTime.gt(Some(cutoff.naive_utc())),
+            )
             .order_by_asc(apollo_service_registry::Column::Id)
             .all(&self.db)
             .await?;

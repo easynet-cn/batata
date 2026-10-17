@@ -210,7 +210,11 @@ pub fn char_len<T: IntoIden>(col: T, len: u32, backend: sea_orm::DatabaseBackend
 }
 
 /// Performs the `char_len_null` operation.
-pub fn char_len_null<T: IntoIden>(col: T, len: u32, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+pub fn char_len_null<T: IntoIden>(
+    col: T,
+    len: u32,
+    backend: sea_orm::DatabaseBackend,
+) -> ColumnDef {
     let mut def = ColumnDef::new(col);
     match backend {
         sea_orm::DatabaseBackend::MySql => {
@@ -224,11 +228,18 @@ pub fn char_len_null<T: IntoIden>(col: T, len: u32, backend: sea_orm::DatabaseBa
 }
 
 /// Performs the `char_len_default` operation.
-pub fn char_len_default<T: IntoIden>(col: T, len: u32, default: &str, backend: sea_orm::DatabaseBackend) -> ColumnDef {
+pub fn char_len_default<T: IntoIden>(
+    col: T,
+    len: u32,
+    default: &str,
+    backend: sea_orm::DatabaseBackend,
+) -> ColumnDef {
     let mut def = ColumnDef::new(col);
     match backend {
         sea_orm::DatabaseBackend::MySql => {
-            def.custom(Alias::new(format!("CHAR({})", len))).not_null().default(default);
+            def.custom(Alias::new(format!("CHAR({})", len)))
+                .not_null()
+                .default(default);
         }
         _ => {
             def.char_len(len).not_null().default(default);
@@ -240,7 +251,9 @@ pub fn char_len_default<T: IntoIden>(col: T, len: u32, default: &str, backend: s
 /// Performs the `date_time` operation.
 pub fn date_time<T: IntoIden>(col: T) -> ColumnDef {
     let mut def = ColumnDef::new(col);
-    def.date_time().not_null().default(Expr::current_timestamp());
+    def.date_time()
+        .not_null()
+        .default(Expr::current_timestamp());
     def.take()
 }
 

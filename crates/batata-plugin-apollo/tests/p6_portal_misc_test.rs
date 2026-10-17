@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::Arc;
 
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_plugin_apollo::api::dto::{ItemChangeSets, ItemDTO, NamespaceDTO};
 use batata_plugin_apollo::persistence::traits::ApolloPersistenceService;
 use batata_plugin_apollo::service::{AppService, ConfigSyncService, ItemService, NamespaceService};
@@ -138,7 +138,10 @@ async fn pitem010_synchronize_applies_changesets() {
 
     assert_eq!(results.len(), 1);
     let keys: Vec<&str> = results[0].iter().map(|i| i.key.as_str()).collect();
-    assert!(keys.contains(&"synced"), "target namespace now has `synced`");
+    assert!(
+        keys.contains(&"synced"),
+        "target namespace now has `synced`"
+    );
 }
 
 /// PMISC-001 — the openapi instance endpoint returns a paged envelope, even
@@ -183,7 +186,10 @@ async fn pmisc_degraded_endpoints() {
 
     let cases = [
         ("/openapi/v1/permissions/root", "hasRootPermission"),
-        ("/openapi/v1/apps/demo/permissions/CREATE_NAMESPACE", "hasPermission"),
+        (
+            "/openapi/v1/apps/demo/permissions/CREATE_NAMESPACE",
+            "hasPermission",
+        ),
         ("/openapi/v1/apps/demo/roles/ModifyNamespace", "roleName"),
         // NOTE: /organizations is a LIST endpoint (List<OrganizationDTO>);
         // it is asserted separately below against its array shape.
@@ -200,7 +206,9 @@ async fn pmisc_degraded_endpoints() {
     // organizations returns an array of one default org
     let resp = test::call_service(
         &app,
-        test::TestRequest::get().uri("/openapi/v1/organizations").to_request(),
+        test::TestRequest::get()
+            .uri("/openapi/v1/organizations")
+            .to_request(),
     )
     .await;
     let body: serde_json::Value = test::read_body_json(resp).await;
@@ -228,8 +236,13 @@ async fn port009_env_cluster_info() {
     let resp = test::call_service(&app, test::TestRequest::get().uri(&uri).to_request()).await;
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let envs = body["envClusterInfo"].as_array().expect("envClusterInfo is an array");
+    let envs = body["envClusterInfo"]
+        .as_array()
+        .expect("envClusterInfo is an array");
     assert_eq!(envs.len(), 4, "DEV/FAT/UAT/PRO");
     assert_eq!(envs[0]["env"], "DEV");
-    assert!(!envs[0]["clusters"].as_array().unwrap().is_empty(), "app has a root cluster");
+    assert!(
+        !envs[0]["clusters"].as_array().unwrap().is_empty(),
+        "app has a root cluster"
+    );
 }

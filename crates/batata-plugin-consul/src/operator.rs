@@ -36,19 +36,19 @@ use rand::Rng as _;
 #[serde(rename_all = "PascalCase")]
 pub struct RaftServer {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
-/// The `node` field.
+    /// The `node` field.
     pub node: String,
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
-/// The `leader` field.
+    /// The `leader` field.
     pub leader: bool,
-/// The `voter` field.
+    /// The `voter` field.
     pub voter: bool,
-/// The `protocol_version` field.
+    /// The `protocol_version` field.
     pub protocol_version: String,
-/// The `last_index` field.
+    /// The `last_index` field.
     pub last_index: u64,
 }
 
@@ -56,9 +56,9 @@ pub struct RaftServer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RaftConfigurationResponse {
-/// The `servers` field.
+    /// The `servers` field.
     pub servers: Vec<RaftServer>,
-/// The `index` field.
+    /// The `index` field.
     pub index: u64,
 }
 
@@ -71,28 +71,28 @@ pub struct RaftConfigurationResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TransferLeaderResponse {
-/// The `success` field.
+    /// The `success` field.
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `warning` field.
+    /// The `warning` field.
     pub warning: Option<String>,
 }
 
 /// Query parameters for raft peer removal
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RaftPeerParams {
-/// The `id` field.
+    /// The `id` field.
     pub id: Option<String>,
-/// The `address` field.
+    /// The `address` field.
     pub address: Option<String>,
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
 }
 
 /// Query parameters for transfer-leader
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TransferLeaderParams {
-/// The `id` field.
+    /// The `id` field.
     pub id: Option<String>,
 }
 
@@ -100,25 +100,25 @@ pub struct TransferLeaderParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotConfiguration {
-/// The `cleanup_dead_servers` field.
+    /// The `cleanup_dead_servers` field.
     pub cleanup_dead_servers: bool,
-/// The `last_contact_threshold` field.
+    /// The `last_contact_threshold` field.
     pub last_contact_threshold: String,
-/// The `max_trailing_logs` field.
+    /// The `max_trailing_logs` field.
     pub max_trailing_logs: u64,
-/// The `min_quorum` field.
+    /// The `min_quorum` field.
     pub min_quorum: u64,
-/// The `server_stabilization_time` field.
+    /// The `server_stabilization_time` field.
     pub server_stabilization_time: String,
-/// The `redundancy_zone_tag` field.
+    /// The `redundancy_zone_tag` field.
     pub redundancy_zone_tag: String,
-/// The `disable_upgrade_migration` field.
+    /// The `disable_upgrade_migration` field.
     pub disable_upgrade_migration: bool,
-/// The `upgrade_version_tag` field.
+    /// The `upgrade_version_tag` field.
     pub upgrade_version_tag: String,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -142,9 +142,9 @@ impl Default for AutopilotConfiguration {
 /// Query parameters for autopilot configuration PUT
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AutopilotConfigParams {
-/// The `cas` field.
+    /// The `cas` field.
     pub cas: Option<u64>,
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
 }
 
@@ -152,11 +152,11 @@ pub struct AutopilotConfigParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotHealthResponse {
-/// The `healthy` field.
+    /// The `healthy` field.
     pub healthy: bool,
-/// The `failure_tolerance` field.
+    /// The `failure_tolerance` field.
     pub failure_tolerance: i32,
-/// The `servers` field.
+    /// The `servers` field.
     pub servers: Vec<AutopilotServerHealth>,
 }
 
@@ -165,29 +165,29 @@ pub struct AutopilotHealthResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotServerHealth {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
-/// The `serf_status` field.
+    /// The `serf_status` field.
     pub serf_status: String,
-/// The `version` field.
+    /// The `version` field.
     pub version: String,
-/// The `leader` field.
+    /// The `leader` field.
     pub leader: bool,
-/// The `last_contact` field.
+    /// The `last_contact` field.
     pub last_contact: String,
-/// The `last_term` field.
+    /// The `last_term` field.
     pub last_term: u64,
-/// The `last_index` field.
+    /// The `last_index` field.
     pub last_index: u64,
-/// The `healthy` field.
+    /// The `healthy` field.
     pub healthy: bool,
-/// The `voter` field.
+    /// The `voter` field.
     pub voter: bool,
-/// The `stable_since` field.
+    /// The `stable_since` field.
     pub stable_since: String,
 }
 
@@ -195,15 +195,15 @@ pub struct AutopilotServerHealth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AutopilotStateResponse {
-/// The `healthy` field.
+    /// The `healthy` field.
     pub healthy: bool,
-/// The `failure_tolerance` field.
+    /// The `failure_tolerance` field.
     pub failure_tolerance: i32,
-/// The `leader` field.
+    /// The `leader` field.
     pub leader: String,
-/// The `voters` field.
+    /// The `voters` field.
     pub voters: Vec<String>,
-/// The `servers` field.
+    /// The `servers` field.
     pub servers: HashMap<String, AutopilotServerHealth>,
 }
 
@@ -211,7 +211,7 @@ pub struct AutopilotStateResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringRequest {
-/// The `key` field.
+    /// The `key` field.
     pub key: String,
 }
 
@@ -221,23 +221,23 @@ pub struct KeyringRequest {
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringResponse {
     #[serde(rename = "WAN")]
-/// The `wan` field.
+    /// The `wan` field.
     pub wan: bool,
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
-/// The `segment` field.
+    /// The `segment` field.
     pub segment: String,
     /// The partition name (a Consul Enterprise feature; empty string in OSS).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub partition: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `messages` field.
+    /// The `messages` field.
     pub messages: Option<HashMap<String, String>>,
     /// `key` -> number of nodes holding that key.
     pub keys: HashMap<String, i32>,
     /// Current primary key -> number of nodes.
     pub primary_keys: HashMap<String, i32>,
-/// The `num_nodes` field.
+    /// The `num_nodes` field.
     pub num_nodes: i32,
 }
 
@@ -246,7 +246,7 @@ pub struct KeyringResponse {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct KeyringResponses {
-/// The `responses` field.
+    /// The `responses` field.
     pub responses: Vec<KeyringResponse>,
 }
 
@@ -264,9 +264,9 @@ pub struct KeyringParams {
 /// Query parameters for operator endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct OperatorQueryParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
-/// The `stale` field.
+    /// The `stale` field.
     pub stale: Option<String>,
 }
 
@@ -299,12 +299,10 @@ fn parse_local_only(value: &Option<String>) -> bool {
 /// Validates the `relay_factor` range (0-5); returns an error message if out of range.
 fn validate_relay_factor(relay_factor: Option<u8>) -> Result<(), String> {
     if let Some(rf) = relay_factor
-        && rf > 5 {
-            return Err(format!(
-                "relay-factor must be between 0 and 5, got {}",
-                rf
-            ));
-        }
+        && rf > 5
+    {
+        return Err(format!("relay-factor must be between 0 and 5, got {}", rf));
+    }
     Ok(())
 }
 
@@ -329,12 +327,12 @@ pub struct ConsulOperatorService {
 }
 
 impl ConsulOperatorService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(member_manager: Arc<dyn batata_common::ClusterManager>) -> Self {
         Self::with_datacenter(member_manager, "dc1".to_string())
     }
 
-/// The `with_datacenter` associated function.
+    /// The `with_datacenter` associated function.
     pub fn with_datacenter(
         member_manager: Arc<dyn batata_common::ClusterManager>,
         datacenter: String,
@@ -347,8 +345,7 @@ impl ConsulOperatorService {
         let member_count = member_manager.member_count() as i32;
         let mut default_key_bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut default_key_bytes);
-        let default_key =
-            base64::engine::general_purpose::STANDARD.encode(default_key_bytes);
+        let default_key = base64::engine::general_purpose::STANDARD.encode(default_key_bytes);
         keyring.insert(default_key.clone(), member_count.max(1));
 
         Self {
@@ -377,7 +374,7 @@ impl ConsulOperatorService {
         svc
     }
 
-/// The `get_raft_configuration` method.
+    /// The `get_raft_configuration` method.
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
         let members = self.member_manager.all_members_extended();
         let servers: Vec<RaftServer> = members
@@ -397,7 +394,7 @@ impl ConsulOperatorService {
         RaftConfigurationResponse { servers, index }
     }
 
-/// The `get_autopilot_health` method.
+    /// The `get_autopilot_health` method.
     pub fn get_autopilot_health(&self) -> AutopilotHealthResponse {
         use batata_common::MemberState;
 
@@ -448,7 +445,7 @@ impl ConsulOperatorService {
         }
     }
 
-/// The `get_autopilot_state` method.
+    /// The `get_autopilot_state` method.
     pub fn get_autopilot_state(&self) -> AutopilotStateResponse {
         let health = self.get_autopilot_health();
         let leader = health
@@ -478,12 +475,12 @@ impl ConsulOperatorService {
         }
     }
 
-/// The `get_autopilot_config` method.
+    /// The `get_autopilot_config` method.
     pub async fn get_autopilot_config(&self) -> AutopilotConfiguration {
         self.autopilot_config.read().await.clone()
     }
 
-/// The `set_autopilot_config` method.
+    /// The `set_autopilot_config` method.
     pub async fn set_autopilot_config(
         &self,
         config: AutopilotConfiguration,
@@ -627,13 +624,13 @@ impl ConsulOperatorService {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceUsage {
-/// The `nodes` field.
+    /// The `nodes` field.
     pub nodes: i64,
-/// The `services` field.
+    /// The `services` field.
     pub services: i64,
-/// The `service_instances` field.
+    /// The `service_instances` field.
     pub service_instances: i64,
-/// The `connect_service_instances` field.
+    /// The `connect_service_instances` field.
     pub connect_service_instances: HashMap<String, i64>,
 }
 
@@ -641,7 +638,7 @@ pub struct ServiceUsage {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct OperatorUsageResponse {
-/// The `usage` field.
+    /// The `usage` field.
     pub usage: HashMap<String, ServiceUsage>,
 }
 
@@ -1312,7 +1309,11 @@ mod tests {
         // relay_factor > 5 is invalid.
         let result = validate_relay_factor(Some(6));
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("relay-factor must be between 0 and 5"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("relay-factor must be between 0 and 5")
+        );
     }
 
     #[test]
@@ -1371,12 +1372,11 @@ mod tests {
 
         // The key should exist only once.
         let responses = service.list_keys(false);
-        let count = responses.responses[0]
-            .keys
-            .get(&key)
-            .copied()
-            .unwrap_or(0);
-        assert_eq!(count, 1, "duplicate install should not create a second entry");
+        let count = responses.responses[0].keys.get(&key).copied().unwrap_or(0);
+        assert_eq!(
+            count, 1,
+            "duplicate install should not create a second entry"
+        );
     }
 
     #[tokio::test]

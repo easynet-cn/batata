@@ -15,13 +15,29 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloRolePermission::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloRolePermission::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloRolePermission::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(unsigned_int_null(ApolloRolePermission::RoleId, backend))
-                    .col(unsigned_int_null(ApolloRolePermission::PermissionId, backend))
-                    .col(string_len_default(ApolloRolePermission::DataChangeCreatedBy, 64, "default"))
+                    .col(unsigned_int_null(
+                        ApolloRolePermission::PermissionId,
+                        backend,
+                    ))
+                    .col(string_len_default(
+                        ApolloRolePermission::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloRolePermission::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloRolePermission::DataChangeLastModifiedBy, 64))
-                    .col(date_time_on_update(ApolloRolePermission::DataChangeLastTime))
+                    .col(string_len_null(
+                        ApolloRolePermission::DataChangeLastModifiedBy,
+                        64,
+                    ))
+                    .col(date_time_on_update(
+                        ApolloRolePermission::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

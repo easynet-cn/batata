@@ -8,8 +8,7 @@ pub use crate::constants::{ACTION_READ, ACTION_WRITE, SCOPE_PRIVATE, SCOPE_PUBLI
 /// Base predicate shape for visibility query planning.
 ///
 /// Mirrors `BaseVisibilityPredicate` in Nacos.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BaseVisibilityPredicate {
     /// No filtering — return all resources
     All,
@@ -21,7 +20,6 @@ pub enum BaseVisibilityPredicate {
     #[default]
     PublicAndOwner,
 }
-
 
 /// Storage-neutral authorized resources set.
 ///
@@ -59,7 +57,11 @@ impl QueryAdvisor {
     }
 
     /// Set the authorized resources used for additional filtering.
-    pub fn with_authorized_resources(mut self, resource_type: &str, resources: Vec<String>) -> Self {
+    pub fn with_authorized_resources(
+        mut self,
+        resource_type: &str,
+        resources: Vec<String>,
+    ) -> Self {
         self.authorized_predicate = AuthorizedResources {
             resource_type: resource_type.to_string(),
             resources,

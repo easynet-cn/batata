@@ -40,14 +40,27 @@ impl RoleService {
     }
 
     /// Performs the `assign_permission` operation.
-    pub async fn assign_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> Result<(), anyhow::Error> {
-        self.persistence.assign_role_permission(role_id, permission_id, created_by).await?;
+    pub async fn assign_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .assign_role_permission(role_id, permission_id, created_by)
+            .await?;
         Ok(())
     }
 
     /// Deletes the specified resource.
-    pub async fn remove_permission(&self, role_id: i64, permission_id: i64) -> Result<(), anyhow::Error> {
-        self.persistence.remove_role_permission(role_id, permission_id).await?;
+    pub async fn remove_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .remove_role_permission(role_id, permission_id)
+            .await?;
         Ok(())
     }
 
@@ -57,14 +70,27 @@ impl RoleService {
     }
 
     /// Performs the `assign_role_to_user` operation.
-    pub async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> Result<(), anyhow::Error> {
-        self.persistence.assign_role_to_user(user_id, role_id, created_by).await?;
+    pub async fn assign_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .assign_role_to_user(user_id, role_id, created_by)
+            .await?;
         Ok(())
     }
 
     /// Deletes the specified resource.
-    pub async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> Result<(), anyhow::Error> {
-        self.persistence.remove_role_from_user(user_id, role_id).await?;
+    pub async fn remove_role_from_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+    ) -> Result<(), anyhow::Error> {
+        self.persistence
+            .remove_role_from_user(user_id, role_id)
+            .await?;
         Ok(())
     }
 
@@ -81,7 +107,12 @@ impl RoleService {
             role_type: model.role_type,
             target_id: model.target_id.clone(),
             data_change_created_by: Some(model.data_change_created_by.clone()),
-            data_change_created_time: Some(model.data_change_created_time.format("%Y-%m-%dT%H:%M:%S%.f+00:00").to_string()),
+            data_change_created_time: Some(
+                model
+                    .data_change_created_time
+                    .format("%Y-%m-%dT%H:%M:%S%.f+00:00")
+                    .to_string(),
+            ),
         }
     }
 }

@@ -24,9 +24,9 @@ impl NamespaceLockEmbedded {
 
     /// Get column family handle
     fn cf(&self) -> anyhow::Result<&rocksdb::ColumnFamily> {
-        self.db
-            .cf_handle(CF_APOLLO_NAMESPACE_LOCK)
-            .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", CF_APOLLO_NAMESPACE_LOCK))
+        self.db.cf_handle(CF_APOLLO_NAMESPACE_LOCK).ok_or_else(|| {
+            anyhow::anyhow!("Column family '{}' not found", CF_APOLLO_NAMESPACE_LOCK)
+        })
     }
 
     /// Build key for namespace lock: "lock:{app_id}:{cluster}:{namespace}"

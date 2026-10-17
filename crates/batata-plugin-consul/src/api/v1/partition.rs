@@ -30,7 +30,8 @@ async fn read_partition(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::partition::read_partition(req, partition_service, acl_service, path, index_provider).await
+    crate::partition::read_partition(req, partition_service, acl_service, path, index_provider)
+        .await
 }
 
 #[put("")]
@@ -54,8 +55,15 @@ async fn update_partition(
     body: web::Json<Partition>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::partition::update_partition(req, partition_service, acl_service, path, body, index_provider)
-        .await
+    crate::partition::update_partition(
+        req,
+        partition_service,
+        acl_service,
+        path,
+        body,
+        index_provider,
+    )
+    .await
 }
 
 #[delete("/{name}")]

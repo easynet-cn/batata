@@ -29,22 +29,22 @@ pub type PartitionError = (u16, String);
 #[serde(rename_all = "PascalCase")]
 #[derive(Default)]
 pub struct Partition {
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-/// The `description` field.
+    /// The `description` field.
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-/// The `deleted_at` field.
+    /// The `deleted_at` field.
     pub deleted_at: Option<String>,
     #[serde(default)]
-/// The `disable_gossip` field.
+    /// The `disable_gossip` field.
     pub disable_gossip: bool,
     #[serde(default)]
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
     #[serde(default)]
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
@@ -58,7 +58,7 @@ pub struct ConsulPartitionService {
 }
 
 impl ConsulPartitionService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(index_provider: ConsulIndexProvider) -> Self {
         let partitions = Arc::new(DashMap::new());
         // "default" partition always exists
@@ -170,10 +170,7 @@ impl ConsulPartitionService {
 
     /// Create a new partition.
     /// Returns the created partition, or an error with HTTP status code.
-    pub async fn create_partition(
-        &self,
-        req: Partition,
-    ) -> Result<Partition, PartitionError> {
+    pub async fn create_partition(&self, req: Partition) -> Result<Partition, PartitionError> {
         Self::validate_name(&req.name)?;
 
         // Cannot create "default" — it already exists
@@ -211,10 +208,7 @@ impl ConsulPartitionService {
     ) -> Result<Partition, PartitionError> {
         // "default" partition cannot be updated
         if name == DEFAULT_PARTITION {
-            return Err((
-                400,
-                "The default partition cannot be modified".to_string(),
-            ));
+            return Err((400, "The default partition cannot be modified".to_string()));
         }
 
         // Check existence (including soft-deleted)
@@ -248,10 +242,7 @@ impl ConsulPartitionService {
     pub async fn delete_partition(&self, name: &str) -> Result<(), PartitionError> {
         // "default" partition cannot be deleted
         if name == DEFAULT_PARTITION {
-            return Err((
-                400,
-                "Cannot delete the default partition".to_string(),
-            ));
+            return Err((400, "Cannot delete the default partition".to_string()));
         }
 
         // Check existence (including soft-deleted)

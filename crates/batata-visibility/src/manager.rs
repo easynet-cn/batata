@@ -130,7 +130,10 @@ impl VisibilityPluginManager {
         resource: &dyn crate::model::VisibilityResource,
     ) -> ValidationResult {
         match self.default_service() {
-            Some(svc) => svc.validate_visibility(identity, action, api_type, resource).await,
+            Some(svc) => {
+                svc.validate_visibility(identity, action, api_type, resource)
+                    .await
+            }
             None => ValidationResult::allow(),
         }
     }

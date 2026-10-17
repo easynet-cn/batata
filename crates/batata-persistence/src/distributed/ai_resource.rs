@@ -15,9 +15,9 @@ use batata_consistency::raft::state_machine::{
 };
 
 use crate::model::{
-    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo,
-    AiResourceSearchDocumentInfo, AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo,
-    Page, PipelineExecutionInfo,
+    AiResourceInfo, AiResourceListFilter, AiResourceSearchChunkInfo, AiResourceSearchDocumentInfo,
+    AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
+    PipelineExecutionInfo,
 };
 use crate::traits::ai_resource::AiResourcePersistence;
 
@@ -959,12 +959,8 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_name: &str,
         resource_version: &str,
     ) -> anyhow::Result<Option<AiResourceSearchDocumentInfo>> {
-        let key = Self::search_document_key(
-            namespace_id,
-            resource_type,
-            resource_name,
-            resource_version,
-        );
+        let key =
+            Self::search_document_key(namespace_id, resource_type, resource_name, resource_version);
         self.get_search_document(&key)
     }
 
@@ -1008,12 +1004,8 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_name: &str,
         resource_version: &str,
     ) -> anyhow::Result<u64> {
-        let key = Self::search_document_key(
-            namespace_id,
-            resource_type,
-            resource_name,
-            resource_version,
-        );
+        let key =
+            Self::search_document_key(namespace_id, resource_type, resource_name, resource_version);
         if self.get_search_document(&key)?.is_none() {
             return Ok(0);
         }

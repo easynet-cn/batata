@@ -13,10 +13,10 @@ use batata_api::{
     grpc::Payload,
     remote::model::{
         AgentCatalogEntry, AgentCatalogVersion, AgentDiscoveryCallInterface,
-        AgentDiscoveryResponse, AgentDiscoveryResult, AgentDiscoveryRpcRequest, AgentEndpointInfo,
-        AgentEndpointOperationResponse, AgentEndpointRegisterRpcRequest,
-        AgentEndpointDeregisterRpcRequest, AgentSearchPage, AgentSearchResponse,
-        AgentSearchRpcRequest, EndpointSet, AgentEndpointRequest, AgentEndpointResponse,
+        AgentDiscoveryResponse, AgentDiscoveryResult, AgentDiscoveryRpcRequest,
+        AgentEndpointDeregisterRpcRequest, AgentEndpointInfo, AgentEndpointOperationResponse,
+        AgentEndpointRegisterRpcRequest, AgentEndpointRequest, AgentEndpointResponse,
+        AgentSearchPage, AgentSearchResponse, AgentSearchRpcRequest, EndpointSet,
         McpServerEndpointRequest, McpServerEndpointResponse, QueryAgentCardRequest,
         QueryAgentCardResponse, QueryMcpServerRequest, QueryMcpServerResponse,
         ReleaseAgentCardRequest, ReleaseAgentCardResponse, ReleaseMcpServerRequest,
@@ -795,11 +795,7 @@ pub struct AgentSearchRpcHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentSearchRpcHandler {
-    async fn handle(
-        &self,
-        _connection: &Connection,
-        payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = AgentSearchRpcRequest::from(payload);
         let request_id = request.request_id();
 
@@ -810,7 +806,11 @@ impl PayloadHandler for AgentSearchRpcHandler {
         } else {
             &search.namespace_id
         };
-        let page_no = if search.page_no == 0 { 1 } else { search.page_no };
+        let page_no = if search.page_no == 0 {
+            1
+        } else {
+            search.page_no
+        };
         let page_size = if search.page_size == 0 {
             20
         } else {
@@ -836,7 +836,14 @@ impl PayloadHandler for AgentSearchRpcHandler {
             match svc
                 // gRPC carries no end-user identity; visibility is not
                 // enforced on this internal path.
-                .list_agents(namespace_id, agent_name_filter, "blur", page_no, page_size, None)
+                .list_agents(
+                    namespace_id,
+                    agent_name_filter,
+                    "blur",
+                    page_no,
+                    page_size,
+                    None,
+                )
                 .await
             {
                 Ok(page) => {
@@ -981,11 +988,7 @@ pub struct AgentDiscoveryRpcHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentDiscoveryRpcHandler {
-    async fn handle(
-        &self,
-        _connection: &Connection,
-        payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = AgentDiscoveryRpcRequest::from(payload);
         let request_id = request.request_id();
 
@@ -1022,36 +1025,35 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
             // Try to resolve via service
             let mut version = String::new();
             if let Some(ref svc) = self.a2a_service
-                && let Ok(versions) = svc.list_versions(namespace_id, &reference.agent_name).await {
-                    // If label is "latest" or empty, find the latest version
-                    let label = if reference.label.is_empty() {
-                        "latest"
-                    } else {
-                        &reference.label
-                    };
-                    if label == "latest" {
-                        if let Some(latest) = versions.iter().find(|v| v.is_latest) {
-                            version = latest.version.clone();
-                        } else if let Some(first) = versions.first() {
-                            version = first.version.clone();
-                        }
-                    } else {
-                        // Try to match by label (not yet supported; fallback to latest)
-                        if let Some(latest) = versions.iter().find(|v| v.is_latest) {
-                            version = latest.version.clone();
-                        } else if let Some(first) = versions.first() {
-                            version = first.version.clone();
-                        }
+                && let Ok(versions) = svc.list_versions(namespace_id, &reference.agent_name).await
+            {
+                // If label is "latest" or empty, find the latest version
+                let label = if reference.label.is_empty() {
+                    "latest"
+                } else {
+                    &reference.label
+                };
+                if label == "latest" {
+                    if let Some(latest) = versions.iter().find(|v| v.is_latest) {
+                        version = latest.version.clone();
+                    } else if let Some(first) = versions.first() {
+                        version = first.version.clone();
+                    }
+                } else {
+                    // Try to match by label (not yet supported; fallback to latest)
+                    if let Some(latest) = versions.iter().find(|v| v.is_latest) {
+                        version = latest.version.clone();
+                    } else if let Some(first) = versions.first() {
+                        version = first.version.clone();
                     }
                 }
+            }
             // Fall back to in-memory registry
             if version.is_empty()
-                && let Some(agent) = self
-                    .agent_registry
-                    .get(namespace_id, &reference.agent_name)
-                {
-                    version = agent.card.version.clone();
-                }
+                && let Some(agent) = self.agent_registry.get(namespace_id, &reference.agent_name)
+            {
+                version = agent.card.version.clone();
+            }
             version
         };
 
@@ -1070,11 +1072,8 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
         // Gather endpoints from NamingService
         let mut endpoint_list: Vec<AgentEndpointInfo> = Vec::new();
         if let Some(ref ep_svc) = self.endpoint_service {
-            let endpoints = ep_svc.get_agent_endpoints(
-                namespace_id,
-                &reference.agent_name,
-                &resolved_version,
-            );
+            let endpoints =
+                ep_svc.get_agent_endpoints(namespace_id, &reference.agent_name, &resolved_version);
             endpoint_list = endpoints
                 .iter()
                 .map(|ep| AgentEndpointInfo {
@@ -1089,7 +1088,12 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
         }
 
         // Compute a simple content digest for change detection
-        let digest_input = format!("{}:{}:{}", reference.agent_name, resolved_version, endpoint_list.len());
+        let digest_input = format!(
+            "{}:{}:{}",
+            reference.agent_name,
+            resolved_version,
+            endpoint_list.len()
+        );
         let content_digest = format!("{:x}", md5_hash(digest_input.as_bytes()));
 
         // Build call interface with endpoint set (DECLARED source)
@@ -1151,11 +1155,7 @@ pub struct AgentEndpointRegisterRpcHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentEndpointRegisterRpcHandler {
-    async fn handle(
-        &self,
-        _connection: &Connection,
-        payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = AgentEndpointRegisterRpcRequest::from(payload);
         let request_id = request.request_id();
 
@@ -1209,7 +1209,10 @@ impl PayloadHandler for AgentEndpointRegisterRpcHandler {
             let url = if endpoint.path.is_empty() {
                 format!("{}://{}:{}", scheme, endpoint.address, endpoint.port)
             } else {
-                format!("{}://{}:{}{}", scheme, endpoint.address, endpoint.port, endpoint.path)
+                format!(
+                    "{}://{}:{}{}",
+                    scheme, endpoint.address, endpoint.port, endpoint.path
+                )
             };
             let card = AgentCard {
                 name: batch.agent_name.clone(),
@@ -1247,10 +1250,12 @@ impl PayloadHandler for AgentEndpointRegisterRpcHandler {
 
     fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
         let request = AgentEndpointRegisterRpcRequest::from(payload);
-        request.registration_batch.as_ref().map(|batch| (
+        request.registration_batch.as_ref().map(|batch| {
+            (
                 GrpcResource::ai(&batch.namespace_id, &batch.agent_name),
                 PermissionAction::Write,
-            ))
+            )
+        })
     }
 }
 
@@ -1271,11 +1276,7 @@ pub struct AgentEndpointDeregisterRpcHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
-    async fn handle(
-        &self,
-        _connection: &Connection,
-        payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = AgentEndpointDeregisterRpcRequest::from(payload);
         let request_id = request.request_id();
 
@@ -1295,24 +1296,22 @@ impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
         // List all versions and delete endpoints for each
         if let Some(ref svc) = self.a2a_service
             && let Ok(versions) = svc.list_versions(namespace_id, &request.agent_name).await
-                && let Some(ref ep_svc) = self.endpoint_service {
-                    for vd in &versions {
-                        let endpoints = ep_svc.get_agent_endpoints(
-                            namespace_id,
-                            &request.agent_name,
-                            &vd.version,
-                        );
-                        for ep in &endpoints {
-                            ep_svc.delete_agent_endpoint(
-                                namespace_id,
-                                &request.agent_name,
-                                &vd.version,
-                                &ep.address,
-                                ep.port,
-                            );
-                        }
-                    }
+            && let Some(ref ep_svc) = self.endpoint_service
+        {
+            for vd in &versions {
+                let endpoints =
+                    ep_svc.get_agent_endpoints(namespace_id, &request.agent_name, &vd.version);
+                for ep in &endpoints {
+                    ep_svc.delete_agent_endpoint(
+                        namespace_id,
+                        &request.agent_name,
+                        &vd.version,
+                        &ep.address,
+                        ep.port,
+                    );
                 }
+            }
+        }
 
         // Also deregister from in-memory registry
         let _ = self

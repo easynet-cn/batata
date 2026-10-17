@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_GRAY_RULE;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredGrayReleaseRule;
 use crate::persistence::traits::GrayReleasePersistence;
-use super::id_generator::IdGenerator;
 
 /// Embedded Gray Release Rule persistence using RocksDB
 pub struct GrayReleaseEmbedded {
@@ -53,7 +53,10 @@ impl GrayReleaseEmbedded {
     /// (`id` from `IdGenerator`) and the Raft apply phase (`id` derived from
     /// the Raft `log_index`). Operates on a `&DB` so it can be called from the
     /// Raft state machine.
-    pub fn write_raw(db: &DB, rule: &StoredGrayReleaseRule) -> anyhow::Result<StoredGrayReleaseRule> {
+    pub fn write_raw(
+        db: &DB,
+        rule: &StoredGrayReleaseRule,
+    ) -> anyhow::Result<StoredGrayReleaseRule> {
         let cf = db
             .cf_handle(CF_APOLLO_GRAY_RULE)
             .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_GRAY_RULE))?;
@@ -168,7 +171,8 @@ impl GrayReleasePersistence for GrayReleaseEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;

@@ -5,9 +5,9 @@ use actix_web::{App, test, web};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo, MemberState};
 
 // wiremock for OIDC provider mock in integration tests
+use batata_naming::service::NamingService;
 #[cfg(test)]
 use wiremock;
-use batata_naming::service::NamingService;
 
 use crate::acl::AclService;
 use crate::agent::ConsulAgentService;
@@ -489,8 +489,16 @@ async fn test_http_health_stream_service_returns_sse() {
 
     let text = String::from_utf8_lossy(&first);
     // SSE format: ": X-Consul-Index: N\ndata: [...]\n\n"
-    assert!(text.contains("X-Consul-Index"), "missing index comment: {}", text);
-    assert!(text.starts_with("data:") || text.contains("data:"), "missing data field: {}", text);
+    assert!(
+        text.contains("X-Consul-Index"),
+        "missing index comment: {}",
+        text
+    );
+    assert!(
+        text.starts_with("data:") || text.contains("data:"),
+        "missing data field: {}",
+        text
+    );
 
     // The data payload must be valid JSON.
     let data_line = text
@@ -2533,10 +2541,7 @@ async fn test_http_agent_checks_filter_by_name() {
     let app = create_test_app().await;
 
     // Register checks
-    for (id, name) in &[
-        ("flt-cn-1", "web-health"),
-        ("flt-cn-2", "db-health"),
-    ] {
+    for (id, name) in &[("flt-cn-1", "web-health"), ("flt-cn-2", "db-health")] {
         let check_json = serde_json::json!({
             "ID": id,
             "Name": name,
@@ -2594,7 +2599,9 @@ async fn test_http_acl_templated_policies_list() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let obj = body.as_object().expect("templated policies should be a map");
+    let obj = body
+        .as_object()
+        .expect("templated policies should be a map");
     assert_eq!(obj.len(), 6, "all 6 built-in templates should be present");
 
     for name in ALL_TEMPLATES {
@@ -2635,7 +2642,11 @@ async fn test_http_acl_templated_policies_list() {
     }
 
     // Templates without a schema should have an empty Schema string.
-    for name in &["builtin/dns", "builtin/nomad-server", "builtin/nomad-client"] {
+    for name in &[
+        "builtin/dns",
+        "builtin/nomad-server",
+        "builtin/nomad-client",
+    ] {
         assert_eq!(
             obj[*name]["Schema"], "",
             "Schema for {} should be empty",
@@ -2660,11 +2671,18 @@ async fn test_http_acl_templated_policy_read_service() {
     assert_eq!(body["TemplateName"], "builtin/service");
     assert!(!body["Schema"].as_str().unwrap().is_empty());
     assert!(body["Template"].as_str().unwrap().contains("{{.Name}}"));
-    assert!(body["Template"]
-        .as_str()
-        .unwrap()
-        .contains("{{.Name}}-sidecar-proxy"));
-    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("{{.Name}}-sidecar-proxy")
+    );
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service_prefix")
+    );
     assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
@@ -2674,8 +2692,18 @@ async fn test_http_acl_templated_policy_read_node() {
     let body = read_templated_policy("builtin/node").await;
     assert_eq!(body["TemplateName"], "builtin/node");
     assert!(!body["Schema"].as_str().unwrap().is_empty());
-    assert!(body["Template"].as_str().unwrap().contains("node \"{{.Name}}\""));
-    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("node \"{{.Name}}\"")
+    );
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service_prefix")
+    );
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
 
@@ -2685,7 +2713,12 @@ async fn test_http_acl_templated_policy_read_dns() {
     assert_eq!(body["TemplateName"], "builtin/dns");
     assert_eq!(body["Schema"], "");
     assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
-    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service_prefix")
+    );
     assert!(body["Template"].as_str().unwrap().contains("query_prefix"));
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
@@ -2695,10 +2728,20 @@ async fn test_http_acl_templated_policy_read_nomad_server() {
     let body = read_templated_policy("builtin/nomad-server").await;
     assert_eq!(body["TemplateName"], "builtin/nomad-server");
     assert_eq!(body["Schema"], "");
-    assert!(body["Template"].as_str().unwrap().contains("acl = \"write\""));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("acl = \"write\"")
+    );
     assert!(body["Template"].as_str().unwrap().contains("agent_prefix"));
     assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
-    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service_prefix")
+    );
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
 
@@ -2707,8 +2750,18 @@ async fn test_http_acl_templated_policy_read_api_gateway() {
     let body = read_templated_policy("builtin/api-gateway").await;
     assert_eq!(body["TemplateName"], "builtin/api-gateway");
     assert!(!body["Schema"].as_str().unwrap().is_empty());
-    assert!(body["Template"].as_str().unwrap().contains("mesh = \"read\""));
-    assert!(body["Template"].as_str().unwrap().contains("service \"{{.Name}}\""));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("mesh = \"read\"")
+    );
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service \"{{.Name}}\"")
+    );
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
 
@@ -2719,7 +2772,12 @@ async fn test_http_acl_templated_policy_read_nomad_client() {
     assert_eq!(body["Schema"], "");
     assert!(body["Template"].as_str().unwrap().contains("agent_prefix"));
     assert!(body["Template"].as_str().unwrap().contains("node_prefix"));
-    assert!(body["Template"].as_str().unwrap().contains("service_prefix"));
+    assert!(
+        body["Template"]
+            .as_str()
+            .unwrap()
+            .contains("service_prefix")
+    );
     assert!(body["Template"].as_str().unwrap().contains("key_prefix"));
     assert!(!body["Description"].as_str().unwrap().is_empty());
 }
@@ -2805,8 +2863,7 @@ async fn test_http_acl_templated_policy_preview_node() {
 
 #[actix_web::test]
 async fn test_http_acl_templated_policy_preview_dns() {
-    let (status, body_str) =
-        preview_templated_policy("builtin/dns", serde_json::json!({})).await;
+    let (status, body_str) = preview_templated_policy("builtin/dns", serde_json::json!({})).await;
     assert_eq!(status, 200);
     let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
     assert!(
@@ -3165,11 +3222,15 @@ async fn test_http_partition_list_excludes_deleted() {
 // ========================================================================
 
 /// Helper: creates an OIDC auth method.
-async fn create_oidc_auth_method(app: &impl actix_web::dev::Service<
-    actix_http::Request,
-    Response = actix_web::dev::ServiceResponse,
-    Error = actix_web::Error,
->, name: &str, discovery_url: &str) {
+async fn create_oidc_auth_method(
+    app: &impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+    name: &str,
+    discovery_url: &str,
+) {
     let req = test::TestRequest::put()
         .uri("/v1/acl/auth-method")
         .set_json(serde_json::json!({
@@ -3184,7 +3245,11 @@ async fn create_oidc_auth_method(app: &impl actix_web::dev::Service<
         }))
         .to_request();
     let resp = test::call_service(app, req).await;
-    assert_eq!(resp.status(), 200, "Creating OIDC auth method should return 200");
+    assert_eq!(
+        resp.status(),
+        200,
+        "Creating OIDC auth method should return 200"
+    );
 }
 
 /// `POST /v1/acl/oidc/auth-url` - returns 404 when the auth method does not exist.
@@ -3242,14 +3307,18 @@ async fn test_http_oidc_auth_url_success() {
 
     // Mock the OIDC discovery endpoint.
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/openid-configuration"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "issuer": mock_server.uri(),
-            "authorization_endpoint": format!("{}/oauth2/authorize", mock_server.uri()),
-            "token_endpoint": format!("{}/oauth2/token", mock_server.uri()),
-            "jwks_uri": format!("{}/.well-known/jwks.json", mock_server.uri()),
-            "userinfo_endpoint": format!("{}/userinfo", mock_server.uri())
-        })))
+        .and(wiremock::matchers::path(
+            "/.well-known/openid-configuration",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": mock_server.uri(),
+                "authorization_endpoint": format!("{}/oauth2/authorize", mock_server.uri()),
+                "token_endpoint": format!("{}/oauth2/token", mock_server.uri()),
+                "jwks_uri": format!("{}/.well-known/jwks.json", mock_server.uri()),
+                "userinfo_endpoint": format!("{}/userinfo", mock_server.uri())
+            })),
+        )
         .mount(&mock_server)
         .await;
 
@@ -3389,10 +3458,7 @@ async fn test_http_keyring_list() {
 
     // Verify the response is a KeyringResponses (contains the Responses array).
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(
-        body.is_object(),
-        "keyring list should return a JSON object"
-    );
+    assert!(body.is_object(), "keyring list should return a JSON object");
     let responses = body["Responses"]
         .as_array()
         .expect("should have Responses array");
@@ -3407,10 +3473,7 @@ async fn test_http_keyring_list() {
     assert_eq!(responses[1]["WAN"], true);
     assert_eq!(responses[0]["Datacenter"], "dc1");
     assert_eq!(responses[0]["NumNodes"], 1);
-    assert!(
-        responses[0]["Keys"].is_object(),
-        "Keys should be a map"
-    );
+    assert!(responses[0]["Keys"].is_object(), "Keys should be a map");
     assert!(
         responses[0]["PrimaryKeys"].is_object(),
         "PrimaryKeys should be a map"
@@ -3577,11 +3640,7 @@ async fn test_http_keyring_remove_primary_fails() {
         .set_json(serde_json::json!({ "Key": primary_key }))
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(
-        resp.status(),
-        400,
-        "removing primary key should return 400"
-    );
+    assert_eq!(resp.status(), 400, "removing primary key should return 400");
 }
 
 /// `POST /v1/operator/keyring` - invalid key format returns 400.
@@ -3709,11 +3768,7 @@ async fn test_http_intentions_create_invalid_permission_rejected() {
         }))
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(
-        resp.status(),
-        400,
-        "invalid HTTP method should be rejected"
-    );
+    assert_eq!(resp.status(), 400, "invalid HTTP method should be rejected");
 }
 
 // ========================================================================
@@ -3807,8 +3862,14 @@ async fn test_http_acl_login_applies_policy_binding_rule() {
 
     // Login and verify the token carries the policy.
     let body = http_login(&app, "login-am").await;
-    let policies = body["Policies"].as_array().expect("Policies should be an array");
-    assert_eq!(policies.len(), 1, "token should have one policy from binding rule");
+    let policies = body["Policies"]
+        .as_array()
+        .expect("Policies should be an array");
+    assert_eq!(
+        policies.len(),
+        1,
+        "token should have one policy from binding rule"
+    );
     assert_eq!(policies[0]["Name"], "login-test-policy");
 }
 
@@ -3834,7 +3895,11 @@ async fn test_http_acl_login_applies_role_binding_rule() {
     // Login and verify the token carries the role.
     let body = http_login(&app, "login-role-am").await;
     let roles = body["Roles"].as_array().expect("Roles should be an array");
-    assert_eq!(roles.len(), 1, "token should have one role from binding rule");
+    assert_eq!(
+        roles.len(),
+        1,
+        "token should have one role from binding rule"
+    );
     assert_eq!(roles[0]["Name"], "login-test-role");
 }
 
@@ -4094,14 +4159,21 @@ async fn test_http_connect_service_identity_success() {
     assert!(cert_pem.contains("BEGIN CERTIFICATE"));
     assert!(cert_pem.contains("END CERTIFICATE"));
 
-    let key_pem = body["PrivateKeyPEM"].as_str().expect("PrivateKeyPEM missing");
+    let key_pem = body["PrivateKeyPEM"]
+        .as_str()
+        .expect("PrivateKeyPEM missing");
     assert!(key_pem.contains("BEGIN"));
     assert!(key_pem.contains("PRIVATE KEY"));
 
     // CA roots must be a non-empty array
     let roots = body["Roots"].as_array().expect("Roots missing");
     assert!(!roots.is_empty());
-    assert!(roots[0]["RootCert"].as_str().unwrap_or("").contains("BEGIN CERTIFICATE"));
+    assert!(
+        roots[0]["RootCert"]
+            .as_str()
+            .unwrap_or("")
+            .contains("BEGIN CERTIFICATE")
+    );
 
     // Trust domain and datacenter
     assert_eq!(body["TrustDomain"], "consul");
@@ -4253,7 +4325,11 @@ async fn test_http_discovery_chain_default_subset() {
 
     // The resolver's target should be the stable subset target
     let target_id = resolver_node["Resolver"]["Target"].as_str().unwrap();
-    assert!(target_id.contains(".stable."), "resolver should target stable subset, got: {}", target_id);
+    assert!(
+        target_id.contains(".stable."),
+        "resolver should target stable subset, got: {}",
+        target_id
+    );
 }
 
 /// Failover targets should produce resolver nodes + DiscoveryTargets for each.
@@ -4299,10 +4375,7 @@ async fn test_http_discovery_chain_with_failover() {
     // The primary resolver's failover should list the failover resolver node names
     let nodes = chain["Nodes"].as_object().expect("Nodes missing");
     // There should be 3 resolver nodes: 1 primary + 2 failover
-    let resolver_nodes: Vec<_> = nodes
-        .values()
-        .filter(|n| n["Type"] == "resolver")
-        .collect();
+    let resolver_nodes: Vec<_> = nodes.values().filter(|n| n["Type"] == "resolver").collect();
     assert_eq!(resolver_nodes.len(), 3);
 
     // Find primary resolver (has failover config)
@@ -4417,12 +4490,24 @@ async fn test_http_connect_proxy_config_success() {
     assert_eq!(meta["CONSUL_PROXY_SERVICE_NAME"], "web-sidecar-proxy");
 
     // Admin endpoint must use the configured envoy_admin_bind_port.
-    assert_eq!(body["admin"]["address"]["socket_address"]["address"], "127.0.0.1");
-    assert_eq!(body["admin"]["address"]["socket_address"]["port_value"], 19001);
+    assert_eq!(
+        body["admin"]["address"]["socket_address"]["address"],
+        "127.0.0.1"
+    );
+    assert_eq!(
+        body["admin"]["address"]["socket_address"]["port_value"],
+        19001
+    );
 
     // Dynamic resources: LDS and CDS must use ADS.
-    assert_eq!(body["dynamic_resources"]["lds_config"]["resource_api_version"], "V3");
-    assert_eq!(body["dynamic_resources"]["cds_config"]["resource_api_version"], "V3");
+    assert_eq!(
+        body["dynamic_resources"]["lds_config"]["resource_api_version"],
+        "V3"
+    );
+    assert_eq!(
+        body["dynamic_resources"]["cds_config"]["resource_api_version"],
+        "V3"
+    );
     assert_eq!(body["dynamic_resources"]["ads_config"]["api_type"], "GRPC");
     assert_eq!(
         body["dynamic_resources"]["ads_config"]["grpc_services"][0]["envoy_grpc"]["cluster_name"],
@@ -4430,14 +4515,16 @@ async fn test_http_connect_proxy_config_success() {
     );
 
     // Static resources: local_agent cluster must point at the agent gRPC port.
-    let clusters = body["static_resources"]["clusters"].as_array().expect("clusters missing");
+    let clusters = body["static_resources"]["clusters"]
+        .as_array()
+        .expect("clusters missing");
     assert!(!clusters.is_empty());
     let local_agent = &clusters[0];
     assert_eq!(local_agent["name"], "local_agent");
     assert_eq!(local_agent["connect_timeout"], "1s");
     assert_eq!(local_agent["type"], "STRICT_DNS");
-    let endpoint_addr = &local_agent["load_assignment"]["endpoints"][0]["lb_endpoints"][0]
-        ["endpoint"]["address"]["socket_address"];
+    let endpoint_addr = &local_agent["load_assignment"]["endpoints"][0]["lb_endpoints"][0]["endpoint"]
+        ["address"]["socket_address"];
     assert_eq!(endpoint_addr["address"], "127.0.0.1");
     // gRPC port defaults to consul_port + 2 (8500 + 2 = 8502 in tests).
     assert_eq!(endpoint_addr["port_value"], 8502);
@@ -4473,7 +4560,10 @@ async fn test_http_connect_proxy_config_default_admin_port() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["admin"]["address"]["socket_address"]["port_value"], 19000);
+    assert_eq!(
+        body["admin"]["address"]["socket_address"]["port_value"],
+        19000
+    );
 }
 
 /// `GET /v1/connect/proxy/{service_id}` for a non-existent service returns 404.

@@ -64,7 +64,10 @@ async fn get_skill_detail(
         }
     };
 
-    match skill_service.get_skill_detail(ns, name, Some(get_username(&req).as_str())).await {
+    match skill_service
+        .get_skill_detail(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(Some(meta)) => HttpResponse::Ok().json(Result::success(meta)),
         Ok(None) => Result::<()>::http_not_found(
             &batata_common::error::SKILL_NOT_FOUND,
@@ -208,7 +211,10 @@ async fn delete_skill(
         }
     };
 
-    match skill_service.delete_skill(ns, name, Some(get_username(&req).as_str())).await {
+    match skill_service
+        .delete_skill(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -578,7 +584,10 @@ async fn update_draft(
         );
     }
 
-    match skill_service.update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str())).await {
+    match skill_service
+        .update_draft(ns, skill_name, &skill, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -614,7 +623,10 @@ async fn delete_draft(
         }
     };
 
-    match skill_service.delete_draft(ns, name, Some(get_username(&req).as_str())).await {
+    match skill_service
+        .delete_draft(ns, name, Some(get_username(&req).as_str()))
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -643,7 +655,12 @@ async fn submit_skill(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .submit(ns, &form.skill_name, &form.version, Some(get_username(&req).as_str()))
+        .submit(
+            ns,
+            &form.skill_name,
+            &form.version,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(version) => HttpResponse::Ok().json(Result::success(version)),
@@ -793,7 +810,12 @@ async fn update_labels(
     };
 
     match skill_service
-        .update_labels(ns, &form.skill_name, labels, Some(get_username(&req).as_str()))
+        .update_labels(
+            ns,
+            &form.skill_name,
+            labels,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -824,7 +846,12 @@ async fn update_biz_tags(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .update_biz_tags(ns, &form.skill_name, &form.biz_tags, Some(get_username(&req).as_str()))
+        .update_biz_tags(
+            ns,
+            &form.skill_name,
+            &form.biz_tags,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -931,7 +958,12 @@ async fn update_scope(
     let ns = normalize_namespace(&form.namespace_id);
 
     match skill_service
-        .update_scope(ns, &form.skill_name, &form.scope, Some(get_username(&req).as_str()))
+        .update_scope(
+            ns,
+            &form.skill_name,
+            &form.scope,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -1013,7 +1045,13 @@ async fn client_search_skills(
     let ns = normalize_namespace(&query.namespace_id);
 
     match skill_service
-        .search_skills(ns, query.keyword.as_deref(), query.page_no, query.page_size, Some(get_username(&req).as_str()))
+        .search_skills(
+            ns,
+            query.keyword.as_deref(),
+            query.page_no,
+            query.page_size,
+            Some(get_username(&req).as_str()),
+        )
         .await
     {
         Ok(page) => HttpResponse::Ok().json(Result::success(page)),

@@ -296,12 +296,8 @@ async fn search(
                 })
                 .collect();
 
-            let result_page = Page::new(
-                page.total_count,
-                page_no as u64,
-                page_size as u64,
-                entries,
-            );
+            let result_page =
+                Page::new(page.total_count, page_no as u64, page_size as u64, entries);
 
             HttpResponse::Ok().json(Result::success(result_page))
         }

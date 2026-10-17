@@ -13,7 +13,9 @@ use crate::agent::ConsulAgentService;
 use crate::config_entry::ConsulConfigEntryService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody};
+use crate::model::{
+    AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, ConsulErrorBody,
+};
 
 // ============================================================================
 // Envoy Bootstrap Models (for /v1/connect/proxy/:service_id)
@@ -25,147 +27,147 @@ use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError
 /// xDS (ADS) configuration pointing back at the local Consul agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyBootstrapConfig {
-/// The `node` field.
+    /// The `node` field.
     pub node: EnvoyNode,
-/// The `admin` field.
+    /// The `admin` field.
     pub admin: EnvoyAdmin,
-/// The `dynamic_resources` field.
+    /// The `dynamic_resources` field.
     pub dynamic_resources: EnvoyDynamicResources,
-/// The `static_resources` field.
+    /// The `static_resources` field.
     pub static_resources: EnvoyStaticResources,
 }
 
 /// Envoy node identity presented to the xDS management server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyNode {
-/// The `id` field — proxy service ID.
+    /// The `id` field — proxy service ID.
     pub id: String,
-/// The `cluster` field — datacenter name.
+    /// The `cluster` field — datacenter name.
     pub cluster: String,
-/// The `metadata` field — Consul-specific node metadata.
+    /// The `metadata` field — Consul-specific node metadata.
     pub metadata: HashMap<String, String>,
 }
 
 /// Envoy admin endpoint configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyAdmin {
-/// The `access_log_path` field.
+    /// The `access_log_path` field.
     pub access_log_path: String,
-/// The `address` field.
+    /// The `address` field.
     pub address: EnvoySocketAddress,
 }
 
 /// Socket address used in admin and cluster endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoySocketAddress {
-/// The `socket_address` field.
+    /// The `socket_address` field.
     pub socket_address: EnvoySocketAddressInner,
 }
 
 /// Inner socket address with address and port.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoySocketAddressInner {
-/// The `address` field.
+    /// The `address` field.
     pub address: String,
-/// The `port_value` field.
+    /// The `port_value` field.
     pub port_value: u16,
 }
 
 /// Dynamic xDS resources (LDS + CDS via aggregated discovery service).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyDynamicResources {
-/// The `lds_config` field.
+    /// The `lds_config` field.
     pub lds_config: EnvoyAdsConfig,
-/// The `cds_config` field.
+    /// The `cds_config` field.
     pub cds_config: EnvoyAdsConfig,
-/// The `ads_config` field.
+    /// The `ads_config` field.
     pub ads_config: EnvoyAdsApiConfigSource,
 }
 
 /// Minimal ADS config pointing at the aggregated discovery service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyAdsConfig {
-/// The `ads` field — empty object to enable ADS.
+    /// The `ads` field — empty object to enable ADS.
     pub ads: serde_json::Value,
-/// The `resource_api_version` field.
+    /// The `resource_api_version` field.
     pub resource_api_version: String,
 }
 
 /// API config source for the aggregated discovery service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyAdsApiConfigSource {
-/// The `api_type` field.
+    /// The `api_type` field.
     pub api_type: String,
-/// The `transport_api_version` field.
+    /// The `transport_api_version` field.
     pub transport_api_version: String,
-/// The `grpc_services` field.
+    /// The `grpc_services` field.
     pub grpc_services: Vec<EnvoyGrpcService>,
 }
 
 /// gRPC service definition pointing at the local agent cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyGrpcService {
-/// The `envoy_grpc` field.
+    /// The `envoy_grpc` field.
     pub envoy_grpc: EnvoyGrpcServiceInner,
 }
 
 /// Inner gRPC service with cluster name reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyGrpcServiceInner {
-/// The `cluster_name` field.
+    /// The `cluster_name` field.
     pub cluster_name: String,
 }
 
 /// Static resources containing the local_agent xDS cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyStaticResources {
-/// The `clusters` field.
+    /// The `clusters` field.
     pub clusters: Vec<EnvoyCluster>,
 }
 
 /// Envoy cluster definition for the local agent xDS server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyCluster {
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
-/// The `connect_timeout` field.
+    /// The `connect_timeout` field.
     pub connect_timeout: String,
-/// The `type` field.
+    /// The `type` field.
     #[serde(rename = "type")]
     pub cluster_type: String,
-/// The `typed_extension_protocol_options` field.
+    /// The `typed_extension_protocol_options` field.
     pub typed_extension_protocol_options: serde_json::Value,
-/// The `load_assignment` field.
+    /// The `load_assignment` field.
     pub load_assignment: EnvoyLoadAssignment,
 }
 
 /// Load assignment for the local agent cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyLoadAssignment {
-/// The `cluster_name` field.
+    /// The `cluster_name` field.
     pub cluster_name: String,
-/// The `endpoints` field.
+    /// The `endpoints` field.
     pub endpoints: Vec<EnvoyLocalityLbEndpoints>,
 }
 
 /// Locality load balancer endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyLocalityLbEndpoints {
-/// The `lb_endpoints` field.
+    /// The `lb_endpoints` field.
     pub lb_endpoints: Vec<EnvoyLbEndpoint>,
 }
 
 /// A single load balancer endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyLbEndpoint {
-/// The `endpoint` field.
+    /// The `endpoint` field.
     pub endpoint: EnvoyEndpoint,
 }
 
 /// Endpoint address wrapper.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvoyEndpoint {
-/// The `address` field.
+    /// The `address` field.
     pub address: EnvoySocketAddress,
 }
 
@@ -177,11 +179,11 @@ pub struct EnvoyEndpoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DiscoveryGraphNodeType {
-/// The `Router` variant.
+    /// The `Router` variant.
     Router,
-/// The `Splitter` variant.
+    /// The `Splitter` variant.
     Splitter,
-/// The `Resolver` variant.
+    /// The `Resolver` variant.
     Resolver,
 }
 
@@ -190,7 +192,7 @@ pub enum DiscoveryGraphNodeType {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryRouteMatch {
     #[serde(rename = "HTTP")]
-/// The `http` field.
+    /// The `http` field.
     pub http: Option<DiscoveryHTTPRouteMatch>,
 }
 
@@ -199,22 +201,22 @@ pub struct DiscoveryRouteMatch {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPRouteMatch {
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_exact` field.
+    /// The `path_exact` field.
     pub path_exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_prefix` field.
+    /// The `path_prefix` field.
     pub path_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `path_regex` field.
+    /// The `path_regex` field.
     pub path_regex: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `header` field.
+    /// The `header` field.
     pub header: Vec<DiscoveryHTTPHeaderMatch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `query_param` field.
+    /// The `query_param` field.
     pub query_param: Vec<DiscoveryHTTPQueryMatch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `methods` field.
+    /// The `methods` field.
     pub methods: Vec<String>,
 }
 
@@ -222,25 +224,25 @@ pub struct DiscoveryHTTPRouteMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPHeaderMatch {
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `exact` field.
+    /// The `exact` field.
     pub exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `prefix` field.
+    /// The `prefix` field.
     pub prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `suffix` field.
+    /// The `suffix` field.
     pub suffix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `regex` field.
+    /// The `regex` field.
     pub regex: Option<String>,
     #[serde(default)]
-/// The `present` field.
+    /// The `present` field.
     pub present: bool,
     #[serde(default)]
-/// The `invert` field.
+    /// The `invert` field.
     pub invert: bool,
 }
 
@@ -248,16 +250,16 @@ pub struct DiscoveryHTTPHeaderMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryHTTPQueryMatch {
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `exact` field.
+    /// The `exact` field.
     pub exact: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `regex` field.
+    /// The `regex` field.
     pub regex: Option<String>,
     #[serde(default)]
-/// The `present` field.
+    /// The `present` field.
     pub present: bool,
 }
 
@@ -265,9 +267,9 @@ pub struct DiscoveryHTTPQueryMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryRoute {
-/// The `definition` field.
+    /// The `definition` field.
     pub definition: Option<DiscoveryRouteMatch>,
-/// The `next_node` field.
+    /// The `next_node` field.
     pub next_node: String,
 }
 
@@ -275,11 +277,11 @@ pub struct DiscoveryRoute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoverySplit {
-/// The `definition` field.
+    /// The `definition` field.
     pub definition: Option<DiscoverySplitDefinition>,
-/// The `weight` field.
+    /// The `weight` field.
     pub weight: f64,
-/// The `next_node` field.
+    /// The `next_node` field.
     pub next_node: String,
 }
 
@@ -288,16 +290,16 @@ pub struct DiscoverySplit {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoverySplitDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `service` field.
+    /// The `service` field.
     pub service: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `service_subset` field.
+    /// The `service_subset` field.
     pub service_subset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -305,14 +307,14 @@ pub struct DiscoverySplitDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryResolver {
-/// The `default` field.
+    /// The `default` field.
     pub default: bool,
-/// The `connect_timeout` field.
+    /// The `connect_timeout` field.
     pub connect_timeout: String,
-/// The `target` field.
+    /// The `target` field.
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-/// The `failover` field.
+    /// The `failover` field.
     pub failover: Option<DiscoveryFailover>,
 }
 
@@ -320,7 +322,7 @@ pub struct DiscoveryResolver {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryFailover {
-/// The `targets` field.
+    /// The `targets` field.
     pub targets: Vec<String>,
 }
 
@@ -329,18 +331,18 @@ pub struct DiscoveryFailover {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryGraphNode {
     #[serde(rename = "Type")]
-/// The `node_type` field.
+    /// The `node_type` field.
     pub node_type: DiscoveryGraphNodeType,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `routes` field.
+    /// The `routes` field.
     pub routes: Vec<DiscoveryRoute>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `splits` field.
+    /// The `splits` field.
     pub splits: Vec<DiscoverySplit>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `resolver` field.
+    /// The `resolver` field.
     pub resolver: Option<DiscoveryResolver>,
 }
 
@@ -349,29 +351,29 @@ pub struct DiscoveryGraphNode {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryTarget {
     #[serde(rename = "ID")]
-/// The `id` field.
+    /// The `id` field.
     pub id: String,
-/// The `service` field.
+    /// The `service` field.
     pub service: String,
-/// The `service_subset` field.
+    /// The `service_subset` field.
     pub service_subset: String,
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: String,
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: String,
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
     #[serde(rename = "MeshGateway")]
-/// The `mesh_gateway` field.
+    /// The `mesh_gateway` field.
     pub mesh_gateway: MeshGatewayConfig,
-/// The `subset` field.
+    /// The `subset` field.
     pub subset: DiscoveryTargetSubset,
-/// The `connect_timeout` field.
+    /// The `connect_timeout` field.
     pub connect_timeout: String,
     #[serde(rename = "SNI")]
-/// The `sni` field.
+    /// The `sni` field.
     pub sni: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
 }
 
@@ -380,7 +382,7 @@ pub struct DiscoveryTarget {
 #[serde(rename_all = "PascalCase")]
 pub struct MeshGatewayConfig {
     #[serde(default)]
-/// The `mode` field.
+    /// The `mode` field.
     pub mode: String,
 }
 
@@ -389,10 +391,10 @@ pub struct MeshGatewayConfig {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryTargetSubset {
     #[serde(default)]
-/// The `filter` field.
+    /// The `filter` field.
     pub filter: String,
     #[serde(default)]
-/// The `only_passing` field.
+    /// The `only_passing` field.
     pub only_passing: bool,
 }
 
@@ -400,25 +402,25 @@ pub struct DiscoveryTargetSubset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CompiledDiscoveryChain {
-/// The `service_name` field.
+    /// The `service_name` field.
     pub service_name: String,
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: String,
-/// The `datacenter` field.
+    /// The `datacenter` field.
     pub datacenter: String,
     #[serde(default)]
-/// The `customization_hash` field.
+    /// The `customization_hash` field.
     pub customization_hash: String,
-/// The `protocol` field.
+    /// The `protocol` field.
     pub protocol: String,
-/// The `start_node` field.
+    /// The `start_node` field.
     pub start_node: String,
-/// The `nodes` field.
+    /// The `nodes` field.
     pub nodes: HashMap<String, DiscoveryGraphNode>,
-/// The `targets` field.
+    /// The `targets` field.
     pub targets: HashMap<String, DiscoveryTarget>,
-/// The `default` field. True when the chain is the auto-generated default
-/// (no custom service-router/service-splitter/service-resolver config entries).
+    /// The `default` field. True when the chain is the auto-generated default
+    /// (no custom service-router/service-splitter/service-resolver config entries).
     #[serde(default)]
     pub default: bool,
 }
@@ -427,7 +429,7 @@ pub struct CompiledDiscoveryChain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryChainResponse {
-/// The `chain` field.
+    /// The `chain` field.
     pub chain: CompiledDiscoveryChain,
 }
 
@@ -440,10 +442,10 @@ pub struct DiscoveryChainResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct ResolvedConsumers {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `peers` field.
+    /// The `peers` field.
     pub peers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-/// The `partitions` field.
+    /// The `partitions` field.
     pub partitions: Vec<String>,
 }
 
@@ -451,9 +453,9 @@ pub struct ResolvedConsumers {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResolvedExportedService {
-/// The `service` field.
+    /// The `service` field.
     pub service: String,
-/// The `consumers` field.
+    /// The `consumers` field.
     pub consumers: ResolvedConsumers,
 }
 
@@ -461,10 +463,10 @@ pub struct ResolvedExportedService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ImportedService {
-/// The `service` field.
+    /// The `service` field.
     pub service: String,
     #[serde(default)]
-/// The `source_peer` field.
+    /// The `source_peer` field.
     pub source_peer: String,
 }
 
@@ -475,14 +477,14 @@ pub struct ImportedService {
 /// Query parameters for discovery chain
 #[derive(Debug, Deserialize)]
 pub struct DiscoveryChainQueryParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
-/// The `ns` field.
+    /// The `ns` field.
     pub ns: Option<String>,
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
     #[serde(rename = "compile-dc")]
-/// The `compile_dc` field.
+    /// The `compile_dc` field.
     pub compile_dc: Option<String>,
 }
 
@@ -491,20 +493,20 @@ pub struct DiscoveryChainQueryParams {
 #[serde(rename_all = "PascalCase")]
 pub struct DiscoveryChainOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `override_protocol` field.
+    /// The `override_protocol` field.
     pub override_protocol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `override_connect_timeout` field.
+    /// The `override_connect_timeout` field.
     pub override_connect_timeout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `override_mesh_gateway` field.
+    /// The `override_mesh_gateway` field.
     pub override_mesh_gateway: Option<MeshGatewayConfig>,
 }
 
 /// Query parameters for exported/imported services
 #[derive(Debug, Deserialize)]
 pub struct ServiceVisibilityQueryParams {
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
 }
 
@@ -528,12 +530,12 @@ pub struct ConsulConnectService {
 }
 
 impl ConsulConnectService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self::with_datacenter("dc1".to_string())
     }
 
-/// The `with_datacenter` associated function.
+    /// The `with_datacenter` associated function.
     pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             exported_services: Arc::new(DashMap::new()),
@@ -599,16 +601,12 @@ impl ConsulConnectService {
             .and_then(|s| s.get_entry("service-defaults", service_name));
 
         // Resolve mesh gateway mode: service-resolver > proxy-defaults > "none"
-        let mesh_gateway_mode = Self::resolve_mesh_gateway_mode(
-            resolver_entry.as_ref(),
-            proxy_defaults_entry.as_ref(),
-        );
+        let mesh_gateway_mode =
+            Self::resolve_mesh_gateway_mode(resolver_entry.as_ref(), proxy_defaults_entry.as_ref());
 
         // Resolve connect timeout: service-resolver > proxy-defaults > "5s"
-        let connect_timeout = Self::resolve_connect_timeout(
-            resolver_entry.as_ref(),
-            proxy_defaults_entry.as_ref(),
-        );
+        let connect_timeout =
+            Self::resolve_connect_timeout(resolver_entry.as_ref(), proxy_defaults_entry.as_ref());
 
         // Resolve protocol: service-defaults > proxy-defaults > "tcp"
         let protocol = Self::resolve_protocol(
@@ -684,7 +682,10 @@ impl ConsulConnectService {
                     &mesh_gateway_mode,
                     &connect_timeout,
                     trust_domain,
-                    DiscoveryTargetSubset { filter, only_passing },
+                    DiscoveryTargetSubset {
+                        filter,
+                        only_passing,
+                    },
                 );
                 targets.insert(subset_target_id, subset_target);
             }
@@ -706,17 +707,13 @@ impl ConsulConnectService {
 
         let mut failover_resolver_names = Vec::new();
         for failover_target_str in &failover_targets {
-            let (fo_service, fo_ns, fo_partition, fo_dc) =
-                Self::parse_failover_target(
-                    failover_target_str,
-                    &default_ns,
-                    &default_partition,
-                    &self.datacenter,
-                );
-            let fo_target_id = format!(
-                "{}.{}.{}.{}",
-                fo_service, fo_ns, fo_partition, fo_dc
+            let (fo_service, fo_ns, fo_partition, fo_dc) = Self::parse_failover_target(
+                failover_target_str,
+                &default_ns,
+                &default_partition,
+                &self.datacenter,
             );
+            let fo_target_id = format!("{}.{}.{}.{}", fo_service, fo_ns, fo_partition, fo_dc);
             let fo_resolver_name = format!("resolver:{}", fo_target_id);
             let fo_target = Self::build_target(
                 &fo_target_id,
@@ -885,7 +882,12 @@ impl ConsulConnectService {
         let service = parts.first().copied().unwrap_or(target).to_string();
         let namespace = parts.get(1).copied().unwrap_or(default_ns).to_string();
         let datacenter = parts.get(2).copied().unwrap_or(default_dc).to_string();
-        (service, namespace, default_partition.to_string(), datacenter)
+        (
+            service,
+            namespace,
+            default_partition.to_string(),
+            datacenter,
+        )
     }
 
     /// Resolve mesh gateway mode: service-resolver > proxy-defaults > "none".
@@ -972,7 +974,10 @@ impl ConsulConnectService {
         metadata.insert("CONSUL_NAMESPACE".to_string(), namespace.to_string());
         metadata.insert("CONSUL_PARTITION".to_string(), "default".to_string());
         metadata.insert("CONSUL_PROXY_ID".to_string(), service_id.to_string());
-        metadata.insert("CONSUL_PROXY_SERVICE_NAME".to_string(), service_name.to_string());
+        metadata.insert(
+            "CONSUL_PROXY_SERVICE_NAME".to_string(),
+            service_name.to_string(),
+        );
 
         EnvoyBootstrapConfig {
             node: EnvoyNode {
@@ -1188,7 +1193,7 @@ impl ConsulConnectService {
         response
     }
 
-/// The `list_exported_services` method.
+    /// The `list_exported_services` method.
     pub fn list_exported_services(&self) -> Vec<ResolvedExportedService> {
         let mut services: Vec<ResolvedExportedService> = self
             .exported_services
@@ -1199,7 +1204,7 @@ impl ConsulConnectService {
         services
     }
 
-/// The `list_imported_services` method.
+    /// The `list_imported_services` method.
     pub fn list_imported_services(&self) -> Vec<ImportedService> {
         use std::collections::BTreeSet;
 
@@ -1278,7 +1283,7 @@ pub async fn get_discovery_chain(
 /// Query parameters for the proxy config endpoint
 #[derive(Debug, Deserialize, Default)]
 pub struct ProxyConfigQueryParams {
-/// The `ns` field — namespace (defaults to "default").
+    /// The `ns` field — namespace (defaults to "default").
     pub ns: Option<String>,
 }
 
@@ -1306,9 +1311,14 @@ pub async fn get_proxy_config(
     }
 
     // Resolve the service registration by ID.
-    let Some(data) = agent.naming_store().get_by_service_id(&namespace, &service_id) else {
-        return HttpResponse::NotFound()
-            .consul_error(ConsulError::new(format!("Service not found: {}", service_id)));
+    let Some(data) = agent
+        .naming_store()
+        .get_by_service_id(&namespace, &service_id)
+    else {
+        return HttpResponse::NotFound().consul_error(ConsulError::new(format!(
+            "Service not found: {}",
+            service_id
+        )));
     };
     let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) else {
         return HttpResponse::InternalServerError()
@@ -1688,9 +1698,8 @@ mod tests {
 
     #[test]
     fn test_parse_failover_target_service_only() {
-        let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
-            "web", "default", "default", "dc1",
-        );
+        let (svc, ns, part, dc) =
+            ConsulConnectService::parse_failover_target("web", "default", "default", "dc1");
         assert_eq!(svc, "web");
         assert_eq!(ns, "default");
         assert_eq!(part, "default");
@@ -1699,9 +1708,8 @@ mod tests {
 
     #[test]
     fn test_parse_failover_target_with_namespace() {
-        let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
-            "web.team-a", "default", "default", "dc1",
-        );
+        let (svc, ns, part, dc) =
+            ConsulConnectService::parse_failover_target("web.team-a", "default", "default", "dc1");
         assert_eq!(svc, "web");
         assert_eq!(ns, "team-a");
         assert_eq!(part, "default");
@@ -1711,7 +1719,10 @@ mod tests {
     #[test]
     fn test_parse_failover_target_with_namespace_and_dc() {
         let (svc, ns, part, dc) = ConsulConnectService::parse_failover_target(
-            "web.team-a.dc2", "default", "default", "dc1",
+            "web.team-a.dc2",
+            "default",
+            "default",
+            "dc1",
         );
         assert_eq!(svc, "web");
         assert_eq!(ns, "team-a");

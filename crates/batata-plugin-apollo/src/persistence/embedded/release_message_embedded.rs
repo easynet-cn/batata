@@ -16,10 +16,10 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG;
 
-use crate::persistence::shared::StoredReleaseMessage;
-use crate::persistence::traits::ReleaseMessagePersistence;
 use super::id_generator::IdGenerator;
 use super::store::JsonStore;
+use crate::persistence::shared::StoredReleaseMessage;
+use crate::persistence::traits::ReleaseMessagePersistence;
 
 const ROW_PREFIX: &str = "rm_id:";
 const KEY_PREFIX: &str = "rm:";
@@ -58,7 +58,10 @@ impl ReleaseMessageEmbedded {
     /// `IdGenerator`) and the Raft apply phase (`id` derived from the Raft
     /// `log_index`). Operates on a `&DB` so it can be called from the Raft
     /// state machine.
-    pub fn write_raw(db: &DB, message: &StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
+    pub fn write_raw(
+        db: &DB,
+        message: &StoredReleaseMessage,
+    ) -> anyhow::Result<StoredReleaseMessage> {
         let cf = db
             .cf_handle(CF_APOLLO_RELEASE_MSG)
             .ok_or_else(|| anyhow::anyhow!("CF {} not found", CF_APOLLO_RELEASE_MSG))?;
@@ -92,7 +95,10 @@ impl ReleaseMessageEmbedded {
 
 #[async_trait]
 impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
-    async fn create(&self, mut message: StoredReleaseMessage) -> anyhow::Result<StoredReleaseMessage> {
+    async fn create(
+        &self,
+        mut message: StoredReleaseMessage,
+    ) -> anyhow::Result<StoredReleaseMessage> {
         message.id = self.id_gen.next_id();
         Self::write_raw(&self.db, &message)
     }
@@ -107,11 +113,7 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
     }
 
     async fn get_latest(&self) -> anyhow::Result<Option<StoredReleaseMessage>> {
-        Ok(self
-            .list_all()
-            .await?
-            .into_iter()
-            .max_by_key(|m| m.id))
+        Ok(self.list_all().await?.into_iter().max_by_key(|m| m.id))
     }
 
     async fn list_all(&self) -> anyhow::Result<Vec<StoredReleaseMessage>> {
@@ -119,7 +121,8 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
         let mut results = Vec::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             if !key.starts_with(ROW_PREFIX.as_bytes()) {
                 continue; // skip composite-key duplicates
             }
@@ -130,8 +133,7 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
     }
 
     async fn delete_by_id(&self, id: i64) -> anyhow::Result<()> {
-        JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG)
-            .delete(Self::row_key(id).as_bytes())
+        JsonStore::new(self.db.clone(), CF_APOLLO_RELEASE_MSG).delete(Self::row_key(id).as_bytes())
     }
 
     async fn delete_old(&self, before_id: i64) -> anyhow::Result<usize> {
@@ -139,7 +141,8 @@ impl ReleaseMessagePersistence for ReleaseMessageEmbedded {
         let mut keys_to_delete = Vec::new();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             if !key.starts_with(ROW_PREFIX.as_bytes()) {
                 continue;
             }

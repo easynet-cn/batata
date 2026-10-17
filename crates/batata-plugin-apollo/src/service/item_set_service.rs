@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use crate::api::dto::{ConfigChangeContent, ItemChangeSets, ItemPair, ItemDTO};
-use crate::persistence::shared::{StoredItem, StoredCommit};
-use crate::persistence::traits::{ApolloPersistenceService, ItemPersistence, CommitPersistence, NamespacePersistence};
+use crate::api::dto::{ConfigChangeContent, ItemChangeSets, ItemDTO, ItemPair};
+use crate::persistence::shared::{StoredCommit, StoredItem};
+use crate::persistence::traits::{
+    ApolloPersistenceService, CommitPersistence, ItemPersistence, NamespacePersistence,
+};
 use chrono::Utc;
 
 /// Represents the `ItemSetService` entity.
@@ -17,12 +19,30 @@ impl ItemSetService {
     }
 
     /// Updates an existing resource.
-    pub async fn update_set(&self, app_id: &str, cluster_name: &str, namespace_name: &str, change_sets: ItemChangeSets) -> Result<(), anyhow::Error> {
-        let namespace = self.persistence.get_by_app_cluster(app_id, cluster_name, namespace_name).await?
-            .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}/{}/{}", app_id, cluster_name, namespace_name))?;
+    pub async fn update_set(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        change_sets: ItemChangeSets,
+    ) -> Result<(), anyhow::Error> {
+        let namespace = self
+            .persistence
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Namespace not found: {}/{}/{}",
+                    app_id,
+                    cluster_name,
+                    namespace_name
+                )
+            })?;
 
         let now = Utc::now().timestamp_millis();
-        let operator = change_sets.create_items.first()
+        let operator = change_sets
+            .create_items
+            .first()
             .or(change_sets.update_items.first())
             .or(change_sets.delete_items.first())
             .and_then(|item| item.data_change_created_by.clone())

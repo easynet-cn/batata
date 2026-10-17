@@ -1,7 +1,7 @@
 mod stored_access_key;
+mod stored_app;
 mod stored_cluster;
 mod stored_commit;
-mod stored_app;
 mod stored_gray_release_rule;
 mod stored_instance;
 mod stored_item;
@@ -11,9 +11,9 @@ mod stored_release;
 mod stored_release_message;
 
 pub use stored_access_key::StoredAccessKey;
+pub use stored_app::StoredApp;
 pub use stored_cluster::StoredCluster;
 pub use stored_commit::StoredCommit;
-pub use stored_app::StoredApp;
 pub use stored_gray_release_rule::StoredGrayReleaseRule;
 pub use stored_instance::StoredInstance;
 pub use stored_item::StoredItem;

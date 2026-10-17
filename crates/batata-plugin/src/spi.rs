@@ -273,12 +273,23 @@ pub trait ConfigChangePluginV2: Send + Sync {
     /// Plugin name.
     fn name(&self) -> &str;
     /// Plugin order; lower values run earlier in the chain.
-    fn order(&self) -> i32 { 0 }
+    fn order(&self) -> i32 {
+        0
+    }
     /// Whether this plugin is enabled.
-    fn is_enabled(&self) -> bool { true }
+    fn is_enabled(&self) -> bool {
+        true
+    }
     /// Pointcuts this plugin wants to intercept.
     fn interested_pointcuts(&self) -> Vec<ConfigPointcut> {
-        vec![ConfigPointcut::Publish, ConfigPointcut::Remove, ConfigPointcut::Get, ConfigPointcut::Import, ConfigPointcut::Export, ConfigPointcut::History]
+        vec![
+            ConfigPointcut::Publish,
+            ConfigPointcut::Remove,
+            ConfigPointcut::Get,
+            ConfigPointcut::Import,
+            ConfigPointcut::Export,
+            ConfigPointcut::History,
+        ]
     }
     /// Execute types (before/after) this plugin wants to handle.
     fn interested_execute_types(&self) -> Vec<ExecuteType> {
@@ -311,24 +322,31 @@ impl ConfigChangePluginV2 for ConfigChangePluginAdapter {
     async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult {
         match (ctx.pointcut, ctx.execute_type) {
             (ConfigPointcut::Publish, ExecuteType::Before) => {
-                self.inner.before_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content).await
+                self.inner
+                    .before_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content)
+                    .await
             }
             (ConfigPointcut::Publish, ExecuteType::After) => {
-                self.inner.after_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content).await;
+                self.inner
+                    .after_publish(&ctx.data_id, &ctx.group, &ctx.tenant, &ctx.content)
+                    .await;
                 ConfigChangeResult::allow()
             }
             (ConfigPointcut::Remove, ExecuteType::Before) => {
-                self.inner.before_delete(&ctx.data_id, &ctx.group, &ctx.tenant).await
+                self.inner
+                    .before_delete(&ctx.data_id, &ctx.group, &ctx.tenant)
+                    .await
             }
             (ConfigPointcut::Remove, ExecuteType::After) => {
-                self.inner.after_delete(&ctx.data_id, &ctx.group, &ctx.tenant).await;
+                self.inner
+                    .after_delete(&ctx.data_id, &ctx.group, &ctx.tenant)
+                    .await;
                 ConfigChangeResult::allow()
             }
             _ => ConfigChangeResult::allow(),
         }
     }
 }
-
 
 /// Traffic control plugin for rate limiting
 #[async_trait::async_trait]
@@ -728,7 +746,10 @@ impl PluginManager {
             if !plugin.interested_pointcuts().contains(&request.pointcut) {
                 continue;
             }
-            if !plugin.interested_execute_types().contains(&request.execute_type) {
+            if !plugin
+                .interested_execute_types()
+                .contains(&request.execute_type)
+            {
                 continue;
             }
             let result = plugin.execute(&mut request).await;

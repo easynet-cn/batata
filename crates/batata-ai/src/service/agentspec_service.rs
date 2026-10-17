@@ -276,7 +276,8 @@ impl AgentSpecOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
         let versions = self.list_versions_for_resource(namespace_id, name).await?;
         let vi = Self::parse_version_info(&resource);
         Ok(Some(AgentSpecMeta {
@@ -312,7 +313,8 @@ impl AgentSpecOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         let ver = match self.find_version(namespace_id, name, version).await? {
             Some(v) => v,
@@ -414,7 +416,8 @@ impl AgentSpecOperationService {
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
         self.persistence
             .ai_resource_delete(namespace_id, name, AGENTSPEC_TYPE)
@@ -445,13 +448,7 @@ impl AgentSpecOperationService {
             .await;
         let page = self
             .persistence
-            .ai_resource_list(
-                namespace_id,
-                AGENTSPEC_TYPE,
-                &filter,
-                page_no,
-                page_size,
-            )
+            .ai_resource_list(namespace_id, AGENTSPEC_TYPE, &filter, page_no, page_size)
             .await?;
         let items: Vec<AgentSpecSummary> = page
             .page_items
@@ -646,7 +643,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
         let vi = Self::parse_version_info(&resource);
         let draft_version = vi
             .editing_version
@@ -679,7 +677,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
         let vi = Self::parse_version_info(&resource);
         let draft_version = vi
             .editing_version
@@ -709,7 +708,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
         let ver = self
             .find_version(namespace_id, name, version)
             .await?
@@ -748,7 +748,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
         let ver = self
             .find_version(namespace_id, name, version)
             .await?
@@ -848,7 +849,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
         // Validate labels point to online versions
         for (label, version) in &labels {
             if let Some(ver) = self.find_version(namespace_id, name, version).await? {
@@ -883,7 +885,8 @@ impl AgentSpecOperationService {
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
         self.persistence
             .ai_resource_update_biz_tags(namespace_id, name, AGENTSPEC_TYPE, biz_tags)
@@ -904,7 +907,8 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         if scope == Some("agentspec") {
             let status = if online {
@@ -959,7 +963,8 @@ impl AgentSpecOperationService {
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
         if scope != SCOPE_PUBLIC && scope != SCOPE_PRIVATE {
             anyhow::bail!("Invalid scope '{}', must be PUBLIC or PRIVATE", scope);
@@ -986,7 +991,8 @@ impl AgentSpecOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
         if resource.status.as_deref() != Some(RESOURCE_STATUS_ENABLE) {
             return Ok(None);
         }
@@ -1080,19 +1086,17 @@ impl AgentSpecOperationService {
                     true
                 }
             })
-            .filter(|r| {
-                match advisor.base_predicate {
-                    batata_visibility::BaseVisibilityPredicate::All => true,
-                    batata_visibility::BaseVisibilityPredicate::Public => {
-                        r.scope == batata_visibility::SCOPE_PUBLIC
-                    }
-                    batata_visibility::BaseVisibilityPredicate::Owner => {
-                        !identity.is_empty() && r.owner == identity
-                    }
-                    batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
-                        r.scope == batata_visibility::SCOPE_PUBLIC
-                            || (!identity.is_empty() && r.owner == identity)
-                    }
+            .filter(|r| match advisor.base_predicate {
+                batata_visibility::BaseVisibilityPredicate::All => true,
+                batata_visibility::BaseVisibilityPredicate::Public => {
+                    r.scope == batata_visibility::SCOPE_PUBLIC
+                }
+                batata_visibility::BaseVisibilityPredicate::Owner => {
+                    !identity.is_empty() && r.owner == identity
+                }
+                batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
+                    r.scope == batata_visibility::SCOPE_PUBLIC
+                        || (!identity.is_empty() && r.owner == identity)
                 }
             })
             .filter(|r| Self::parse_version_info(r).online_cnt > 0)
@@ -1185,7 +1189,8 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         version: &str,
         _user: Option<&str>,
     ) -> anyhow::Result<Option<AgentSpec>> {
-        self.get_version_detail(namespace_id, name, version, _user).await
+        self.get_version_detail(namespace_id, name, version, _user)
+            .await
     }
 
     async fn get_version_meta(
@@ -1199,7 +1204,12 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
             .await
     }
 
-    async fn delete(&self, namespace_id: &str, name: &str, _user: Option<&str>) -> anyhow::Result<()> {
+    async fn delete(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.delete(namespace_id, name, _user).await
     }
 
@@ -1258,7 +1268,12 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         self.update_draft(namespace_id, name, spec, _user).await
     }
 
-    async fn delete_draft(&self, namespace_id: &str, name: &str, _user: Option<&str>) -> anyhow::Result<()> {
+    async fn delete_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.delete_draft(namespace_id, name, _user).await
     }
 
@@ -1289,8 +1304,7 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         version: &str,
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.force_publish(namespace_id, name, version, _user)
-            .await
+        self.force_publish(namespace_id, name, version, _user).await
     }
 
     async fn redraft(
@@ -1320,7 +1334,8 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         biz_tags: &str,
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.update_biz_tags(namespace_id, name, biz_tags, _user).await
+        self.update_biz_tags(namespace_id, name, biz_tags, _user)
+            .await
     }
 
     async fn change_online_status(
@@ -1365,6 +1380,7 @@ impl super::traits::AgentSpecService for AgentSpecOperationService {
         page_size: u64,
         _user: Option<&str>,
     ) -> anyhow::Result<batata_common::model::Page<AgentSpecBasicInfo>> {
-        self.search(namespace_id, keyword, page_no, page_size, _user).await
+        self.search(namespace_id, keyword, page_no, page_size, _user)
+            .await
     }
 }

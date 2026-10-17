@@ -30,8 +30,8 @@ async fn setup() -> Arc<ExternalDbPersistService> {
 /// Build a ZIP in memory from (path, content) pairs.
 fn build_zip(files: &[(&str, &str)]) -> Vec<u8> {
     let writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     let mut writer = writer;
     for (path, content) in files {
         writer.start_file(*path, options).unwrap();

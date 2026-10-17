@@ -2,44 +2,44 @@
 //!
 //! Provides standalone single-node storage using RocksDB without an external database.
 
+mod access_key_embedded;
 mod app_embedded;
 mod cluster_embedded;
-mod namespace_embedded;
-mod item_embedded;
-mod release_embedded;
 mod commit_embedded;
 mod gray_release_embedded;
+mod id_generator;
 mod instance_embedded;
-mod access_key_embedded;
+mod item_embedded;
+mod namespace_embedded;
+mod namespace_lock_embedded;
+mod portal;
+mod release_embedded;
 mod release_message_embedded;
 mod service_registry_embedded;
-mod namespace_lock_embedded;
-mod id_generator;
-mod portal;
 mod store;
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use rocksdb::DB;
+use std::sync::Arc;
 
-use crate::persistence::traits::ApolloPersistenceService;
 use crate::persistence::shared::*;
+use crate::persistence::traits::ApolloPersistenceService;
 use crate::raft::{ApolloRaftRequest, ApolloRaftWriter};
 pub use id_generator::IdGenerator;
 pub use store::JsonStore;
 
+pub use access_key_embedded::AccessKeyEmbedded;
 pub use app_embedded::AppEmbedded;
 pub use cluster_embedded::ClusterEmbedded;
-pub use namespace_embedded::NamespaceEmbedded;
-pub use item_embedded::ItemEmbedded;
-pub use release_embedded::ReleaseEmbedded;
 pub use commit_embedded::CommitEmbedded;
 pub use gray_release_embedded::GrayReleaseEmbedded;
 pub use instance_embedded::InstanceEmbedded;
-pub use access_key_embedded::AccessKeyEmbedded;
+pub use item_embedded::ItemEmbedded;
+pub use namespace_embedded::NamespaceEmbedded;
+pub use namespace_lock_embedded::NamespaceLockEmbedded;
+pub use release_embedded::ReleaseEmbedded;
 pub use release_message_embedded::ReleaseMessageEmbedded;
 pub use service_registry_embedded::ServiceRegistryEmbedded;
-pub use namespace_lock_embedded::NamespaceLockEmbedded;
 
 /// Embedded (RocksDB) implementation of all Apollo persistence traits
 ///
@@ -113,20 +113,47 @@ impl EmbeddedApolloPersistence {
     /// list in sync when adding an entity (guarded by recovery round-trip test).
     fn recover_core_max_id(db: &DB) -> Option<i64> {
         const CF_PREFIXES: &[(&str, &str)] = &[
-            (batata_consistency::raft::state_machine::CF_APOLLO_NAMESPACE, "ns_id:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_ITEM, "item_id:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_RELEASE, "release:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_COMMIT, "commit:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_GRAY_RULE, "gray_id:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_ACCESS_KEY, "ak_id:"),
-            (batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG, "rm_id:"),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_NAMESPACE,
+                "ns_id:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_ITEM,
+                "item_id:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_RELEASE,
+                "release:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_COMMIT,
+                "commit:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_GRAY_RULE,
+                "gray_id:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_ACCESS_KEY,
+                "ak_id:",
+            ),
+            (
+                batata_consistency::raft::state_machine::CF_APOLLO_RELEASE_MSG,
+                "rm_id:",
+            ),
         ];
         let mut max: Option<i64> = None;
         for (cf_name, prefix) in CF_PREFIXES {
-            let Some(cf) = db.cf_handle(cf_name) else { continue };
+            let Some(cf) = db.cf_handle(cf_name) else {
+                continue;
+            };
             for item in db.prefix_iterator_cf(cf, prefix.as_bytes()).flatten() {
-                let Ok(key) = std::str::from_utf8(&item.0) else { continue };
-                let Some(rest) = key.strip_prefix(prefix) else { continue };
+                let Ok(key) = std::str::from_utf8(&item.0) else {
+                    continue;
+                };
+                let Some(rest) = key.strip_prefix(prefix) else {
+                    continue;
+                };
                 if let Ok(id) = rest.parse::<i64>() {
                     max = Some(max.unwrap_or(0).max(id));
                 }
@@ -157,10 +184,16 @@ impl EmbeddedApolloPersistence {
         ];
         let mut max: Option<i64> = None;
         for cf_name in PORTAL_CFS {
-            let Some(cf) = db.cf_handle(cf_name) else { continue };
+            let Some(cf) = db.cf_handle(cf_name) else {
+                continue;
+            };
             for item in db.prefix_iterator_cf(cf, b"id:").flatten() {
-                let Ok(key) = std::str::from_utf8(&item.0) else { continue };
-                let Some(rest) = key.strip_prefix("id:") else { continue };
+                let Ok(key) = std::str::from_utf8(&item.0) else {
+                    continue;
+                };
+                let Some(rest) = key.strip_prefix("id:") else {
+                    continue;
+                };
                 if let Ok(id) = rest.parse::<i64>() {
                     max = Some(max.unwrap_or(0).max(id));
                 }
@@ -299,8 +332,15 @@ impl crate::persistence::traits::NamespacePersistence for EmbeddedApolloPersiste
     async fn get(&self, id: i64) -> anyhow::Result<Option<StoredNamespace>> {
         self.namespace.get(id).await
     }
-    async fn get_by_app_cluster(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredNamespace>> {
-        self.namespace.get_by_app_cluster(app_id, cluster_name, namespace_name).await
+    async fn get_by_app_cluster(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Option<StoredNamespace>> {
+        self.namespace
+            .get_by_app_cluster(app_id, cluster_name, namespace_name)
+            .await
     }
     async fn list_by_app(&self, app_id: &str) -> anyhow::Result<Vec<StoredNamespace>> {
         self.namespace.list_by_app(app_id).await
@@ -419,11 +459,25 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredRelease>> {
         self.release.get_by_id(id).await
     }
-    async fn get_latest(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredRelease>> {
-        self.release.get_latest(app_id, cluster_name, namespace_name).await
+    async fn get_latest(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Option<StoredRelease>> {
+        self.release
+            .get_latest(app_id, cluster_name, namespace_name)
+            .await
     }
-    async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<StoredRelease>> {
-        self.release.list_by_namespace(app_id, cluster_name, namespace_name).await
+    async fn list_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredRelease>> {
+        self.release
+            .list_by_namespace(app_id, cluster_name, namespace_name)
+            .await
     }
     async fn delete(&self, id: i64) -> anyhow::Result<()> {
         if let Some(writer) = &self.raft_writer {
@@ -461,7 +515,9 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
         cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<Vec<StoredRelease>> {
-        self.release.list_active(app_id, cluster_name, namespace_name).await
+        self.release
+            .list_active(app_id, cluster_name, namespace_name)
+            .await
     }
 
     async fn list_all_by_namespace(
@@ -470,7 +526,9 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
         cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<Vec<StoredRelease>> {
-        self.release.list_all_by_namespace(app_id, cluster_name, namespace_name).await
+        self.release
+            .list_all_by_namespace(app_id, cluster_name, namespace_name)
+            .await
     }
 }
 
@@ -484,11 +542,7 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
                 .map_err(|e| anyhow::anyhow!(e))?;
             return self
                 .commit
-                .get_latest(
-                    &commit.app_id,
-                    &commit.cluster_name,
-                    &commit.namespace_name,
-                )
+                .get_latest(&commit.app_id, &commit.cluster_name, &commit.namespace_name)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("commit not found after raft apply"));
         }
@@ -497,11 +551,25 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
     async fn get_by_id(&self, id: i64) -> anyhow::Result<Option<StoredCommit>> {
         self.commit.get_by_id(id).await
     }
-    async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Vec<StoredCommit>> {
-        self.commit.list_by_namespace(app_id, cluster_name, namespace_name).await
+    async fn list_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Vec<StoredCommit>> {
+        self.commit
+            .list_by_namespace(app_id, cluster_name, namespace_name)
+            .await
     }
-    async fn get_latest(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredCommit>> {
-        self.commit.get_latest(app_id, cluster_name, namespace_name).await
+    async fn get_latest(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Option<StoredCommit>> {
+        self.commit
+            .get_latest(app_id, cluster_name, namespace_name)
+            .await
     }
     async fn update(&self, commit: StoredCommit) -> anyhow::Result<StoredCommit> {
         if let Some(writer) = &self.raft_writer {
@@ -511,11 +579,7 @@ impl crate::persistence::traits::CommitPersistence for EmbeddedApolloPersistence
                 .map_err(|e| anyhow::anyhow!(e))?;
             return self
                 .commit
-                .get_latest(
-                    &commit.app_id,
-                    &commit.cluster_name,
-                    &commit.namespace_name,
-                )
+                .get_latest(&commit.app_id, &commit.cluster_name, &commit.namespace_name)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("commit not found after raft apply"));
         }
@@ -542,10 +606,22 @@ impl crate::persistence::traits::GrayReleasePersistence for EmbeddedApolloPersis
             self.gray_release.create(rule).await
         }
     }
-    async fn get_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredGrayReleaseRule>> {
-        self.gray_release.get_by_namespace(app_id, cluster_name, namespace_name).await
+    async fn get_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Option<StoredGrayReleaseRule>> {
+        self.gray_release
+            .get_by_namespace(app_id, cluster_name, namespace_name)
+            .await
     }
-    async fn update_rules(&self, id: i64, rules: String, release_id: i64) -> anyhow::Result<StoredGrayReleaseRule> {
+    async fn update_rules(
+        &self,
+        id: i64,
+        rules: String,
+        release_id: i64,
+    ) -> anyhow::Result<StoredGrayReleaseRule> {
         if let Some(writer) = &self.raft_writer {
             // Reconstruct the full updated rule locally, then replicate the whole
             // object so the apply phase can write both keys deterministically.
@@ -582,7 +658,11 @@ impl crate::persistence::traits::InstancePersistence for EmbeddedApolloPersisten
     async fn upsert(&self, instance: StoredInstance) -> anyhow::Result<StoredInstance> {
         self.instance.upsert(instance).await
     }
-    async fn get_by_app(&self, app_id: &str, cluster_name: Option<&str>) -> anyhow::Result<Vec<StoredInstance>> {
+    async fn get_by_app(
+        &self,
+        app_id: &str,
+        cluster_name: Option<&str>,
+    ) -> anyhow::Result<Vec<StoredInstance>> {
         self.instance.get_by_app(app_id, cluster_name).await
     }
     async fn delete_expired(&self, before_timestamp: i64) -> anyhow::Result<usize> {
@@ -687,14 +767,35 @@ impl crate::persistence::traits::NamespaceLockPersistence for EmbeddedApolloPers
     async fn lock(&self, lock: StoredNamespaceLock) -> anyhow::Result<StoredNamespaceLock> {
         self.namespace_lock.lock(lock).await
     }
-    async fn unlock(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<()> {
-        self.namespace_lock.unlock(app_id, cluster_name, namespace_name).await
+    async fn unlock(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<()> {
+        self.namespace_lock
+            .unlock(app_id, cluster_name, namespace_name)
+            .await
     }
-    async fn get(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<Option<StoredNamespaceLock>> {
-        self.namespace_lock.get(app_id, cluster_name, namespace_name).await
+    async fn get(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<Option<StoredNamespaceLock>> {
+        self.namespace_lock
+            .get(app_id, cluster_name, namespace_name)
+            .await
     }
-    async fn is_locked(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<bool> {
-        self.namespace_lock.is_locked(app_id, cluster_name, namespace_name).await
+    async fn is_locked(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<bool> {
+        self.namespace_lock
+            .is_locked(app_id, cluster_name, namespace_name)
+            .await
     }
 }
 
@@ -704,30 +805,49 @@ impl ApolloPersistenceService for EmbeddedApolloPersistence {
         // Verify that Apollo column families exist
         use batata_consistency::raft::state_machine::*;
         let cfs = [
-            CF_APOLLO_APP, CF_APOLLO_NAMESPACE, CF_APOLLO_ITEM,
-            CF_APOLLO_RELEASE, CF_APOLLO_COMMIT, CF_APOLLO_GRAY_RULE,
-            CF_APOLLO_INSTANCE, CF_APOLLO_ACCESS_KEY, CF_APOLLO_RELEASE_MSG,
-            CF_APOLLO_NAMESPACE_LOCK, CF_APOLLO_RELEASE_HISTORY,
-            CF_APOLLO_APP_NAMESPACE, CF_APOLLO_AUDIT, CF_APOLLO_CONSUMER,
-            CF_APOLLO_CONSUMER_TOKEN, CF_APOLLO_CONSUMER_AUDIT, CF_APOLLO_PERMISSION,
+            CF_APOLLO_APP,
+            CF_APOLLO_NAMESPACE,
+            CF_APOLLO_ITEM,
+            CF_APOLLO_RELEASE,
+            CF_APOLLO_COMMIT,
+            CF_APOLLO_GRAY_RULE,
+            CF_APOLLO_INSTANCE,
+            CF_APOLLO_ACCESS_KEY,
+            CF_APOLLO_RELEASE_MSG,
+            CF_APOLLO_NAMESPACE_LOCK,
+            CF_APOLLO_RELEASE_HISTORY,
+            CF_APOLLO_APP_NAMESPACE,
+            CF_APOLLO_AUDIT,
+            CF_APOLLO_CONSUMER,
+            CF_APOLLO_CONSUMER_TOKEN,
+            CF_APOLLO_CONSUMER_AUDIT,
+            CF_APOLLO_PERMISSION,
             CF_APOLLO_CONSUMER_ROLE,
-            CF_APOLLO_ROLE, CF_APOLLO_ROLE_PERMISSION, CF_APOLLO_USER_ROLE,
-            CF_APOLLO_USERS, CF_APOLLO_FAVORITE, CF_APOLLO_SERVER_CONFIG,
+            CF_APOLLO_ROLE,
+            CF_APOLLO_ROLE_PERMISSION,
+            CF_APOLLO_USER_ROLE,
+            CF_APOLLO_USERS,
+            CF_APOLLO_FAVORITE,
+            CF_APOLLO_SERVER_CONFIG,
             CF_APOLLO_INSTANCE_CONFIG,
         ];
         for cf_name in cfs {
-            self.db.cf_handle(cf_name)
+            self.db
+                .cf_handle(cf_name)
                 .ok_or_else(|| anyhow::anyhow!("Column family {} not found", cf_name))?;
         }
         Ok(())
     }
 }
 
-
 #[async_trait]
-impl crate::persistence::traits::service_registry::ServiceRegistryPersistence for EmbeddedApolloPersistence {
+impl crate::persistence::traits::service_registry::ServiceRegistryPersistence
+    for EmbeddedApolloPersistence
+{
     async fn heartbeat(&self, service_name: &str, uri: &str, cluster: &str) -> anyhow::Result<()> {
-        self.service_registry.heartbeat(service_name, uri, cluster).await
+        self.service_registry
+            .heartbeat(service_name, uri, cluster)
+            .await
     }
     async fn deregister(&self, service_name: &str, uri: &str) -> anyhow::Result<()> {
         self.service_registry.deregister(service_name, uri).await
@@ -736,7 +856,10 @@ impl crate::persistence::traits::service_registry::ServiceRegistryPersistence fo
         &self,
         service_name: &str,
         window_secs: i64,
-    ) -> anyhow::Result<Vec<crate::persistence::traits::service_registry::ServiceRegistryEntry>> {
-        self.service_registry.find_alive(service_name, window_secs).await
+    ) -> anyhow::Result<Vec<crate::persistence::traits::service_registry::ServiceRegistryEntry>>
+    {
+        self.service_registry
+            .find_alive(service_name, window_secs)
+            .await
     }
 }

@@ -283,9 +283,10 @@ impl ConfigPersistence for ExternalDbPersistService {
         // If cas_md5 is provided but the row doesn't match, `existing` will be None
         // and we know the CAS failed (either config doesn't exist or MD5 mismatch).
         if let Some(expected_md5) = cas_md5
-            && !expected_md5.is_empty() {
-                query = query.filter(config_info::Column::Md5.eq(expected_md5));
-            }
+            && !expected_md5.is_empty()
+        {
+            query = query.filter(config_info::Column::Md5.eq(expected_md5));
+        }
 
         // When CAS is active, use SELECT FOR UPDATE to lock the row
         // exclusively. This prevents the TOCTOU race: a second concurrent
@@ -934,7 +935,8 @@ impl ConfigPersistence for ExternalDbPersistService {
             // Include records up to the end of the second (whole-second boundaries
             // would otherwise exclude sub-second records created at the boundary).
             select = select.filter(
-                his_config_info::Column::GmtModified.lte(dt.naive_utc() + chrono::Duration::seconds(1)),
+                his_config_info::Column::GmtModified
+                    .lte(dt.naive_utc() + chrono::Duration::seconds(1)),
             );
         }
 

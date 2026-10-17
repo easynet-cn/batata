@@ -9,13 +9,17 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
-        
+
         manager
             .create_table(
                 Table::create()
                     .table(ApolloApp::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloApp::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloApp::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloApp::AppId, 64, "default"))
                     .col(string_len_default(ApolloApp::Name, 500, "default"))
                     .col(string_len_default(ApolloApp::OrgId, 32, "default"))
@@ -24,7 +28,11 @@ impl MigrationTrait for Migration {
                     .col(string_len_default(ApolloApp::OwnerEmail, 500, "default"))
                     .col(bit(ApolloApp::IsDeleted, None))
                     .col(unsigned_big_int(ApolloApp::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloApp::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloApp::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloApp::DataChangeCreatedTime))
                     .col(string_len_null(ApolloApp::DataChangeLastModifiedBy, 64))
                     .col(date_time_on_update(ApolloApp::DataChangeLastTime))

@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
 
 use crate::entity::apollo_release_message;
 use crate::persistence::shared::StoredReleaseMessage;
@@ -22,7 +20,11 @@ impl ReleaseMessageSqlPersistence {
 impl From<StoredReleaseMessage> for apollo_release_message::ActiveModel {
     fn from(message: StoredReleaseMessage) -> Self {
         Self {
-            id: if message.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(message.id) },
+            id: if message.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(message.id)
+            },
             message: Set(message.message),
             data_change_created_time: Set(chrono::DateTime::from_timestamp_millis(
                 message.data_change_created_time,

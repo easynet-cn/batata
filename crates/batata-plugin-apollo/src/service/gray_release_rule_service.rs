@@ -1,6 +1,6 @@
-use std::sync::Arc;
-use std::net::IpAddr;
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::Arc;
 
 use crate::api::dto::GrayReleaseRuleDTO;
 use crate::persistence::shared::StoredGrayReleaseRule;
@@ -20,11 +20,23 @@ impl GrayReleaseRuleService {
     }
 
     /// Performs the `create` operation.
-    pub async fn create(&self, dto: GrayReleaseRuleDTO) -> Result<GrayReleaseRuleDTO, anyhow::Error> {
-        let existing = self.persistence.get_by_namespace(&dto.app_id, &dto.cluster_name, &dto.namespace_name).await?;
+    pub async fn create(
+        &self,
+        dto: GrayReleaseRuleDTO,
+    ) -> Result<GrayReleaseRuleDTO, anyhow::Error> {
+        let existing = self
+            .persistence
+            .get_by_namespace(&dto.app_id, &dto.cluster_name, &dto.namespace_name)
+            .await?;
 
         if existing.is_some() {
-            return Err(anyhow::anyhow!("Gray release rule already exists: {}/{}/{}/{}", dto.app_id, dto.cluster_name, dto.namespace_name, dto.branch_name));
+            return Err(anyhow::anyhow!(
+                "Gray release rule already exists: {}/{}/{}/{}",
+                dto.app_id,
+                dto.cluster_name,
+                dto.namespace_name,
+                dto.branch_name
+            ));
         }
 
         let now = Utc::now().timestamp_millis();
@@ -52,42 +64,89 @@ impl GrayReleaseRuleService {
     }
 
     /// Performs the `get` operation.
-    pub async fn get(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str) -> Result<Option<GrayReleaseRuleDTO>, anyhow::Error> {
+    pub async fn get(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+    ) -> Result<Option<GrayReleaseRuleDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
-        let found = stored_list.into_iter()
-            .find(|s| s.cluster_name == cluster_name && s.namespace_name == namespace_name && s.branch_name == branch_name && !s.is_deleted);
+        let found = stored_list.into_iter().find(|s| {
+            s.cluster_name == cluster_name
+                && s.namespace_name == namespace_name
+                && s.branch_name == branch_name
+                && !s.is_deleted
+        });
         Ok(found.map(|s| s.into()))
     }
 
     /// Returns the requested value.
-    pub async fn list_by_namespace(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> Result<Vec<GrayReleaseRuleDTO>, anyhow::Error> {
+    pub async fn list_by_namespace(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> Result<Vec<GrayReleaseRuleDTO>, anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
         Ok(stored_list
             .into_iter()
-            .filter(|s| s.cluster_name == cluster_name && s.namespace_name == namespace_name && !s.is_deleted)
+            .filter(|s| {
+                s.cluster_name == cluster_name
+                    && s.namespace_name == namespace_name
+                    && !s.is_deleted
+            })
             .map(|s| s.into())
             .collect())
     }
 
     /// Performs the `update` operation.
-    pub async fn update(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, dto: GrayReleaseRuleDTO) -> Result<(), anyhow::Error> {
+    pub async fn update(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        dto: GrayReleaseRuleDTO,
+    ) -> Result<(), anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
-        let existing = stored_list.into_iter()
-            .find(|s| s.cluster_name == cluster_name && s.namespace_name == namespace_name && s.branch_name == branch_name && !s.is_deleted)
+        let existing = stored_list
+            .into_iter()
+            .find(|s| {
+                s.cluster_name == cluster_name
+                    && s.namespace_name == namespace_name
+                    && s.branch_name == branch_name
+                    && !s.is_deleted
+            })
             .ok_or_else(|| anyhow::anyhow!("Gray release rule not found"))?;
 
         let _now = Utc::now().timestamp_millis();
 
         let rules = dto.rules.unwrap_or(existing.rules);
-        self.persistence.update_rules(existing.id, rules, dto.release_id).await?;
+        self.persistence
+            .update_rules(existing.id, rules, dto.release_id)
+            .await?;
         Ok(())
     }
 
     /// Performs the `delete` operation.
-    pub async fn delete(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, _operator: &str) -> Result<(), anyhow::Error> {
+    pub async fn delete(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        _operator: &str,
+    ) -> Result<(), anyhow::Error> {
         let stored_list = self.persistence.list_by_app(app_id).await?;
-        let existing = stored_list.into_iter()
-            .find(|s| s.cluster_name == cluster_name && s.namespace_name == namespace_name && s.branch_name == branch_name && !s.is_deleted)
+        let existing = stored_list
+            .into_iter()
+            .find(|s| {
+                s.cluster_name == cluster_name
+                    && s.namespace_name == namespace_name
+                    && s.branch_name == branch_name
+                    && !s.is_deleted
+            })
             .ok_or_else(|| anyhow::anyhow!("Gray release rule not found"))?;
 
         self.persistence.delete(existing.id).await?;
@@ -95,30 +154,46 @@ impl GrayReleaseRuleService {
     }
 
     /// Performs the `match_gray_release_rule` operation.
-    pub async fn match_gray_release_rule(&self, app_id: &str, cluster_name: &str, namespace_name: &str, client_ip: &str) -> Result<Option<i64>, anyhow::Error> {
+    pub async fn match_gray_release_rule(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        client_ip: &str,
+    ) -> Result<Option<i64>, anyhow::Error> {
         let rules = self.persistence.list_by_app(app_id).await?;
-        let active_rules: Vec<_> = rules.into_iter()
-            .filter(|r| r.cluster_name == cluster_name && r.namespace_name == namespace_name && !r.is_deleted && r.branch_status == Some(1))
+        let active_rules: Vec<_> = rules
+            .into_iter()
+            .filter(|r| {
+                r.cluster_name == cluster_name
+                    && r.namespace_name == namespace_name
+                    && !r.is_deleted
+                    && r.branch_status == Some(1)
+            })
             .collect();
 
         if active_rules.is_empty() {
             return Ok(None);
         }
 
-        let client_ip_addr: IpAddr = client_ip.parse().unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+        let client_ip_addr: IpAddr = client_ip
+            .parse()
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
 
         for rule in active_rules {
             let rules_json: Value = serde_json::from_str(&rule.rules).unwrap_or_default();
             if let Some(rules_array) = rules_json.as_array() {
                 for rule_item in rules_array {
                     if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str())
-                        && self.is_ip_in_range(&client_ip_addr, ip_range) {
-                            return Ok(Some(rule.release_id));
-                        }
+                        && self.is_ip_in_range(&client_ip_addr, ip_range)
+                    {
+                        return Ok(Some(rule.release_id));
+                    }
                     if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str())
-                        && self.is_ip_in_range(&client_ip_addr, ip_segment) {
-                            return Ok(Some(rule.release_id));
-                        }
+                        && self.is_ip_in_range(&client_ip_addr, ip_segment)
+                    {
+                        return Ok(Some(rule.release_id));
+                    }
                 }
             }
         }
@@ -145,22 +220,38 @@ impl GrayReleaseRuleService {
         client_label: Option<&str>,
     ) -> Result<Option<i64>, anyhow::Error> {
         let rules = self.persistence.list_by_app(app_id).await?;
-        let active_rules: Vec<_> = rules.into_iter()
-            .filter(|r| r.cluster_name == cluster_name && r.namespace_name == namespace_name && !r.is_deleted && r.branch_status == Some(1))
+        let active_rules: Vec<_> = rules
+            .into_iter()
+            .filter(|r| {
+                r.cluster_name == cluster_name
+                    && r.namespace_name == namespace_name
+                    && !r.is_deleted
+                    && r.branch_status == Some(1)
+            })
             .collect();
 
         if active_rules.is_empty() {
             return Ok(None);
         }
 
-        let client_ip_addr: IpAddr = client_ip.parse().unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+        let client_ip_addr: IpAddr = client_ip
+            .parse()
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
 
         for rule in active_rules {
             let rules_json: Value = serde_json::from_str(&rule.rules).unwrap_or_default();
             if let Some(rules_array) = rules_json.as_array()
-                && self.match_rules_array(&client_ip_addr, rules_array, app_id, labels, headers, client_label) {
-                    return Ok(Some(rule.release_id));
-                }
+                && self.match_rules_array(
+                    &client_ip_addr,
+                    rules_array,
+                    app_id,
+                    labels,
+                    headers,
+                    client_label,
+                )
+            {
+                return Ok(Some(rule.release_id));
+            }
         }
 
         Ok(None)
@@ -205,8 +296,12 @@ impl GrayReleaseRuleService {
             return false;
         }
 
-        let rule_app = item.get("clientAppId").and_then(|v| v.as_str()).unwrap_or("");
-        let app_matches = rule_app.trim().is_empty() || rule_app.eq_ignore_ascii_case(client_app_id);
+        let rule_app = item
+            .get("clientAppId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let app_matches =
+            rule_app.trim().is_empty() || rule_app.eq_ignore_ascii_case(client_app_id);
         if !app_matches {
             return false;
         }
@@ -224,7 +319,7 @@ impl GrayReleaseRuleService {
         }
 
         let label_list = item.get("clientLabelList").and_then(|v| v.as_array());
-        
+
         match label_list {
             Some(list) => list
                 .iter()
@@ -247,13 +342,15 @@ impl GrayReleaseRuleService {
         match rule_type {
             "IP" | "ip" => {
                 if let Some(ip_range) = rule_item.get("ip").and_then(|v| v.as_str())
-                    && self.is_ip_in_range(ip, ip_range) {
-                        return true;
-                    }
+                    && self.is_ip_in_range(ip, ip_range)
+                {
+                    return true;
+                }
                 if let Some(ip_segment) = rule_item.get("ipSegment").and_then(|v| v.as_str())
-                    && self.is_ip_in_range(ip, ip_segment) {
-                        return true;
-                    }
+                    && self.is_ip_in_range(ip, ip_segment)
+                {
+                    return true;
+                }
                 false
             }
             "LABEL" | "label" => {
@@ -289,23 +386,31 @@ impl GrayReleaseRuleService {
             if ip_range.contains('/') {
                 let parts: Vec<&str> = ip_range.split('/').collect();
                 if parts.len() == 2
-                    && let (Ok(network), Ok(prefix)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<u8>()) {
-                        let mask = u32::MAX << (32 - prefix);
-                        let ip_u32 = u32::from(*ip_v4);
-                        let network_u32 = u32::from(network);
-                        return (ip_u32 & mask) == (network_u32 & mask);
-                    }
+                    && let (Ok(network), Ok(prefix)) = (
+                        parts[0].parse::<std::net::Ipv4Addr>(),
+                        parts[1].parse::<u8>(),
+                    )
+                {
+                    let mask = u32::MAX << (32 - prefix);
+                    let ip_u32 = u32::from(*ip_v4);
+                    let network_u32 = u32::from(network);
+                    return (ip_u32 & mask) == (network_u32 & mask);
+                }
             } else if ip_range == ip.to_string() {
                 return true;
             } else if ip_range.contains('-') {
                 let parts: Vec<&str> = ip_range.split('-').collect();
                 if parts.len() == 2
-                    && let (Ok(start), Ok(end)) = (parts[0].parse::<std::net::Ipv4Addr>(), parts[1].parse::<std::net::Ipv4Addr>()) {
-                        let ip_u32 = u32::from(*ip_v4);
-                        let start_u32 = u32::from(start);
-                        let end_u32 = u32::from(end);
-                        return ip_u32 >= start_u32 && ip_u32 <= end_u32;
-                    }
+                    && let (Ok(start), Ok(end)) = (
+                        parts[0].parse::<std::net::Ipv4Addr>(),
+                        parts[1].parse::<std::net::Ipv4Addr>(),
+                    )
+                {
+                    let ip_u32 = u32::from(*ip_v4);
+                    let start_u32 = u32::from(start);
+                    let end_u32 = u32::from(end);
+                    return ip_u32 >= start_u32 && ip_u32 <= end_u32;
+                }
             }
         }
         false

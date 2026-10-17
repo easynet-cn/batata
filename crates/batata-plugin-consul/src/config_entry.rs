@@ -51,56 +51,56 @@ pub const SUPPORTED_KINDS: &[&str] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConfigEntry {
-/// The `kind` field.
+    /// The `kind` field.
     pub kind: String,
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
     /// Additional fields stored as dynamic JSON
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
-/// The `create_index` field.
+    /// The `create_index` field.
     pub create_index: u64,
-/// The `modify_index` field.
+    /// The `modify_index` field.
     pub modify_index: u64,
 }
 
 /// Query parameters for config entry list
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryListParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
-/// The `index` field.
+    /// The `index` field.
     pub index: Option<u64>,
-/// The `wait` field.
+    /// The `wait` field.
     pub wait: Option<String>,
-/// The `filter` field.
+    /// The `filter` field.
     pub filter: Option<String>,
 }
 
 /// Query parameters for config entry apply
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryApplyParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
-/// The `cas` field.
+    /// The `cas` field.
     pub cas: Option<u64>,
 }
 
 /// Query parameters for config entry delete
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigEntryDeleteParams {
-/// The `dc` field.
+    /// The `dc` field.
     pub dc: Option<String>,
-/// The `cas` field.
+    /// The `cas` field.
     pub cas: Option<u64>,
 }
 
@@ -108,22 +108,22 @@ pub struct ConfigEntryDeleteParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ConfigEntryRequest {
-/// The `kind` field.
+    /// The `kind` field.
     pub kind: String,
     #[serde(default)]
-/// The `name` field.
+    /// The `name` field.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `namespace` field.
+    /// The `namespace` field.
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `partition` field.
+    /// The `partition` field.
     pub partition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-/// The `meta` field.
+    /// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
     #[serde(flatten)]
-/// The `extra` field.
+    /// The `extra` field.
     pub extra: HashMap<String, serde_json::Value>,
 }
 
@@ -145,7 +145,7 @@ pub struct ConsulConfigEntryService {
 }
 
 impl ConsulConfigEntryService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
@@ -249,7 +249,7 @@ impl ConsulConfigEntryService {
         }
     }
 
-/// The `list_entries` method.
+    /// The `list_entries` method.
     pub fn list_entries(&self, kind: &str) -> Vec<ConfigEntry> {
         let prefix = format!("{}/", kind);
         self.entries
@@ -259,13 +259,13 @@ impl ConsulConfigEntryService {
             .collect()
     }
 
-/// The `get_entry` method.
+    /// The `get_entry` method.
     pub fn get_entry(&self, kind: &str, name: &str) -> Option<ConfigEntry> {
         let key = Self::entry_key(kind, name);
         self.entries.get(&key).map(|r| r.value().clone())
     }
 
-/// The `apply_entry` method.
+    /// The `apply_entry` method.
     pub async fn apply_entry(
         &self,
         mut req: ConfigEntryRequest,
@@ -328,7 +328,7 @@ impl ConsulConfigEntryService {
         Ok(true)
     }
 
-/// The `delete_entry` method.
+    /// The `delete_entry` method.
     pub async fn delete_entry(
         &self,
         kind: &str,
@@ -837,7 +837,11 @@ mod tests {
     // Validation failure-path tests
     // ========================================================================
 
-    fn req(kind: &str, name: &str, extra: HashMap<String, serde_json::Value>) -> ConfigEntryRequest {
+    fn req(
+        kind: &str,
+        name: &str,
+        extra: HashMap<String, serde_json::Value>,
+    ) -> ConfigEntryRequest {
         ConfigEntryRequest {
             kind: kind.to_string(),
             name: name.to_string(),

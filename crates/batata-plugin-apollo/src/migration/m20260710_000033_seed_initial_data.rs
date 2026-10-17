@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseBackend, Statement, Value, ConnectionTrait};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, Value};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -30,16 +30,8 @@ async fn seed_server_config<C: ConnectionTrait>(
             "false",
             "一次发布只能有一个人修改开关",
         ),
-        (
-            "item.key.length.limit",
-            "128",
-            "item key 最大长度限制",
-        ),
-        (
-            "item.value.length.limit",
-            "20000",
-            "item value最大长度限制",
-        ),
+        ("item.key.length.limit", "128", "item key 最大长度限制"),
+        ("item.value.length.limit", "20000", "item value最大长度限制"),
         (
             "config-service.cache.enabled",
             "false",
@@ -96,4 +88,3 @@ async fn seed_server_config<C: ConnectionTrait>(
 
     Ok(())
 }
-

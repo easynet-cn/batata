@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_ACCESS_KEY;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredAccessKey;
 use crate::persistence::traits::AccessKeyPersistence;
-use super::id_generator::IdGenerator;
 
 /// Embedded Access Key persistence using RocksDB
 pub struct AccessKeyEmbedded {
@@ -119,7 +119,8 @@ impl AccessKeyPersistence for AccessKeyEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;

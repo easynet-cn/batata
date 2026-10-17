@@ -119,9 +119,10 @@ pub async fn authenticate(
     let sig_bytes = signature.as_bytes();
     for secret in &enabled_secrets {
         if let Ok(expected) = compute_signature(secret, ts, &path_with_query)
-            && bool::from(expected.as_bytes().ct_eq(sig_bytes)) {
-                return Ok(());
-            }
+            && bool::from(expected.as_bytes().ct_eq(sig_bytes))
+        {
+            return Ok(());
+        }
     }
     Err(unauthorized("Unauthorized"))
 }
@@ -143,7 +144,12 @@ fn unauthorized(message: &str) -> actix_web::HttpResponse {
 /// Extract `{appId}` from `/configs/{appId}/...`, `/configfiles[...]{appId}/...`
 /// or from the `appId` query param on notification paths; None when blank.
 fn extract_app_id(path: &str, req: &HttpRequest) -> Option<String> {
-    const PREFIXES: [&str; 4] = ["/configs/", "/configfiles/json/", "/configfiles/raw/", "/configfiles/"];
+    const PREFIXES: [&str; 4] = [
+        "/configs/",
+        "/configfiles/json/",
+        "/configfiles/raw/",
+        "/configfiles/",
+    ];
     let mut app_id: Option<String> = None;
     for prefix in PREFIXES {
         if let Some(rest) = path.strip_prefix(prefix) {
@@ -170,14 +176,10 @@ fn extract_app_id(path: &str, req: &HttpRequest) -> Option<String> {
 }
 
 fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
-    let raw = req
-        .uri()
-        .query()?
-        .split('&')
-        .find_map(|pair| {
-            let (k, v) = pair.split_once('=')?;
-            (k == name).then_some(v.to_string())
-        })?;
+    let raw = req.uri().query()?.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == name).then_some(v.to_string())
+    })?;
     Some(percent_decode(&raw))
 }
 
@@ -250,11 +252,17 @@ mod tests {
     #[test]
     fn test_extract_app_id_from_paths() {
         assert_eq!(
-            extract_app_id("/configs/myApp/default/ns", &test_req("/configs/myApp/default/ns", "")),
+            extract_app_id(
+                "/configs/myApp/default/ns",
+                &test_req("/configs/myApp/default/ns", "")
+            ),
             Some("myApp".to_string())
         );
         assert_eq!(
-            extract_app_id("/configfiles/json/a/c/n", &test_req("/configfiles/json/a/c/n", "")),
+            extract_app_id(
+                "/configfiles/json/a/c/n",
+                &test_req("/configfiles/json/a/c/n", "")
+            ),
             Some("a".to_string())
         );
     }
@@ -262,13 +270,22 @@ mod tests {
     #[test]
     fn test_extract_app_id_blank_rejected() {
         // notifications without an appId anywhere → None (→ 400 InvalidAppId)
-        assert_eq!(extract_app_id("/notifications/v2", &test_req("/notifications/v2", "cluster=default")), None);
+        assert_eq!(
+            extract_app_id(
+                "/notifications/v2",
+                &test_req("/notifications/v2", "cluster=default")
+            ),
+            None
+        );
     }
 
     #[test]
     fn test_extract_app_id_from_notifications_query() {
         assert_eq!(
-            extract_app_id("/notifications/v2", &test_req("/notifications/v2", "appId=abc&cluster=x")),
+            extract_app_id(
+                "/notifications/v2",
+                &test_req("/notifications/v2", "appId=abc&cluster=x")
+            ),
             Some("abc".to_string())
         );
     }

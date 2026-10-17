@@ -290,7 +290,8 @@ impl SkillOperationService {
             None => return Ok(None),
         };
 
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         let versions = self.list_versions_for_skill(namespace_id, name).await?;
         let vi = Self::parse_version_info(&resource);
@@ -325,7 +326,8 @@ impl SkillOperationService {
             Some(r) => r,
             None => return Ok(None),
         };
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         let ver = match self.find_version(namespace_id, name, version).await? {
             Some(v) => v,
@@ -409,7 +411,8 @@ impl SkillOperationService {
     ) -> anyhow::Result<()> {
         // Visibility check
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
 
         // 1. Delete the resource meta (immediately removes from list/query results)
@@ -447,13 +450,7 @@ impl SkillOperationService {
 
         let page = self
             .persistence
-            .ai_resource_list(
-                namespace_id,
-                SKILL_TYPE,
-                &filter,
-                page_no,
-                page_size,
-            )
+            .ai_resource_list(namespace_id, SKILL_TYPE, &filter, page_no, page_size)
             .await?;
 
         let items: Vec<SkillSummary> = page
@@ -653,8 +650,7 @@ impl SkillOperationService {
             // cannot be created as-is, so the upload would have to bump it.
             let (target, adjusted) = match (parsed_version, max_published) {
                 (Some(parsed), Some(published))
-                    if compare_versions(&parsed, &published)
-                        != std::cmp::Ordering::Greater =>
+                    if compare_versions(&parsed, &published) != std::cmp::Ordering::Greater =>
                 {
                     (next_patch_version(&published), true)
                 }
@@ -849,7 +845,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         let vi = Self::parse_version_info(&resource);
         let draft_version = vi
@@ -888,7 +885,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         let vi = Self::parse_version_info(&resource);
         let draft_version = vi
@@ -926,7 +924,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         // Verify version exists and is draft
         let ver = self
@@ -975,7 +974,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         let ver = self
             .find_version(namespace_id, name, version)
@@ -1097,7 +1097,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         // Validate all label targets point to online versions
         for (label, version) in &labels {
@@ -1140,7 +1141,8 @@ impl SkillOperationService {
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
         self.persistence
             .ai_resource_update_biz_tags(namespace_id, name, SKILL_TYPE, biz_tags)
@@ -1167,7 +1169,8 @@ impl SkillOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
-        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+            .await?;
 
         if scope == Some("skill") {
             // Skill-level: enable/disable the whole skill
@@ -1231,7 +1234,8 @@ impl SkillOperationService {
         user: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(resource) = self.find_resource(namespace_id, name).await? {
-            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource).await?;
+            self.check_visibility(user, batata_visibility::ACTION_WRITE, &resource)
+                .await?;
         }
         if scope != SCOPE_PUBLIC && scope != SCOPE_PRIVATE {
             anyhow::bail!("Invalid scope '{}', must be PUBLIC or PRIVATE", scope);
@@ -1266,7 +1270,8 @@ impl SkillOperationService {
             None => return Ok(None),
         };
 
-        self.check_visibility(user, batata_visibility::ACTION_READ, &resource).await?;
+        self.check_visibility(user, batata_visibility::ACTION_READ, &resource)
+            .await?;
 
         // Check skill is enabled
         if resource.status.as_deref() != Some(RESOURCE_STATUS_ENABLE) {
@@ -1456,19 +1461,17 @@ impl SkillOperationService {
                     true
                 }
             })
-            .filter(|r| {
-                match advisor.base_predicate {
-                    batata_visibility::BaseVisibilityPredicate::All => true,
-                    batata_visibility::BaseVisibilityPredicate::Public => {
-                        r.scope == batata_visibility::SCOPE_PUBLIC
-                    }
-                    batata_visibility::BaseVisibilityPredicate::Owner => {
-                        !identity.is_empty() && r.owner == identity
-                    }
-                    batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
-                        r.scope == batata_visibility::SCOPE_PUBLIC
-                            || (!identity.is_empty() && r.owner == identity)
-                    }
+            .filter(|r| match advisor.base_predicate {
+                batata_visibility::BaseVisibilityPredicate::All => true,
+                batata_visibility::BaseVisibilityPredicate::Public => {
+                    r.scope == batata_visibility::SCOPE_PUBLIC
+                }
+                batata_visibility::BaseVisibilityPredicate::Owner => {
+                    !identity.is_empty() && r.owner == identity
+                }
+                batata_visibility::BaseVisibilityPredicate::PublicAndOwner => {
+                    r.scope == batata_visibility::SCOPE_PUBLIC
+                        || (!identity.is_empty() && r.owner == identity)
                 }
             })
             .filter(|r| {
@@ -1592,7 +1595,12 @@ impl super::traits::SkillService for SkillOperationService {
             .await
     }
 
-    async fn delete_skill(&self, namespace_id: &str, name: &str, _user: Option<&str>) -> anyhow::Result<()> {
+    async fn delete_skill(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.delete_skill(namespace_id, name, _user).await
     }
 
@@ -1688,7 +1696,12 @@ impl super::traits::SkillService for SkillOperationService {
         self.update_draft(namespace_id, name, skill, _user).await
     }
 
-    async fn delete_draft(&self, namespace_id: &str, name: &str, _user: Option<&str>) -> anyhow::Result<()> {
+    async fn delete_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        _user: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.delete_draft(namespace_id, name, _user).await
     }
 
@@ -1719,8 +1732,7 @@ impl super::traits::SkillService for SkillOperationService {
         version: &str,
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.force_publish(namespace_id, name, version, _user)
-            .await
+        self.force_publish(namespace_id, name, version, _user).await
     }
 
     async fn redraft(
@@ -1750,7 +1762,8 @@ impl super::traits::SkillService for SkillOperationService {
         biz_tags: &str,
         _user: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.update_biz_tags(namespace_id, name, biz_tags, _user).await
+        self.update_biz_tags(namespace_id, name, biz_tags, _user)
+            .await
     }
 
     async fn change_online_status(
@@ -1784,7 +1797,8 @@ impl super::traits::SkillService for SkillOperationService {
         label: Option<&str>,
         _user: Option<&str>,
     ) -> anyhow::Result<Option<Skill>> {
-        self.query_skill(namespace_id, name, version, label, _user).await
+        self.query_skill(namespace_id, name, version, label, _user)
+            .await
     }
 
     async fn search_skills(

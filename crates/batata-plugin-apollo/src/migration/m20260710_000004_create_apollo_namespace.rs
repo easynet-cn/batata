@@ -1,7 +1,10 @@
 use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
-use crate::migration::column_helper::{bit, date_time, date_time_on_update, string_len_default, string_len_null, unsigned_big_int, unsigned_int};
+use crate::migration::column_helper::{
+    bit, date_time, date_time_on_update, string_len_default, string_len_null, unsigned_big_int,
+    unsigned_int,
+};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -10,21 +13,40 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
-        
+
         manager
             .create_table(
                 Table::create()
                     .table(ApolloNamespace::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloNamespace::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloNamespace::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloNamespace::AppId, 64, "default"))
-                    .col(string_len_default(ApolloNamespace::ClusterName, 500, "default"))
-                    .col(string_len_default(ApolloNamespace::NamespaceName, 500, "default"))
+                    .col(string_len_default(
+                        ApolloNamespace::ClusterName,
+                        500,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloNamespace::NamespaceName,
+                        500,
+                        "default",
+                    ))
                     .col(bit(ApolloNamespace::IsDeleted, None))
                     .col(unsigned_big_int(ApolloNamespace::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloNamespace::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloNamespace::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloNamespace::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloNamespace::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloNamespace::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloNamespace::DataChangeLastTime))
                     .to_owned(),
             )

@@ -785,12 +785,14 @@ impl AuthPersistence for DistributedPersistService {
     }
 
     async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
-        self.local_auth_read(|reader| reader.has_global_admin()).await
+        self.local_auth_read(|reader| reader.has_global_admin())
+            .await
     }
 
     async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool> {
         let username = username.to_string();
-        self.local_auth_read(move |reader| reader.has_global_admin_by_username(&username)).await
+        self.local_auth_read(move |reader| reader.has_global_admin_by_username(&username))
+            .await
     }
 
     async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {

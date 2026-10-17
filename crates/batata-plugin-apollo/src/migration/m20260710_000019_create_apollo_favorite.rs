@@ -15,12 +15,23 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloFavorite::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloFavorite::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloFavorite::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloFavorite::UserId, 32, "default"))
                     .col(string_len_default(ApolloFavorite::AppId, 64, "default"))
-                    .col(string_len_default(ApolloFavorite::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloFavorite::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloFavorite::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloFavorite::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloFavorite::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloFavorite::DataChangeLastTime))
                     .to_owned(),
             )

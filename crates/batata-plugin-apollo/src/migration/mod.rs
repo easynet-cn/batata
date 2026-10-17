@@ -1,5 +1,5 @@
 use sea_orm::{DatabaseBackend, Statement};
-use sea_orm_migration::{prelude::*, MigratorTrait};
+use sea_orm_migration::{MigratorTrait, prelude::*};
 use sea_query::{Alias, DynIden, SeaRc};
 
 /// Column name helper utilities for migration statements.

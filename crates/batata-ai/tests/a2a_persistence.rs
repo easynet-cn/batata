@@ -18,8 +18,8 @@ mod common;
 
 use std::sync::Arc;
 
-use batata_ai::model::{AgentCard, AgentCapabilities, AgentSkill};
 use batata_ai::A2aServerOperationService;
+use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
 use batata_persistence::entity::{ai_resource, ai_resource_version};
 use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
@@ -93,7 +93,9 @@ async fn a2a_agent_round_trip() {
     assert!(!id.is_empty(), "register must return an id");
 
     assert!(
-        svc.register_agent(&card("1.0.0"), NS, "manual").await.is_err(),
+        svc.register_agent(&card("1.0.0"), NS, "manual")
+            .await
+            .is_err(),
         "duplicate registration must fail"
     );
     println!("ok: register id={id}");
@@ -155,9 +157,15 @@ async fn a2a_agent_round_trip() {
         .await
         .expect("get")
         .expect("agent must exist");
-    assert_eq!(reread.card.description, "changed", "content must be updated");
     assert_eq!(
-        svc.list_versions(NS, NAME).await.expect("list versions").len(),
+        reread.card.description, "changed",
+        "content must be updated"
+    );
+    assert_eq!(
+        svc.list_versions(NS, NAME)
+            .await
+            .expect("list versions")
+            .len(),
         2,
         "updating must not duplicate the version"
     );
@@ -185,14 +193,24 @@ async fn a2a_agent_round_trip() {
         "deleted version must be gone"
     );
     assert_eq!(
-        svc.list_versions(NS, NAME).await.expect("list versions").len(),
+        svc.list_versions(NS, NAME)
+            .await
+            .expect("list versions")
+            .len(),
         1
     );
     println!("ok: delete single version");
 
     // ---- delete the whole agent --------------------------------------------
-    svc.delete_agent(NS, NAME, None).await.expect("delete agent");
-    assert!(svc.get_agent_card(NS, NAME, None, None).await.expect("get").is_none());
+    svc.delete_agent(NS, NAME, None)
+        .await
+        .expect("delete agent");
+    assert!(
+        svc.get_agent_card(NS, NAME, None, None)
+            .await
+            .expect("get")
+            .is_none()
+    );
     assert_eq!(
         svc.list_agents(NS, Some(NAME), "accurate", 1, 10, None)
             .await

@@ -241,10 +241,7 @@ async fn test_config_update() {
         .await
         .expect("Failed to get config");
 
-    assert_eq!(
-        response["data"], content_v2,
-        "Should have v2 content"
-    );
+    assert_eq!(response["data"], content_v2, "Should have v2 content");
 }
 
 /// Test configuration parameter validation
@@ -514,12 +511,8 @@ async fn test_config_md5() {
     // Verify MD5 matches the expected value for the content. Nacos exposes the
     // MD5 via the `Content-MD5` header rather than the JSON body.
     let expected_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
-    let actual_md5 = content_md5.unwrap_or_else(|| {
-        panic!(
-            "Content-MD5 header should be present, body: {}",
-            body
-        )
-    });
+    let actual_md5 = content_md5
+        .unwrap_or_else(|| panic!("Content-MD5 header should be present, body: {}", body));
     assert_eq!(
         actual_md5, expected_md5,
         "Content-MD5 header should match md5 of content '{}': expected '{}', got '{}'",

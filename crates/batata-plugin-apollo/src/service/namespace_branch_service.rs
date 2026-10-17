@@ -13,7 +13,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-
 use crate::api::dto::NamespaceDTO;
 use crate::persistence::shared::{StoredCluster, StoredNamespace};
 use crate::persistence::traits::{
@@ -81,27 +80,27 @@ impl NamespaceBranchService {
         parent_cluster_name: &str,
         namespace_name: &str,
     ) -> anyhow::Result<Option<(StoredCluster, StoredNamespace)>> {
-        let parent = match ClusterPersistence::get(
-            &self.persistence,
-            app_id,
-            parent_cluster_name,
-        )
-        .await?
-        {
-            Some(c) => c,
-            None => return Ok(None),
-        };
+        let parent =
+            match ClusterPersistence::get(&self.persistence, app_id, parent_cluster_name).await? {
+                Some(c) => c,
+                None => return Ok(None),
+            };
         for cluster in ClusterPersistence::list(&self.persistence, app_id).await? {
-            if cluster.is_deleted || parent.id == 0 || cluster.parent_cluster_id != parent.id || parent_cluster_name == cluster.name {
+            if cluster.is_deleted
+                || parent.id == 0
+                || cluster.parent_cluster_id != parent.id
+                || parent_cluster_name == cluster.name
+            {
                 continue;
             }
             if let Some(ns) = self
                 .persistence
                 .get_by_app_cluster(app_id, &cluster.name, namespace_name)
                 .await?
-                && !ns.is_deleted {
-                    return Ok(Some((cluster, ns)));
-                }
+                && !ns.is_deleted
+            {
+                return Ok(Some((cluster, ns)));
+            }
         }
         Ok(None)
     }
@@ -217,13 +216,8 @@ impl NamespaceBranchService {
             {
                 continue;
             }
-            GrayReleasePersistence::update_rules(
-                &self.persistence,
-                r.id,
-                "[]".to_string(),
-                0,
-            )
-            .await?;
+            GrayReleasePersistence::update_rules(&self.persistence, r.id, "[]".to_string(), 0)
+                .await?;
         }
         // Mark all live rules for this namespace as terminal via soft delete.
         let rules = GrayReleasePersistence::list_by_app(&self.persistence, app_id).await?;
@@ -325,9 +319,7 @@ impl NamespaceBranchService {
             comment: stored.comment.clone(),
             data_change_created_by: Some(stored.data_change_created_by.clone()),
             data_change_last_modified_by: stored.data_change_last_modified_by.clone(),
-            data_change_last_time: stored
-                .data_change_last_time
-                .map(|t| t.to_string()),
+            data_change_last_time: stored.data_change_last_time.map(|t| t.to_string()),
             data_change_created_time: Some(stored.data_change_created_time.to_string()),
         }
     }

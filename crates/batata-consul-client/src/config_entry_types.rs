@@ -15,43 +15,43 @@ use serde::{Deserialize, Serialize};
 /// Matches Consul Go SDK constants (`api.ServiceDefaults`, `api.ProxyDefaults`,
 /// etc.) so users can reference them without string literals.
 pub mod kinds {
-/// The config-entry kind for `service-defaults`.
+    /// The config-entry kind for `service-defaults`.
     pub const SERVICE_DEFAULTS: &str = "service-defaults";
-/// The config-entry kind for `proxy-defaults`.
+    /// The config-entry kind for `proxy-defaults`.
     pub const PROXY_DEFAULTS: &str = "proxy-defaults";
-/// The config-entry kind for `service-router`.
+    /// The config-entry kind for `service-router`.
     pub const SERVICE_ROUTER: &str = "service-router";
-/// The config-entry kind for `service-splitter`.
+    /// The config-entry kind for `service-splitter`.
     pub const SERVICE_SPLITTER: &str = "service-splitter";
-/// The config-entry kind for `service-resolver`.
+    /// The config-entry kind for `service-resolver`.
     pub const SERVICE_RESOLVER: &str = "service-resolver";
-/// The config-entry kind for `ingress-gateway`.
+    /// The config-entry kind for `ingress-gateway`.
     pub const INGRESS_GATEWAY: &str = "ingress-gateway";
-/// The config-entry kind for `terminating-gateway`.
+    /// The config-entry kind for `terminating-gateway`.
     pub const TERMINATING_GATEWAY: &str = "terminating-gateway";
-/// The config-entry kind for `mesh`.
+    /// The config-entry kind for `mesh`.
     pub const MESH: &str = "mesh";
-/// The config-entry kind for `exported-services`.
+    /// The config-entry kind for `exported-services`.
     pub const EXPORTED_SERVICES: &str = "exported-services";
-/// The config-entry kind for `service-intentions`.
+    /// The config-entry kind for `service-intentions`.
     pub const SERVICE_INTENTIONS: &str = "service-intentions";
-/// The config-entry kind for `jwt-provider`.
+    /// The config-entry kind for `jwt-provider`.
     pub const JWT_PROVIDER: &str = "jwt-provider";
-/// The config-entry kind for `sameness-group`.
+    /// The config-entry kind for `sameness-group`.
     pub const SAMENESS_GROUP: &str = "sameness-group";
-/// The config-entry kind for `inline-certificate`.
+    /// The config-entry kind for `inline-certificate`.
     pub const INLINE_CERTIFICATE: &str = "inline-certificate";
-/// The config-entry kind for `file-system-certificate`.
+    /// The config-entry kind for `file-system-certificate`.
     pub const FILE_SYSTEM_CERTIFICATE: &str = "file-system-certificate";
-/// The config-entry kind for `api-gateway`.
+    /// The config-entry kind for `api-gateway`.
     pub const API_GATEWAY: &str = "api-gateway";
-/// The config-entry kind for `bound-api-gateway`.
+    /// The config-entry kind for `bound-api-gateway`.
     pub const BOUND_API_GATEWAY: &str = "bound-api-gateway";
-/// The config-entry kind for `http-route`.
+    /// The config-entry kind for `http-route`.
     pub const HTTP_ROUTE: &str = "http-route";
-/// The config-entry kind for `tcp-route`.
+    /// The config-entry kind for `tcp-route`.
     pub const TCP_ROUTE: &str = "tcp-route";
-/// The config-entry kind for `control-plane-request-limit`.
+    /// The config-entry kind for `control-plane-request-limit`.
     pub const RATE_LIMIT_IP: &str = "control-plane-request-limit";
 }
 

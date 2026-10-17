@@ -22,7 +22,11 @@ impl AccessKeySqlPersistence {
 impl From<StoredAccessKey> for apollo_access_key::ActiveModel {
     fn from(access_key: StoredAccessKey) -> Self {
         Self {
-            id: if access_key.id == 0 { sea_orm::ActiveValue::NotSet } else { sea_orm::Set(access_key.id) },
+            id: if access_key.id == 0 {
+                sea_orm::ActiveValue::NotSet
+            } else {
+                sea_orm::Set(access_key.id)
+            },
             app_id: Set(access_key.app_id),
             secret: Set(access_key.secret),
             mode: Set(access_key.mode),
@@ -36,9 +40,9 @@ impl From<StoredAccessKey> for apollo_access_key::ActiveModel {
             .unwrap_or_default()
             .naive_utc()),
             data_change_last_modified_by: Set(access_key.data_change_last_modified_by),
-            data_change_last_time: Set(access_key.data_change_last_time.and_then(|t| {
-                chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-            })),
+            data_change_last_time: Set(access_key
+                .data_change_last_time
+                .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc()))),
         }
     }
 }
@@ -56,7 +60,9 @@ impl From<apollo_access_key::Model> for StoredAccessKey {
             data_change_created_by: model.data_change_created_by,
             data_change_created_time: model.data_change_created_time.and_utc().timestamp_millis(),
             data_change_last_modified_by: model.data_change_last_modified_by,
-            data_change_last_time: model.data_change_last_time.map(|t| t.and_utc().timestamp_millis()),
+            data_change_last_time: model
+                .data_change_last_time
+                .map(|t| t.and_utc().timestamp_millis()),
         }
     }
 }
@@ -105,9 +111,9 @@ impl AccessKeyPersistence for AccessKeySqlPersistence {
         let mut active_model: apollo_access_key::ActiveModel = existing.into();
         active_model.is_enabled = Set(access_key.is_enabled);
         active_model.data_change_last_modified_by = Set(access_key.data_change_last_modified_by);
-        active_model.data_change_last_time = Set(access_key.data_change_last_time.and_then(|t| {
-            chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())
-        }));
+        active_model.data_change_last_time = Set(access_key
+            .data_change_last_time
+            .and_then(|t| chrono::DateTime::from_timestamp_millis(t).map(|dt| dt.naive_utc())));
 
         let updated = active_model.update(&self.db).await?;
         Ok(updated.into())

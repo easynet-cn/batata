@@ -110,10 +110,9 @@ impl QueryStore {
             Self::Persistent { db } => {
                 if let Some(cf) = db.cf_handle(CF_CONSUL_QUERIES) {
                     let existed = db.get_cf(cf, id.as_bytes()).ok().flatten().is_some();
-                    if existed
-                        && let Err(e) = db.delete_cf(cf, id.as_bytes()) {
-                            error!("Failed to delete query '{}': {}", id, e);
-                        }
+                    if existed && let Err(e) = db.delete_cf(cf, id.as_bytes()) {
+                        error!("Failed to delete query '{}': {}", id, e);
+                    }
                     existed
                 } else {
                     false
@@ -164,7 +163,7 @@ impl Default for ConsulQueryService {
 }
 
 impl ConsulQueryService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new() -> Self {
         Self {
             store: QueryStore::memory(),
@@ -180,9 +179,10 @@ impl ConsulQueryService {
         let mut max_index = 0u64;
         for query in store.list() {
             if let Some(idx) = query.modify_index
-                && idx > max_index {
-                    max_index = idx;
-                }
+                && idx > max_index
+            {
+                max_index = idx;
+            }
         }
         if max_index > 0 {
             let current = QUERY_INDEX.load(Ordering::SeqCst);
@@ -310,21 +310,20 @@ impl ConsulQueryService {
     /// Delete a prepared query
     pub async fn delete_query(&self, id: &str) -> bool {
         let removed = self.store.remove(id);
-        if removed
-            && let Some(ref raft) = self.raft_node {
-                match raft
-                    .write(ConsulRaftRequest::QueryDelete { id: id.to_string() })
-                    .await
-                {
-                    Ok(r) if !r.success => {
-                        error!("Raft QueryDelete rejected: {:?}", r.message);
-                    }
-                    Err(e) => {
-                        error!("Raft QueryDelete failed: {}", e);
-                    }
-                    _ => {}
+        if removed && let Some(ref raft) = self.raft_node {
+            match raft
+                .write(ConsulRaftRequest::QueryDelete { id: id.to_string() })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft QueryDelete rejected: {:?}", r.message);
                 }
+                Err(e) => {
+                    error!("Raft QueryDelete failed: {}", e);
+                }
+                _ => {}
             }
+        }
         removed
     }
 

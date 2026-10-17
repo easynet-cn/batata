@@ -53,21 +53,10 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(""),
                     )
-                    .col(
-                        string_len(AiResourceSearchDocument::ResourceType, 32).not_null(),
-                    )
-                    .col(
-                        string_len(AiResourceSearchDocument::ResourceName, 256)
-                            .not_null(),
-                    )
-                    .col(
-                        string_len(AiResourceSearchDocument::ResourceVersion, 64)
-                            .not_null(),
-                    )
-                    .col(
-                        string_len(AiResourceSearchDocument::DisplayName, 256)
-                            .not_null(),
-                    )
+                    .col(string_len(AiResourceSearchDocument::ResourceType, 32).not_null())
+                    .col(string_len(AiResourceSearchDocument::ResourceName, 256).not_null())
+                    .col(string_len(AiResourceSearchDocument::ResourceVersion, 64).not_null())
+                    .col(string_len(AiResourceSearchDocument::DisplayName, 256).not_null())
                     .col(string_len_null(AiResourceSearchDocument::CDesc, 2048))
                     .col(long_text_null(AiResourceSearchDocument::Tags, backend))
                     .col(long_text_null(
@@ -79,15 +68,9 @@ impl MigrationTrait for Migration {
                         backend,
                     ))
                     .col(long_text_null(AiResourceSearchDocument::Metadata, backend))
-                    .col(
-                        string_len(AiResourceSearchDocument::SourceDigest, 64)
-                            .not_null(),
-                    )
+                    .col(string_len(AiResourceSearchDocument::SourceDigest, 64).not_null())
                     .col(string_len(AiResourceSearchDocument::Status, 32).not_null())
-                    .col(
-                        string_len(AiResourceSearchDocument::GenerateMode, 32)
-                            .not_null(),
-                    )
+                    .col(string_len(AiResourceSearchDocument::GenerateMode, 32).not_null())
                     .to_owned(),
             )
             .await?;
@@ -245,7 +228,11 @@ impl MigrationTrait for Migration {
                     .col(long_text_null(AiResourceTask::TaskResult, backend))
                     .col(integer(AiResourceTask::RetryCount).not_null().default(0))
                     .col(big_integer(AiResourceTask::Revision).not_null().default(1))
-                    .col(big_integer(AiResourceTask::LeaseToken).not_null().default(0))
+                    .col(
+                        big_integer(AiResourceTask::LeaseToken)
+                            .not_null()
+                            .default(0),
+                    )
                     .col(big_integer(AiResourceTask::NextExecuteAt).not_null())
                     .col(big_integer_null(AiResourceTask::LeaseExpireAt))
                     .col(string_len_null(AiResourceTask::LastError, 2000))

@@ -19,15 +19,18 @@ use crate::entity::{
 use crate::persistence::sql::SqlApolloPersistence;
 use crate::persistence::traits::{
     AppNamespacePersistence, AuditPersistence, ConsumerPersistence, ConsumerRolePersistence,
-    ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence, PermissionPersistence,
-    ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence, UserPersistence,
-    UserTokenPersistence,
+    ConsumerTokenPersistence, FavoritePersistence, InstanceConfigPersistence,
+    PermissionPersistence, ReleaseHistoryPersistence, RolePersistence, ServerConfigPersistence,
+    UserPersistence, UserTokenPersistence,
 };
 use chrono::Utc;
 
 #[async_trait]
 impl AppNamespacePersistence for SqlApolloPersistence {
-    async fn create_app_namespace(&self, dto: crate::api::dto::AppNamespaceDTO) -> anyhow::Result<apollo_app_namespace::Model> {
+    async fn create_app_namespace(
+        &self,
+        dto: crate::api::dto::AppNamespaceDTO,
+    ) -> anyhow::Result<apollo_app_namespace::Model> {
         let db = &self.db;
         let existing = apollo_app_namespace::Entity::find()
             .filter(apollo_app_namespace::Column::AppId.eq(&dto.app_id))
@@ -39,7 +42,10 @@ impl AppNamespacePersistence for SqlApolloPersistence {
             anyhow::bail!("AppNamespace already exists: {}/{}", dto.app_id, dto.name);
         }
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let active_model = apollo_app_namespace::ActiveModel {
             app_id: Set(dto.app_id),
             name: Set(dto.name),
@@ -57,7 +63,11 @@ impl AppNamespacePersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn get_app_namespace(&self, app_id: &str, name: &str) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
+    async fn get_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<apollo_app_namespace::Model>> {
         let db = &self.db;
         Ok(apollo_app_namespace::Entity::find()
             .filter(apollo_app_namespace::Column::AppId.eq(app_id))
@@ -67,7 +77,10 @@ impl AppNamespacePersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_app_namespace_by_app(&self, app_id: &str) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
+    async fn list_app_namespace_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Vec<apollo_app_namespace::Model>> {
         let db = &self.db;
         Ok(apollo_app_namespace::Entity::find()
             .filter(apollo_app_namespace::Column::AppId.eq(app_id))
@@ -87,7 +100,12 @@ impl AppNamespacePersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn delete_app_namespace(&self, app_id: &str, name: &str, operator: &str) -> anyhow::Result<()> {
+    async fn delete_app_namespace(
+        &self,
+        app_id: &str,
+        name: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         let db = &self.db;
         let model = apollo_app_namespace::Entity::find()
             .filter(apollo_app_namespace::Column::AppId.eq(app_id))
@@ -109,10 +127,16 @@ impl AppNamespacePersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl AuditPersistence for SqlApolloPersistence {
-    async fn create_audit(&self, dto: crate::api::dto::AuditDTO) -> anyhow::Result<apollo_audit::Model> {
+    async fn create_audit(
+        &self,
+        dto: crate::api::dto::AuditDTO,
+    ) -> anyhow::Result<apollo_audit::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "system".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "system".to_string());
         let active_model = apollo_audit::ActiveModel {
             audit_key: Set(dto.audit_key),
             entity_name: Set(dto.entity_name),
@@ -131,7 +155,11 @@ impl AuditPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn list_audit(&self, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
+    async fn list_audit(
+        &self,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_audit::Model>, u64)> {
         let db = &self.db;
         let mut models = apollo_audit::Entity::find()
             .order_by_desc(apollo_audit::Column::OpTime)
@@ -141,11 +169,19 @@ impl AuditPersistence for SqlApolloPersistence {
         let page = if page == 0 { 1 } else { page };
         let size = if size == 0 { 1 } else { size };
         let start = ((page - 1) * size) as usize;
-        let page_items = if start >= models.len() { Vec::new() } else { models.drain(start..).take(size as usize).collect() };
+        let page_items = if start >= models.len() {
+            Vec::new()
+        } else {
+            models.drain(start..).take(size as usize).collect()
+        };
         Ok((page_items, total))
     }
 
-    async fn list_audit_by_entity(&self, entity_name: &str, entity_id: &str) -> anyhow::Result<Vec<apollo_audit::Model>> {
+    async fn list_audit_by_entity(
+        &self,
+        entity_name: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<Vec<apollo_audit::Model>> {
         let db = &self.db;
         Ok(apollo_audit::Entity::find()
             .filter(apollo_audit::Column::EntityName.eq(entity_name))
@@ -158,10 +194,16 @@ impl AuditPersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl ConsumerPersistence for SqlApolloPersistence {
-    async fn create_consumer(&self, dto: crate::api::dto::ConsumerDTO) -> anyhow::Result<apollo_consumer::Model> {
+    async fn create_consumer(
+        &self,
+        dto: crate::api::dto::ConsumerDTO,
+    ) -> anyhow::Result<apollo_consumer::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let active_model = apollo_consumer::ActiveModel {
             app_id: Set(dto.app_id),
             name: Set(dto.name),
@@ -179,10 +221,15 @@ impl ConsumerPersistence for SqlApolloPersistence {
     }
 
     async fn get_consumer(&self, id: i64) -> anyhow::Result<Option<apollo_consumer::Model>> {
-        Ok(apollo_consumer::Entity::find_by_id(id).one(&self.db).await?)
+        Ok(apollo_consumer::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?)
     }
 
-    async fn get_consumer_by_app(&self, app_id: &str) -> anyhow::Result<Option<apollo_consumer::Model>> {
+    async fn get_consumer_by_app(
+        &self,
+        app_id: &str,
+    ) -> anyhow::Result<Option<apollo_consumer::Model>> {
         Ok(apollo_consumer::Entity::find()
             .filter(apollo_consumer::Column::AppId.eq(app_id))
             .one(&self.db)
@@ -196,7 +243,12 @@ impl ConsumerPersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl PermissionPersistence for SqlApolloPersistence {
-    async fn create_permission(&self, permission_type: i32, target_id: &str, created_by: &str) -> anyhow::Result<apollo_permission::Model> {
+    async fn create_permission(
+        &self,
+        permission_type: i32,
+        target_id: &str,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_permission::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
         let active_model = apollo_permission::ActiveModel {
@@ -211,31 +263,48 @@ impl PermissionPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn list_permission_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         Ok(apollo_permission::Entity::find()
             .filter(apollo_permission::Column::TargetId.eq(target_id))
             .all(&self.db)
             .await?)
     }
 
-    async fn list_permission_by_type(&self, permission_type: i32) -> anyhow::Result<Vec<apollo_permission::Model>> {
+    async fn list_permission_by_type(
+        &self,
+        permission_type: i32,
+    ) -> anyhow::Result<Vec<apollo_permission::Model>> {
         Ok(apollo_permission::Entity::find()
             .filter(apollo_permission::Column::PermissionType.eq(permission_type))
             .all(&self.db)
             .await?)
     }
 
-    async fn get_permission_by_id(&self, id: i64) -> anyhow::Result<Option<apollo_permission::Model>> {
-        Ok(apollo_permission::Entity::find_by_id(id).one(&self.db).await?)
+    async fn get_permission_by_id(
+        &self,
+        id: i64,
+    ) -> anyhow::Result<Option<apollo_permission::Model>> {
+        Ok(apollo_permission::Entity::find_by_id(id)
+            .one(&self.db)
+            .await?)
     }
 }
 
 #[async_trait]
 impl RolePersistence for SqlApolloPersistence {
-    async fn create_role(&self, dto: crate::api::dto::RoleDTO) -> anyhow::Result<apollo_role::Model> {
+    async fn create_role(
+        &self,
+        dto: crate::api::dto::RoleDTO,
+    ) -> anyhow::Result<apollo_role::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "admin".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "admin".to_string());
         let active_model = apollo_role::ActiveModel {
             role_name: Set(dto.role_name),
             role_type: Set(dto.role_type),
@@ -258,7 +327,10 @@ impl RolePersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_role_by_target(&self, target_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
+    async fn list_role_by_target(
+        &self,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<apollo_role::Model>> {
         Ok(apollo_role::Entity::find()
             .filter(apollo_role::Column::TargetId.eq(target_id))
             .filter(apollo_role::Column::IsDeleted.eq(false))
@@ -266,7 +338,10 @@ impl RolePersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn get_role_by_name(&self, role_name: &str) -> anyhow::Result<Option<apollo_role::Model>> {
+    async fn get_role_by_name(
+        &self,
+        role_name: &str,
+    ) -> anyhow::Result<Option<apollo_role::Model>> {
         Ok(apollo_role::Entity::find()
             .filter(apollo_role::Column::RoleName.eq(role_name))
             .filter(apollo_role::Column::IsDeleted.eq(false))
@@ -289,7 +364,12 @@ impl RolePersistence for SqlApolloPersistence {
         Ok(())
     }
 
-    async fn assign_role_permission(&self, role_id: i64, permission_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_permission(
+        &self,
+        role_id: i64,
+        permission_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
         let active_model = apollo_role_permission::ActiveModel {
@@ -301,7 +381,9 @@ impl RolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_role_permission::Entity::insert(active_model).exec(db).await?;
+        apollo_role_permission::Entity::insert(active_model)
+            .exec(db)
+            .await?;
         Ok(())
     }
 
@@ -322,7 +404,12 @@ impl RolePersistence for SqlApolloPersistence {
         Ok(models.into_iter().map(|m| m.permission_id).collect())
     }
 
-    async fn assign_role_to_user(&self, user_id: &str, role_id: i64, created_by: &str) -> anyhow::Result<()> {
+    async fn assign_role_to_user(
+        &self,
+        user_id: &str,
+        role_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<()> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
         let active_model = apollo_user_role::ActiveModel {
@@ -334,7 +421,9 @@ impl RolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_user_role::Entity::insert(active_model).exec(db).await?;
+        apollo_user_role::Entity::insert(active_model)
+            .exec(db)
+            .await?;
         Ok(())
     }
 
@@ -367,7 +456,10 @@ impl RolePersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl UserPersistence for SqlApolloPersistence {
-    async fn create_user(&self, dto: crate::api::dto::UserDTO) -> anyhow::Result<apollo_users::Model> {
+    async fn create_user(
+        &self,
+        dto: crate::api::dto::UserDTO,
+    ) -> anyhow::Result<apollo_users::Model> {
         let db = &self.db;
         if apollo_users::Entity::find()
             .filter(apollo_users::Column::Username.eq(&dto.username))
@@ -480,7 +572,9 @@ impl ConsumerRolePersistence for SqlApolloPersistence {
             data_change_last_time: Set(Some(now)),
             ..Default::default()
         };
-        apollo_consumer_role::Entity::insert(active_model).exec(db).await?;
+        apollo_consumer_role::Entity::insert(active_model)
+            .exec(db)
+            .await?;
         Ok(())
     }
 
@@ -517,9 +611,7 @@ impl ConsumerRolePersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_consumer_role_links(
-        &self,
-    ) -> anyhow::Result<Vec<apollo_consumer_role::Model>> {
+    async fn list_consumer_role_links(&self) -> anyhow::Result<Vec<apollo_consumer_role::Model>> {
         Ok(apollo_consumer_role::Entity::find().all(&self.db).await?)
     }
 
@@ -548,7 +640,10 @@ impl ConsumerRolePersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl FavoritePersistence for SqlApolloPersistence {
-    async fn create_favorite(&self, dto: crate::api::dto::FavoriteDTO) -> anyhow::Result<apollo_favorite::Model> {
+    async fn create_favorite(
+        &self,
+        dto: crate::api::dto::FavoriteDTO,
+    ) -> anyhow::Result<apollo_favorite::Model> {
         let db = &self.db;
         let existing = apollo_favorite::Entity::find()
             .filter(apollo_favorite::Column::UserId.eq(&dto.user_id))
@@ -559,7 +654,10 @@ impl FavoritePersistence for SqlApolloPersistence {
             return Ok(model);
         }
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| dto.user_id.clone());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| dto.user_id.clone());
         let active_model = apollo_favorite::ActiveModel {
             user_id: Set(dto.user_id),
             app_id: Set(dto.app_id),
@@ -572,7 +670,10 @@ impl FavoritePersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn list_favorite_by_user(&self, user_id: &str) -> anyhow::Result<Vec<apollo_favorite::Model>> {
+    async fn list_favorite_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_favorite::Model>> {
         Ok(apollo_favorite::Entity::find()
             .filter(apollo_favorite::Column::UserId.eq(user_id))
             .order_by_desc(apollo_favorite::Column::DataChangeCreatedTime)
@@ -595,7 +696,10 @@ impl FavoritePersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl ServerConfigPersistence for SqlApolloPersistence {
-    async fn get_server_config(&self, key: &str) -> anyhow::Result<Option<apollo_server_config::Model>> {
+    async fn get_server_config(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<apollo_server_config::Model>> {
         Ok(apollo_server_config::Entity::find()
             .filter(apollo_server_config::Column::Key.eq(key))
             .one(&self.db)
@@ -609,7 +713,10 @@ impl ServerConfigPersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn create_server_config(&self, dto: crate::api::dto::ServerConfigDTO) -> anyhow::Result<apollo_server_config::Model> {
+    async fn create_server_config(
+        &self,
+        dto: crate::api::dto::ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
         let db = &self.db;
         let existing = apollo_server_config::Entity::find()
             .filter(apollo_server_config::Column::Key.eq(&dto.key))
@@ -631,7 +738,12 @@ impl ServerConfigPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn update_server_config(&self, key: &str, value: &str, operator: &str) -> anyhow::Result<()> {
+    async fn update_server_config(
+        &self,
+        key: &str,
+        value: &str,
+        operator: &str,
+    ) -> anyhow::Result<()> {
         let db = &self.db;
         let model = apollo_server_config::Entity::find()
             .filter(apollo_server_config::Column::Key.eq(key))
@@ -662,7 +774,10 @@ impl ServerConfigPersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl InstanceConfigPersistence for SqlApolloPersistence {
-    async fn create_or_update_instance_config(&self, dto: crate::api::dto::InstanceConfigDTO) -> anyhow::Result<apollo_instance_config::Model> {
+    async fn create_or_update_instance_config(
+        &self,
+        dto: crate::api::dto::InstanceConfigDTO,
+    ) -> anyhow::Result<apollo_instance_config::Model> {
         let db = &self.db;
         let config_app_id = dto.config_app_id.clone().unwrap_or_default();
         let existing = apollo_instance_config::Entity::find()
@@ -673,7 +788,10 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
             .one(db)
             .await?;
         let now = Utc::now().naive_utc();
-        let created_by = dto.data_change_created_by.clone().unwrap_or_else(|| "system".to_string());
+        let created_by = dto
+            .data_change_created_by
+            .clone()
+            .unwrap_or_else(|| "system".to_string());
         if let Some(model) = existing {
             let mut active_model: apollo_instance_config::ActiveModel = model.into();
             active_model.release_key = Set(dto.release_key);
@@ -698,7 +816,10 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn get_instance_config_by_instance(&self, instance_id: i64) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn get_instance_config_by_instance(
+        &self,
+        instance_id: i64,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         Ok(apollo_instance_config::Entity::find()
             .filter(apollo_instance_config::Column::InstanceId.eq(instance_id))
             .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
@@ -706,7 +827,12 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_instance_config_by_app_cluster(&self, _app_id: &str, cluster_name: &str, _namespace_name: &str) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn list_instance_config_by_app_cluster(
+        &self,
+        _app_id: &str,
+        cluster_name: &str,
+        _namespace_name: &str,
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         Ok(apollo_instance_config::Entity::find()
             .filter(apollo_instance_config::Column::ClusterName.eq(cluster_name))
             .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
@@ -748,7 +874,12 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
         Ok((content, total))
     }
 
-    async fn count_instance_config(&self, app_id: &str, cluster_name: &str, namespace_name: &str) -> anyhow::Result<u64> {
+    async fn count_instance_config(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+    ) -> anyhow::Result<u64> {
         Ok(apollo_instance_config::Entity::find()
             .filter(apollo_instance_config::Column::ConfigAppId.eq(app_id))
             .filter(apollo_instance_config::Column::ClusterName.eq(cluster_name))
@@ -757,7 +888,10 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_instance_config_by_release_keys(&self, release_keys: &[String]) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
+    async fn list_instance_config_by_release_keys(
+        &self,
+        release_keys: &[String],
+    ) -> anyhow::Result<Vec<apollo_instance_config::Model>> {
         Ok(apollo_instance_config::Entity::find()
             .filter(apollo_instance_config::Column::ReleaseKey.is_in(release_keys.iter().cloned()))
             .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
@@ -776,7 +910,11 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
             .filter(apollo_instance_config::Column::ConfigAppId.eq(app_id))
             .filter(apollo_instance_config::Column::ClusterName.eq(cluster_name))
             .filter(apollo_instance_config::Column::NamespaceName.eq(namespace_name))
-            .filter(apollo_instance_config::Column::ReleaseKey.is_in(release_keys.iter().cloned()).not())
+            .filter(
+                apollo_instance_config::Column::ReleaseKey
+                    .is_in(release_keys.iter().cloned())
+                    .not(),
+            )
             .order_by_desc(apollo_instance_config::Column::DataChangeLastTime)
             .all(&self.db)
             .await?)
@@ -785,7 +923,14 @@ impl InstanceConfigPersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl ReleaseHistoryPersistence for SqlApolloPersistence {
-    async fn find_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, page: u64, size: u64) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
+    async fn find_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        page: u64,
+        size: u64,
+    ) -> anyhow::Result<(Vec<apollo_release_history::Model>, u64)> {
         let db = &self.db;
         let mut models = apollo_release_history::Entity::find()
             .filter(apollo_release_history::Column::AppId.eq(app_id))
@@ -799,11 +944,26 @@ impl ReleaseHistoryPersistence for SqlApolloPersistence {
         let page = if page == 0 { 1 } else { page };
         let size = if size == 0 { 1 } else { size };
         let start = ((page - 1) * size) as usize;
-        let page_items = if start >= models.len() { Vec::new() } else { models.drain(start..).take(size as usize).collect() };
+        let page_items = if start >= models.len() {
+            Vec::new()
+        } else {
+            models.drain(start..).take(size as usize).collect()
+        };
         Ok((page_items, total))
     }
 
-    async fn record_release_history(&self, app_id: &str, cluster_name: &str, namespace_name: &str, branch_name: &str, release_id: i64, previous_release_id: i64, operation: i32, operation_context: &str, operator: &str) -> anyhow::Result<apollo_release_history::Model> {
+    async fn record_release_history(
+        &self,
+        app_id: &str,
+        cluster_name: &str,
+        namespace_name: &str,
+        branch_name: &str,
+        release_id: i64,
+        previous_release_id: i64,
+        operation: i32,
+        operation_context: &str,
+        operator: &str,
+    ) -> anyhow::Result<apollo_release_history::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
         let active_model = apollo_release_history::ActiveModel {
@@ -829,7 +989,11 @@ impl ReleaseHistoryPersistence for SqlApolloPersistence {
 
 #[async_trait]
 impl ConsumerTokenPersistence for SqlApolloPersistence {
-    async fn create_consumer_token(&self, consumer_id: i64, created_by: &str) -> anyhow::Result<apollo_consumer_token::Model> {
+    async fn create_consumer_token(
+        &self,
+        consumer_id: i64,
+        created_by: &str,
+    ) -> anyhow::Result<apollo_consumer_token::Model> {
         let db = &self.db;
         let now = Utc::now().naive_utc();
         // Upstream ConsumerTokenService.createToken: "{consumerId}-{uuid}".
@@ -846,7 +1010,10 @@ impl ConsumerTokenPersistence for SqlApolloPersistence {
         Ok(active_model.insert(db).await?)
     }
 
-    async fn list_tokens_by_consumer(&self, consumer_id: i64) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
+    async fn list_tokens_by_consumer(
+        &self,
+        consumer_id: i64,
+    ) -> anyhow::Result<Vec<apollo_consumer_token::Model>> {
         let db = &self.db;
         Ok(apollo_consumer_token::Entity::find()
             .filter(apollo_consumer_token::Column::ConsumerId.eq(consumer_id))
@@ -865,7 +1032,10 @@ impl ConsumerTokenPersistence for SqlApolloPersistence {
         Ok(())
     }
 
-    async fn get_consumer_token_by_token(&self, token: &str) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
+    async fn get_consumer_token_by_token(
+        &self,
+        token: &str,
+    ) -> anyhow::Result<Option<apollo_consumer_token::Model>> {
         let db = &self.db;
         Ok(apollo_consumer_token::Entity::find()
             .filter(apollo_consumer_token::Column::Token.eq(token))
@@ -918,7 +1088,10 @@ impl UserTokenPersistence for SqlApolloPersistence {
             .await?)
     }
 
-    async fn list_user_tokens(&self, user_id: &str) -> anyhow::Result<Vec<apollo_user_token::Model>> {
+    async fn list_user_tokens(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<apollo_user_token::Model>> {
         Ok(apollo_user_token::Entity::find()
             .filter(apollo_user_token::Column::UserId.eq(user_id))
             .filter(apollo_user_token::Column::IsDeleted.eq(false))

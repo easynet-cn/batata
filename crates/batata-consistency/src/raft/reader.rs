@@ -1024,12 +1024,8 @@ mod tests {
             action: "rw".to_string(),
             ..Default::default()
         };
-        db.put_cf(
-            perm_cf,
-            pkey.as_bytes(),
-            bincode::serialize(&perm).unwrap(),
-        )
-        .unwrap();
+        db.put_cf(perm_cf, pkey.as_bytes(), bincode::serialize(&perm).unwrap())
+            .unwrap();
 
         let reader = RocksDbReader::new(db);
 

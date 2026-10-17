@@ -76,7 +76,8 @@ impl DefaultVisibilityService {
             return false;
         }
         // Hardcoded admin usernames (backward compatibility)
-        if self.admin_usernames
+        if self
+            .admin_usernames
             .iter()
             .any(|a| a.eq_ignore_ascii_case(identity))
         {
@@ -180,7 +181,8 @@ impl VisibilityService for DefaultVisibilityService {
 
         // Non-read (write) operations: only see own resources (Nacos: OWNER)
         if action != ACTION_READ {
-            let mut advisor = QueryAdvisor::new().with_base_predicate(BaseVisibilityPredicate::Owner);
+            let mut advisor =
+                QueryAdvisor::new().with_base_predicate(BaseVisibilityPredicate::Owner);
             // Populate authorized predicate with resource type (matching Nacos behavior)
             advisor = advisor.with_authorized_resources(&context.resource_type, Vec::new());
             return advisor;
@@ -199,7 +201,6 @@ impl VisibilityService for DefaultVisibilityService {
         advisor
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -263,7 +264,10 @@ mod tests {
         let result = service
             .validate_visibility("admin", ACTION_READ, "admin", &resource)
             .await;
-        assert!(result.is_allowed(), "admin user should read private resources");
+        assert!(
+            result.is_allowed(),
+            "admin user should read private resources"
+        );
     }
 
     #[tokio::test]
@@ -275,13 +279,19 @@ mod tests {
         let result = service
             .validate_visibility("", ACTION_READ, "admin", &resource)
             .await;
-        assert!(result.is_allowed(), "anonymous should read public resources");
+        assert!(
+            result.is_allowed(),
+            "anonymous should read public resources"
+        );
 
         // Authenticated non-owner can read public
         let result = service
             .validate_visibility("other_user", ACTION_READ, "admin", &resource)
             .await;
-        assert!(result.is_allowed(), "non-owner should read public resources");
+        assert!(
+            result.is_allowed(),
+            "non-owner should read public resources"
+        );
     }
 
     #[tokio::test]
@@ -299,14 +309,20 @@ mod tests {
         let result = service
             .validate_visibility("other_user", ACTION_WRITE, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "non-owner should not write public resources");
+        assert!(
+            !result.is_allowed(),
+            "non-owner should not write public resources"
+        );
         assert!(result.reason().is_some());
 
         // Anonymous cannot write
         let result = service
             .validate_visibility("", ACTION_WRITE, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "anonymous should not write public resources");
+        assert!(
+            !result.is_allowed(),
+            "anonymous should not write public resources"
+        );
     }
 
     #[tokio::test]
@@ -330,38 +346,53 @@ mod tests {
         let result = service
             .validate_visibility("other_user", ACTION_READ, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "non-owner should not read private resources");
+        assert!(
+            !result.is_allowed(),
+            "non-owner should not read private resources"
+        );
 
         // Non-owner cannot write
         let result = service
             .validate_visibility("other_user", ACTION_WRITE, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "non-owner should not write private resources");
+        assert!(
+            !result.is_allowed(),
+            "non-owner should not write private resources"
+        );
 
         // Anonymous cannot read
         let result = service
             .validate_visibility("", ACTION_READ, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "anonymous should not read private resources");
+        assert!(
+            !result.is_allowed(),
+            "anonymous should not read private resources"
+        );
     }
 
     #[tokio::test]
     async fn test_custom_admin_usernames() {
-        let service = DefaultVisibilityService::new()
-            .with_admin_usernames(vec!["superuser".to_string()]);
+        let service =
+            DefaultVisibilityService::new().with_admin_usernames(vec!["superuser".to_string()]);
         let resource = make_resource(SCOPE_PRIVATE, "someone_else");
 
         // Custom admin can access
         let result = service
             .validate_visibility("superuser", ACTION_READ, "admin", &resource)
             .await;
-        assert!(result.is_allowed(), "custom admin should read private resources");
+        assert!(
+            result.is_allowed(),
+            "custom admin should read private resources"
+        );
 
         // Default admin no longer works
         let result = service
             .validate_visibility("nacos", ACTION_READ, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "default admin should not work with custom list");
+        assert!(
+            !result.is_allowed(),
+            "default admin should not work with custom list"
+        );
     }
 
     // ============================================================
@@ -382,7 +413,9 @@ mod tests {
         let service = DefaultVisibilityService::new();
         let ctx = make_query_ctx();
 
-        let advisor = service.advise_query("nacos", ACTION_READ, "admin", &ctx).await;
+        let advisor = service
+            .advise_query("nacos", ACTION_READ, "admin", &ctx)
+            .await;
         assert_eq!(advisor.base_predicate, BaseVisibilityPredicate::All);
     }
 
@@ -392,7 +425,9 @@ mod tests {
         let ctx = make_query_ctx();
 
         // Write action for authenticated non-admin returns OWNER
-        let advisor = service.advise_query("user1", ACTION_WRITE, "admin", &ctx).await;
+        let advisor = service
+            .advise_query("user1", ACTION_WRITE, "admin", &ctx)
+            .await;
         assert_eq!(advisor.base_predicate, BaseVisibilityPredicate::Owner);
         assert_eq!(advisor.authorized_predicate.resource_type, "skill");
     }
@@ -412,8 +447,13 @@ mod tests {
         let service = DefaultVisibilityService::new();
         let ctx = make_query_ctx();
 
-        let advisor = service.advise_query("user1", ACTION_READ, "admin", &ctx).await;
-        assert_eq!(advisor.base_predicate, BaseVisibilityPredicate::PublicAndOwner);
+        let advisor = service
+            .advise_query("user1", ACTION_READ, "admin", &ctx)
+            .await;
+        assert_eq!(
+            advisor.base_predicate,
+            BaseVisibilityPredicate::PublicAndOwner
+        );
         assert_eq!(advisor.authorized_predicate.resource_type, "skill");
     }
 
@@ -466,7 +506,11 @@ mod tests {
             AuthCheckResult::success()
         }
 
-        async fn login(&self, _username: &str, _password: &str) -> Result<batata_common::LoginResult, batata_common::LoginError> {
+        async fn login(
+            &self,
+            _username: &str,
+            _password: &str,
+        ) -> Result<batata_common::LoginResult, batata_common::LoginError> {
             unimplemented!()
         }
 
@@ -486,7 +530,10 @@ mod tests {
         let result = service
             .validate_visibility("global_admin", ACTION_READ, "admin", &resource)
             .await;
-        assert!(result.is_allowed(), "auth plugin global admin should bypass visibility checks");
+        assert!(
+            result.is_allowed(),
+            "auth plugin global admin should bypass visibility checks"
+        );
     }
 
     #[tokio::test]
@@ -501,7 +548,10 @@ mod tests {
         let result = service
             .validate_visibility("regular_user", ACTION_READ, "admin", &resource)
             .await;
-        assert!(!result.is_allowed(), "non-admin should not read private resources");
+        assert!(
+            !result.is_allowed(),
+            "non-admin should not read private resources"
+        );
 
         // Owner can read
         let result = service
@@ -518,7 +568,9 @@ mod tests {
         let service = DefaultVisibilityService::new().with_auth_plugin(plugin);
         let ctx = make_query_ctx();
 
-        let advisor = service.advise_query("global_admin", ACTION_READ, "admin", &ctx).await;
+        let advisor = service
+            .advise_query("global_admin", ACTION_READ, "admin", &ctx)
+            .await;
         assert_eq!(advisor.base_predicate, BaseVisibilityPredicate::All);
     }
 
@@ -530,7 +582,12 @@ mod tests {
         let service = DefaultVisibilityService::new().with_auth_plugin(plugin);
         let ctx = make_query_ctx();
 
-        let advisor = service.advise_query("regular_user", ACTION_READ, "admin", &ctx).await;
-        assert_eq!(advisor.base_predicate, BaseVisibilityPredicate::PublicAndOwner);
+        let advisor = service
+            .advise_query("regular_user", ACTION_READ, "admin", &ctx)
+            .await;
+        assert_eq!(
+            advisor.base_predicate,
+            BaseVisibilityPredicate::PublicAndOwner
+        );
     }
 }

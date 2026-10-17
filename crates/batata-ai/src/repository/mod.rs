@@ -278,10 +278,7 @@ impl<'a> AiResourceRepository<'a> {
     }
 
     /// Insert a version, returning the generated ID.
-    pub async fn version_insert(
-        &self,
-        version: &AiResourceVersionInfo,
-    ) -> anyhow::Result<i64> {
+    pub async fn version_insert(&self, version: &AiResourceVersionInfo) -> anyhow::Result<i64> {
         self.persistence.ai_resource_version_insert(version).await
     }
 

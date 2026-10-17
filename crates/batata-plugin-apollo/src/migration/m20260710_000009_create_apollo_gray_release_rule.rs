@@ -15,20 +15,56 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloGrayReleaseRule::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloGrayReleaseRule::Id, backend).auto_increment().primary_key())
-                    .col(string_len_default(ApolloGrayReleaseRule::AppId, 64, "default"))
-                    .col(string_len_default(ApolloGrayReleaseRule::ClusterName, 32, "default"))
-                    .col(string_len_default(ApolloGrayReleaseRule::NamespaceName, 32, "default"))
-                    .col(string_len_default(ApolloGrayReleaseRule::BranchName, 32, "default"))
-                    .col(string_len_default(ApolloGrayReleaseRule::Rules, 16000, "[]"))
+                    .col(
+                        unsigned_int(ApolloGrayReleaseRule::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::AppId,
+                        64,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::ClusterName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::NamespaceName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::BranchName,
+                        32,
+                        "default",
+                    ))
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::Rules,
+                        16000,
+                        "[]",
+                    ))
                     .col(unsigned_int(ApolloGrayReleaseRule::ReleaseId, backend).default(0))
-                    .col(signed_int_null(ApolloGrayReleaseRule::BranchStatus, backend))
+                    .col(signed_int_null(
+                        ApolloGrayReleaseRule::BranchStatus,
+                        backend,
+                    ))
                     .col(bit(ApolloGrayReleaseRule::IsDeleted, None))
                     .col(unsigned_big_int(ApolloGrayReleaseRule::DeletedAt, backend).default(0))
-                    .col(string_len_default(ApolloGrayReleaseRule::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloGrayReleaseRule::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloGrayReleaseRule::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloGrayReleaseRule::DataChangeLastModifiedBy, 64))
-                    .col(date_time_on_update(ApolloGrayReleaseRule::DataChangeLastTime))
+                    .col(string_len_null(
+                        ApolloGrayReleaseRule::DataChangeLastModifiedBy,
+                        64,
+                    ))
+                    .col(date_time_on_update(
+                        ApolloGrayReleaseRule::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

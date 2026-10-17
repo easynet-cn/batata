@@ -1,13 +1,23 @@
-use actix_web::{web, HttpResponse, Responder};
+use crate::api::dto::{
+    AppDTO, AppNamespaceDTO, ClusterDTO, CommitDTO, ConfigExportDTO, ConfigImportDTO,
+    ErrorResponse, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO,
+};
+use crate::persistence::shared::StoredRelease;
+use crate::persistence::traits::{
+    ApolloPersistenceService, NamespacePersistence, ReleasePersistence,
+};
+use crate::service::{
+    AccessKeyService, AppNamespaceService, AppService, AuditService, ClusterService, CommitService,
+    ConsumerService, ConsumerTokenService, FavoriteService, GrayReleaseRuleService,
+    InstanceService, ItemService, ItemSetService, NamespaceService, ReleaseService, SearchService,
+    UserTokenService,
+};
+use actix_web::{HttpResponse, Responder, web};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::Utc;
-use crate::persistence::shared::StoredRelease;
-use crate::persistence::traits::{ApolloPersistenceService, ReleasePersistence, NamespacePersistence};
-use crate::service::{AppService, NamespaceService, ItemService, ItemSetService, ReleaseService, ClusterService, InstanceService, AccessKeyService, GrayReleaseRuleService, AppNamespaceService, CommitService, ConsumerService, ConsumerTokenService, AuditService, FavoriteService, SearchService, UserTokenService};
-use crate::api::dto::{AppDTO, NamespaceDTO, ItemDTO, ErrorResponse, ClusterDTO, GrayReleaseRuleDTO, AppNamespaceDTO, CommitDTO, ItemChangeSets, ConfigImportDTO, ConfigExportDTO};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -235,10 +245,12 @@ async fn get_env_clusters(
     match app_service.get(&app_id).await {
         Ok(None) => return HttpResponse::NotFound().finish(),
         Ok(Some(_)) => {}
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     }
     let service = ClusterService::new(data.get_ref().clone());
     match service.list(&app_id).await {
@@ -285,7 +297,11 @@ async fn create_app_namespace(
                 namespace_name: req.name.clone(),
                 format: Some(req.format.clone()),
                 is_public: Some(req.is_public),
-                comment: if req.comment.is_empty() { None } else { Some(req.comment.clone()) },
+                comment: if req.comment.is_empty() {
+                    None
+                } else {
+                    Some(req.comment.clone())
+                },
                 data_change_created_by: Some(req.data_change_created_by.clone()),
                 data_change_last_modified_by: None,
                 data_change_created_time: None,
@@ -330,7 +346,11 @@ async fn create_namespace(
         namespace_name: req.name,
         format: Some(req.format),
         is_public: Some(req.is_public),
-        comment: if req.comment.is_empty() { None } else { Some(req.comment) },
+        comment: if req.comment.is_empty() {
+            None
+        } else {
+            Some(req.comment)
+        },
         data_change_created_by: Some(req.data_change_created_by),
         data_change_last_modified_by: None,
         data_change_created_time: None,
@@ -395,7 +415,10 @@ async fn get_namespace(
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
     let ns_service = NamespaceService::new(data.get_ref().clone());
     let item_service = ItemService::new(data.get_ref().clone());
-    match ns_service.get(&app_id, &cluster_name, &namespace_name).await {
+    match ns_service
+        .get(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(ns)) => {
             let items = item_service
                 .list(&app_id, &cluster_name, &namespace_name)
@@ -431,7 +454,10 @@ async fn get_item(
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name, key) = path.into_inner();
     let service = ItemService::new(data.get_ref().clone());
-    match service.get_by_key(&app_id, &cluster_name, &namespace_name, &key).await {
+    match service
+        .get_by_key(&app_id, &cluster_name, &namespace_name, &key)
+        .await
+    {
         Ok(Some(item)) => HttpResponse::Ok().json(item),
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
@@ -453,7 +479,11 @@ async fn create_item(
         key: req.key,
         value: req.value,
         r#type: Some(req.r#type),
-        comment: if req.comment.is_empty() { None } else { Some(req.comment) },
+        comment: if req.comment.is_empty() {
+            None
+        } else {
+            Some(req.comment)
+        },
         line_num: None,
         data_change_created_by: req.data_change_created_by,
         data_change_last_modified_by: req.data_change_last_modified_by,
@@ -461,7 +491,10 @@ async fn create_item(
         data_change_last_time: None,
     };
     let service = ItemService::new(data.get_ref().clone());
-    match service.create(&app_id, &cluster_name, &namespace_name, item_dto).await {
+    match service
+        .create(&app_id, &cluster_name, &namespace_name, item_dto)
+        .await
+    {
         Ok(item) => HttpResponse::Ok().json(item),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -478,7 +511,10 @@ async fn update_item(
     let (_env, app_id, cluster_name, namespace_name, _key) = path.into_inner();
     let req = body.into_inner();
     let service = ItemService::new(data.get_ref().clone());
-    match service.get_by_key(&app_id, &cluster_name, &namespace_name, &req.key).await {
+    match service
+        .get_by_key(&app_id, &cluster_name, &namespace_name, &req.key)
+        .await
+    {
         Ok(Some(item)) => {
             let item_id = item.id.unwrap_or(0);
             let item_dto = ItemDTO {
@@ -486,7 +522,11 @@ async fn update_item(
                 key: req.key,
                 value: req.value,
                 r#type: Some(req.r#type),
-                comment: if req.comment.is_empty() { None } else { Some(req.comment) },
+                comment: if req.comment.is_empty() {
+                    None
+                } else {
+                    Some(req.comment)
+                },
                 line_num: None,
                 data_change_created_by: None,
                 data_change_last_modified_by: req
@@ -528,7 +568,10 @@ async fn delete_item(
         .and_then(|v| v.as_str())
         .unwrap_or("admin");
     let service = ItemService::new(data.get_ref().clone());
-    match service.get_by_key(&app_id, &cluster_name, &namespace_name, &key).await {
+    match service
+        .get_by_key(&app_id, &cluster_name, &namespace_name, &key)
+        .await
+    {
         Ok(Some(item)) => {
             let item_id = item.id.unwrap_or(0);
             match service.delete(item_id, op).await {
@@ -597,7 +640,11 @@ async fn publish_release(
             &cluster_name,
             &namespace_name,
             &req.release_title,
-            if req.release_comment.is_empty() { None } else { Some(req.release_comment) },
+            if req.release_comment.is_empty() {
+                None
+            } else {
+                Some(req.release_comment)
+            },
             &req.released_by,
             req.is_emergency_publish,
         )
@@ -630,7 +677,10 @@ async fn get_latest_release(
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.get_latest_active(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .get_latest_active(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(Some(release)) => {
             let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
                 .unwrap_or_else(|_| Value::Object(Default::default()));
@@ -662,13 +712,17 @@ async fn find_active_releases(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(10);
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_active_releases(&app_id, &cluster_name, &namespace_name, page, size).await {
+    match service
+        .find_active_releases(&app_id, &cluster_name, &namespace_name, page, size)
+        .await
+    {
         Ok((releases, total)) => {
             let open_releases: Vec<OpenRelease> = releases
                 .into_iter()
                 .map(|r| {
-                    let configs: Value = serde_json::from_str(&r.configurations.unwrap_or_default())
-                        .unwrap_or_else(|_| Value::Object(Default::default()));
+                    let configs: Value =
+                        serde_json::from_str(&r.configurations.unwrap_or_default())
+                            .unwrap_or_else(|_| Value::Object(Default::default()));
                     OpenRelease {
                         id: r.id.unwrap_or(0),
                         release_id: r.id.unwrap_or(0),
@@ -701,9 +755,21 @@ async fn rollback_release(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name, release_id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.rollback(&app_id, &cluster_name, &namespace_name, release_id, operator).await {
+    match service
+        .rollback(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            release_id,
+            operator,
+        )
+        .await
+    {
         Ok(release) => {
             let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
                 .unwrap_or_else(|_| Value::Object(Default::default()));
@@ -786,7 +852,10 @@ async fn create_access_key(
     body: web::Json<Value>,
 ) -> impl Responder {
     let app_id = app_id.into_inner();
-    let operator = body.get("createdBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = body
+        .get("createdBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.create(&app_id, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
@@ -818,7 +887,10 @@ async fn delete_access_key(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.delete(&app_id, id, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -836,7 +908,10 @@ async fn create_access_key_with_env(
     body: web::Json<Value>,
 ) -> impl Responder {
     let (app_id, _env) = path.into_inner();
-    let operator = body.get("createdBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = body
+        .get("createdBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.create(&app_id, operator).await {
         Ok(key) => HttpResponse::Ok().json(key),
@@ -868,7 +943,10 @@ async fn delete_access_key_with_env(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, _env, id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AccessKeyService::new(data.get_ref().clone());
     match service.delete(&app_id, id, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -888,7 +966,10 @@ async fn get_release_history(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50);
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_release_history(&app_id, &cluster_name, &namespace_name, page, size).await {
+    match service
+        .find_release_history(&app_id, &cluster_name, &namespace_name, page, size)
+        .await
+    {
         Ok((list, total)) => {
             let resp = serde_json::json!({
                 "content": list,
@@ -915,7 +996,10 @@ async fn get_release_history_frontend(
     let page = query.get("page").and_then(|v| v.as_u64()).unwrap_or(0);
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(50);
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.find_release_history(&app_id, &cluster_name, &namespace_name, page, size).await {
+    match service
+        .find_release_history(&app_id, &cluster_name, &namespace_name, page, size)
+        .await
+    {
         Ok((list, total)) => {
             let resp = serde_json::json!({
                 "content": list,
@@ -938,7 +1022,10 @@ async fn list_branches(
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.list_by_namespace(&app_id, &cluster_name, &namespace_name).await {
+    match service
+        .list_by_namespace(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(rules) => HttpResponse::Ok().json(rules),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
@@ -953,7 +1040,10 @@ async fn create_branch(
     body: web::Json<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
-    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
 
     // Upstream createBranch: child Cluster (ParentClusterId>0, timestamp-named)
     // + child Namespace. Idempotent — returns the existing branch.
@@ -980,10 +1070,19 @@ async fn update_branch_rule(
     let (_env, app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
 
-    let rules = body.get("rules").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let rules = body
+        .get("rules")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let release_id = body.get("releaseId").and_then(|v| v.as_i64()).unwrap_or(0);
-    let branch_status = body.get("branchStatus").and_then(|v| v.as_i64()).map(|v| v as i32);
-    let operator = body.get("dataChangeLastModifiedBy").and_then(|v| v.as_str()).unwrap_or("admin");
+    let branch_status = body
+        .get("branchStatus")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let operator = body
+        .get("dataChangeLastModifiedBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
 
     let dto = GrayReleaseRuleDTO {
         id: None,
@@ -1000,7 +1099,10 @@ async fn update_branch_rule(
         data_change_created_time: None,
     };
 
-    match service.update(&app_id, &cluster_name, &namespace_name, &branch_name, dto).await {
+    match service
+        .update(&app_id, &cluster_name, &namespace_name, &branch_name, dto)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({"status": "ok"})),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -1015,7 +1117,10 @@ async fn delete_branch(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name, _branch_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
 
     // Upstream deleteBranch: tombstone rule + cascade soft-delete of the
     // child cluster/namespace/items; child releases are retained.
@@ -1043,18 +1148,25 @@ async fn merge_branch(
     let req = body.into_inner();
 
     let convert = |items: Vec<OpenItemDTO>| -> Vec<ItemDTO> {
-        items.into_iter().map(|item| ItemDTO {
-            id: None,
-            key: item.key,
-            value: item.value,
-            r#type: Some(item.r#type),
-            comment: if item.comment.is_empty() { None } else { Some(item.comment) },
-            line_num: None,
-            data_change_created_by: item.data_change_created_by,
-            data_change_last_modified_by: item.data_change_last_modified_by,
-            data_change_created_time: None,
-            data_change_last_time: None,
-        }).collect()
+        items
+            .into_iter()
+            .map(|item| ItemDTO {
+                id: None,
+                key: item.key,
+                value: item.value,
+                r#type: Some(item.r#type),
+                comment: if item.comment.is_empty() {
+                    None
+                } else {
+                    Some(item.comment)
+                },
+                line_num: None,
+                data_change_created_by: item.data_change_created_by,
+                data_change_last_modified_by: item.data_change_last_modified_by,
+                data_change_created_time: None,
+                data_change_last_time: None,
+            })
+            .collect()
     };
 
     let change_sets = ItemChangeSets {
@@ -1063,19 +1175,26 @@ async fn merge_branch(
         delete_items: convert(req.delete_items),
     };
 
-    let release_comment = if req.release_comment.is_empty() { None } else { Some(req.release_comment) };
+    let release_comment = if req.release_comment.is_empty() {
+        None
+    } else {
+        Some(req.release_comment)
+    };
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.merge_branch_and_release(
-        &app_id,
-        &cluster_name,
-        &namespace_name,
-        &branch_name,
-        &req.release_title,
-        release_comment,
-        &req.released_by,
-        req.is_emergency_publish,
-        change_sets,
-    ).await {
+    match service
+        .merge_branch_and_release(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            &branch_name,
+            &req.release_title,
+            release_comment,
+            &req.released_by,
+            req.is_emergency_publish,
+            change_sets,
+        )
+        .await
+    {
         Ok(release) => {
             let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
                 .unwrap_or_else(|_| Value::Object(Default::default()));
@@ -1103,7 +1222,10 @@ async fn get_branch_rule(
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name, branch_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+    match service
+        .get(&app_id, &cluster_name, &namespace_name, &branch_name)
+        .await
+    {
         Ok(Some(rule)) => HttpResponse::Ok().json(rule),
         Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
@@ -1141,7 +1263,7 @@ async fn create_commit_openapi(
     dto.app_id = app_id;
     dto.cluster_name = cluster_name;
     dto.namespace_name = namespace_name;
-    
+
     let service = CommitService::new(data.get_ref().clone());
     match service.create(dto).await {
         Ok(commit) => HttpResponse::Ok().json(commit),
@@ -1200,7 +1322,10 @@ async fn delete_app(
     query: web::Query<Value>,
 ) -> impl Responder {
     let app_id = app_id.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AppService::new(data.get_ref().clone());
     match service.delete(&app_id, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1236,7 +1361,10 @@ async fn delete_app_namespace(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, namespace_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = AppNamespaceService::new(data.get_ref().clone());
     match service.delete(&app_id, &namespace_name, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1253,7 +1381,10 @@ async fn delete_cluster(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = ClusterService::new(data.get_ref().clone());
     match service.delete(&app_id, &cluster_name, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1270,9 +1401,15 @@ async fn delete_namespace(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let service = NamespaceService::new(data.get_ref().clone());
-    match service.delete(&app_id, &cluster_name, &namespace_name, operator).await {
+    match service
+        .delete(&app_id, &cluster_name, &namespace_name, operator)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1317,8 +1454,14 @@ async fn compare_releases(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     query: web::Query<Value>,
 ) -> impl Responder {
-    let base = query.get("baseReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
-    let to_compare = query.get("toCompareReleaseId").and_then(|v| v.as_i64()).unwrap_or(0);
+    let base = query
+        .get("baseReleaseId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let to_compare = query
+        .get("toCompareReleaseId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let service = ReleaseService::new(data.get_ref().clone());
     match service.compare(base, to_compare).await {
         Ok(result) => HttpResponse::Ok().json(result),
@@ -1335,10 +1478,16 @@ async fn rollback_release_by_id(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, release_id) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("admin");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("admin");
     let to_release_id = query.get("toReleaseId").and_then(|v| v.as_i64());
     let service = ReleaseService::new(data.get_ref().clone());
-    match service.rollback_by_id(release_id, to_release_id, operator).await {
+    match service
+        .rollback_by_id(release_id, to_release_id, operator)
+        .await
+    {
         Ok(release) => {
             let configs: Value = serde_json::from_str(&release.configurations.unwrap_or_default())
                 .unwrap_or_else(|_| Value::Object(Default::default()));
@@ -1369,16 +1518,23 @@ async fn create_gray_release(
     let req = body.into_inner();
 
     let gray_service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match gray_service.get(&app_id, &cluster_name, &namespace_name, &branch_name).await {
+    match gray_service
+        .get(&app_id, &cluster_name, &namespace_name, &branch_name)
+        .await
+    {
         Ok(Some(_)) => {}
-        Ok(None) => return HttpResponse::NotFound().json(ErrorResponse {
-            status: 404,
-            message: format!("Branch not found: {}", branch_name),
-        }),
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Ok(None) => {
+            return HttpResponse::NotFound().json(ErrorResponse {
+                status: 404,
+                message: format!("Branch not found: {}", branch_name),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     }
 
     // Upstream publishBranchNamespace: base = the PARENT cluster's latest
@@ -1401,10 +1557,12 @@ async fn create_gray_release(
 
     let configurations_json = match serde_json::to_string(&configurations) {
         Ok(s) => s,
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     };
 
     let now = Utc::now().timestamp_millis();
@@ -1444,14 +1602,27 @@ async fn create_gray_release(
             let sender = crate::service::release_message_service::ReleaseMessageService::new(
                 data.get_ref().clone(),
             );
-            match sender.send_message(&app_id, &cluster_name, &namespace_name).await {
+            match sender
+                .send_message(&app_id, &cluster_name, &namespace_name)
+                .await
+            {
                 Ok(stored) => {
                     crate::service::notification_hub::hub().notify(&stored.message);
                 }
                 Err(e) => tracing::error!("failed to persist gray release message: {}", e),
             }
             let _ = ReleaseService::new(data.get_ref().clone())
-                .record_history(&app_id, &cluster_name, &namespace_name, &branch_name, created.id, 0, 2, &req.released_by, "")
+                .record_history(
+                    &app_id,
+                    &cluster_name,
+                    &namespace_name,
+                    &branch_name,
+                    created.id,
+                    0,
+                    2,
+                    &req.released_by,
+                    "",
+                )
                 .await;
             let configs: Value = serde_json::from_str(&created.configurations)
                 .unwrap_or_else(|_| Value::Object(Default::default()));
@@ -1514,7 +1685,10 @@ async fn export_configs_openapi(
 ) -> impl Responder {
     let (app_id, cluster_name, namespace_name) = path.into_inner();
     let item_service = ItemService::new(data.get_ref().clone());
-    match item_service.list(&app_id, &cluster_name, &namespace_name).await {
+    match item_service
+        .list(&app_id, &cluster_name, &namespace_name)
+        .await
+    {
         Ok(items) => {
             let export = ConfigExportDTO {
                 app_id,
@@ -1544,7 +1718,12 @@ async fn import_configs_openapi(
         delete_items: vec![],
     };
     match item_set_service
-        .update_set(&dto.app_id, &dto.cluster_name, &dto.namespace_name, change_sets)
+        .update_set(
+            &dto.app_id,
+            &dto.cluster_name,
+            &dto.namespace_name,
+            change_sets,
+        )
         .await
     {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -1564,14 +1743,12 @@ async fn list_audit_openapi(
     let size = query.get("size").and_then(|v| v.as_u64()).unwrap_or(20);
     let service = AuditService::new(data.get_ref().clone());
     match service.list(page, size).await {
-        Ok((audits, total)) => {
-            HttpResponse::Ok().json(serde_json::json!({
-                "content": audits,
-                "total": total,
-                "page": page,
-                "size": size,
-            }))
-        }
+        Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
+            "content": audits,
+            "total": total,
+            "page": page,
+            "size": size,
+        })),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -1588,10 +1765,7 @@ async fn list_audit_by_entity_openapi(
         .get("entityName")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let entity_id = query
-        .get("entityId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let entity_id = query.get("entityId").and_then(|v| v.as_str()).unwrap_or("");
     let service = AuditService::new(data.get_ref().clone());
     match service.list_by_entity(entity_name, entity_id).await {
         Ok(audits) => HttpResponse::Ok().json(audits),
@@ -1607,7 +1781,12 @@ async fn openapi_audit_properties(
     _data: web::Data<Arc<dyn ApolloPersistenceService>>,
 ) -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!([
-        "APP", "CLUSTER", "NAMESPACE", "ITEM", "RELEASE", "COMMIT"
+        "APP",
+        "CLUSTER",
+        "NAMESPACE",
+        "ITEM",
+        "RELEASE",
+        "COMMIT"
     ]))
 }
 
@@ -1622,7 +1801,10 @@ async fn openapi_audit_logs(
         Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
             "content": audits, "total": total, "page": page, "size": size,
         })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1637,7 +1819,10 @@ async fn openapi_audit_logs_op_name(
         Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
             "content": audits, "total": total, "page": page, "size": size,
         })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1648,7 +1833,10 @@ async fn openapi_audit_trace(
     let service = AuditService::new(data.get_ref().clone());
     match service.list(0, 100).await {
         Ok((audits, _)) => HttpResponse::Ok().json(audits),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1663,7 +1851,10 @@ async fn openapi_audit_logs_field(
         Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
             "content": audits, "total": total, "page": page, "size": size,
         })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1678,7 +1869,10 @@ async fn openapi_audit_logs_search(
         Ok((audits, total)) => HttpResponse::Ok().json(serde_json::json!({
             "content": audits, "total": total, "page": page, "size": size,
         })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1691,8 +1885,14 @@ async fn openapi_get_consumer_by_app(
     let service = ConsumerService::new(data.get_ref().clone());
     match service.get_by_app(app_id).await {
         Ok(Some(c)) => HttpResponse::Ok().json(c),
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: format!("Consumer not found: {}", app_id) }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("Consumer not found: {}", app_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1707,11 +1907,17 @@ async fn openapi_consumer_tokens_by_app(
             let token_service = ConsumerTokenService::new(data.get_ref().clone());
             match token_service.list_by_consumer(c.id.unwrap_or(0)).await {
                 Ok(tokens) => HttpResponse::Ok().json(tokens),
-                Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+                Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+                    status: 500,
+                    message: e.to_string(),
+                }),
             }
         }
         Ok(None) => HttpResponse::Ok().json(serde_json::json!([])),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1730,7 +1936,10 @@ async fn openapi_list_user_tokens(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.list("apollo").await {
         Ok(tokens) => HttpResponse::Ok().json(tokens),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1738,14 +1947,20 @@ async fn openapi_create_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     body: web::Json<Value>,
 ) -> impl Responder {
-    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let description = body
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let service = UserTokenService::new(data.get_ref().clone());
     match service.create("apollo", description, "apollo", None).await {
         Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
             "token": token,
             "model": model,
         })),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1757,7 +1972,10 @@ async fn openapi_revoke_user_token(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1773,9 +1991,15 @@ async fn openapi_rotate_user_token(
                 "token": token,
                 "model": model,
             })),
-            Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+            Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            }),
         },
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1787,7 +2011,10 @@ async fn openapi_delete_user_token(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1806,7 +2033,10 @@ async fn openapi_list_admin_user_tokens(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.list("apollo").await {
         Ok(tokens) => HttpResponse::Ok().json(tokens),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1814,15 +2044,24 @@ async fn openapi_create_admin_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     body: web::Json<Value>,
 ) -> impl Responder {
-    let user_id = body.get("userId").and_then(|v| v.as_str()).unwrap_or("apollo");
-    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let user_id = body
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
+    let description = body
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let service = UserTokenService::new(data.get_ref().clone());
     match service.create(user_id, description, "apollo", None).await {
         Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
             "token": token,
             "model": model,
         })),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1834,7 +2073,10 @@ async fn openapi_revoke_admin_user_token(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1846,7 +2088,10 @@ async fn openapi_delete_admin_user_token(
     let service = UserTokenService::new(data.get_ref().clone());
     match service.revoke(id).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -1979,7 +2224,7 @@ async fn find_missing_namespaces_openapi(
             return HttpResponse::InternalServerError().json(ErrorResponse {
                 status: 500,
                 message: e.to_string(),
-            })
+            });
         }
     };
 
@@ -1989,7 +2234,7 @@ async fn find_missing_namespaces_openapi(
             return HttpResponse::InternalServerError().json(ErrorResponse {
                 status: 500,
                 message: e.to_string(),
-            })
+            });
         }
     };
 
@@ -2029,7 +2274,7 @@ async fn create_missing_namespaces_openapi(
             return HttpResponse::InternalServerError().json(ErrorResponse {
                 status: 500,
                 message: e.to_string(),
-            })
+            });
         }
     };
 
@@ -2039,7 +2284,7 @@ async fn create_missing_namespaces_openapi(
             return HttpResponse::InternalServerError().json(ErrorResponse {
                 status: 500,
                 message: e.to_string(),
-            })
+            });
         }
     };
 
@@ -2077,7 +2322,7 @@ async fn create_missing_namespaces_openapi(
                 return HttpResponse::BadRequest().json(ErrorResponse {
                     status: 400,
                     message: format!("Failed to create namespace {}: {}", app_ns.name, e),
-                })
+                });
             }
         }
     }
@@ -2656,19 +2901,43 @@ async fn openapi_create_namespace(
     body: web::Json<Value>,
 ) -> impl Responder {
     let app_id = body.get("appId").and_then(|v| v.as_str()).unwrap_or("");
-    let cluster = body.get("clusterName").and_then(|v| v.as_str()).unwrap_or("default");
-    let ns = body.get("namespaceName").and_then(|v| v.as_str()).unwrap_or("");
-    let operator = body.get("dataChangeCreatedBy").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let cluster = body
+        .get("clusterName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let ns = body
+        .get("namespaceName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let operator = body
+        .get("dataChangeCreatedBy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
     if app_id.is_empty() || ns.is_empty() {
-        return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: "appId and namespaceName are required".into() });
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "appId and namespaceName are required".into(),
+        });
     }
     let dto = crate::api::dto::NamespaceDTO {
         app_id: app_id.to_string(),
         cluster_name: cluster.to_string(),
         namespace_name: ns.to_string(),
-        format: Some(body.get("format").and_then(|v| v.as_str()).unwrap_or("properties").to_string()),
-        is_public: Some(body.get("isPublic").and_then(|v| v.as_bool()).unwrap_or(false)),
-        comment: body.get("comment").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        format: Some(
+            body.get("format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("properties")
+                .to_string(),
+        ),
+        is_public: Some(
+            body.get("isPublic")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        ),
+        comment: body
+            .get("comment")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         data_change_created_by: Some(operator.to_string()),
         data_change_last_modified_by: None,
         data_change_last_time: None,
@@ -2679,7 +2948,10 @@ async fn openapi_create_namespace(
         .await
     {
         Ok(ns) => HttpResponse::Ok().json(ns),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2704,7 +2976,12 @@ async fn openapi_list_appnamespaces(
     // /appnamespaces lists public ones); private ns are queried per app.
     let all = match service.list_public().await {
         Ok(v) => v,
-        Err(e) => return HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
     };
     let total = all.len();
     let start = (q.page * q.size).min(total);
@@ -2725,7 +3002,10 @@ async fn openapi_create_appnamespace(
     let service = crate::service::AppNamespaceService::new(data.get_ref().clone());
     match service.create(body.into_inner()).await {
         Ok(ns) => HttpResponse::Ok().json(ns),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2736,11 +3016,17 @@ async fn openapi_delete_appnamespace(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (app_id, name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
     let service = crate::service::AppNamespaceService::new(data.get_ref().clone());
     match service.delete(&app_id, &name, operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2760,7 +3046,10 @@ async fn openapi_get_namespace_lock(
             "appId": app_id,
         })),
         Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2773,7 +3062,10 @@ async fn openapi_apps_authorized(
     let service = crate::service::AppService::new(data.get_ref().clone());
     match service.list().await {
         Ok(apps) => HttpResponse::Ok().json(apps),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2794,7 +3086,10 @@ async fn openapi_releases_status(
     // Reuse the adminservice handler logic by delegating through the service layer.
     match crate::route::admin::publish_info_map(data.get_ref(), &app_id).await {
         Ok(map) => HttpResponse::Ok().json(map),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2809,9 +3104,7 @@ fn parse_properties_text(text: &str) -> Result<Vec<(String, String)>, (usize, St
         }
         let sep = line.find(['=', ':']).map(|i| (i, line.as_bytes()[i]));
         let (k, v) = match sep {
-            Some((i, b)) if b == b'=' || b == b':' => {
-                (line[..i].trim(), line[i + 1..].trim())
-            }
+            Some((i, b)) if b == b'=' || b == b':' => (line[..i].trim(), line[i + 1..].trim()),
             _ => {
                 // `key value` whitespace form
                 match line.split_once(char::is_whitespace) {
@@ -2832,9 +3125,7 @@ fn parse_properties_text(text: &str) -> Result<Vec<(String, String)>, (usize, St
 }
 
 /// PITEM-011 — syntax check only.
-async fn openapi_validate_items_text(
-    body: web::Json<serde_json::Value>,
-) -> impl Responder {
+async fn openapi_validate_items_text(body: web::Json<serde_json::Value>) -> impl Responder {
     let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
     match parse_properties_text(text) {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -2862,13 +3153,24 @@ async fn openapi_get_encoded_item(
     let (_env, app_id, cluster, ns, b64) = path.into_inner();
     let key = match decode_item_key(&b64) {
         Ok(k) => k,
-        Err(e) => return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
+        }
     };
     let service = crate::service::ItemService::new(data.get_ref().clone());
     match service.get_by_key(&app_id, &cluster, &ns, &key).await {
         Ok(Some(item)) => HttpResponse::Ok().json(item),
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: format!("Item not found: {}", key) }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("Item not found: {}", key),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2880,29 +3182,54 @@ async fn openapi_put_encoded_item(
     body: web::Json<crate::api::dto::ItemDTO>,
 ) -> impl Responder {
     let (_env, app_id, cluster, ns, b64) = path.into_inner();
-    let create_if_missing = query.get("createIfNotExists").and_then(|v| v.as_str()) != Some("false");
+    let create_if_missing =
+        query.get("createIfNotExists").and_then(|v| v.as_str()) != Some("false");
     let key = match decode_item_key(&b64) {
         Ok(k) => k,
-        Err(e) => return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
+        }
     };
     let mut dto = body.into_inner();
     dto.key = key.clone();
-    let operator = dto.data_change_last_modified_by.clone().unwrap_or_else(|| "apollo".into());
+    let operator = dto
+        .data_change_last_modified_by
+        .clone()
+        .unwrap_or_else(|| "apollo".into());
     let create_dto = crate::api::dto::ItemDTO {
-        id: None, key: key.clone(), value: dto.value.clone(), r#type: None,
-        comment: None, line_num: None,
+        id: None,
+        key: key.clone(),
+        value: dto.value.clone(),
+        r#type: None,
+        comment: None,
+        line_num: None,
         data_change_created_by: Some(operator),
-        data_change_last_modified_by: None, data_change_last_time: None,
+        data_change_last_modified_by: None,
+        data_change_last_time: None,
         data_change_created_time: None,
     };
     let service = crate::service::ItemService::new(data.get_ref().clone());
-    match service.update_by_key(&app_id, &cluster, &ns, &key, dto).await {
+    match service
+        .update_by_key(&app_id, &cluster, &ns, &key, dto)
+        .await
+    {
         Ok(item) => HttpResponse::Ok().json(item),
-        Err(_) if create_if_missing => match service.create(&app_id, &cluster, &ns, create_dto).await {
-            Ok(item) => HttpResponse::Ok().json(item),
-            Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
-        },
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(_) if create_if_missing => {
+            match service.create(&app_id, &cluster, &ns, create_dto).await {
+                Ok(item) => HttpResponse::Ok().json(item),
+                Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+                    status: 400,
+                    message: e.to_string(),
+                }),
+            }
+        }
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2913,15 +3240,29 @@ async fn openapi_delete_encoded_item(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster, ns, b64) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
     let key = match decode_item_key(&b64) {
         Ok(k) => k,
-        Err(e) => return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
+        }
     };
     let service = crate::service::ItemService::new(data.get_ref().clone());
-    match service.delete_by_key(&app_id, &cluster, &ns, &key, operator).await {
+    match service
+        .delete_by_key(&app_id, &cluster, &ns, &key, operator)
+        .await
+    {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -2934,10 +3275,12 @@ async fn openapi_find_branch_items(
     let service = crate::service::ItemService::new(data.get_ref().clone());
     match service.list(&app_id, &branch, &ns).await {
         Ok(items) => HttpResponse::Ok().json(items),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
-
 
 /// PITEM-003 PUT items with full properties text — diff against current
 /// items and apply create/update/delete as one change set (+ one commit),
@@ -2950,22 +3293,39 @@ async fn openapi_bulk_update_items_by_text(
     use crate::persistence::traits::NamespacePersistence;
     let (_env, app_id, cluster, ns_name) = path.into_inner();
     let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
-    let operator = body.get("operator").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let operator = body
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
 
     let parsed = match parse_properties_text(text) {
         Ok(p) => p,
-        Err((line, reason)) => return HttpResponse::BadRequest().json(ErrorResponse {
-            status: 400,
-            message: format!("syntax error at line {}: {}", line, reason),
-        }),
+        Err((line, reason)) => {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: format!("syntax error at line {}: {}", line, reason),
+            });
+        }
     };
 
-    if data.get_ref().get_by_app_cluster(&app_id, &cluster, &ns_name).await.unwrap_or(None).is_none() {
-        return HttpResponse::NotFound().json(ErrorResponse { status: 404, message: format!("Namespace not found: {}/{}/{}", app_id, cluster, ns_name) });
+    if data
+        .get_ref()
+        .get_by_app_cluster(&app_id, &cluster, &ns_name)
+        .await
+        .unwrap_or(None)
+        .is_none()
+    {
+        return HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: format!("Namespace not found: {}/{}/{}", app_id, cluster, ns_name),
+        });
     }
 
     let item_service = crate::service::ItemService::new(data.get_ref().clone());
-    let current = item_service.list(&app_id, &cluster, &ns_name).await.unwrap_or_default();
+    let current = item_service
+        .list(&app_id, &cluster, &ns_name)
+        .await
+        .unwrap_or_default();
     let desired: std::collections::HashMap<String, String> = parsed.into_iter().collect();
 
     let mut creates = Vec::new();
@@ -2979,7 +3339,8 @@ async fn openapi_bulk_update_items_by_text(
             _ => {}
         }
     }
-    let existing_keys: std::collections::HashSet<String> = current.iter().map(|i| i.key.clone()).collect();
+    let existing_keys: std::collections::HashSet<String> =
+        current.iter().map(|i| i.key.clone()).collect();
     for (k, v) in &desired {
         if !existing_keys.contains(k) {
             creates.push((k.clone(), v.clone()));
@@ -2988,29 +3349,64 @@ async fn openapi_bulk_update_items_by_text(
 
     for (it, new_value) in &updates {
         let mut dto = crate::api::dto::ItemDTO {
-            id: it.id, key: it.key.clone(), value: new_value.clone(),
-            r#type: it.r#type, comment: it.comment.clone(), line_num: it.line_num,
+            id: it.id,
+            key: it.key.clone(),
+            value: new_value.clone(),
+            r#type: it.r#type,
+            comment: it.comment.clone(),
+            line_num: it.line_num,
             data_change_created_by: it.data_change_created_by.clone(),
             data_change_last_modified_by: Some(operator.to_string()),
-            data_change_last_time: None, data_change_created_time: None,
+            data_change_last_time: None,
+            data_change_created_time: None,
         };
         dto.data_change_created_time = None;
-        if let Err(e) = item_service.update(&app_id, &cluster, &ns_name, it.id.unwrap(), dto).await {
-            return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() });
+        if let Err(e) = item_service
+            .update(&app_id, &cluster, &ns_name, it.id.unwrap(), dto)
+            .await
+        {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
         }
     }
     for (k, v) in &creates {
-        if let Err(e) = item_service.create(&app_id, &cluster, &ns_name, crate::api::dto::ItemDTO {
-            id: None, key: k.clone(), value: v.clone(), r#type: None, comment: None, line_num: None,
-            data_change_created_by: Some(operator.to_string()),
-            data_change_last_modified_by: None, data_change_last_time: None, data_change_created_time: None,
-        }).await {
-            return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() });
+        if let Err(e) = item_service
+            .create(
+                &app_id,
+                &cluster,
+                &ns_name,
+                crate::api::dto::ItemDTO {
+                    id: None,
+                    key: k.clone(),
+                    value: v.clone(),
+                    r#type: None,
+                    comment: None,
+                    line_num: None,
+                    data_change_created_by: Some(operator.to_string()),
+                    data_change_last_modified_by: None,
+                    data_change_last_time: None,
+                    data_change_created_time: None,
+                },
+            )
+            .await
+        {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
         }
     }
     for it in &deletes {
-        if let Err(e) = item_service.delete_by_key(&app_id, &cluster, &ns_name, &it.key, operator).await {
-            return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() });
+        if let Err(e) = item_service
+            .delete_by_key(&app_id, &cluster, &ns_name, &it.key, operator)
+            .await
+        {
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+            });
         }
     }
 
@@ -3027,35 +3423,57 @@ async fn openapi_revert_items(
     query: web::Query<Value>,
 ) -> impl Responder {
     let (_env, app_id, cluster, ns_name) = path.into_inner();
-    let operator = query.get("operator").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let operator = query
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
 
-    let latest = ReleasePersistence::get_latest(data.get_ref(), &app_id, &cluster, &ns_name).await.ok().flatten();
+    let latest = ReleasePersistence::get_latest(data.get_ref(), &app_id, &cluster, &ns_name)
+        .await
+        .ok()
+        .flatten();
     let released: HashMap<String, String> = latest
         .as_ref()
         .and_then(|r| serde_json::from_str(&r.configurations).unwrap_or_default())
         .unwrap_or_default();
 
     let item_service = crate::service::ItemService::new(data.get_ref().clone());
-    let current = item_service.list(&app_id, &cluster, &ns_name).await.unwrap_or_default();
+    let current = item_service
+        .list(&app_id, &cluster, &ns_name)
+        .await
+        .unwrap_or_default();
     let mut reverted = 0usize;
 
     for it in &current {
         match released.get(&it.key) {
             None => {
-                if item_service.delete_by_key(&app_id, &cluster, &ns_name, &it.key, operator).await.is_ok() {
+                if item_service
+                    .delete_by_key(&app_id, &cluster, &ns_name, &it.key, operator)
+                    .await
+                    .is_ok()
+                {
                     reverted += 1;
                 }
             }
             Some(v) if v != &it.value => {
                 let mut dto = crate::api::dto::ItemDTO {
-                    id: it.id, key: it.key.clone(), value: v.clone(),
-                    r#type: it.r#type, comment: it.comment.clone(), line_num: it.line_num,
+                    id: it.id,
+                    key: it.key.clone(),
+                    value: v.clone(),
+                    r#type: it.r#type,
+                    comment: it.comment.clone(),
+                    line_num: it.line_num,
                     data_change_created_by: it.data_change_created_by.clone(),
                     data_change_last_modified_by: Some(operator.to_string()),
-                    data_change_last_time: None, data_change_created_time: None,
+                    data_change_last_time: None,
+                    data_change_created_time: None,
                 };
                 dto.data_change_created_time = None;
-                if item_service.update(&app_id, &cluster, &ns_name, it.id.unwrap(), dto).await.is_ok() {
+                if item_service
+                    .update(&app_id, &cluster, &ns_name, it.id.unwrap(), dto)
+                    .await
+                    .is_ok()
+                {
                     reverted += 1;
                 }
             }
@@ -3064,13 +3482,29 @@ async fn openapi_revert_items(
     }
     for (k, v) in &released {
         if !current.iter().any(|i| &i.key == k)
-            && item_service.create(&app_id, &cluster, &ns_name, crate::api::dto::ItemDTO {
-                id: None, key: k.clone(), value: v.clone(), r#type: None, comment: None, line_num: None,
-                data_change_created_by: Some(operator.to_string()),
-                data_change_last_modified_by: None, data_change_last_time: None, data_change_created_time: None,
-            }).await.is_ok() {
-                reverted += 1;
-            }
+            && item_service
+                .create(
+                    &app_id,
+                    &cluster,
+                    &ns_name,
+                    crate::api::dto::ItemDTO {
+                        id: None,
+                        key: k.clone(),
+                        value: v.clone(),
+                        r#type: None,
+                        comment: None,
+                        line_num: None,
+                        data_change_created_by: Some(operator.to_string()),
+                        data_change_last_modified_by: None,
+                        data_change_last_time: None,
+                        data_change_created_time: None,
+                    },
+                )
+                .await
+                .is_ok()
+        {
+            reverted += 1;
+        }
     }
     let _ = latest; // release row untouched; history recorded implicitly via items
     let _ = ns_name;
@@ -3085,11 +3519,16 @@ async fn openapi_missing_namespaces(
     use crate::persistence::traits::NamespacePersistence;
     let (app_id, cluster, _ns) = path.into_inner();
     let public_ns = crate::service::AppNamespaceService::new(data.get_ref().clone())
-        .list_public().await.unwrap_or_default();
+        .list_public()
+        .await
+        .unwrap_or_default();
     let mut missing = Vec::new();
     for p in public_ns {
-        let exists = NamespacePersistence::get_by_app_cluster(data.get_ref(), &app_id, &cluster, &p.name)
-            .await.map(|v| v.is_some()).unwrap_or(false);
+        let exists =
+            NamespacePersistence::get_by_app_cluster(data.get_ref(), &app_id, &cluster, &p.name)
+                .await
+                .map(|v| v.is_some())
+                .unwrap_or(false);
         if !exists && p.app_id != app_id {
             missing.push(serde_json::json!({
                 "name": p.name, "appId": p.app_id, "format": p.format, "isPublic": true,
@@ -3121,11 +3560,21 @@ async fn openapi_list_instances(
     let page = q.page.max(1) as u64;
     let size = if q.size == 0 { 20 } else { q.size } as u64;
     match service
-        .list_open_instances(&app_id, &cluster, &namespace_name, q.instance_app_id.as_deref(), page, size)
+        .list_open_instances(
+            &app_id,
+            &cluster,
+            &namespace_name,
+            q.instance_app_id.as_deref(),
+            page,
+            size,
+        )
         .await
     {
         Ok(dto) => HttpResponse::Ok().json(dto),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3143,7 +3592,10 @@ async fn openapi_list_instances_by_release(
     let service = InstanceService::new(data.get_ref().clone());
     match service.list_open_instances_by_release(&release_ids).await {
         Ok(items) => HttpResponse::Ok().json(items),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3154,9 +3606,15 @@ async fn openapi_count_instances(
 ) -> impl Responder {
     let (app_id, _env, cluster, namespace_name) = path.into_inner();
     let service = InstanceService::new(data.get_ref().clone());
-    match service.count_open_instances(&app_id, &cluster, &namespace_name).await {
+    match service
+        .count_open_instances(&app_id, &cluster, &namespace_name)
+        .await
+    {
         Ok(count) => HttpResponse::Ok().json(count),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3175,7 +3633,10 @@ async fn openapi_list_instances_by_release_not_in(
         .await
     {
         Ok(items) => HttpResponse::Ok().json(items),
-        Err(e) => HttpResponse::NotFound().json(ErrorResponse { status: 404, message: e.to_string() }),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3188,8 +3649,12 @@ struct InstancePageQuery {
     #[serde(default)]
     instance_app_id: Option<String>,
 }
-fn one() -> usize { 1 }
-fn twenty() -> usize { 20 }
+fn one() -> usize {
+    1
+}
+fn twenty() -> usize {
+    20
+}
 
 #[derive(serde::Deserialize)]
 struct ReleaseIdsQuery {
@@ -3227,11 +3692,20 @@ async fn openapi_items_diff(
     let model = body.into_inner();
     let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
     match service
-        .compare(&app_id, &cluster, &namespace_name, &model.sync_to_namespaces, &model.sync_items)
+        .compare(
+            &app_id,
+            &cluster,
+            &namespace_name,
+            &model.sync_to_namespaces,
+            &model.sync_items,
+        )
         .await
     {
         Ok(diffs) => HttpResponse::Ok().json(diffs),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3253,11 +3727,21 @@ async fn openapi_items_synchronize(
     let operator = "apollo";
     let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
     match service
-        .synchronize(&app_id, "default", &namespace_name, &model.sync_to_namespaces, &model.sync_items, operator)
+        .synchronize(
+            &app_id,
+            "default",
+            &namespace_name,
+            &model.sync_to_namespaces,
+            &model.sync_items,
+            operator,
+        )
         .await
     {
         Ok(results) => HttpResponse::Ok().json(results),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3307,7 +3791,9 @@ async fn openapi_miss_envs(
     path: web::Path<String>,
 ) -> impl Responder {
     let app_id = path.into_inner();
-    let namespaces = <dyn NamespacePersistence>::list_by_app(data.get_ref(), &app_id).await.unwrap_or_default();
+    let namespaces = <dyn NamespacePersistence>::list_by_app(data.get_ref(), &app_id)
+        .await
+        .unwrap_or_default();
     // batata does not persist an env per namespace; treat any namespace as
     // "present in all envs" so an app with at least one namespace reports no
     // missing envs.
@@ -3341,7 +3827,12 @@ async fn openapi_create_app_env(
         }
         match service.create(dto).await {
             Ok(c) => created.push(c),
-            Err(e) => return HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+            Err(e) => {
+                return HttpResponse::BadRequest().json(ErrorResponse {
+                    status: 400,
+                    message: e.to_string(),
+                });
+            }
         }
     }
     HttpResponse::Ok().json(created)
@@ -3358,7 +3849,9 @@ async fn openapi_appnamespace_usage(
 ) -> impl Responder {
     let (_app_id, namespace_name) = path.into_inner();
     // All namespaces sharing this name across apps/clusters.
-    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref()).await.unwrap_or_default();
+    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref())
+        .await
+        .unwrap_or_default();
     let mut envs = Vec::new();
     let mut clusters = Vec::new();
     let mut used_by = Vec::new();
@@ -3373,7 +3866,12 @@ async fn openapi_appnamespace_usage(
         }
     }
     if !clusters.is_empty() {
-        envs = vec!["DEV".to_string(), "FAT".to_string(), "UAT".to_string(), "PRO".to_string()];
+        envs = vec![
+            "DEV".to_string(),
+            "FAT".to_string(),
+            "UAT".to_string(),
+            "PRO".to_string(),
+        ];
     }
     HttpResponse::Ok().json(crate::api::dto::AppNamespaceUsageDTO {
         namespace_name,
@@ -3416,24 +3914,41 @@ async fn openapi_associated_public_namespace(
     };
 
     if cluster_name == "default" {
-        let ns = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+        let ns = data
+            .get_ref()
+            .get_by_app_cluster(&owner_app, &cluster_name, &namespace_name)
+            .await
+            .unwrap_or(None);
         return HttpResponse::Ok().json(ns_json(ns));
     }
 
-    let custom = data.get_ref().get_by_app_cluster(&owner_app, &cluster_name, &namespace_name).await.unwrap_or(None);
+    let custom = data
+        .get_ref()
+        .get_by_app_cluster(&owner_app, &cluster_name, &namespace_name)
+        .await
+        .unwrap_or(None);
     let published = match custom.as_ref() {
-        Some(_) => ReleasePersistence::get_latest(data.get_ref(), &owner_app, &cluster_name, &namespace_name)
-            .await
-            .ok()
-            .flatten()
-            .is_some(),
+        Some(_) => ReleasePersistence::get_latest(
+            data.get_ref(),
+            &owner_app,
+            &cluster_name,
+            &namespace_name,
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_some(),
         None => false,
     };
 
     if published {
         return HttpResponse::Ok().json(ns_json(custom));
     }
-    let fallback = data.get_ref().get_by_app_cluster(&owner_app, "default", &namespace_name).await.unwrap_or(None);
+    let fallback = data
+        .get_ref()
+        .get_by_app_cluster(&owner_app, "default", &namespace_name)
+        .await
+        .unwrap_or(None);
     HttpResponse::Ok().json(ns_json(fallback))
 }
 
@@ -3448,11 +3963,21 @@ async fn openapi_items_synchronize_env(
     let operator = "apollo";
     let service = crate::service::ConfigSyncService::new(data.get_ref().clone());
     match service
-        .synchronize(&app_id, &cluster_name, &namespace_name, &model.sync_to_namespaces, &model.sync_items, operator)
+        .synchronize(
+            &app_id,
+            &cluster_name,
+            &namespace_name,
+            &model.sync_to_namespaces,
+            &model.sync_items,
+            operator,
+        )
         .await
     {
         Ok(results) => HttpResponse::Ok().json(results),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3482,11 +4007,21 @@ async fn openapi_appnamespace_instances(
     let page = q.page.max(1) as u64;
     let size = if q.size == 0 { 20 } else { q.size } as u64;
     match service
-        .list_open_instances(&owner.app_id, "default", &namespace_name, q.instance_app_id.as_deref(), page, size)
+        .list_open_instances(
+            &owner.app_id,
+            "default",
+            &namespace_name,
+            q.instance_app_id.as_deref(),
+            page,
+            size,
+        )
         .await
     {
         Ok(dto) => HttpResponse::Ok().json(dto),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3496,7 +4031,9 @@ async fn openapi_namespace_usage(
     path: web::Path<(String, String, String, String)>,
 ) -> impl Responder {
     let (app_id, _env, cluster_name, namespace_name) = path.into_inner();
-    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref()).await.unwrap_or_default();
+    let all_ns = <dyn NamespacePersistence>::list_all(data.get_ref())
+        .await
+        .unwrap_or_default();
     let mut used_by = Vec::new();
     for ns in all_ns {
         if ns.namespace_name == namespace_name && !ns.is_deleted {
@@ -3520,7 +4057,10 @@ async fn openapi_delete_favorite(
     query: web::Query<Value>,
 ) -> impl Responder {
     let id = path.into_inner();
-    let user_id = query.get("userId").and_then(|v| v.as_str()).unwrap_or("apollo");
+    let user_id = query
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("apollo");
     let service = FavoriteService::new(data.get_ref().clone());
     match service.delete(id, user_id).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -3821,9 +4361,7 @@ async fn openapi_current_user(
 }
 
 /// PMISC-012 — list users.
-async fn openapi_list_users(
-    data: web::Data<Arc<dyn ApolloPersistenceService>>,
-) -> impl Responder {
+async fn openapi_list_users(data: web::Data<Arc<dyn ApolloPersistenceService>>) -> impl Responder {
     // Single-tenant: always include the fixed admin. The persistence layer may
     // be empty, so we synthesize the admin entry directly.
     let mut users = vec![serde_json::json!({
@@ -3856,7 +4394,10 @@ async fn openapi_create_user(
     let dto = body.into_inner();
     match data.create_user(dto).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3870,7 +4411,10 @@ async fn openapi_update_user(
     let dto = body.into_inner();
     match data.update_user(&username, dto).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse { status: 400, message: e.to_string() }),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3882,7 +4426,10 @@ async fn openapi_delete_user(
     let username = path.into_inner();
     match data.delete_user(&username).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse { status: 500, message: e.to_string() }),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -3895,7 +4442,9 @@ async fn openapi_system_info(
     _data: web::Data<Arc<dyn ApolloPersistenceService>>,
 ) -> impl Responder {
     let version = env!("CARGO_PKG_VERSION").to_string();
-    let commit = option_env!("GIT_COMMIT_ID").unwrap_or("unknown").to_string();
+    let commit = option_env!("GIT_COMMIT_ID")
+        .unwrap_or("unknown")
+        .to_string();
     HttpResponse::Ok().json(serde_json::json!({
         "apolloVersion": version,
         "gitCommitId": commit,
@@ -3926,7 +4475,10 @@ async fn openapi_change_user_enabled(
 ) -> impl Responder {
     use crate::persistence::traits::UserPersistence;
     let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
-    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let enabled = body
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     match UserPersistence::get_user(data.get_ref(), username).await {
         Ok(Some(mut user)) => {

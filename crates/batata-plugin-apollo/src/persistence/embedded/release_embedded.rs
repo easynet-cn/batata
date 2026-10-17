@@ -8,9 +8,9 @@ use rocksdb::DB;
 
 use batata_consistency::raft::state_machine::CF_APOLLO_RELEASE;
 
+use super::id_generator::IdGenerator;
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::ReleasePersistence;
-use super::id_generator::IdGenerator;
 
 /// Represents the `ReleaseEmbedded` entity.
 pub struct ReleaseEmbedded {
@@ -48,7 +48,10 @@ impl ReleaseEmbedded {
 
     /// Build index key for listing: "release_by_ns:{app_id}:{cluster}:{namespace}:{release_id}"
     fn index_key(app_id: &str, cluster: &str, namespace: &str, release_id: i64) -> String {
-        format!("release_by_ns:{}:{}:{}:{}", app_id, cluster, namespace, release_id)
+        format!(
+            "release_by_ns:{}:{}:{}:{}",
+            app_id, cluster, namespace, release_id
+        )
     }
 
     /// Writes a fully-formed `StoredRelease` (including its `id`) to RocksDB.
@@ -175,7 +178,8 @@ impl ReleasePersistence for ReleaseEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;
@@ -206,14 +210,23 @@ impl ReleasePersistence for ReleaseEmbedded {
         self.db
             .put_cf(
                 cf,
-                Self::index_key(&release.app_id, &release.cluster_name, &release.namespace_name, release.id)
-                    .as_bytes(),
+                Self::index_key(
+                    &release.app_id,
+                    &release.cluster_name,
+                    &release.namespace_name,
+                    release.id,
+                )
+                .as_bytes(),
                 &bytes,
             )
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
         // Refresh the latest pointer when the previously-latest row changed.
-        let latest_key = Self::key_latest(&release.app_id, &release.cluster_name, &release.namespace_name);
+        let latest_key = Self::key_latest(
+            &release.app_id,
+            &release.cluster_name,
+            &release.namespace_name,
+        );
         let is_current_latest = match self.db.get_cf(cf, latest_key.as_bytes())? {
             Some(data) => bincode::deserialize::<StoredRelease>(&data)?.id == release.id,
             None => false,
@@ -267,7 +280,10 @@ impl ReleasePersistence for ReleaseEmbedded {
         for item in iter {
             let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let release: StoredRelease = bincode::deserialize(&value)?;
-            if release.release_id == Some(release_id) && !release.is_deleted && !release.is_abandoned {
+            if release.release_id == Some(release_id)
+                && !release.is_deleted
+                && !release.is_abandoned
+            {
                 return Ok(Some(release));
             }
         }
@@ -285,7 +301,8 @@ impl ReleasePersistence for ReleaseEmbedded {
         let mut results = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             if !key_str.starts_with(&prefix) {
                 break;

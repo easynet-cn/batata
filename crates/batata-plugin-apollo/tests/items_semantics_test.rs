@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::Arc;
 
-use actix_web::{test, web, App};
+use actix_web::{App, test, web};
 use batata_plugin_apollo::api::dto::{AppDTO, ItemChangeSets, ItemDTO, NamespaceDTO};
 use batata_plugin_apollo::persistence::traits::ApolloPersistenceService;
 use batata_plugin_apollo::service::{

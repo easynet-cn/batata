@@ -10,7 +10,12 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(ApolloNamespace::Table)
-                    .add_column(ColumnDef::new(ApolloNamespace::Format).string_len(32).not_null().default("properties"))
+                    .add_column(
+                        ColumnDef::new(ApolloNamespace::Format)
+                            .string_len(32)
+                            .not_null()
+                            .default("properties"),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -19,7 +24,12 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(ApolloNamespace::Table)
-                    .add_column(ColumnDef::new(ApolloNamespace::IsPublic).boolean().not_null().default(false))
+                    .add_column(
+                        ColumnDef::new(ApolloNamespace::IsPublic)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -28,7 +38,11 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(ApolloNamespace::Table)
-                    .add_column(ColumnDef::new(ApolloNamespace::Comment).string_len(500).null())
+                    .add_column(
+                        ColumnDef::new(ApolloNamespace::Comment)
+                            .string_len(500)
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await?;

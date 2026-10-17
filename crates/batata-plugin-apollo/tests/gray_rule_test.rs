@@ -7,12 +7,7 @@ use batata_plugin_apollo::api::dto::GrayReleaseRuleDTO;
 use batata_plugin_apollo::persistence::traits::ApolloPersistenceService;
 use batata_plugin_apollo::service::GrayReleaseRuleService;
 
-async fn create_rule(
-    svc: &GrayReleaseRuleService,
-    ns: &str,
-    rules: &str,
-    release_id: i64,
-) {
+async fn create_rule(svc: &GrayReleaseRuleService, ns: &str, rules: &str, release_id: i64) {
     let dto = GrayReleaseRuleDTO {
         id: None,
         app_id: "app1".into(),

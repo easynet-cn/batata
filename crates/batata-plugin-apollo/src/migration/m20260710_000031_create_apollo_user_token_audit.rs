@@ -15,13 +15,19 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloUserTokenAudit::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloUserTokenAudit::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloUserTokenAudit::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(unsigned_int_null(ApolloUserTokenAudit::TokenId, backend))
                     .col(string_len_default(ApolloUserTokenAudit::UserId, 64, ""))
                     .col(string_len_default(ApolloUserTokenAudit::Uri, 1024, ""))
                     .col(string_len_default(ApolloUserTokenAudit::Method, 16, ""))
                     .col(date_time(ApolloUserTokenAudit::DataChangeCreatedTime))
-                    .col(date_time_on_update(ApolloUserTokenAudit::DataChangeLastTime))
+                    .col(date_time_on_update(
+                        ApolloUserTokenAudit::DataChangeLastTime,
+                    ))
                     .to_owned(),
             )
             .await?;

@@ -28,7 +28,6 @@ fn check_type_from_consul(s: &str) -> RegistryCheckType {
 
 use crate::acl::{AclService, ResourceType};
 use crate::check_index::ConsulCheckIndex;
-use crate::peering::ConsulPeeringService;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
@@ -38,6 +37,7 @@ use crate::model::{
     ServiceHealth, ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
+use crate::peering::ConsulPeeringService;
 
 /// Handle blocking query wait if `index` query parameter is set.
 /// Returns once index advances past the target or timeout elapses.
@@ -84,7 +84,7 @@ pub enum AliasTarget {
 }
 
 impl ConsulHealthService {
-/// The `new` associated function.
+    /// The `new` associated function.
     pub fn new(registry: Arc<InstanceCheckRegistry>, check_index: Arc<ConsulCheckIndex>) -> Self {
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
@@ -98,7 +98,7 @@ impl ConsulHealthService {
         }
     }
 
-/// The `with_node_name` method.
+    /// The `with_node_name` method.
     pub fn with_node_name(mut self, node_name: String) -> Self {
         self.node_name = node_name;
         self
@@ -334,12 +334,19 @@ impl ConsulHealthService {
                         let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
                         for c in &checks {
                             let s = check_status_from_consul(&c.status);
-                            if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Critical) {
+                            if matches!(
+                                s,
+                                batata_naming::healthcheck::registry::CheckStatus::Critical
+                            ) {
                                 worst = batata_naming::healthcheck::registry::CheckStatus::Critical;
                                 break;
-                            } else if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Warning)
-                                && !matches!(worst, batata_naming::healthcheck::registry::CheckStatus::Critical)
-                            {
+                            } else if matches!(
+                                s,
+                                batata_naming::healthcheck::registry::CheckStatus::Warning
+                            ) && !matches!(
+                                worst,
+                                batata_naming::healthcheck::registry::CheckStatus::Critical
+                            ) {
                                 worst = batata_naming::healthcheck::registry::CheckStatus::Warning;
                             }
                         }
@@ -349,22 +356,27 @@ impl ConsulHealthService {
                 AliasTarget::Node(node_name) => {
                     // Get all checks for the node and compute worst status
                     let all_checks = self.get_all_checks().await;
-                    let node_checks: Vec<&HealthCheck> = all_checks
-                        .iter()
-                        .filter(|c| &c.node == node_name)
-                        .collect();
+                    let node_checks: Vec<&HealthCheck> =
+                        all_checks.iter().filter(|c| &c.node == node_name).collect();
                     if node_checks.is_empty() {
                         batata_naming::healthcheck::registry::CheckStatus::Critical
                     } else {
                         let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
                         for c in &node_checks {
                             let s = check_status_from_consul(&c.status);
-                            if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Critical) {
+                            if matches!(
+                                s,
+                                batata_naming::healthcheck::registry::CheckStatus::Critical
+                            ) {
                                 worst = batata_naming::healthcheck::registry::CheckStatus::Critical;
                                 break;
-                            } else if matches!(s, batata_naming::healthcheck::registry::CheckStatus::Warning)
-                                && !matches!(worst, batata_naming::healthcheck::registry::CheckStatus::Critical)
-                            {
+                            } else if matches!(
+                                s,
+                                batata_naming::healthcheck::registry::CheckStatus::Warning
+                            ) && !matches!(
+                                worst,
+                                batata_naming::healthcheck::registry::CheckStatus::Critical
+                            ) {
                                 worst = batata_naming::healthcheck::registry::CheckStatus::Warning;
                             }
                         }
@@ -2573,8 +2585,13 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        service.register_check(reg).await.expect("script check should be accepted");
-        let (config, _) = registry.get_check("svc:script-1").expect("check should be registered");
+        service
+            .register_check(reg)
+            .await
+            .expect("script check should be accepted");
+        let (config, _) = registry
+            .get_check("svc:script-1")
+            .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Script);
         assert_eq!(config.script.as_deref(), Some("/bin/check.sh"));
     }
@@ -2589,8 +2606,13 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        service.register_check(reg).await.expect("args check should be accepted");
-        let (config, _) = registry.get_check("svc:args-1").expect("check should be registered");
+        service
+            .register_check(reg)
+            .await
+            .expect("args check should be accepted");
+        let (config, _) = registry
+            .get_check("svc:args-1")
+            .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Script);
         assert_eq!(
             config.args.as_deref(),
@@ -2609,8 +2631,13 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        service.register_check(reg).await.expect("docker check should be accepted");
-        let (config, _) = registry.get_check("svc:docker-1").expect("check should be registered");
+        service
+            .register_check(reg)
+            .await
+            .expect("docker check should be accepted");
+        let (config, _) = registry
+            .get_check("svc:docker-1")
+            .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Docker);
         assert_eq!(config.docker_container_id.as_deref(), Some("abc123"));
     }
@@ -2624,9 +2651,14 @@ mod tests {
             alias_service: Some("web".to_string()),
             ..Default::default()
         };
-        service.register_check(reg).await.expect("alias check should be accepted");
+        service
+            .register_check(reg)
+            .await
+            .expect("alias check should be accepted");
         // Alias checks are registered internally as TTL checks
-        let (config, _) = registry.get_check("svc:alias-1").expect("check should be registered");
+        let (config, _) = registry
+            .get_check("svc:alias-1")
+            .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Ttl);
     }
 
@@ -2646,7 +2678,10 @@ mod tests {
             status: Some("passing".to_string()),
             ..Default::default()
         };
-        service.register_check(svc_check).await.expect("service check should register");
+        service
+            .register_check(svc_check)
+            .await
+            .expect("service check should register");
 
         // Register an alias check pointing to service "web"
         let alias_reg = CheckRegistration {
@@ -2655,7 +2690,10 @@ mod tests {
             alias_service: Some("web".to_string()),
             ..Default::default()
         };
-        service.register_check(alias_reg).await.expect("alias check should register");
+        service
+            .register_check(alias_reg)
+            .await
+            .expect("alias check should register");
 
         // Sync alias checks so the alias mirrors the (passing) service check
         service.sync_alias_checks().await;
@@ -2695,7 +2733,10 @@ mod tests {
             interval: Some("10s".to_string()),
             ..Default::default()
         };
-        service.register_check(svc_check).await.expect("service check should register");
+        service
+            .register_check(svc_check)
+            .await
+            .expect("service check should register");
 
         let alias_reg = CheckRegistration {
             name: "alias-warn".to_string(),
@@ -2703,14 +2744,19 @@ mod tests {
             alias_service: Some("warnsvc".to_string()),
             ..Default::default()
         };
-        service.register_check(alias_reg).await.expect("alias check should register");
+        service
+            .register_check(alias_reg)
+            .await
+            .expect("alias check should register");
 
         service
             .update_check_status_async("svc:warn-1", "warning", None)
             .await
             .expect("update should succeed");
 
-        let (_, alias_status) = registry.get_check("alias:warn").expect("alias check exists");
+        let (_, alias_status) = registry
+            .get_check("alias:warn")
+            .expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Warning);
     }
 

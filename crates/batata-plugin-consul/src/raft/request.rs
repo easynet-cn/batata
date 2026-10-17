@@ -9,7 +9,7 @@ pub enum ConsulRaftRequest {
     // ==================== KV Operations ====================
     /// Put a key-value pair into the Consul KV store
     KVPut {
-/// The `item` field.
+        /// The `item` field.
         key: String,
         /// JSON-serialized StoredKV
         stored_kv_json: String,
@@ -19,20 +19,23 @@ pub enum ConsulRaftRequest {
 
     /// Delete a key from the Consul KV store
     KVDelete {
-/// The `item` field.
+        /// The `item` field.
         key: String,
         /// Optional session index key to clean up
         session_index_cleanup: Option<String>,
     },
 
     /// Delete all keys with a given prefix
-    KVDeletePrefix { #[doc = "The `prefix` field."] prefix: String },
+    KVDeletePrefix {
+        #[doc = "The `prefix` field."]
+        prefix: String,
+    },
 
     /// Acquire a session lock on a KV key
     KVAcquireSession {
-/// The `item` field.
+        /// The `item` field.
         key: String,
-/// The `item` field.
+        /// The `item` field.
         session_id: String,
         /// JSON-serialized StoredKV with session set
         stored_kv_json: String,
@@ -40,9 +43,9 @@ pub enum ConsulRaftRequest {
 
     /// Release a session lock on a single KV key
     KVReleaseSessionKey {
-/// The `item` field.
+        /// The `item` field.
         key: String,
-/// The `item` field.
+        /// The `item` field.
         session_id: String,
         /// JSON-serialized StoredKV with session cleared
         stored_kv_json: String,
@@ -50,7 +53,7 @@ pub enum ConsulRaftRequest {
 
     /// Release all KV keys held by a session (on session destroy)
     KVReleaseSession {
-/// The `item` field.
+        /// The `item` field.
         session_id: String,
         /// Vec of (kv_key, updated_stored_kv_json) pairs
         updates: Vec<(String, String)>,
@@ -60,11 +63,11 @@ pub enum ConsulRaftRequest {
 
     /// Check-and-set: only update if modify_index matches
     KVCas {
-/// The `item` field.
+        /// The `item` field.
         key: String,
         /// JSON-serialized StoredKV
         stored_kv_json: String,
-/// The `item` field.
+        /// The `item` field.
         expected_modify_index: u64,
     },
 
@@ -83,70 +86,88 @@ pub enum ConsulRaftRequest {
     // ==================== Session Operations ====================
     /// Create a new Consul session
     SessionCreate {
-/// The `item` field.
+        /// The `item` field.
         session_id: String,
         /// JSON-serialized StoredSession
         stored_session_json: String,
     },
 
     /// Destroy a Consul session
-    SessionDestroy { #[doc = "The `session_id` field."] session_id: String },
+    SessionDestroy {
+        #[doc = "The `session_id` field."]
+        session_id: String,
+    },
 
     /// Renew a Consul session
     SessionRenew {
-/// The `item` field.
+        /// The `item` field.
         session_id: String,
         /// JSON-serialized StoredSession with renewed TTL
         stored_session_json: String,
     },
 
     /// Clean up expired sessions
-    SessionCleanupExpired { #[doc = "The `expired_session_ids` field."] expired_session_ids: Vec<String> },
+    SessionCleanupExpired {
+        #[doc = "The `expired_session_ids` field."]
+        expired_session_ids: Vec<String>,
+    },
 
     // ==================== ACL Operations ====================
     /// Create or update an ACL token
     ACLTokenSet {
-/// The `item` field.
+        /// The `item` field.
         accessor_id: String,
         /// JSON-serialized AclToken
         token_json: String,
     },
 
     /// Delete an ACL token
-    ACLTokenDelete { #[doc = "The `accessor_id` field."] accessor_id: String },
+    ACLTokenDelete {
+        #[doc = "The `accessor_id` field."]
+        accessor_id: String,
+    },
 
     /// Create or update an ACL policy
     ACLPolicySet {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized AclPolicy
         policy_json: String,
     },
 
     /// Delete an ACL policy
-    ACLPolicyDelete { #[doc = "The `id` field."] id: String },
+    ACLPolicyDelete {
+        #[doc = "The `id` field."]
+        id: String,
+    },
 
     /// Create or update an ACL role
     ACLRoleSet {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized AclRole
         role_json: String,
     },
 
     /// Delete an ACL role
-    ACLRoleDelete { #[doc = "The `id` field."] id: String },
+    ACLRoleDelete {
+        #[doc = "The `id` field."]
+        id: String,
+    },
 
     /// Create or update an ACL auth method
     ACLAuthMethodSet {
-/// The `item` field.
+        /// The `item` field.
         name: String,
         /// JSON-serialized AuthMethod
         method_json: String,
     },
 
     /// Delete an ACL auth method
-    ACLAuthMethodDelete { #[doc = "The `name` field."] name: String },
+    ACLAuthMethodDelete {
+        #[doc = "The `name` field."]
+        name: String,
+    },
 
     /// Bootstrap ACL (first token creation)
     ACLBootstrap {
@@ -156,19 +177,22 @@ pub enum ConsulRaftRequest {
 
     /// Create or update an ACL binding rule
     ACLBindingRuleSet {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized BindingRule
         rule_json: String,
     },
 
     /// Delete an ACL binding rule
-    ACLBindingRuleDelete { #[doc = "The `id` field."] id: String },
+    ACLBindingRuleDelete {
+        #[doc = "The `id` field."]
+        id: String,
+    },
 
     // ==================== Prepared Query Operations ====================
     /// Create a prepared query
     QueryCreate {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized PreparedQuery
         query_json: String,
@@ -176,14 +200,17 @@ pub enum ConsulRaftRequest {
 
     /// Update a prepared query
     QueryUpdate {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized PreparedQuery
         query_json: String,
     },
 
     /// Delete a prepared query
-    QueryDelete { #[doc = "The `id` field."] id: String },
+    QueryDelete {
+        #[doc = "The `id` field."]
+        id: String,
+    },
 
     // ==================== Config Entry Operations ====================
     /// Apply (create or update) a config entry
@@ -203,7 +230,7 @@ pub enum ConsulRaftRequest {
     // ==================== Connect CA Operations ====================
     /// Set a CA root certificate
     CARootSet {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized CARoot
         root_json: String,
@@ -217,20 +244,23 @@ pub enum ConsulRaftRequest {
 
     /// Create or update an intention
     IntentionUpsert {
-/// The `item` field.
+        /// The `item` field.
         id: String,
         /// JSON-serialized Intention
         intention_json: String,
     },
 
     /// Delete an intention
-    IntentionDelete { #[doc = "The `id` field."] id: String },
+    IntentionDelete {
+        #[doc = "The `id` field."]
+        id: String,
+    },
 
     /// Upsert intention by source/destination pair
     IntentionUpsertExact {
-/// The `item` field.
+        /// The `item` field.
         source: String,
-/// The `item` field.
+        /// The `item` field.
         destination: String,
         /// JSON-serialized Intention
         intention_json: String,
@@ -248,18 +278,24 @@ pub enum ConsulRaftRequest {
     // ==================== Peering Operations ====================
     /// Write a peering (create or update)
     PeeringWrite {
-/// The `item` field.
+        /// The `item` field.
         name: String,
         /// JSON-serialized Peering
         peering_json: String,
     },
 
     /// Delete a peering (soft delete with deleted_at)
-    PeeringDelete { #[doc = "The `name` field."] name: String },
+    PeeringDelete {
+        #[doc = "The `name` field."]
+        name: String,
+    },
 
     // ==================== Operator Operations ====================
     /// Remove a Raft peer/server
-    OperatorRemovePeer { #[doc = "The `server_key` field."] server_key: String },
+    OperatorRemovePeer {
+        #[doc = "The `server_key` field."]
+        server_key: String,
+    },
 
     /// Update autopilot configuration
     OperatorAutopilotUpdate {
@@ -270,26 +306,32 @@ pub enum ConsulRaftRequest {
     // ==================== Namespace Operations ====================
     /// Create or update a namespace
     NamespaceUpsert {
-/// The `item` field.
+        /// The `item` field.
         name: String,
         /// JSON-serialized Namespace
         namespace_json: String,
     },
 
     /// Delete a namespace
-    NamespaceDelete { #[doc = "The `name` field."] name: String },
+    NamespaceDelete {
+        #[doc = "The `name` field."]
+        name: String,
+    },
 
     // ==================== Partition Operations ====================
     /// Create or update a partition
     PartitionUpsert {
-/// The `item` field.
+        /// The `item` field.
         name: String,
         /// JSON-serialized Partition
         partition_json: String,
     },
 
     /// Delete a partition (soft delete - sets DeletedAt)
-    PartitionDelete { #[doc = "The `name` field."] name: String },
+    PartitionDelete {
+        #[doc = "The `name` field."]
+        name: String,
+    },
 
     // ==================== Catalog Operations ====================
     /// Register a service in the catalog
@@ -309,14 +351,17 @@ pub enum ConsulRaftRequest {
     // ==================== Health Check Operations ====================
     /// Persist a health check configuration (for restart recovery)
     HealthCheckRegister {
-/// The `item` field.
+        /// The `item` field.
         check_id: String,
         /// JSON-serialized InstanceCheckConfig
         config_json: String,
     },
 
     /// Remove a persisted health check configuration
-    HealthCheckDeregister { #[doc = "The `check_id` field."] check_id: String },
+    HealthCheckDeregister {
+        #[doc = "The `check_id` field."]
+        check_id: String,
+    },
 
     // ==================== Internal ====================
     /// No-operation command
@@ -324,7 +369,7 @@ pub enum ConsulRaftRequest {
 }
 
 impl ConsulRaftRequest {
-/// The `op_type` method.
+    /// The `op_type` method.
     pub fn op_type(&self) -> &'static str {
         match self {
             // KV
@@ -395,16 +440,16 @@ impl ConsulRaftRequest {
 /// Response from a Consul Raft operation.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConsulRaftResponse {
-/// The `success` field.
+    /// The `success` field.
     pub success: bool,
-/// The `data` field.
+    /// The `data` field.
     pub data: Option<Vec<u8>>,
-/// The `message` field.
+    /// The `message` field.
     pub message: Option<String>,
 }
 
 impl ConsulRaftResponse {
-/// The `success` associated function.
+    /// The `success` associated function.
     pub fn success() -> Self {
         Self {
             success: true,
@@ -413,7 +458,7 @@ impl ConsulRaftResponse {
         }
     }
 
-/// The `failure` associated function.
+    /// The `failure` associated function.
     pub fn failure(msg: String) -> Self {
         Self {
             success: false,

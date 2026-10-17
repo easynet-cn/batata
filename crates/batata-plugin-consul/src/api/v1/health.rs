@@ -1,4 +1,3 @@
-
 // actix-web route macros (`#[get]`, `#[post]`, `#[delete]`, ...) expand to a
 // struct that cannot carry a doc comment, which trips `missing_docs`. The
 // generated struct is an internal implementation detail, so the lint is allowed
@@ -236,12 +235,7 @@ async fn health_stream_all(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // ACL check: service list access (empty name = wildcard read)
-    let authz = acl_service.authorize_request(
-        &req,
-        crate::acl::ResourceType::Service,
-        "",
-        false,
-    );
+    let authz = acl_service.authorize_request(&req, crate::acl::ResourceType::Service, "", false);
     if !authz.allowed {
         crate::api_metrics::incr_endpoint("health_stream_all", "error");
         return HttpResponse::Forbidden().json(serde_json::json!({

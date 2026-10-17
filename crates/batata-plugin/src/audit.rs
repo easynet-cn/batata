@@ -205,21 +205,15 @@ impl ConfigChangePluginV2 for AuditPlugin {
     }
 
     async fn execute(&self, ctx: &mut ConfigChangeRequest) -> ConfigChangeResult {
-        let entry = AuditLogEntry::from_request(
-            ctx,
-            ctx.proceed,
-            ctx.deny_reason.clone(),
-        );
+        let entry = AuditLogEntry::from_request(ctx, ctx.proceed, ctx.deny_reason.clone());
         self.log(entry);
         ConfigChangeResult::allow()
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     fn make_request(pointcut: ConfigPointcut, execute_type: ExecuteType) -> ConfigChangeRequest {
         let mut req = ConfigChangeRequest::new(
@@ -255,7 +249,10 @@ mod tests {
         // Give the async logger a moment to process
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        let logs = store.query(None, None, None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert!(!logs.is_empty(), "should have logged the publish event");
 
         let entry = &logs[0];
@@ -279,7 +276,10 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        let logs = store.query(None, None, None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert!(!logs.is_empty());
         assert_eq!(logs[0].pointcut, "remove");
         assert_eq!(logs[0].execute_type, "before");
@@ -295,7 +295,10 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        let logs = store.query(None, None, None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert!(!logs.is_empty());
         assert_eq!(logs[0].pointcut, "get");
     }
@@ -323,7 +326,10 @@ mod tests {
             store.append(entry).await.unwrap();
         }
 
-        let logs = store.query(None, None, None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 3, "should only keep max_size entries");
         // Newest first (reverse order), so we should see data-4, data-3, data-2
         assert_eq!(logs[0].data_id, "data-4");
@@ -355,20 +361,32 @@ mod tests {
         }
 
         // Filter by data_id
-        let logs = store.query(Some("data-0"), None, None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(Some("data-0"), None, None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].data_id, "data-0");
 
         // Filter by group
-        let logs = store.query(None, Some("group-a"), None, None, None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, Some("group-a"), None, None, None, None, 1, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 3);
 
         // Filter by operator
-        let logs = store.query(None, None, None, Some("user-0"), None, None, 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, Some("user-0"), None, None, 1, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 3);
 
         // Filter by time range
-        let logs = store.query(None, None, None, None, Some(1001), Some(1003), 1, 100).await.unwrap();
+        let logs = store
+            .query(None, None, None, None, Some(1001), Some(1003), 1, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 3); // timestamps 1001, 1002, 1003
     }
 
@@ -396,13 +414,19 @@ mod tests {
         }
 
         // Page 1 (newest first)
-        let page1 = store.query(None, None, None, None, None, None, 1, 3).await.unwrap();
+        let page1 = store
+            .query(None, None, None, None, None, None, 1, 3)
+            .await
+            .unwrap();
         assert_eq!(page1.len(), 3);
         assert_eq!(page1[0].data_id, "data-9");
         assert_eq!(page1[2].data_id, "data-7");
 
         // Page 2
-        let page2 = store.query(None, None, None, None, None, None, 2, 3).await.unwrap();
+        let page2 = store
+            .query(None, None, None, None, None, None, 2, 3)
+            .await
+            .unwrap();
         assert_eq!(page2.len(), 3);
         assert_eq!(page2[0].data_id, "data-6");
         assert_eq!(page2[2].data_id, "data-4");

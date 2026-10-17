@@ -15,12 +15,23 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApolloUserRole::Table)
                     .if_not_exists()
-                    .col(unsigned_int(ApolloUserRole::Id, backend).auto_increment().primary_key())
+                    .col(
+                        unsigned_int(ApolloUserRole::Id, backend)
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(string_len_default(ApolloUserRole::UserId, 128, "default"))
                     .col(unsigned_int_null(ApolloUserRole::RoleId, backend))
-                    .col(string_len_default(ApolloUserRole::DataChangeCreatedBy, 64, "default"))
+                    .col(string_len_default(
+                        ApolloUserRole::DataChangeCreatedBy,
+                        64,
+                        "default",
+                    ))
                     .col(date_time(ApolloUserRole::DataChangeCreatedTime))
-                    .col(string_len_null(ApolloUserRole::DataChangeLastModifiedBy, 64))
+                    .col(string_len_null(
+                        ApolloUserRole::DataChangeLastModifiedBy,
+                        64,
+                    ))
                     .col(date_time_on_update(ApolloUserRole::DataChangeLastTime))
                     .to_owned(),
             )

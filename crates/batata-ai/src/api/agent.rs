@@ -12,9 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web,
-};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_common::{ActionTypes, ApiType, DEFAULT_NAMESPACE_ID, SignType};
@@ -242,7 +240,10 @@ async fn create_agent(
     );
 
     let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
-    match service.register_agent(&body.into_inner(), ns, "manual").await {
+    match service
+        .register_agent(&body.into_inner(), ns, "manual")
+        .await
+    {
         Ok(id) => HttpResponse::Ok().json(Result::success(id)),
         Err(e) => Result::<()>::http_internal_error(e),
     }
@@ -302,7 +303,10 @@ async fn delete_agent(
         }
     };
 
-    match service.delete_agent(ns, name, query.version.as_deref()).await {
+    match service
+        .delete_agent(ns, name, query.version.as_deref())
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(Result::success("ok")),
         Err(e) => Result::<()>::http_internal_error(e),
     }

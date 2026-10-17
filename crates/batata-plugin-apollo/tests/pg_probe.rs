@@ -11,9 +11,7 @@ use sea_orm_migration::MigratorTrait;
 
 use batata_plugin_apollo::persistence::shared::{StoredCluster, StoredNamespace};
 use batata_plugin_apollo::persistence::sql::SqlApolloPersistence;
-use batata_plugin_apollo::persistence::traits::{
-    ClusterPersistence, NamespacePersistence,
-};
+use batata_plugin_apollo::persistence::traits::{ClusterPersistence, NamespacePersistence};
 
 fn pg_url() -> String {
     std::env::var("TEST_DATABASE_URL")
@@ -25,7 +23,9 @@ fn pg_url() -> String {
 async fn probe_pg_last_insert_id_and_namespace_create() {
     let url = pg_url();
     let conn = sea_orm::Database::connect(url.as_str()).await.unwrap();
-    batata_plugin_apollo::migration::ApolloMigrator::up(&conn, None).await.unwrap();
+    batata_plugin_apollo::migration::ApolloMigrator::up(&conn, None)
+        .await
+        .unwrap();
 
     // Raw driver-level check of the exact statement pattern used by the
     // original code path.
@@ -42,8 +42,12 @@ async fn probe_pg_last_insert_id_and_namespace_create() {
             chrono::Utc::now().naive_utc().into(),
         ],
     );
-    let qr = conn.query_one_raw(res).await.unwrap().expect("row returned");
-    
+    let qr = conn
+        .query_one_raw(res)
+        .await
+        .unwrap()
+        .expect("row returned");
+
     let raw_id: i32 = qr.try_get::<i32>("", "id").unwrap();
     println!("RAW RETURNING id = {raw_id}");
 
