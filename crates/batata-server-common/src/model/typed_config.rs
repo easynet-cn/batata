@@ -342,6 +342,11 @@ fn default_raft_snapshot_threshold() -> i64 {
 fn default_raft_snapshot_transfer_timeout_ms() -> i64 {
     30_000
 }
+/// 1 MiB: large enough to keep round-trips low on a fast LAN, small enough to
+/// stay well inside the gRPC message limit. Capped at 3 MiB by the Raft layer.
+fn default_raft_snapshot_chunk_size() -> i64 {
+    1024 * 1024
+}
 fn default_raft_forward_max_retries() -> i64 {
     3
 }
@@ -2714,6 +2719,9 @@ pub struct RaftConfig {
     #[serde(default = "default_raft_snapshot_transfer_timeout_ms")]
     /// Timeout for transferring a snapshot, in milliseconds.
     pub snapshot_transfer_timeout_ms: i64,
+    #[serde(default = "default_raft_snapshot_chunk_size")]
+    /// Size of one snapshot chunk, in bytes. Capped at 3 MiB by the Raft layer.
+    pub snapshot_chunk_size: i64,
     #[serde(default)]
     /// Settings for forwarding writes to the leader.
     pub forward: RaftForwardConfig,
@@ -2736,6 +2744,7 @@ impl Default for RaftConfig {
             rpc_timeout_ms: default_raft_rpc_timeout_ms(),
             snapshot_threshold: default_raft_snapshot_threshold(),
             snapshot_transfer_timeout_ms: default_raft_snapshot_transfer_timeout_ms(),
+            snapshot_chunk_size: default_raft_snapshot_chunk_size(),
             forward: RaftForwardConfig::default(),
             peer_connect_timeout_secs: default_raft_peer_connect_timeout_secs(),
             peer_connect_retry_interval_ms: default_raft_peer_connect_retry_interval_ms(),

@@ -14,7 +14,7 @@ use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, SnapshotResponse, VoteRequest, VoteResponse,
 };
 use openraft::{BasicNode, Snapshot, Vote};
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, error, warn};
 
 use batata_server_api::raft::{
@@ -41,6 +41,15 @@ pub struct RaftNetworkConfig {
     pub http2_keepalive_interval: Duration,
     /// HTTP/2 keep-alive timeout
     pub http2_keepalive_timeout: Duration,
+    /// Size of one snapshot chunk pushed to a follower
+    pub snapshot_chunk_size: usize,
+    /// Cap for a single Raft gRPC message, in both directions
+    pub max_message_size: usize,
+    /// HTTP/2 flow-control window. Must exceed `snapshot_chunk_size`, otherwise
+    /// every chunk stalls waiting for WINDOW_UPDATE.
+    pub http2_initial_stream_window_size: u32,
+    /// HTTP/2 frame size
+    pub http2_max_frame_size: u32,
 }
 
 impl Default for RaftNetworkConfig {
@@ -53,6 +62,10 @@ impl Default for RaftNetworkConfig {
             tcp_nodelay: true,
             http2_keepalive_interval: Duration::from_secs(10),
             http2_keepalive_timeout: Duration::from_secs(5),
+            snapshot_chunk_size: super::config::DEFAULT_SNAPSHOT_CHUNK_SIZE,
+            max_message_size: 4 * 1024 * 1024,
+            http2_initial_stream_window_size: super::config::DEFAULT_RAFT_STREAM_WINDOW_SIZE,
+            http2_max_frame_size: super::config::DEFAULT_RAFT_MAX_FRAME_SIZE,
         }
     }
 }
@@ -70,6 +83,10 @@ impl RaftNetworkConfig {
                 config.grpc_http2_keepalive_interval_secs,
             ),
             http2_keepalive_timeout: Duration::from_secs(config.grpc_http2_keepalive_timeout_secs),
+            snapshot_chunk_size: config.effective_snapshot_chunk_size(),
+            max_message_size: config.snapshot_max_message_size(),
+            http2_initial_stream_window_size: super::config::DEFAULT_RAFT_STREAM_WINDOW_SIZE,
+            http2_max_frame_size: super::config::DEFAULT_RAFT_MAX_FRAME_SIZE,
         }
     }
 }
@@ -111,6 +128,9 @@ impl openraft::network::RaftNetworkFactory<TypeConfig> for BatataRaftNetworkFact
 pub struct RaftNetworkConnection {
     addr: String,
     client: Option<RaftServiceClient<Channel>>,
+    /// Dedicated client for snapshot transfer: it needs a far longer per
+    /// request timeout than the regular RPCs share.
+    snapshot_client: Option<RaftServiceClient<Channel>>,
     network_config: RaftNetworkConfig,
 }
 
@@ -120,6 +140,7 @@ impl RaftNetworkConnection {
         Self {
             addr,
             client: None,
+            snapshot_client: None,
             network_config: RaftNetworkConfig::default(),
         }
     }
@@ -129,38 +150,95 @@ impl RaftNetworkConnection {
         Self {
             addr,
             client: None,
+            snapshot_client: None,
             network_config,
         }
     }
 
-    /// Ensure we have a connected client
+    /// Build an endpoint with the transport settings every Raft RPC wants.
+    ///
+    /// The caller picks the timeout, because a snapshot transfer needs a much
+    /// longer one than an ordinary AppendEntries.
+    fn endpoint(&self, timeout: Duration) -> Result<Endpoint, NetworkError> {
+        let endpoint = format!("http://{}", self.addr);
+        debug!("Connecting to Raft node at {}", endpoint);
+
+        Ok(Channel::from_shared(endpoint)
+            .map_err(|e| NetworkError::new(&e))?
+            .connect_timeout(self.network_config.connect_timeout)
+            .timeout(timeout)
+            .tcp_keepalive(Some(self.network_config.tcp_keepalive))
+            .tcp_nodelay(self.network_config.tcp_nodelay)
+            .http2_keep_alive_interval(self.network_config.http2_keepalive_interval)
+            .keep_alive_timeout(self.network_config.http2_keepalive_timeout)
+            // Without an explicit window the HTTP/2 default (64 KiB) applies,
+            // which is smaller than one snapshot chunk and stalls the transfer.
+            .initial_stream_window_size(self.network_config.http2_initial_stream_window_size)
+            .initial_connection_window_size(
+                self.network_config.http2_initial_stream_window_size * 2,
+            )
+            .max_frame_size(self.network_config.http2_max_frame_size))
+    }
+
+    /// Wrap a channel so a whole snapshot chunk fits in a single gRPC message.
+    fn wrap_client(channel: Channel, max_message_size: usize) -> RaftServiceClient<Channel> {
+        RaftServiceClient::new(channel)
+            .max_decoding_message_size(max_message_size)
+            .max_encoding_message_size(max_message_size)
+    }
+
+    /// Ensure we have a connected client for ordinary RPCs
     async fn ensure_client(&mut self) -> Result<&mut RaftServiceClient<Channel>, NetworkError> {
         if self.client.is_none() {
-            let endpoint = format!("http://{}", self.addr);
-            debug!("Connecting to Raft node at {}", endpoint);
-
-            let channel = Channel::from_shared(endpoint.clone())
-                .map_err(|e| NetworkError::new(&e))?
-                .connect_timeout(self.network_config.connect_timeout)
-                .timeout(self.network_config.rpc_timeout)
-                .tcp_keepalive(Some(self.network_config.tcp_keepalive))
-                .tcp_nodelay(self.network_config.tcp_nodelay)
-                .http2_keep_alive_interval(self.network_config.http2_keepalive_interval)
-                .keep_alive_timeout(self.network_config.http2_keepalive_timeout)
+            let channel = self
+                .endpoint(self.network_config.rpc_timeout)?
                 .connect()
                 .await
                 .map_err(|e| {
-                    warn!("Failed to connect to {}: {}", endpoint, e);
+                    warn!("Failed to connect to {}: {}", self.addr, e);
                     NetworkError::new(&e)
                 })?;
 
-            self.client = Some(RaftServiceClient::new(channel));
+            self.client = Some(Self::wrap_client(
+                channel,
+                self.network_config.max_message_size,
+            ));
         }
 
         // Safe: client is guaranteed to be Some after the above block
         self.client.as_mut().ok_or_else(|| {
             NetworkError::new(&std::io::Error::other(
                 "Client connection failed unexpectedly",
+            ))
+        })
+    }
+
+    /// Ensure we have a client whose timeout covers a full snapshot transfer.
+    ///
+    /// Reusing the ordinary client would cap the whole stream at the regular
+    /// RPC timeout, which any sizeable snapshot exceeds.
+    async fn ensure_snapshot_client(
+        &mut self,
+    ) -> Result<&mut RaftServiceClient<Channel>, NetworkError> {
+        if self.snapshot_client.is_none() {
+            let channel = self
+                .endpoint(self.network_config.snapshot_timeout)?
+                .connect()
+                .await
+                .map_err(|e| {
+                    warn!("Failed to connect to Raft node {}: {}", self.addr, e);
+                    NetworkError::new(&e)
+                })?;
+
+            self.snapshot_client = Some(Self::wrap_client(
+                channel,
+                self.network_config.max_message_size,
+            ));
+        }
+
+        self.snapshot_client.as_mut().ok_or_else(|| {
+            NetworkError::new(&std::io::Error::other(
+                "Snapshot client connection failed unexpectedly",
             ))
         })
     }
@@ -328,7 +406,10 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         use std::io::Read;
         use tokio::select;
 
-        let client = match self.ensure_client().await {
+        // Read it up front: `client` below holds a mutable borrow of `self`.
+        let chunk_size = self.network_config.snapshot_chunk_size.max(1);
+
+        let client = match self.ensure_snapshot_client().await {
             Ok(c) => c,
             Err(e) => return Err(StreamingError::Unreachable(Unreachable::new(&e))),
         };
@@ -347,9 +428,12 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         // missing membership would wipe the config on the follower.
         let meta = Some(super::proto_convert::to_proto_snapshot_meta(&snapshot.meta));
 
-        // Split data into chunks and create streaming requests
-        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
-        let chunks: Vec<_> = data.chunks(CHUNK_SIZE).collect();
+        // Split data into chunks and create streaming requests.
+        //
+        // The chunk size is configurable: it has to stay below the gRPC
+        // message limit and below the HTTP/2 flow-control window for the
+        // transfer to run at full speed.
+        let chunks: Vec<_> = data.chunks(chunk_size).collect();
         let total_chunks = chunks.len();
 
         let requests: Vec<batata_server_api::raft::InstallSnapshotRequest> = chunks
@@ -360,7 +444,7 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
                     term: vote.leader_id().term,
                     leader_id: vote.leader_id().node_id,
                     meta: if i == 0 { meta.clone() } else { None },
-                    offset: (i * CHUNK_SIZE) as u64,
+                    offset: (i * chunk_size) as u64,
                     data: chunk.to_vec(),
                     done: i == total_chunks - 1,
                     vote: Some(Self::to_proto_vote(&vote)),

@@ -329,7 +329,13 @@ async fn create_raft_node(
         grpc_tcp_nodelay: configuration.raft_grpc_tcp_nodelay(),
         grpc_http2_keepalive_interval_secs: configuration.raft_grpc_http2_keepalive_interval_secs(),
         grpc_http2_keepalive_timeout_secs: configuration.raft_grpc_http2_keepalive_timeout_secs(),
-        data_dir: std::path::PathBuf::from(&rocksdb_dir),
+        // Raft-owned state (log, snapshots) lives under `protocol/raft`, while
+        // the state machine stays on the shared business database path. That
+        // keeps the standalone and cluster layouts identical, so switching
+        // deployment modes never orphans existing data.
+        data_dir: std::path::PathBuf::from(configuration.raft_data_dir()),
+        state_machine_dir: Some(std::path::PathBuf::from(&rocksdb_dir)),
+        snapshot_chunk_size: configuration.raft_snapshot_chunk_size(),
         ..Default::default()
     };
 

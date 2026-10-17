@@ -1021,6 +1021,15 @@ pub fn start_grpc_servers(
                 .raft_grpc_http2_keepalive_timeout_secs(),
         );
 
+        // Snapshot chunks are far larger than the HTTP/2 defaults, so the Raft
+        // listener needs an explicit window and message cap. Without them a
+        // 1 MiB chunk crawls through a 64 KiB window.
+        let raft_stream_window = batata_consistency::raft::config::DEFAULT_RAFT_STREAM_WINDOW_SIZE;
+        let raft_max_frame = batata_consistency::raft::config::DEFAULT_RAFT_MAX_FRAME_SIZE;
+        let raft_max_message = batata_consistency::raft::config::snapshot_max_message_size_for(
+            app_state.configuration.raft_snapshot_chunk_size(),
+        );
+
         let handle = tokio::spawn(async move {
             let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
@@ -1035,8 +1044,14 @@ pub fn start_grpc_servers(
                 .tcp_nodelay(raft_tcp_nodelay)
                 .http2_keepalive_interval(Some(raft_http2_interval))
                 .http2_keepalive_timeout(Some(raft_http2_timeout))
+                .initial_stream_window_size(raft_stream_window)
+                .initial_connection_window_size(raft_stream_window.saturating_mul(2))
+                .max_frame_size(raft_max_frame)
                 .add_service(
-                    batata_server_api::raft::raft_service_server::RaftServiceServer::new(raft_service),
+                    batata_server_api::raft::raft_service_server::RaftServiceServer::new(
+                        raft_service,
+                    )
+                    .max_decoding_message_size(raft_max_message),
                 )
                 .add_service(
                     batata_server_api::raft::raft_management_service_server::RaftManagementServiceServer::new(

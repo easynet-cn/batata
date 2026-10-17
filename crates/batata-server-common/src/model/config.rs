@@ -1654,6 +1654,21 @@ impl Configuration {
         self.typed.raft.snapshot_threshold as u64
     }
 
+    /// Root directory for Raft-owned data: `{data_dir}/protocol/raft`.
+    ///
+    /// Mirrors JRaft's layout so consensus state (log, snapshots) never shares
+    /// a directory with the business database.
+    pub fn raft_data_dir(&self) -> String {
+        format!("{}/protocol/raft", self.embedded_data_dir())
+    }
+
+    /// Size of one snapshot chunk in bytes (default: 1 MiB).
+    ///
+    /// Capped at 3 MiB so a chunk always fits in a single gRPC message.
+    pub fn raft_snapshot_chunk_size(&self) -> usize {
+        self.typed.raft.snapshot_chunk_size as usize
+    }
+
     /// Raft snapshot transfer timeout in milliseconds (default: 30000).
     /// Timeout for full snapshot transfer between nodes. Should be larger than rpc_timeout.
     pub fn raft_snapshot_transfer_timeout_ms(&self) -> u64 {
@@ -2984,6 +2999,31 @@ mod tests {
         assert_eq!(cfg.raft_forward_initial_delay_ms(), 200);
         assert_eq!(cfg.raft_peer_connect_timeout_secs(), 30);
         assert_eq!(cfg.raft_peer_connect_retry_interval_ms(), 500);
+        assert_eq!(cfg.raft_snapshot_chunk_size(), 1024 * 1024);
+    }
+
+    /// Raft state must live beside the business database, never inside it, so
+    /// that the two deployment modes keep one shared database path.
+    #[test]
+    fn test_raft_data_dir_is_outside_the_business_db() {
+        let cfg = build_config(vec![(
+            "batata.persistence.embedded.data_dir",
+            "/var/batata/data".into(),
+        )]);
+        assert_eq!(cfg.raft_data_dir(), "/var/batata/data/protocol/raft");
+        assert_ne!(cfg.raft_data_dir(), cfg.embedded_rocksdb_dir());
+        // The database is a sibling of `protocol/`, not a child of the raft root.
+        assert!(cfg.embedded_rocksdb_dir().starts_with("/var/batata/data/"));
+        assert!(!cfg.embedded_rocksdb_dir().contains("/protocol/raft"));
+    }
+
+    #[test]
+    fn test_typed_raft_snapshot_chunk_size_override() {
+        let cfg = build_config(vec![(
+            "batata.raft.snapshot_chunk_size",
+            (256 * 1024_i64).into(),
+        )]);
+        assert_eq!(cfg.raft_snapshot_chunk_size(), 256 * 1024);
     }
 
     #[test]
