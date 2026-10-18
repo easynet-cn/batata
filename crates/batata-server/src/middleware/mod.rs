@@ -9,6 +9,8 @@ pub mod http_tracing;
 /// Re-exported item.
 pub use batata_server_common::middleware::auth;
 /// Re-exported item.
+pub use batata_server_common::middleware::config_storage_gate;
+/// Re-exported item.
 pub use batata_server_common::middleware::distro_filter;
 /// Re-exported item.
 pub use batata_server_common::middleware::http_metrics;

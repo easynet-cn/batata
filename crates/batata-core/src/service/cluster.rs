@@ -22,8 +22,56 @@ use super::{
         LoggingMemberChangeListener, MemberChangeEvent, MemberChangeEventPublisher,
         MemberChangeListener,
     },
-    member_lookup::{MemberLookup, create_member_lookup},
+    member_lookup::{MemberLookup, MembersChangedHook, create_member_lookup},
 };
+
+/// Reconcile the member manager's view with a lookup result.
+///
+/// Adds newly discovered members (publishing join events), removes members that
+/// disappeared (publishing leave events) and never removes the local node.
+///
+/// This is a free function so that both the initial load in
+/// [`ServerMemberManager::start`] and the runtime reload hook installed on the
+/// lookup share the exact same reconciliation logic. Nacos gets the same effect
+/// via `AbstractMemberLookup.afterLookup() -> memberManager.memberChange()`.
+async fn apply_lookup_members(
+    server_list: &Arc<DashMap<String, Member>>,
+    local_address: &str,
+    event_publisher: &Arc<MemberChangeEventPublisher>,
+    members: Vec<Member>,
+) {
+    let current_addresses: HashSet<String> = server_list.iter().map(|e| e.key().clone()).collect();
+
+    let new_addresses: HashSet<String> = members.iter().map(|m| m.address.clone()).collect();
+
+    // Add new members
+    for member in members {
+        if !current_addresses.contains(&member.address) {
+            info!("Adding new cluster member: {}", member.address);
+            server_list.insert(member.address.clone(), member.clone());
+
+            // Publish join event
+            event_publisher
+                .publish(MemberChangeEvent::member_join(member))
+                .await;
+        }
+    }
+
+    // Remove members that are no longer in the list (except self)
+    for addr in current_addresses {
+        if addr != local_address
+            && !new_addresses.contains(&addr)
+            && let Some((_, member)) = server_list.remove(&addr)
+        {
+            info!("Removing cluster member: {}", addr);
+
+            // Publish leave event
+            event_publisher
+                .publish(MemberChangeEvent::member_leave(member))
+                .await;
+        }
+    }
+}
 
 /// Server member manager configuration
 #[derive(Clone, Debug)]
@@ -214,6 +262,25 @@ impl ServerMemberManager {
         if !self.is_standalone {
             // Initialize and start member lookup
             let lookup = create_member_lookup(&self.config);
+
+            // Install the reload hook before starting: cluster.conf / address
+            // server changes detected after startup must reach the member
+            // manager, otherwise `server_list` stays at its boot snapshot and no
+            // join/leave event (and therefore no distro mapper refresh) happens.
+            let server_list = self.server_list.clone();
+            let local_address = self.local_address.clone();
+            let event_publisher = self.event_publisher.clone();
+            let hook: MembersChangedHook = Arc::new(move |members| {
+                let server_list = server_list.clone();
+                let local_address = local_address.clone();
+                let event_publisher = event_publisher.clone();
+                Box::pin(async move {
+                    apply_lookup_members(&server_list, &local_address, &event_publisher, members)
+                        .await;
+                })
+            });
+            lookup.set_members_changed_hook(hook).await;
+
             lookup.start().await?;
 
             // Load discovered members
@@ -307,39 +374,13 @@ impl ServerMemberManager {
 
     /// Update members from lookup results
     async fn update_members_from_lookup(&self, members: Vec<Member>) {
-        let current_addresses: HashSet<String> =
-            self.server_list.iter().map(|e| e.key().clone()).collect();
-
-        let new_addresses: HashSet<String> = members.iter().map(|m| m.address.clone()).collect();
-
-        // Add new members
-        for member in members {
-            if !current_addresses.contains(&member.address) {
-                info!("Adding new cluster member: {}", member.address);
-                self.server_list
-                    .insert(member.address.clone(), member.clone());
-
-                // Publish join event
-                self.event_publisher
-                    .publish(MemberChangeEvent::member_join(member))
-                    .await;
-            }
-        }
-
-        // Remove members that are no longer in the list (except self)
-        for addr in current_addresses {
-            if addr != self.local_address
-                && !new_addresses.contains(&addr)
-                && let Some((_, member)) = self.server_list.remove(&addr)
-            {
-                info!("Removing cluster member: {}", addr);
-
-                // Publish leave event
-                self.event_publisher
-                    .publish(MemberChangeEvent::member_leave(member))
-                    .await;
-            }
-        }
+        apply_lookup_members(
+            &self.server_list,
+            &self.local_address,
+            &self.event_publisher,
+            members,
+        )
+        .await;
     }
 
     /// Get the shared server list map (for wiring to DistroProtocol)
@@ -698,6 +739,7 @@ fn member_to_extended(m: &Member) -> batata_common::ExtendedMemberInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::member_event::MemberChangeType;
 
     fn test_config() -> Configuration {
         let config = config::Config::builder()
@@ -816,5 +858,56 @@ mod tests {
         let leader = manager.leader_address();
         assert!(leader.is_some());
         assert_eq!(leader.unwrap(), manager.local_address());
+    }
+
+    /// A runtime reload of the member source must be reconciled exactly like the
+    /// initial load: new members join, departed members leave, and the local
+    /// node is never removed even if it disappeared from cluster.conf.
+    #[tokio::test]
+    async fn test_apply_lookup_members_reconciles_and_keeps_self() {
+        let self_addr = "10.0.0.1:8848".to_string();
+        let departing = "10.0.0.2:8848".to_string();
+        let joining = "10.0.0.3:8848".to_string();
+
+        let member = |ip: &str| MemberBuilder::new(ip.to_string(), 8848).build();
+
+        let server_list = Arc::new(DashMap::new());
+        server_list.insert(self_addr.clone(), member("10.0.0.1"));
+        server_list.insert(departing.clone(), member("10.0.0.2"));
+
+        let publisher = Arc::new(MemberChangeEventPublisher::new(16));
+        publisher.start().await;
+        let mut rx = publisher.subscribe();
+
+        // cluster.conf now lists self + a new peer, the old peer is gone.
+        let members = vec![member("10.0.0.1"), member("10.0.0.3")];
+        apply_lookup_members(&server_list, &self_addr, &publisher, members).await;
+
+        assert_eq!(server_list.len(), 2);
+        assert!(server_list.contains_key(&self_addr));
+        assert!(server_list.contains_key(&joining));
+        assert!(!server_list.contains_key(&departing));
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push((event.change_type, event.member.address));
+        }
+        assert_eq!(
+            events,
+            vec![
+                (MemberChangeType::MemberJoin, joining.clone()),
+                (MemberChangeType::MemberLeave, departing.clone()),
+            ]
+        );
+
+        // Removing self from the source must not drop the local node.
+        apply_lookup_members(
+            &server_list,
+            &self_addr,
+            &publisher,
+            vec![member("10.0.0.3")],
+        )
+        .await;
+        assert!(server_list.contains_key(&self_addr));
     }
 }

@@ -202,13 +202,37 @@ pub struct DistroData {
 }
 
 impl DistroData {
-    /// Creates a new instance.
+    /// Creates a new instance with a locally generated version.
+    ///
+    /// Only appropriate on the **producing** side. A node that receives data
+    /// must keep the version that came off the wire — see `with_version`.
     pub fn new(data_type: DistroDataType, key: String, content: Vec<u8>, source: String) -> Self {
         Self {
             data_type,
             key,
             content,
             version: chrono::Utc::now().timestamp_millis(),
+            source,
+        }
+    }
+
+    /// Creates a new instance carrying `version` as produced by `source`.
+    ///
+    /// Used on the receiving side so the replica can later answer whether it
+    /// is up to date with that source. Stamping the local clock here instead
+    /// would fabricate a version nobody can compare against.
+    pub fn with_version(
+        data_type: DistroDataType,
+        key: String,
+        content: Vec<u8>,
+        source: String,
+        version: i64,
+    ) -> Self {
+        Self {
+            data_type,
+            key,
+            content,
+            version,
             source,
         }
     }
@@ -910,6 +934,9 @@ impl DistroProtocol {
                         request.data_type = api_data_type;
                         request.custom_type_name = custom_type_name;
                         request.verify_data = verify_data.clone();
+                        // Versions are per-node counters: tell the peer whose
+                        // counter it is being asked about.
+                        request.source = local_address.clone();
 
                         let cm = client_manager.clone();
                         let addr = member_address.clone();
@@ -997,13 +1024,10 @@ impl DistroProtocol {
         let mut all_loaded = true;
 
         // For each registered handler, request snapshot from a peer
-        let handler_entries: Vec<(DistroDataType, Arc<dyn DistroDataHandler>)> = self
-            .handlers
-            .iter()
-            .map(|e| (e.key().clone(), e.value().clone()))
-            .collect();
+        let data_types: Vec<DistroDataType> =
+            self.handlers.iter().map(|e| e.key().clone()).collect();
 
-        for (data_type, handler) in &handler_entries {
+        for data_type in &data_types {
             let api_data_type = match data_type {
                 DistroDataType::NamingInstance => {
                     batata_server_api::distro::DistroDataType::NamingInstance
@@ -1063,14 +1087,15 @@ impl DistroProtocol {
                                         }
                                     };
 
-                                    let data = DistroData::new(
+                                    let data = DistroData::with_version(
                                         internal_data_type,
                                         item.key,
                                         item.content.into_bytes(),
                                         item.source,
+                                        item.version,
                                     );
 
-                                    if let Err(e) = handler.process_sync_data(data).await {
+                                    if let Err(e) = self.receive_sync_data(data).await {
                                         warn!("Failed to process snapshot data: {}", e);
                                     }
                                 }
@@ -1282,6 +1307,39 @@ impl DistroProtocol {
         } else {
             Err(format!("No handler for data type: {}", data.data_type))
         }
+    }
+
+    /// Ask the handler for `data_type` whether the local replica already holds
+    /// version `version` of `key`, as produced by `source`.
+    ///
+    /// Returns `false` (i.e. "please resync me") when the data type has no
+    /// handler, when the handler errors, or when `source` is unknown — a false
+    /// negative costs one extra sync, a false positive leaves the replica
+    /// silently divergent.
+    pub async fn is_in_sync_with(
+        &self,
+        data_type: &DistroDataType,
+        key: &str,
+        source: &str,
+        version: i64,
+    ) -> bool {
+        let Some(handler) = self.handlers.get(data_type) else {
+            return false;
+        };
+        let probe = DistroData::with_version(
+            data_type.clone(),
+            key.to_string(),
+            Vec::new(),
+            source.to_string(),
+            version,
+        );
+        handler
+            .process_verify_data(&probe)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Verify probe failed for {} (source={}): {}", key, source, e);
+                false
+            })
     }
 
     /// Process a batch of received sync items.
@@ -1725,6 +1783,47 @@ mod tests {
             assert_eq!(stored.key, key);
             assert_eq!(stored.data_type, DistroDataType::NamingInstance);
         }
+    }
+
+    /// `is_in_sync_with` must delegate to the handler and answer "resync me"
+    /// whenever it cannot prove the replica is current.
+    #[tokio::test]
+    async fn test_is_in_sync_with_delegates_to_handler() {
+        let (proto, _handler) = test_protocol("10.0.0.1:8848");
+
+        // Nothing applied yet -> stale.
+        assert!(
+            !proto
+                .is_in_sync_with(&DistroDataType::NamingInstance, "svc-a", "10.0.0.2:8848", 1)
+                .await
+        );
+
+        let mut applied = build_item("svc-a");
+        applied.version = 5;
+        proto.receive_sync_data(applied).await.unwrap();
+
+        assert!(
+            proto
+                .is_in_sync_with(&DistroDataType::NamingInstance, "svc-a", "10.0.0.2:8848", 5)
+                .await
+        );
+        assert!(
+            !proto
+                .is_in_sync_with(&DistroDataType::NamingInstance, "svc-a", "10.0.0.2:8848", 6)
+                .await,
+            "a newer version on the peer must be reported as stale"
+        );
+        assert!(
+            !proto
+                .is_in_sync_with(
+                    &DistroDataType::Custom("nope".into()),
+                    "svc-a",
+                    "10.0.0.2:8848",
+                    5
+                )
+                .await,
+            "an unregistered data type cannot be proven in sync"
+        );
     }
 
     #[tokio::test]

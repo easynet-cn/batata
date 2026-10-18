@@ -9,6 +9,7 @@ use batata_api::naming::model::NotifySubscriberRequest;
 use batata_api::remote::model::RequestTrait;
 use batata_core::service::distro::{DistroData, DistroDataHandler, DistroDataType};
 use batata_core::service::remote::ConnectionManager;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -55,6 +56,16 @@ pub struct DistroInstance {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
+/// Composite key of a service key plus the peer that produced the data.
+///
+/// `last_sync_versions` is keyed per (key, source) because `DistroData::version`
+/// is a per-node counter: version 7 from node A and version 7 from node B say
+/// nothing about each other. Nacos gets the same property by keeping revisions
+/// on the per-client object rather than on the shared service.
+fn sync_version_key(key: &str, source: &str) -> String {
+    format!("{}@@{}", key, source)
+}
+
 /// Default implementation for naming instance data
 pub struct NamingInstanceDistroHandler {
     local_address: String,
@@ -62,6 +73,10 @@ pub struct NamingInstanceDistroHandler {
     /// Connection manager used to push updates to subscribers connected to
     /// this node. `None` in unit tests / standalone wiring.
     connection_manager: Option<Arc<ConnectionManager>>,
+    /// Key: `sync_version_key(service_key, source)`, Value: version of the
+    /// most recent sync applied from that source. Consumed by
+    /// `process_verify_data` to answer "am I up to date with peer X?".
+    last_sync_versions: Arc<DashMap<String, i64>>,
 }
 
 impl NamingInstanceDistroHandler {
@@ -71,6 +86,7 @@ impl NamingInstanceDistroHandler {
             local_address,
             naming_service,
             connection_manager: None,
+            last_sync_versions: Arc::new(DashMap::new()),
         }
     }
 
@@ -85,6 +101,7 @@ impl NamingInstanceDistroHandler {
             local_address,
             naming_service,
             connection_manager: Some(connection_manager),
+            last_sync_versions: Arc::new(DashMap::new()),
         }
     }
 
@@ -193,16 +210,17 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
 
         let content = serde_json::to_vec(&data).ok()?;
 
-        // Use service revision as version instead of Utc::now().
-        // This gives a stable version that only changes when data actually changes,
-        // enabling accurate verify comparisons between cluster nodes.
-        let revision = self.naming_service.get_service_revision(key);
+        // Use the local-mutation-only distro version instead of the shared
+        // service revision. The revision also moves when a peer's sync is
+        // merged, which would make two nodes invalidate each other's version
+        // forever (see `NamingService::distro_versions`).
+        let version = self.naming_service.get_distro_version(key);
 
         Some(DistroData {
             data_type: DistroDataType::NamingInstance,
             key: key.to_string(),
             content,
-            version: revision,
+            version,
             source: self.local_address.clone(),
         })
     }
@@ -248,6 +266,15 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             &data.source,
         );
 
+        // Remember which version we just applied *from this source*, so the
+        // next verify round can answer "am I up to date with that peer?".
+        // This is the batata counterpart of Nacos storing the synced revision
+        // on the replicated client object (`upgradeClient -> setRevision`).
+        if !data.source.is_empty() {
+            self.last_sync_versions
+                .insert(sync_version_key(&data.key, &data.source), data.version);
+        }
+
         info!(
             "Synced {} instances for service {}//{}/{} (merge)",
             count, instance_data.namespace, instance_data.group_name, instance_data.service_name
@@ -264,13 +291,22 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
     }
 
     async fn process_verify_data(&self, data: &DistroData) -> Result<bool, String> {
-        // Verify data by checking if our local version matches
-        if let Some(local_data) = self.get_data(&data.key).await {
-            // Compare versions
-            Ok(local_data.version >= data.version)
-        } else {
-            // We don't have this data, need sync
-            Ok(false)
+        // "version" is a per-node counter, so it is only comparable against
+        // the value this same source sent us last time. Comparing it with our
+        // own counter (the previous behaviour) is meaningless: the two
+        // counters advance independently, so a replica whose counter happens
+        // to be ahead would never request a sync and silently stay divergent.
+        //
+        // Equality, not ordering — Nacos compares `client.getRevision()` with
+        // the received `DistroClientVerifyInfo.revision` the same way.
+        match self
+            .last_sync_versions
+            .get(&sync_version_key(&data.key, &data.source))
+        {
+            Some(applied) => Ok(*applied.value() == data.version),
+            // Nothing applied from that source yet (or our copy was dropped):
+            // report out of sync so the peer pushes its data.
+            None => Ok(false),
         }
     }
 
@@ -312,6 +348,12 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             Vec::new(),
             "",
         );
+        // Drop the recorded versions too: we no longer hold any data for this
+        // key, so claiming "still at version N" would suppress the next
+        // resync and leave the replica permanently empty.
+        let prefix = format!("{}@@", key);
+        self.last_sync_versions
+            .retain(|k, _| !k.starts_with(&prefix));
         debug!(
             "Removed remote ephemeral instances for non-responsible key: {}",
             key
@@ -413,6 +455,132 @@ mod tests {
             assert!(instances[0].ephemeral);
             assert_eq!(instances[0].cluster_name, "DEFAULT");
         }
+    }
+
+    /// A `DistroData::version` is a per-node counter, so it may only ever be
+    /// compared against the version the *same* peer sent last time.
+    #[tokio::test]
+    async fn test_verify_data_is_compared_per_source() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+        let key = "public@@DEFAULT_GROUP@@svc-verify";
+
+        let probe = |source: &str, version: i64| DistroData {
+            data_type: DistroDataType::NamingInstance,
+            key: key.to_string(),
+            content: Vec::new(),
+            version,
+            source: source.to_string(),
+        };
+
+        // Nothing applied from that peer yet.
+        assert!(
+            !handler
+                .process_verify_data(&probe("10.0.0.2:8848", 7))
+                .await
+                .unwrap()
+        );
+
+        let mut applied = build_sync_data("public", "DEFAULT_GROUP", "svc-verify", "10.2.2.2");
+        applied.version = 7;
+        applied.source = "10.0.0.2:8848".to_string();
+        handler.process_sync_data(applied).await.unwrap();
+
+        assert!(
+            handler
+                .process_verify_data(&probe("10.0.0.2:8848", 7))
+                .await
+                .unwrap(),
+            "same peer, same version -> in sync"
+        );
+        assert!(
+            !handler
+                .process_verify_data(&probe("10.0.0.2:8848", 8))
+                .await
+                .unwrap(),
+            "peer moved on -> stale"
+        );
+        assert!(
+            !handler
+                .process_verify_data(&probe("10.0.0.3:8848", 7))
+                .await
+                .unwrap(),
+            "version 7 from a different node says nothing about this one"
+        );
+    }
+
+    /// Dispossessing a key must forget the recorded versions too, otherwise the
+    /// replica claims to be current while holding no data at all.
+    #[tokio::test]
+    async fn test_dispossession_forgets_recorded_versions() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+        let key = "public@@DEFAULT_GROUP@@svc-forget";
+
+        let mut applied = build_sync_data("public", "DEFAULT_GROUP", "svc-forget", "10.3.3.3");
+        applied.version = 3;
+        applied.source = "10.0.0.2:8848".to_string();
+        handler.process_sync_data(applied).await.unwrap();
+
+        let probe = DistroData {
+            data_type: DistroDataType::NamingInstance,
+            key: key.to_string(),
+            content: Vec::new(),
+            version: 3,
+            source: "10.0.0.2:8848".to_string(),
+        };
+        assert!(handler.process_verify_data(&probe).await.unwrap());
+
+        handler.remove_data(key).await.unwrap();
+        assert!(
+            !handler.process_verify_data(&probe).await.unwrap(),
+            "after dispossession the replica must request a resync"
+        );
+    }
+
+    /// The version we advertise for a key must be stable while we only replay
+    /// somebody else's data — otherwise two nodes bump each other's version on
+    /// every apply and ping-pong syncs forever.
+    #[tokio::test]
+    async fn test_distro_version_ignores_remote_syncs() {
+        let naming = Arc::new(NamingService::new());
+        let key = "public@@DEFAULT_GROUP@@svc-version";
+        assert_eq!(naming.get_distro_version(key), 0);
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "svc-version",
+            crate::Instance {
+                instance_id: "local#9000#DEFAULT#svc-version".to_string(),
+                ip: "10.1.0.1".to_string(),
+                port: 9000,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "svc-version".to_string(),
+                metadata: std::collections::HashMap::new(),
+            },
+        );
+        assert_eq!(
+            naming.get_distro_version(key),
+            1,
+            "a local registration must move the version"
+        );
+
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+        let mut remote = build_sync_data("public", "DEFAULT_GROUP", "svc-version", "10.9.9.9");
+        remote.version = 42;
+        remote.source = "10.0.0.2:8848".to_string();
+        handler.process_sync_data(remote).await.unwrap();
+
+        assert_eq!(
+            naming.get_distro_version(key),
+            1,
+            "merging a peer's sync must NOT move our own version"
+        );
     }
 
     /// Verify-failure flow end-to-end on the naming layer: dispossess drops

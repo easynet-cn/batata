@@ -305,6 +305,27 @@ impl RaftNode {
         self.config.snapshot_dir()
     }
 
+    /// Check whether this node is a voting member of the Raft group.
+    ///
+    /// Nacos equivalent: `CircuitFilter` only opens the config service once this
+    /// node's own Raft address shows up in the Raft group's peer list. Until the
+    /// group has been formed the local store holds no (or stale) replicated
+    /// data, so serving reads from it would silently return missing or outdated
+    /// values.
+    ///
+    /// Note this is weaker than [`RaftNode::is_ready`]: a member that is still
+    /// replaying log entries is reported as a member here, matching upstream
+    /// which accepts eventual consistency for config reads.
+    pub fn is_group_member(&self) -> bool {
+        let watcher = self.raft.metrics();
+        let metrics = watcher.borrow();
+        let self_id = self.node_id();
+        metrics
+            .membership_config
+            .voter_ids()
+            .any(|id| id == self_id)
+    }
+
     /// Check if this node is the leader
     pub fn is_leader(&self) -> bool {
         let metrics = self.metrics();

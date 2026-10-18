@@ -3,6 +3,7 @@
 
 /// Provides the `auth` module.
 pub mod auth; // Authentication and authorization middleware
+pub mod config_storage_gate; // Nacos CircuitFilter parity: gate config reads on raft membership
 pub mod distro_filter; // Distro AP mode request routing for naming writes
 /// Provides the `http_metrics` module.
 pub mod http_metrics; // HTTP request metrics (count, duration, errors)

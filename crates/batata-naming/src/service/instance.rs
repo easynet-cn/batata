@@ -62,6 +62,7 @@ impl NamingService {
         // Update service name index and revision
         self.index_service_name(&service_key);
         self.increment_service_revision(&service_key);
+        self.increment_distro_version(&service_key);
         self.update_empty_state(&service_key, instances.is_empty());
         true
     }
@@ -86,6 +87,7 @@ impl NamingService {
         if let Some(instances) = self.services.get(&service_key) {
             if instances.remove(&instance_key).is_some() {
                 self.increment_service_revision(&service_key);
+                self.increment_distro_version(&service_key);
             }
             self.update_empty_state(&service_key, instances.is_empty());
             // Return true for idempotency — deregistering a non-existent instance
@@ -432,6 +434,7 @@ impl NamingService {
         // Update service name index and revision
         self.index_service_name(&service_key);
         self.increment_service_revision(&service_key);
+        self.increment_distro_version(&service_key);
         true
     }
 
@@ -474,6 +477,7 @@ impl NamingService {
 
         // Increment service revision for change detection
         self.increment_service_revision(&service_key);
+        self.increment_distro_version(&service_key);
         true
     }
 
@@ -660,6 +664,9 @@ impl NamingService {
             entry.remove(&key);
         }
 
+        // Only `revision` moves here — deliberately NOT `distro_version`: that
+        // counter tracks *this node's own* mutations and is what peers compare
+        // against, so replaying a peer's data must leave it untouched.
         self.increment_service_revision(&service_key);
         self.update_empty_state(&service_key, entry.is_empty());
     }
@@ -728,6 +735,11 @@ impl NamingService {
                 updated.healthy = healthy;
                 drop(entry);
                 instances.insert(instance_key, Arc::new(updated));
+                // A health flip is a local mutation of this service, so the
+                // distro version has to move — otherwise a health-only sync
+                // that never reached a peer carries the old version and the
+                // verify loop would consider that peer up to date.
+                self.increment_distro_version(&service_key);
             }
             return true;
         }

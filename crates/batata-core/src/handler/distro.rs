@@ -10,6 +10,7 @@ use crate::{
     service::distro::{DistroData, DistroDataType, DistroProtocol},
 };
 use tonic::Status;
+use tracing::warn;
 
 use crate::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_api::grpc::Payload;
@@ -48,12 +49,15 @@ impl PayloadHandler for DistroDataSyncHandler {
             }
         };
 
-        // Create internal DistroData
-        let data = DistroData::new(
+        // Create internal DistroData. The version MUST be the one that came
+        // off the wire: the replica later answers "am I up to date with this
+        // peer?" by comparing it against what it applied last time.
+        let data = DistroData::with_version(
             data_type,
             request.distro_data.key,
             request.distro_data.content.into_bytes(),
             request.distro_data.source,
+            request.distro_data.version,
         );
 
         // Process the sync data
@@ -166,24 +170,22 @@ impl PayloadHandler for DistroDataVerifyHandler {
         // Check which keys need sync
         let mut keys_need_sync = Vec::new();
 
+        let source = request.source.clone();
+        if source.is_empty() {
+            // Peer predates the `source` field (or is misconfigured). Without
+            // it, per-source versions cannot be compared, so report every key
+            // as stale — one redundant round of syncs, then it converges once
+            // the peer sends its address.
+            warn!("Distro verify request without source address; reporting all keys stale");
+        }
+
         for (key, version) in &request.verify_data {
-            // Get local data version
-            let snapshot = self.distro_protocol.get_snapshot(&data_type).await;
-
-            let local_version = snapshot.iter().find(|d| &d.key == key).map(|d| d.version);
-
-            match local_version {
-                Some(local_v) if local_v < *version => {
-                    // Our version is older, need sync
-                    keys_need_sync.push(key.clone());
-                }
-                None => {
-                    // We don't have this key, need sync
-                    keys_need_sync.push(key.clone());
-                }
-                _ => {
-                    // Our version is same or newer, no need
-                }
+            let in_sync = self
+                .distro_protocol
+                .is_in_sync_with(&data_type, key, &source, *version)
+                .await;
+            if !in_sync {
+                keys_need_sync.push(key.clone());
             }
         }
 

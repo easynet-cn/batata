@@ -34,8 +34,9 @@ use crate::{
         ai_prompt as console_prompt, ai_skill as console_skill,
     },
     middleware::{
-        auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
-        tps_control::TpsControlMiddleware, traffic_revise::TrafficReviseFilter,
+        auth::Authentication, config_storage_gate::ConfigStorageGate, distro_filter::DistroFilter,
+        rate_limit::RateLimiter, tps_control::TpsControlMiddleware,
+        traffic_revise::TrafficReviseFilter,
     },
     model::common::AppState,
 };
@@ -534,6 +535,9 @@ pub fn main_server(
             // HTTP response compression (gzip, brotli, zstd)
             .wrap(Condition::new(compression_enabled, Compress::default()))
             .wrap(TrafficReviseFilter::new(server_status.clone()))
+            // Nacos `CircuitFilter` parity: config reads are rejected until this
+            // node has joined the raft group (embedded cluster mode only).
+            .wrap(ConfigStorageGate::new())
             .wrap(DistroFilter::new(distro_protocol.clone()))
             .wrap(TpsControlMiddleware::new(control_plugin.clone()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))

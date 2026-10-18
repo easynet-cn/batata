@@ -160,6 +160,17 @@ pub struct DistroDataVerifyRequest {
     pub custom_type_name: Option<String>,
     /// Keys and their versions to verify
     pub verify_data: HashMap<String, i64>,
+    /// Address of the node that produced `verify_data`.
+    ///
+    /// Versions are per-node counters, so a replica can only answer "am I up
+    /// to date?" when it knows *whose* counter it is being compared against —
+    /// it stores the last version it applied from each peer. Nacos gets the
+    /// same effect by keying revisions per client.
+    ///
+    /// Empty for requests sent by nodes that predate this field; the receiver
+    /// then treats every key as needing a sync (conservative, self-healing).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 impl DistroDataVerifyRequest {
@@ -170,6 +181,7 @@ impl DistroDataVerifyRequest {
             data_type: DistroDataType::NamingInstance,
             custom_type_name: None,
             verify_data: HashMap::new(),
+            source: String::new(),
         }
     }
 
@@ -180,6 +192,7 @@ impl DistroDataVerifyRequest {
             data_type: DistroDataType::Custom,
             custom_type_name: Some(custom_type_name.to_string()),
             verify_data: HashMap::new(),
+            source: String::new(),
         }
     }
 
@@ -599,6 +612,29 @@ mod tests {
         assert!(item.version > 0);
         assert!(item.custom_type_name.is_none());
         assert_eq!(item.effective_type_name(), "NAMING_INSTANCE");
+    }
+
+    /// The verify request must carry the producing node: versions are per-node
+    /// counters and cannot be compared without knowing whose counter it is.
+    #[test]
+    fn test_verify_request_carries_source() {
+        let mut request = DistroDataVerifyRequest::new();
+        assert!(
+            request.source.is_empty(),
+            "default must stay wire-compatible"
+        );
+        request.source = "10.0.0.1:8848".to_string();
+        request.verify_data.insert("k".to_string(), 7);
+
+        let json = serde_json::to_string(&request).unwrap();
+        let back: DistroDataVerifyRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, "10.0.0.1:8848");
+        assert_eq!(back.verify_data.get("k"), Some(&7));
+
+        // A payload from a node that predates the field still deserializes.
+        let legacy = r#"{"dataType":"NAMING_INSTANCE","verifyData":{"k":7}}"#;
+        let decoded: DistroDataVerifyRequest = serde_json::from_str(legacy).unwrap();
+        assert!(decoded.source.is_empty());
     }
 
     #[test]

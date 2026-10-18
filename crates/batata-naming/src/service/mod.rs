@@ -131,6 +131,16 @@ pub struct NamingService {
     /// the revision, so a revision-based clock would be refreshed forever and no
     /// empty service would ever expire.
     service_empty_since: Arc<DashMap<String, i64>>,
+    /// Key: service_key, Value: distro version counter.
+    ///
+    /// Deliberately **not** the same counter as `ServiceMetadata::revision`:
+    /// this one moves only on local mutations (client register/deregister,
+    /// batch register, local health flip) and never when a peer's distro sync
+    /// is merged in. Distro verify compares "the version I last applied from
+    /// peer P" against "P's current version"; if the counter also moved on
+    /// remote applies, the two nodes would invalidate each other on every
+    /// cycle and ping-pong syncs forever.
+    distro_versions: Arc<DashMap<String, i64>>,
 }
 
 /// Build cluster config key format: service_key##clusterName (pre-allocated)
@@ -157,6 +167,7 @@ impl NamingService {
             closing_connections: Arc::new(DashMap::new()),
             service_name_index: Arc::new(DashMap::new()),
             service_empty_since: Arc::new(DashMap::new()),
+            distro_versions: Arc::new(DashMap::new()),
         }
     }
 
@@ -209,6 +220,34 @@ impl NamingService {
         self.service_metadata
             .get(service_key)
             .map(|m| m.revision as i64)
+            .unwrap_or(0)
+    }
+
+    /// Bump the distro version for a service and return the new value.
+    ///
+    /// Call sites must be **local** mutations only. Merging a peer's distro
+    /// sync changes the local instance set but must not move this counter —
+    /// see the `distro_versions` field docs for why.
+    fn increment_distro_version(&self, service_key: &str) -> i64 {
+        let mut entry = self
+            .distro_versions
+            .entry(service_key.to_string())
+            .or_insert(0);
+        let next = (*entry).wrapping_add(1);
+        *entry = next;
+        next
+    }
+
+    /// Current distro version for a service. `0` when this node never mutated
+    /// the key locally (i.e. it is a pure replica for that key).
+    ///
+    /// This is the value shipped in `DistroData::version`: peers compare it
+    /// against the version they last applied from this node, so it must be
+    /// stable while this node only replays somebody else's data.
+    pub fn get_distro_version(&self, service_key: &str) -> i64 {
+        self.distro_versions
+            .get(service_key)
+            .map(|v| *v.value())
             .unwrap_or(0)
     }
 }

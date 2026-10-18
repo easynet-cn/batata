@@ -4,10 +4,12 @@
 use std::{
     collections::HashSet,
     fs::File,
+    future::Future,
     io::{BufRead, BufReader},
     path::Path,
+    pin::Pin,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -19,6 +21,16 @@ use tracing::{debug, error, info, warn};
 use batata_api::model::{Member, MemberBuilder};
 
 use crate::model::Configuration;
+
+/// Hook invoked when a lookup refreshes its member source at runtime.
+///
+/// Mirrors Nacos `AbstractMemberLookup.afterLookup()` which forwards to
+/// `ServerMemberManager.memberChange()`. Without it a reload only updates the
+/// lookup's private cache: the member manager keeps the startup snapshot, no
+/// join/leave event is published, and consumers such as the distro mapper never
+/// learn about the change.
+pub type MembersChangedHook =
+    Arc<dyn Fn(Vec<Member>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Trait for member lookup strategies
 #[tonic::async_trait]
@@ -36,6 +48,12 @@ pub trait MemberLookup: Send + Sync {
     fn use_address_server(&self) -> bool {
         false
     }
+
+    /// Install a hook invoked whenever the lookup re-reads its member source.
+    ///
+    /// The hook must be installed before [`MemberLookup::start`] so that reloads
+    /// detected by the background watcher reach the member manager.
+    async fn set_members_changed_hook(&self, _hook: MembersChangedHook) {}
 }
 
 /// Lookup type enumeration
@@ -64,17 +82,16 @@ pub struct FileMemberLookup {
     members: Arc<DashMap<String, Member>>,
     cluster_conf_path: String,
     running: Arc<AtomicBool>,
+    /// Invoked with a fresh member snapshot after every reload.
+    hook: Arc<RwLock<Option<MembersChangedHook>>>,
+    /// How often cluster.conf is checked for a new modification time.
+    poll_interval: Duration,
 }
 
 impl FileMemberLookup {
     /// Creates a new instance.
     pub fn new(config: Configuration) -> Self {
-        Self {
-            config,
-            members: Arc::new(DashMap::new()),
-            cluster_conf_path: "conf/cluster.conf".to_string(),
-            running: Arc::new(AtomicBool::new(false)),
-        }
+        Self::with_path(config, "conf/cluster.conf")
     }
 
     /// With Path.
@@ -84,7 +101,28 @@ impl FileMemberLookup {
             members: Arc::new(DashMap::new()),
             cluster_conf_path: path.to_string(),
             running: Arc::new(AtomicBool::new(false)),
+            hook: Arc::new(RwLock::new(None)),
+            poll_interval: Duration::from_secs(10),
         }
+    }
+
+    /// Override the cluster.conf poll interval (mainly for tests, where the
+    /// default 10s delay is far too slow).
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+        self.poll_interval = interval;
+        self
+    }
+
+    /// Notify the installed hook with the current member snapshot.
+    async fn notify_members_changed(
+        members: &Arc<DashMap<String, Member>>,
+        hook: &Arc<RwLock<Option<MembersChangedHook>>>,
+    ) {
+        let Some(hook) = hook.read().ok().and_then(|guard| guard.clone()) else {
+            return;
+        };
+        let snapshot: Vec<Member> = members.iter().map(|e| e.value().clone()).collect();
+        (hook)(snapshot).await;
     }
 
     /// Parse cluster.conf file and return member addresses
@@ -221,12 +259,19 @@ impl FileMemberLookup {
         let running = self.running.clone();
         let conf_path = self.cluster_conf_path.clone();
         let config = self.config.clone();
+        let hook = self.hook.clone();
+        let poll_interval = self.poll_interval;
+        // Baseline is taken here, not inside the spawned task: the task body
+        // only starts running when the runtime first polls it, so sampling
+        // lazily would swallow any edit made between `start()` and the first
+        // poll.
+        let initial_modified = std::fs::metadata(&self.cluster_conf_path)
+            .and_then(|m| m.modified())
+            .ok();
 
         tokio::spawn(async move {
-            let check_interval = tokio::time::Duration::from_secs(10);
-            let mut last_modified = std::fs::metadata(&conf_path)
-                .and_then(|m| m.modified())
-                .ok();
+            let check_interval = poll_interval;
+            let mut last_modified = initial_modified;
 
             loop {
                 tokio::time::sleep(check_interval).await;
@@ -281,6 +326,11 @@ impl FileMemberLookup {
                         }
 
                         info!("Reloaded {} cluster members", members.len());
+
+                        // Forward the snapshot so the member manager (and its
+                        // join/leave listeners, e.g. the distro mapper) sees
+                        // the change instead of just this lookup's cache.
+                        Self::notify_members_changed(&members, &hook).await;
                     }
                 }
             }
@@ -313,6 +363,12 @@ impl MemberLookup for FileMemberLookup {
     fn get_members(&self) -> Vec<Member> {
         self.members.iter().map(|e| e.value().clone()).collect()
     }
+
+    async fn set_members_changed_hook(&self, hook: MembersChangedHook) {
+        if let Ok(mut guard) = self.hook.write() {
+            *guard = Some(hook);
+        }
+    }
 }
 
 /// Address server based member lookup
@@ -324,6 +380,8 @@ pub struct AddressServerMemberLookup {
     client: reqwest::Client,
     address_server_url: String,
     refresh_interval: Duration,
+    /// Invoked with a fresh member snapshot after every successful poll.
+    hook: Arc<RwLock<Option<MembersChangedHook>>>,
 }
 
 impl AddressServerMemberLookup {
@@ -353,6 +411,7 @@ impl AddressServerMemberLookup {
             client,
             address_server_url: url,
             refresh_interval: Duration::from_secs(30),
+            hook: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -418,6 +477,7 @@ impl AddressServerMemberLookup {
         let url = self.address_server_url.clone();
         let interval = self.refresh_interval;
         let default_port = self.config.server_main_port();
+        let hook = self.hook.clone();
 
         tokio::spawn(async move {
             loop {
@@ -467,6 +527,10 @@ impl AddressServerMemberLookup {
                                     members.insert(member.address.clone(), member);
                                 }
                             }
+
+                            // Forward the snapshot so the member manager sees
+                            // membership changes, not just this lookup's cache.
+                            FileMemberLookup::notify_members_changed(&members, &hook).await;
                         }
                     }
                     Ok(response) => {
@@ -551,6 +615,12 @@ impl MemberLookup for AddressServerMemberLookup {
     fn use_address_server(&self) -> bool {
         true
     }
+
+    async fn set_members_changed_hook(&self, hook: MembersChangedHook) {
+        if let Ok(mut guard) = self.hook.write() {
+            *guard = Some(hook);
+        }
+    }
 }
 
 /// Create a member lookup instance based on configuration
@@ -618,5 +688,62 @@ mod tests {
         );
         assert_eq!(LookupType::from("AddressServer"), LookupType::AddressServer);
         assert_eq!(LookupType::from("unknown"), LookupType::File);
+    }
+
+    /// Editing cluster.conf at runtime must reach the installed hook.
+    ///
+    /// Nacos gets this via `FileConfigMemberLookup`'s watcher calling
+    /// `afterLookup()` -> `memberManager.memberChange()`; without the hook the
+    /// reload only refreshes the lookup's private map and the member manager
+    /// keeps the boot-time snapshot forever.
+    #[tokio::test]
+    async fn test_file_lookup_notifies_hook_on_conf_change() {
+        let dir = std::env::temp_dir().join(format!("batata-cluster-conf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cluster.conf");
+        std::fs::write(&path, "10.0.0.1:8848\n").unwrap();
+
+        let config = config::Config::builder()
+            .set_default("batata.standalone", false)
+            .unwrap()
+            .set_default("batata.server.main.port", 8848)
+            .unwrap()
+            .set_default("batata.version", "1.0.0")
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let lookup =
+            FileMemberLookup::with_path(Configuration::from_config(config), path.to_str().unwrap())
+                .with_poll_interval(Duration::from_millis(50));
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let hook: MembersChangedHook = Arc::new(move |members| {
+            let tx = tx.clone();
+            Box::pin(async move {
+                let _ = tx.send(members.len()).await;
+            })
+        });
+        lookup.set_members_changed_hook(hook).await;
+
+        lookup.start().await.unwrap();
+        assert_eq!(lookup.get_members().len(), 1);
+
+        std::fs::write(&path, "10.0.0.1:8848\n10.0.0.2:8848\n10.0.0.3:8848\n").unwrap();
+
+        let observed = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .ok()
+            .flatten();
+
+        lookup.stop().await;
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            observed,
+            Some(3),
+            "hook must observe the reloaded members (lookup cache now holds {})",
+            lookup.get_members().len()
+        );
     }
 }
