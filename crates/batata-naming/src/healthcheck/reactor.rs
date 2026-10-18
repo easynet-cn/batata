@@ -54,9 +54,19 @@ pub enum ReactorMessage {
 /// - Managing task lifecycle (create, update, cancel)
 /// - Adaptive check interval management
 /// - Scheduling registry-driven checks for unified health system
+///
+/// The reactor is protocol-agnostic: it does not require a `NamingService`.
+/// That service is only consulted by `schedule_instance_checks()`, the
+/// Nacos-specific path that scans registered instances. Facades that model
+/// their own health checks (e.g. the Consul plugin) construct the reactor with
+/// [`HealthCheckReactor::new_registry_only`] and drive it entirely through
+/// `set_registry()` + `schedule_registry_check()`.
 pub struct HealthCheckReactor {
-    /// Naming service for accessing instances
-    naming_service: Arc<NamingService>,
+    /// Naming service for accessing instances.
+    ///
+    /// `None` for registry-only reactors: no Nacos instance scan is possible
+    /// (and none is wanted) in that mode.
+    naming_service: Option<Arc<NamingService>>,
 
     /// Health check configuration
     config: Arc<HealthCheckConfig>,
@@ -85,8 +95,31 @@ pub struct HealthCheckReactor {
 }
 
 impl HealthCheckReactor {
-    /// Create a new health check reactor
+    /// Create a new health check reactor backed by a Nacos `NamingService`.
+    ///
+    /// Use this when the reactor must scan registered Nacos instances
+    /// (`schedule_instance_checks`). See [`Self::new_registry_only`] for the
+    /// protocol-agnostic variant.
     pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
+        Self::with_optional_naming_service(Some(naming_service), config)
+    }
+
+    /// Create a reactor that is driven purely by the check registry.
+    ///
+    /// Facades that own their own health-check model (the Consul plugin, for
+    /// example) have no Nacos instances to scan: their checks live in an
+    /// `InstanceCheckRegistry` and are scheduled through
+    /// `schedule_registry_check()`. Passing a dummy `NamingService` here would
+    /// silently produce an always-empty scan, so the dependency is simply not
+    /// taken.
+    pub fn new_registry_only(config: Arc<HealthCheckConfig>) -> Self {
+        Self::with_optional_naming_service(None, config)
+    }
+
+    fn with_optional_naming_service(
+        naming_service: Option<Arc<NamingService>>,
+        config: Arc<HealthCheckConfig>,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel(REACTOR_CHANNEL_CAPACITY);
 
         let standalone_chain = Arc::new(HealthCheckInterceptorChain::standalone(config.clone()));
@@ -173,37 +206,67 @@ impl HealthCheckReactor {
                                 handle.abort();
                             }
 
-                            // NOTE: we deliberately do NOT gate this loop with
-                            // `interceptor_chain_lock.should_execute(...)` even in
-                            // cluster mode. Each cluster node has its own
-                            // `InstanceCheckRegistry` and runs `update_check_result`
-                            // locally — gating the probe to the responsible node
-                            // would leave the other nodes' registries with stale
-                            // initial status, and a Consul `/v1/health/*` query
-                            // that lands on a non-responsible node would return
-                            // wrong data. Until check status is replicated through
-                            // Raft (see project_consul_active_healthcheck_plan),
-                            // every node probes every active check. The N-fold
-                            // probe traffic this implies is the lesser evil
-                            // compared to wrong health responses.
+                            // Cluster responsibility gate.
+                            //
+                            // Every node used to probe every active check, which
+                            // multiplied probe traffic by the cluster size. That
+                            // was a deliberate trade-off while check status was
+                            // purely local: a non-responsible node that skipped
+                            // the probe would serve stale status from its own
+                            // registry. Status is now replicated through Raft
+                            // (`RaftHealthReplicator` + `RegistryApplyHook`), so
+                            // the responsible node's probe result reaches every
+                            // node and gating is safe.
+                            //
+                            // The shard key is the *probed target address*
+                            // (`responsible_id()` → `ip:port`), never the check
+                            // id: several checks can point at the same backend,
+                            // and hashing by check id would spread them across
+                            // different nodes, making each node's aggregate a
+                            // partial view.
+                            //
+                            // Note this is a batata deviation from upstream
+                            // Consul, where each agent probes its own local
+                            // checks and nothing is sharded. Batata has no
+                            // agent/server split, so without a gate the same
+                            // backend would be probed N times per interval.
+                            let chain_lock = Arc::clone(&interceptor_chain_lock);
+
                             let handle = tokio::spawn(async move {
                                 let task = RegistryCheckTask::new(check_key, reg_clone);
                                 loop {
-                                    task.execute().await;
-
-                                    match task.interval() {
-                                        Some(interval) => {
-                                            tokio::time::sleep(interval).await;
-                                        }
+                                    // `None` means the check was removed from the
+                                    // registry while we were sleeping.
+                                    let interval = match task.interval() {
+                                        Some(interval) => interval,
                                         None => {
-                                            // Check was removed from registry
                                             debug!(
                                                 "Registry check {} removed, stopping",
                                                 task.check_key()
                                             );
                                             break;
                                         }
+                                    };
+
+                                    // Not responsible → skip this round but keep
+                                    // the loop alive: membership can change and
+                                    // responsibility can move to this node.
+                                    let responsible_id = task.responsible_id();
+                                    let should_probe =
+                                        chain_lock.read().should_execute(&responsible_id);
+                                    if !should_probe {
+                                        debug!(
+                                            "Registry check {} skipped: node not responsible for {}",
+                                            task.check_key(),
+                                            responsible_id
+                                        );
+                                        tokio::time::sleep(interval).await;
+                                        continue;
                                     }
+
+                                    task.execute().await;
+
+                                    tokio::time::sleep(interval).await;
                                 }
                             });
 
@@ -352,21 +415,31 @@ impl HealthCheckReactor {
     }
 
     /// Schedule health checks for all instances (called on service registration)
+    ///
+    /// This is the Nacos-specific entry point: it scans instances registered in
+    /// the `NamingService` and turns each eligible one into a `HealthCheckTask`.
+    /// Registry-only reactors (see [`Self::new_registry_only`]) have no
+    /// `NamingService` and therefore nothing to scan; calling this on them is a
+    /// no-op rather than an error, because callers such as the shared startup
+    /// path may not know which flavour they hold.
     pub fn schedule_instance_checks(&self, namespace: &str, group_name: &str, service_name: &str) {
         if !self.config.is_enabled() {
             return;
         }
 
+        let Some(naming_service) = self.naming_service.as_ref() else {
+            debug!(
+                "Registry-only reactor: skipping Nacos instance scan for {}/{}/{}",
+                namespace, group_name, service_name
+            );
+            return;
+        };
+
         // Snapshot instances for this service (zero-copy Arc clones).
         // We early-skip disabled/persistent instances without paying any
         // value-clone cost; only survivors get deep-cloned into HealthCheckTask.
-        let snapshot = self.naming_service.get_instances_snapshot(
-            namespace,
-            group_name,
-            service_name,
-            "",
-            false,
-        );
+        let snapshot =
+            naming_service.get_instances_snapshot(namespace, group_name, service_name, "", false);
 
         for arc in snapshot {
             // Skip disabled instances
@@ -384,8 +457,7 @@ impl HealthCheckReactor {
             }
 
             // Get cluster configuration
-            let cluster_config = self
-                .naming_service
+            let cluster_config = naming_service
                 .get_cluster_config(namespace, group_name, service_name, &arc.cluster_name)
                 .unwrap_or_else(|| ClusterConfig {
                     name: arc.cluster_name.clone(),
@@ -406,7 +478,7 @@ impl HealthCheckReactor {
                 service_name.to_string(),
                 cluster_config,
                 self.config.clone(),
-                self.naming_service.clone(),
+                naming_service.clone(),
             );
 
             // Schedule the task
@@ -469,6 +541,23 @@ mod tests {
         let reactor = HealthCheckReactor::new(naming_service, config);
         assert_eq!(reactor.get_active_task_count(), 0);
         assert!(reactor.get_all_task_ids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_registry_only_reactor_holds_no_naming_service() {
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new_registry_only(config);
+        assert!(reactor.naming_service.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_registry_only_reactor_ignores_nacos_instance_scan() {
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new_registry_only(config);
+        // The Nacos-specific scan must be a no-op instead of panicking: shared
+        // startup paths may call it without knowing which reactor they hold.
+        reactor.schedule_instance_checks("public", "DEFAULT_GROUP", "svc");
+        assert_eq!(reactor.get_active_task_count(), 0);
     }
 
     #[tokio::test]

@@ -231,11 +231,16 @@ impl RaftNode {
     /// `HealthCheckTtlUpdate` Raft entries flow back into the in-memory
     /// `InstanceCheckRegistry` on every cluster node. Mirror of
     /// `register_naming_hook`.
+    ///
+    /// The slot is single-owner, so a second registration replaces the first.
+    /// That is logged rather than silently accepted — see
+    /// `install_health_check_hook` for why this matters and what must change
+    /// before a second facade (Nacos included) can write through this channel.
     pub async fn register_health_check_hook(
         &self,
         hook: Arc<dyn super::health_check_hook::HealthCheckApplyHook>,
     ) {
-        *self.health_check_hook.write().await = Some(hook);
+        super::health_check_hook::install_health_check_hook(&self.health_check_hook, hook).await;
     }
 
     /// Replay all persistent instances from RocksDB `CF_INSTANCES` into the

@@ -327,8 +327,17 @@ impl ConsulHealthService {
                     // Get all checks for the aliased service and compute worst status
                     let checks = self.get_service_checks(service_id).await;
                     if checks.is_empty() {
-                        // Aliased service has no checks → alias is critical
-                        batata_naming::healthcheck::registry::CheckStatus::Critical
+                        // Aliased service has no checks → the alias stays
+                        // healthy.
+                        //
+                        // Consul starts an alias at `HealthPassing` with the
+                        // message "No checks found." and only degrades to
+                        // critical when the aliased service does not exist at
+                        // all (`agent/checks/alias.go:260-295`). A service with
+                        // zero checks is healthy, so treating it as critical
+                        // would additionally make `?passing` hide every
+                        // check-less service.
+                        batata_naming::healthcheck::registry::CheckStatus::Passing
                     } else {
                         // Worst status wins (critical > warning > passing)
                         let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
@@ -359,7 +368,11 @@ impl ConsulHealthService {
                     let node_checks: Vec<&HealthCheck> =
                         all_checks.iter().filter(|c| &c.node == node_name).collect();
                     if node_checks.is_empty() {
-                        batata_naming::healthcheck::registry::CheckStatus::Critical
+                        // Aliased node has no checks → the alias stays healthy.
+                        // Same reasoning as the service branch above: Consul
+                        // defaults an alias to passing and only reports
+                        // critical when the aliased target does not exist.
+                        batata_naming::healthcheck::registry::CheckStatus::Passing
                     } else {
                         let mut worst = batata_naming::healthcheck::registry::CheckStatus::Passing;
                         for c in &node_checks {
@@ -2718,6 +2731,50 @@ mod tests {
 
         let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Passing);
+    }
+
+    #[tokio::test]
+    async fn test_alias_check_is_passing_when_target_has_no_checks() {
+        let (service, registry) = create_test_health_service_with_registry();
+
+        // Alias to a service that has no checks at all, and to a node that has
+        // none either. Consul starts an alias at passing ("No checks found.")
+        // and only degrades to critical when the aliased target does not exist,
+        // so a check-less target must not be mirrored as critical — otherwise
+        // `?passing` would hide every service that registers no checks.
+        for (check_id, alias_reg) in [
+            (
+                "alias:empty-svc",
+                CheckRegistration {
+                    name: "alias-empty-svc".to_string(),
+                    check_id: Some("alias:empty-svc".to_string()),
+                    alias_service: Some("no-checks-svc".to_string()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "alias:empty-node",
+                CheckRegistration {
+                    name: "alias-empty-node".to_string(),
+                    check_id: Some("alias:empty-node".to_string()),
+                    alias_node: Some("no-checks-node".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            service
+                .register_check(alias_reg)
+                .await
+                .expect("alias check should register");
+
+            service.sync_alias_checks().await;
+            let (_, alias_status) = registry.get_check(check_id).expect("alias check exists");
+            assert_eq!(
+                alias_status.status,
+                CheckStatus::Passing,
+                "alias {check_id} to a check-less target must stay passing"
+            );
+        }
     }
 
     #[tokio::test]

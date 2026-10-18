@@ -235,6 +235,24 @@ impl InstanceCheckStatus {
     }
 }
 
+/// Location coordinates reserved for the Consul facade.
+///
+/// The shared health-check kernel is protocol-agnostic: `namespace`,
+/// `group_name` and `cluster_name` are only indexing coordinates. Consul has
+/// none of these concepts, so its checks are registered under fixed ones.
+///
+/// These constants live in the kernel rather than in the Consul plugin because
+/// the kernel owns the check-key space: keeping the partition here means (a) the
+/// plugin cannot drift from the kernel's key format, and (b) the kernel can
+/// recognise facade-owned keys without depending on any plugin — the
+/// prerequisite for prefix-based dispatch if a second owner ever joins this
+/// Raft channel (see `RaftNode::register_health_check_hook`).
+pub const CONSUL_FACADE_NAMESPACE: &str = "consul";
+/// Group coordinate reserved for the Consul facade (see [`CONSUL_FACADE_NAMESPACE`]).
+pub const CONSUL_FACADE_GROUP: &str = "CONSUL_GROUP";
+/// Cluster coordinate reserved for the Consul facade (see [`CONSUL_FACADE_NAMESPACE`]).
+pub const CONSUL_FACADE_CLUSTER: &str = "DEFAULT";
+
 /// Build an instance key from location coordinates
 pub fn build_instance_key(
     namespace: &str,
@@ -440,6 +458,27 @@ impl InstanceCheckRegistry {
         output: String,
         response_time_ms: u64,
     ) {
+        let desired = if success {
+            CheckStatus::Passing
+        } else {
+            CheckStatus::Critical
+        };
+
+        // Edge-triggered replication. The probe runs on every interval, but
+        // the status only flips occasionally — replicating an unchanged status
+        // would append a Raft entry per probe per node for an outcome nobody
+        // can observe. Nacos avoids the same waste by only writing once the
+        // check actually flips (its `checkTimes` threshold).
+        let unchanged = self
+            .statuses
+            .get(check_key)
+            .is_some_and(|s| s.status == desired);
+
+        if unchanged {
+            self.refresh_probe_metadata(check_key, output, response_time_ms);
+            return;
+        }
+
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_status(check_key, success, &output, response_time_ms)
@@ -448,6 +487,19 @@ impl InstanceCheckRegistry {
             return;
         }
         self.apply_status_local(check_key, success, output, response_time_ms);
+    }
+
+    /// Refresh the bookkeeping fields of a check whose status did not change.
+    ///
+    /// Deliberately bypasses [`Self::apply_status_local`]: that path
+    /// re-aggregates and notifies the result handler, which would wake
+    /// blocking queries even though the health state is identical.
+    fn refresh_probe_metadata(&self, check_key: &str, output: String, response_time_ms: u64) {
+        if let Some(mut status) = self.statuses.get_mut(check_key) {
+            status.last_updated = current_timestamp_ms();
+            status.last_response_time_ms = response_time_ms;
+            status.output = output;
+        }
     }
 
     /// Update a check result with an explicit tri-state status (passing/warning/critical).
@@ -464,6 +516,20 @@ impl InstanceCheckRegistry {
     ) {
         // In cluster mode the replicator forwards the raw status string via
         // replicate_ttl for full fidelity. Otherwise apply locally.
+        //
+        // Same edge-trigger guard as [`Self::update_check_result`]: a Script /
+        // Docker check is executed every interval, and re-replicating an
+        // identical status only adds Raft traffic.
+        let unchanged = self
+            .statuses
+            .get(check_key)
+            .is_some_and(|s| s.status == status);
+
+        if unchanged {
+            self.refresh_probe_metadata(check_key, output, response_time_ms);
+            return;
+        }
+
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_ttl(check_key, status.as_str(), Some(output.as_str()))
@@ -935,6 +1001,66 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "rcl-1");
         assert!(!calls[0].1);
+    }
+
+    #[tokio::test]
+    async fn unchanged_probe_result_is_not_replicated() {
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            test_naming_service(),
+        ));
+        registry.register_check(make_config("edge-1", CheckType::Tcp, CheckStatus::Passing));
+
+        let rep = Arc::new(CapturingReplicator {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        registry.set_replicator(rep.clone());
+
+        // Three passing probes against an already-passing check: nothing
+        // flipped, so none of them may reach Raft.
+        for _ in 0..3 {
+            registry
+                .update_check_result("edge-1", true, "ok".into(), 10)
+                .await;
+        }
+        assert!(
+            rep.calls.lock().unwrap().is_empty(),
+            "an unchanged status must not be replicated"
+        );
+
+        // The first failing probe flips the status → exactly one Raft write.
+        registry
+            .update_check_result("edge-1", false, "down".into(), 20)
+            .await;
+        assert_eq!(rep.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unchanged_tri_state_result_is_not_replicated() {
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            test_naming_service(),
+        ));
+        registry.register_check(make_config(
+            "edge-2",
+            CheckType::Script,
+            CheckStatus::Warning,
+        ));
+
+        let rep = Arc::new(CapturingReplicator {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        registry.set_replicator(rep.clone());
+
+        // Same warning as the current status → no Raft write.
+        registry
+            .update_check_result_with_status("edge-2", CheckStatus::Warning, "still warn".into(), 5)
+            .await;
+        assert!(rep.calls.lock().unwrap().is_empty());
+
+        // Transition to critical → one Raft write.
+        registry
+            .update_check_result_with_status("edge-2", CheckStatus::Critical, "boom".into(), 5)
+            .await;
+        assert_eq!(rep.calls.lock().unwrap().len(), 1);
     }
 
     #[test]

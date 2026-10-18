@@ -50,6 +50,22 @@ pub use task::HealthCheckTask;
 /// expired instance checker, and the unified instance check registry.
 /// In cluster mode, uses `DistroMapper`-based responsibility filtering so
 /// only the responsible node executes health checks for ephemeral instances.
+///
+/// ## Replication: the Nacos facade deliberately does not use the Raft channel
+///
+/// `HealthCheckStatusUpdate` / `HealthCheckTtlUpdate` Raft entries (see
+/// `raft_replicator`) are written by facades that own their own check registry.
+/// Today that is the Consul facade only. The Nacos facade keeps health state on
+/// its established paths instead:
+///
+/// * ephemeral instances — heartbeat expiration plus locally executed
+///   TCP/HTTP probes, with `DistroMapper` responsibility gating;
+/// * persistent instances — `PersistentInstanceUpdate` through Raft, which is
+///   already the authoritative, replicated representation of their health.
+///
+/// Routing Nacos checks through the status channel as well would mean two
+/// writers for the same fact. If that ever becomes desirable, note that
+/// `RaftNode`'s hook slot is single-owner and must be made multicast first.
 pub struct HealthCheckManager {
     reactor: HealthCheckReactor,
     unhealthy_checker: UnhealthyInstanceChecker,

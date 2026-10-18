@@ -754,10 +754,12 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // Creates a reactor for the Consul registry. When checks are registered
         // with HTTP/TCP/gRPC type, the reactor periodically executes them.
         {
-            let naming_service = Arc::new(batata_naming::NamingService::new());
+            // Registry-only reactor: Consul checks live in the plugin's own
+            // `InstanceCheckRegistry`, so there are no Nacos instances to scan.
+            // Constructing a dummy `NamingService` here would only produce an
+            // always-empty scan while pretending the dependency is real.
             let hc_config = Arc::new(batata_naming::healthcheck::HealthCheckConfig::default());
-            let reactor = batata_naming::healthcheck::HealthCheckReactor::new(
-                naming_service,
+            let reactor = batata_naming::healthcheck::HealthCheckReactor::new_registry_only(
                 hc_config.clone(),
             );
             reactor.set_registry(inner.registry.clone());
@@ -783,11 +785,30 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 tracing::info!("Consul reactor wired to Raft for cluster-wide health status sync");
             }
 
-            // The standalone interceptor chain is fine — we now have correct
-            // cluster status semantics through Raft, so a follow-up
-            // responsibility gate (see plan) can be added later without
-            // breaking query correctness.
-            let _ = (&hc_config, &inner.distro_protocol);
+            // Cluster mode: shard active probes by target address so each
+            // backend is probed once per interval cluster-wide instead of once
+            // per node. Safe now that probe results replicate through Raft —
+            // see the gate comment in `HealthCheckReactor`'s
+            // `ScheduleRegistryCheck` arm.
+            //
+            // This is a batata deviation from upstream Consul: upstream has an
+            // agent/server split where every agent probes only its own local
+            // checks, so nothing needs sharding. Batata serves agent endpoints
+            // from the server itself, so without a gate the same backend is
+            // probed once per server node.
+            if let (Some(distro), Some(_)) = (&inner.distro_protocol, &inner.raft_node_for_health) {
+                let chain =
+                    batata_naming::healthcheck::interceptor::HealthCheckInterceptorChain::cluster(
+                        hc_config.clone(),
+                        distro.mapper().clone(),
+                        distro.local_address().to_string(),
+                    );
+                reactor.set_interceptor_chain(Arc::new(chain));
+                tracing::info!(
+                    "Consul health check reactor gated to responsible node (local_address={})",
+                    distro.local_address()
+                );
+            }
 
             // Wire the check scheduler so new active check registrations are auto-scheduled
             let reactor_ref = Arc::new(reactor);
@@ -810,6 +831,16 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // status into alias checks. Runs every 5s so active checks (whose
         // status changes via update_check_result, not TTL update) are also
         // reflected in their alias checks.
+        //
+        // Why polling instead of event-driven: an alias has to be re-synced
+        // whenever *any* check of the aliased service/node changes, and the
+        // result handler — the natural hook — does not own the health service
+        // (it only sees `naming_store` + `index_provider`). Wiring it up would
+        // add a circular dependency between the two for a rarely used
+        // feature. The poll itself is near-free when no alias check exists:
+        // `sync_alias_checks` iterates `alias_map` and returns immediately if
+        // it is empty. Worst case is a <=5s propagation delay, which matches
+        // how slowly Consul alias status is expected to move anyway.
         let health_for_alias = inner.health.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));

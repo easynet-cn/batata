@@ -78,6 +78,26 @@ impl ConsulNamingStore {
         self.bump_revision();
     }
 
+    /// Update health status for an instance, reporting whether it changed.
+    ///
+    /// Same write as [`Self::update_health`], but returns `false` when the new
+    /// value equals the stored one. Callers that wake blocking queries must use
+    /// this: bumping the catalog index on an unchanged value wakes every
+    /// long-poll watcher for nothing.
+    pub fn update_health_if_changed(&self, ip: &str, port: i32, healthy: bool) -> bool {
+        let changed = match self
+            .health_status
+            .insert(Self::health_key(ip, port), healthy)
+        {
+            Some(previous) => previous != healthy,
+            None => true,
+        };
+        if changed {
+            self.bump_revision();
+        }
+        changed
+    }
+
     /// Build a key from namespace, service name and service ID.
     /// Uses "default" namespace if ns is empty.
     pub fn build_key(ns: &str, service_name: &str, service_id: &str) -> String {

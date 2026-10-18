@@ -7,11 +7,16 @@ use serde::{Deserialize, Serialize};
 
 /// Fixed internal namespace for Consul health check registry keys.
 /// This is NOT a Consul concept — it's only used as a key prefix in InstanceCheckRegistry.
-pub const CONSUL_INTERNAL_NAMESPACE: &str = "consul";
+///
+/// Defined by the shared health-check kernel (`batata-naming`) so the plugin
+/// cannot drift from the kernel's check-key partition.
+pub const CONSUL_INTERNAL_NAMESPACE: &str =
+    batata_naming::healthcheck::registry::CONSUL_FACADE_NAMESPACE;
 /// Fixed internal group for Consul health check registry keys.
-pub const CONSUL_INTERNAL_GROUP: &str = "CONSUL_GROUP";
+pub const CONSUL_INTERNAL_GROUP: &str = batata_naming::healthcheck::registry::CONSUL_FACADE_GROUP;
 /// Fixed internal cluster for Consul health check registry keys.
-pub const CONSUL_INTERNAL_CLUSTER: &str = "DEFAULT";
+pub const CONSUL_INTERNAL_CLUSTER: &str =
+    batata_naming::healthcheck::registry::CONSUL_FACADE_CLUSTER;
 
 /// Load or create a persistent node ID from the given data directory.
 /// Follows Consul's pattern: each instance has its own `consul-node-id` file

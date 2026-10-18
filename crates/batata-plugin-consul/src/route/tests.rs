@@ -448,6 +448,187 @@ async fn test_http_health_service_peer_and_sameness_group_conflict() {
     assert_eq!(resp.status(), 400);
 }
 
+#[actix_web::test]
+async fn test_http_health_service_passing_excludes_node_critical() {
+    let app = create_test_app().await;
+
+    // Register a service carrying a single TTL check and mark it passing, so
+    // the only remaining variable is the node-level check registered below.
+    // The check ID is given explicitly: auto-generated IDs depend on the
+    // "service:{id}" / "service:{name}:{id}" convention, which would make the
+    // pass/fail calls below guesswork.
+    let svc = serde_json::json!({
+        "Name": "node-chk-svc",
+        "ID": "node-chk-svc-1",
+        "Port": 7100,
+        "Address": "10.2.0.20",
+        "Check": { "CheckID": "node-chk-svc-check", "TTL": "15s" }
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/service/register")
+        .set_json(&svc)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/pass/node-chk-svc-check")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "service check should exist");
+
+    // Baseline: the registered service is visible without any filter.
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-chk-svc")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(body.len(), 1, "registered service should be visible");
+
+    // Register a node-level check (no ServiceID) and mark it passing.
+    let node_check = serde_json::json!({
+        "Name": "node-ttl",
+        "CheckID": "node-ttl-chk-1",
+        "TTL": "30s"
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/register")
+        .set_json(&node_check)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/pass/node-ttl-chk-1")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    // Both checks passing → the instance survives `?passing`.
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-chk-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(
+        body.len(),
+        1,
+        "a healthy service should survive ?passing while its node check passes"
+    );
+
+    // Node check goes critical → Consul aggregates node checks into every
+    // service on that node, so `?passing` must drop the instance entirely.
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/fail/node-ttl-chk-1")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-chk-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert!(
+        body.is_empty(),
+        "a critical node check must make ?passing return empty, got {} entries",
+        body.len()
+    );
+
+    // Recovery: passing again brings the instance back.
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/pass/node-ttl-chk-1")
+        .to_request();
+    test::call_service(&app, req).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-chk-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(
+        body.len(),
+        1,
+        "service should reappear once the node check passes"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_health_service_passing_excludes_node_maintenance() {
+    let app = create_test_app().await;
+
+    let svc = serde_json::json!({
+        "Name": "node-maint-svc",
+        "ID": "node-maint-svc-1",
+        "Port": 7101,
+        "Address": "10.2.0.21",
+        "Check": { "CheckID": "node-maint-svc-check", "TTL": "15s" }
+    });
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/service/register")
+        .set_json(&svc)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/check/pass/node-maint-svc-check")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "service check should exist");
+
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-maint-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(
+        body.len(),
+        1,
+        "healthy service should be visible before maintenance"
+    );
+
+    // Node maintenance registers a critical node-level check, which must hide
+    // every service on the node from `?passing`.
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/maintenance?enable=true&reason=testing")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-maint-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert!(
+        body.is_empty(),
+        "node maintenance must make ?passing return empty, got {} entries",
+        body.len()
+    );
+
+    // Leaving maintenance restores visibility.
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/maintenance?enable=false")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+
+    let req = test::TestRequest::get()
+        .uri("/v1/health/service/node-maint-svc?passing=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(
+        body.len(),
+        1,
+        "service should reappear after maintenance ends"
+    );
+}
+
 // ========================================================================
 // Health Stream SSE HTTP Tests
 // ========================================================================

@@ -237,7 +237,16 @@ impl HealthCheckResultHandler for ConsulResultHandler {
         _cluster: &str,
         healthy: bool,
     ) {
-        self.naming_store.update_health(ip, port, healthy);
+        // Edge-triggered: the reactor reports a result on every probe interval,
+        // which is level-triggered by nature. Waking blocking queries on an
+        // unchanged value would return identical payloads to every watcher
+        // (Consul long-polling, `?index=` clients) once per interval.
+        if !self
+            .naming_store
+            .update_health_if_changed(ip, port, healthy)
+        {
+            return;
+        }
         self.index_provider.increment(ConsulTable::Catalog);
     }
 

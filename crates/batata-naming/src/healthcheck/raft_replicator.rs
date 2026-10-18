@@ -32,11 +32,17 @@ fn status_label(success: bool) -> &'static str {
 ///
 /// Because every node's reactor runs the same probe loop, the leader
 /// receives N copies of the same status proposal per probe interval.
-/// That's redundant but cheap (Raft de-duplicates via apply order) and
-/// correct — leader-only-write would require a responsibility gate which
-/// is the subject of a follow-up; doing it without the gate would mean
-/// dropping non-leader probes on the floor and losing read-your-write on
-/// HTTP requests that hit followers.
+///
+/// That redundancy is what makes gating safe *once it exists*: the apply
+/// path fans out to every node, so a node that does not probe still learns
+/// the result. Gating the probe loop to the responsible node (shard key =
+/// the probed target's `ip:port`, see `RegistryCheckTask::responsible_id`)
+/// is therefore the intended follow-up, and it must be conditional on
+/// replication being active — in standalone mode there is no apply fan-out,
+/// so every node has to probe for itself.
+///
+/// The Nacos facade deliberately does not use this channel at all; see
+/// `HealthCheckManager`'s documentation.
 pub struct RaftHealthReplicator {
     raft: Arc<RaftNode>,
 }

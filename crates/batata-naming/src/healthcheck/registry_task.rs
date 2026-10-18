@@ -572,6 +572,40 @@ mod tests {
     }
 
     #[test]
+    fn test_responsible_id_is_the_probed_target_not_the_check_id() {
+        let registry = create_registry();
+
+        // Two distinct checks probing the same backend.
+        let mut cfg_a = create_tcp_check_config("shard-a");
+        cfg_a.ip = "10.0.0.5".to_string();
+        cfg_a.port = 8080;
+        let mut cfg_b = create_tcp_check_config("shard-b");
+        cfg_b.ip = "10.0.0.5".to_string();
+        cfg_b.port = 8080;
+        registry.register_check(cfg_a);
+        registry.register_check(cfg_b);
+
+        let task_a = RegistryCheckTask::new("shard-a".to_string(), registry.clone());
+        let task_b = RegistryCheckTask::new("shard-b".to_string(), registry.clone());
+
+        assert_eq!(task_a.responsible_id(), "10.0.0.5:8080");
+        assert_eq!(
+            task_a.responsible_id(),
+            task_b.responsible_id(),
+            "checks probing the same target must share one shard key, otherwise the node aggregating them sees only part of the picture",
+        );
+
+        // A different target must hash to a different shard, otherwise the
+        // gate would concentrate every probe on one node.
+        let mut cfg_c = create_tcp_check_config("shard-c");
+        cfg_c.ip = "10.0.0.6".to_string();
+        cfg_c.port = 8080;
+        registry.register_check(cfg_c);
+        let task_c = RegistryCheckTask::new("shard-c".to_string(), registry);
+        assert_ne!(task_a.responsible_id(), task_c.responsible_id());
+    }
+
+    #[test]
     fn test_registry_task_interval_returns_none_when_removed() {
         let registry = create_registry();
         let task = RegistryCheckTask::new("nonexistent".to_string(), registry);
