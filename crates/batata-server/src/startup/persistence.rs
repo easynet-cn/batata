@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use batata_common::ClusterManager;
 use batata_consistency::RaftNode;
-use batata_core::cluster::ServerMemberManager;
+use batata_core::cluster::{RaftLeaderView, ServerMemberManager};
 use batata_migration::{Migrator, MigratorTrait};
 use batata_persistence::{DeployTopology, PersistenceService, StorageBackend};
 use batata_server_common::model::config::Configuration;
@@ -269,6 +269,7 @@ async fn init_external_db_cluster(
     let core_config = configuration.to_core_config();
     let smm = Arc::new(ServerMemberManager::new(&core_config));
     let cm: Arc<dyn ClusterManager> = smm.clone();
+    spawn_raft_leader_publisher(&raft_node, &smm);
 
     Ok(PersistenceContext {
         database_connection: Some(db),
@@ -278,6 +279,30 @@ async fn init_external_db_cluster(
         rocks_db: Some(rdb),
         raft_node: Some(raft_node),
     })
+}
+
+/// Publish the observed Raft leader into the member manager.
+///
+/// Nacos has a single source of truth for leadership: `CPProtocol.isLeader(group)`.
+/// `ServerMemberManager` has no leader notion at all (`isFirstIp()` is member
+/// order, not leadership). Batata's cluster-status and Consul `/v1/agent/self`
+/// stats read leadership off the member manager, so the Raft view is mirrored
+/// into it periodically. Each tick is one metrics read.
+fn spawn_raft_leader_publisher(raft_node: &Arc<RaftNode>, smm: &Arc<ServerMemberManager>) {
+    let raft_node = raft_node.clone();
+    let smm = smm.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let view = raft_node.leader_addr().map(|addr| RaftLeaderView {
+                addr,
+                is_self: raft_node.is_leader(),
+            });
+            smm.set_raft_leader(view);
+        }
+    });
 }
 
 /// Create a RaftNode + RocksDB instance. Shared by both embedded-cluster
@@ -401,6 +426,7 @@ async fn init_embedded_cluster(
     let core_config = configuration.to_core_config();
     let smm = Arc::new(ServerMemberManager::new(&core_config));
     let cm: Arc<dyn ClusterManager> = smm.clone();
+    spawn_raft_leader_publisher(&raft_node, &smm);
 
     Ok(PersistenceContext {
         database_connection: None,

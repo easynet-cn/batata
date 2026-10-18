@@ -163,6 +163,7 @@ async fn follower_installs_streamed_snapshot_and_keeps_membership() {
             namespace_id: "ns-snapshot".to_string(),
             namespace_name: "snapshot".to_string(),
             namespace_desc: None,
+            now_ms: chrono::Utc::now().timestamp_millis(),
         })
         .await
         .expect("replicate namespace");

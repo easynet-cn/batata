@@ -76,6 +76,7 @@ fn persistent_instance_register() -> RaftRequest {
         enabled: true,
         metadata: r#"{"version":"1.0","env":"prod"}"#.to_string(),
         cluster_name: "DEFAULT".to_string(),
+        now_ms: 1_700_000_000_000,
     }))
 }
 

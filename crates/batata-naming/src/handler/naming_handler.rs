@@ -930,6 +930,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
                             } else {
                                 instance.cluster_name.clone()
                             },
+                            now_ms: chrono::Utc::now().timestamp_millis(),
                         },
                     ));
                 match raft.write(req).await {

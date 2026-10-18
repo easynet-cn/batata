@@ -21,9 +21,12 @@ impl RocksStateMachine {
         ttl_ms: u64,
         fence_token: u64,
         owner_metadata: Option<String>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::lock_key(namespace, name);
-        let now = chrono::Utc::now().timestamp_millis();
+        // Use the leader clock carried in the log entry, never a local one:
+        // replicas must agree on `expires_at` or the lock stops being mutual.
+        let now = now_ms;
         let expires_at = now + ttl_ms as i64;
 
         // Check if lock exists and is held
@@ -215,9 +218,10 @@ impl RocksStateMachine {
         name: &str,
         owner: &str,
         ttl_ms: Option<u64>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::lock_key(namespace, name);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = now_ms;
 
         // Get existing lock
         let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {

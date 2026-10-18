@@ -310,6 +310,19 @@ fn validate_relay_factor(relay_factor: Option<u8>) -> Result<(), String> {
 // Operator Service (ClusterManager-backed)
 // ============================================================================
 
+/// Extract the host part of an `ip:port` address, tolerating IPv6 literals.
+///
+/// Leader resolution compares cluster members against
+/// [`ClusterManager::leader_address`], which reports a **Raft listener
+/// address** (`ip:raft_port`) while member addresses carry the HTTP port
+/// (`ip:http_port`). Only the host can be compared, never the full address.
+fn address_host(address: &str) -> &str {
+    if let Some(rest) = address.strip_prefix('[') {
+        return rest.split_once(']').map_or(address, |(host, _)| host);
+    }
+    address.rsplit_once(':').map_or(address, |(host, _)| host)
+}
+
 /// Cluster operator service backed by a `ClusterManager`.
 ///
 /// Surfaces Raft configuration, autopilot, and keyring endpoints derived from
@@ -377,14 +390,21 @@ impl ConsulOperatorService {
     /// The `get_raft_configuration` method.
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
         let members = self.member_manager.all_members_extended();
+        let leader_host = self
+            .member_manager
+            .leader_address()
+            .map(|addr| address_host(&addr).to_string());
         let servers: Vec<RaftServer> = members
             .iter()
-            .enumerate()
-            .map(|(i, m)| RaftServer {
+            .map(|m| RaftServer {
                 id: m.address.clone(),
                 node: m.address.clone(),
                 address: m.address.clone(),
-                leader: i == 0, // First member is typically the leader
+                // The Raft group elects its own leader; member order does not
+                // imply leadership. When no leader has been observed yet every
+                // server is reported as a follower, which is what Consul does
+                // (`Leader: false` across the board) until an election settles.
+                leader: leader_host.as_deref() == Some(address_host(&m.address)),
                 voter: true,
                 protocol_version: "3".to_string(),
                 last_index: self.index.load(Ordering::SeqCst),
@@ -401,11 +421,14 @@ impl ConsulOperatorService {
         let members = self.member_manager.all_members_extended();
         let current_index = self.index.load(Ordering::SeqCst);
         let mut healthy_voters = 0i32;
+        let leader_host = self
+            .member_manager
+            .leader_address()
+            .map(|addr| address_host(&addr).to_string());
 
         let servers: Vec<AutopilotServerHealth> = members
             .iter()
-            .enumerate()
-            .map(|(i, m)| {
+            .map(|m| {
                 let is_healthy = m.state == MemberState::Up;
                 let serf_status = match m.state {
                     MemberState::Up => "alive",
@@ -422,7 +445,7 @@ impl ConsulOperatorService {
                     address: m.address.clone(),
                     serf_status: serf_status.to_string(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
-                    leader: i == 0,
+                    leader: leader_host.as_deref() == Some(address_host(&m.address)),
                     last_contact,
                     last_term: 1,
                     last_index: current_index,
@@ -1651,5 +1674,130 @@ mod tests {
         assert!(!server.node.is_empty());
         assert!(!server.address.is_empty());
         assert!(server.address.contains(':')); // host:port format
+    }
+
+    /// Multi-member stub whose Raft leader is deliberately **not** the first
+    /// member, so a member-order shortcut cannot satisfy the assertions below.
+    struct MultiNodeClusterManager {
+        members: Vec<ExtendedMemberInfo>,
+        leader: Option<String>,
+    }
+
+    fn member_at(ip: &str) -> ExtendedMemberInfo {
+        ExtendedMemberInfo {
+            ip: ip.to_string(),
+            port: 8848,
+            address: format!("{}:8848", ip),
+            state: MemberState::Up,
+            extend_info: std::collections::BTreeMap::new(),
+        }
+    }
+
+    impl ClusterManager for MultiNodeClusterManager {
+        fn is_standalone(&self) -> bool {
+            false
+        }
+        fn is_leader(&self) -> bool {
+            self.leader
+                .as_deref()
+                .is_some_and(|l| address_host(l) == address_host(&self.members[0].address))
+        }
+        fn is_cluster_healthy(&self) -> bool {
+            true
+        }
+        fn leader_address(&self) -> Option<String> {
+            self.leader.clone()
+        }
+        fn local_address(&self) -> &str {
+            &self.members[0].address
+        }
+        fn member_count(&self) -> usize {
+            self.members.len()
+        }
+        fn all_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            self.members.clone()
+        }
+        fn healthy_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            self.members.clone()
+        }
+        fn get_member(&self, address: &str) -> Option<ExtendedMemberInfo> {
+            self.members.iter().find(|m| m.address == address).cloned()
+        }
+        fn get_self_member(&self) -> ExtendedMemberInfo {
+            self.members[0].clone()
+        }
+        fn health_summary(&self) -> ClusterHealthSummary {
+            let total = self.members.len();
+            ClusterHealthSummary {
+                total,
+                up: total,
+                ..Default::default()
+            }
+        }
+        fn refresh_self(&self) {}
+        fn is_self(&self, address: &str) -> bool {
+            address == self.members[0].address
+        }
+        fn update_member_state(&self, _address: &str, _state: &str) -> Result<String, String> {
+            Ok("UP".to_string())
+        }
+    }
+
+    fn multi_node_service(leader: Option<&str>) -> ConsulOperatorService {
+        let cm: Arc<dyn ClusterManager> = Arc::new(MultiNodeClusterManager {
+            members: vec![
+                member_at("10.0.0.1"),
+                member_at("10.0.0.2"),
+                member_at("10.0.0.3"),
+            ],
+            leader: leader.map(str::to_string),
+        });
+        ConsulOperatorService::new(cm)
+    }
+
+    #[test]
+    fn test_address_host_strips_port_and_ipv6_brackets() {
+        assert_eq!(address_host("10.0.0.1:8848"), "10.0.0.1");
+        assert_eq!(address_host("10.0.0.1:7848"), "10.0.0.1");
+        assert_eq!(address_host("[::1]:8848"), "::1");
+        assert_eq!(address_host("host-without-port"), "host-without-port");
+    }
+
+    #[test]
+    fn test_raft_configuration_marks_observed_raft_leader() {
+        // The leader is the third member and arrives as a Raft listener
+        // address (`ip:7848`) while members carry the HTTP port (`ip:8848`).
+        let config = multi_node_service(Some("10.0.0.3:7848")).get_raft_configuration();
+        assert_eq!(config.servers.len(), 3);
+        assert!(
+            !config.servers[0].leader,
+            "member order implies no leadership"
+        );
+        assert!(!config.servers[1].leader);
+        assert!(config.servers[2].leader);
+        assert_eq!(config.servers.iter().filter(|s| s.leader).count(), 1);
+    }
+
+    #[test]
+    fn test_raft_configuration_reports_no_leader_before_election() {
+        let config = multi_node_service(None).get_raft_configuration();
+        assert!(config.servers.iter().all(|s| !s.leader));
+    }
+
+    #[test]
+    fn test_autopilot_health_and_state_follow_raft_leader() {
+        let service = multi_node_service(Some("10.0.0.3:7848"));
+        let health = service.get_autopilot_health();
+        assert_eq!(health.servers.iter().filter(|s| s.leader).count(), 1);
+        assert!(health.servers[2].leader);
+
+        let state = service.get_autopilot_state();
+        assert_eq!(state.leader, "10.0.0.3:8848");
+    }
+
+    #[test]
+    fn test_autopilot_state_leader_is_empty_without_leader() {
+        let state = multi_node_service(None).get_autopilot_state();
+        assert_eq!(state.leader, "");
     }
 }

@@ -91,6 +91,25 @@ pub struct ServerMemberManager {
     client_manager: Arc<OnceCell<Arc<ClusterClientManager>>>,
     distro_protocol: Arc<RwLock<Option<Arc<DistroProtocol>>>>,
     running: Arc<AtomicBool>,
+    /// Latest Raft leadership observed by this node, published by the Raft
+    /// node (see `spawn_raft_leader_publisher`). `None` means no leader has
+    /// been observed yet.
+    raft_leader: Arc<std::sync::RwLock<Option<RaftLeaderView>>>,
+}
+
+/// The Raft leader as observed by this node.
+///
+/// Nacos keeps a single source of truth for leadership: the CP protocol
+/// (`CPProtocol.isLeader(group)`); `ServerMemberManager` has no leader notion
+/// at all. Batata mirrors that by publishing the Raft view into the member
+/// manager for reporting only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaftLeaderView {
+    /// Address of the current Raft leader. This is the Raft listener address
+    /// (`ip:raft_port`), not the HTTP member address (`ip:main_port`).
+    pub addr: String,
+    /// Whether this node is the current Raft leader.
+    pub is_self: bool,
 }
 
 impl std::fmt::Debug for ServerMemberManager {
@@ -169,6 +188,7 @@ impl ServerMemberManager {
             client_manager: Arc::new(OnceCell::new()),
             distro_protocol: Arc::new(RwLock::new(None)),
             running: Arc::new(AtomicBool::new(false)),
+            raft_leader: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -441,48 +461,71 @@ impl ServerMemberManager {
         healthy > total / 2
     }
 
-    /// Check if this node is the leader
+    /// Check whether this node is the Raft consensus leader.
     ///
-    /// In standalone mode, this always returns true.
-    /// In cluster mode, the leader is determined by:
-    /// - The first healthy node (by sorted address) is considered the leader
-    /// - This provides a simple deterministic leader election without Raft overhead
+    /// Mirrors Nacos `CPProtocol.isLeader(group)`: the only source of truth
+    /// for leadership is the Raft state machine, never the member list.
+    /// In standalone mode there is no Raft group, so the node owns everything
+    /// and this returns `true`.
     ///
-    /// Note: For CP (consistent) operations, use the Raft consensus layer instead.
-    /// This method is suitable for AP (available) operations and cluster status reporting.
+    /// In cluster mode the value comes from the leader view published by the
+    /// Raft node; until the first publication it is `false`, which is honest
+    /// because no leader has been observed yet.
+    ///
+    /// Use [`Self::is_first_member`] for member-order ownership instead
+    /// (Nacos `ServerMemberManager.isFirstIp()`), and never use either of them
+    /// to gate CP writes: Raft forwards non-leader writes on its own.
     pub fn is_leader(&self) -> bool {
         if self.is_standalone {
             return true;
         }
-
-        // Get all healthy members and sort by address
-        let mut healthy_addresses: Vec<String> = self
-            .server_list
-            .iter()
-            .filter(|e| matches!(e.value().state, NodeState::Up))
-            .map(|e| e.key().clone())
-            .collect();
-
-        healthy_addresses.sort();
-
-        // The first healthy node (by sorted address) is the leader
-        healthy_addresses
-            .first()
-            .map(|addr| addr == &self.local_address)
-            .unwrap_or(false)
+        self.raft_leader().is_some_and(|view| view.is_self)
     }
 
-    /// Get the current leader address
+    /// Publish the Raft leadership observed by this node.
     ///
-    /// Returns the address of the current leader node.
-    /// In standalone mode, returns the local address.
-    /// In cluster mode, returns the first healthy node by sorted address.
+    /// Called by the periodic publisher spawned at startup. Passing `None`
+    /// means "no leader known", which makes [`Self::is_leader`] report `false`
+    /// on every node until an election completes.
+    pub fn set_raft_leader(&self, view: Option<RaftLeaderView>) {
+        if let Ok(mut guard) = self.raft_leader.write() {
+            *guard = view;
+        }
+    }
+
+    /// Current observed Raft leadership, if any.
+    pub fn raft_leader(&self) -> Option<RaftLeaderView> {
+        self.raft_leader.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Get the current Raft leader address.
+    ///
+    /// Returns the local address in standalone mode, otherwise the address of
+    /// the observed Raft leader (a Raft listener address, not the HTTP member
+    /// address). `None` while no leader has been observed.
     pub fn leader_address(&self) -> Option<String> {
         if self.is_standalone {
             return Some(self.local_address.clone());
         }
+        self.raft_leader().map(|view| view.addr)
+    }
 
-        // Get all healthy members and sort by address
+    /// Whether this node is the first healthy member by sorted address.
+    ///
+    /// Equivalent to Nacos `ServerMemberManager.isFirstIp()`: a deterministic
+    /// single-node owner for cluster-wide singleton tasks. This is **not** the
+    /// Raft leader; use [`Self::is_leader`] for leadership.
+    pub fn is_first_member(&self) -> bool {
+        self.first_member_address()
+            .as_ref()
+            .is_some_and(|addr| addr == &self.local_address)
+    }
+
+    /// Address of the first healthy member by sorted address.
+    ///
+    /// See [`Self::is_first_member`] for semantics; this is the member-order
+    /// owner, not the Raft leader.
+    pub fn first_member_address(&self) -> Option<String> {
         let mut healthy_addresses: Vec<String> = self
             .server_list
             .iter()
@@ -667,6 +710,65 @@ mod tests {
             .build()
             .unwrap();
         Configuration::from_config(config)
+    }
+
+    fn cluster_test_config() -> Configuration {
+        let config = config::Config::builder()
+            .set_default("batata.standalone", false)
+            .unwrap()
+            .set_default("batata.server.main.port", 8848)
+            .unwrap()
+            .set_default("batata.version", "1.0.0")
+            .unwrap()
+            .build()
+            .unwrap();
+        Configuration::from_config(config)
+    }
+
+    /// Leadership in cluster mode must come from Raft, never from the member
+    /// list. Nacos has no `ServerMemberManager.isLeader()` at all: the only
+    /// source of truth is `CPProtocol.isLeader(group)`.
+    #[test]
+    fn test_cluster_leader_comes_from_raft_view() {
+        let manager = ServerMemberManager::new(&cluster_test_config());
+        assert!(!manager.is_standalone());
+
+        // No leader observed yet: no node may claim leadership.
+        assert!(!manager.is_leader());
+        assert_eq!(manager.leader_address(), None);
+
+        // A remote node is the Raft leader.
+        manager.set_raft_leader(Some(RaftLeaderView {
+            addr: "10.0.0.2:7800".to_string(),
+            is_self: false,
+        }));
+        assert!(!manager.is_leader());
+        assert_eq!(manager.leader_address(), Some("10.0.0.2:7800".to_string()));
+
+        // This node became the Raft leader.
+        manager.set_raft_leader(Some(RaftLeaderView {
+            addr: "10.0.0.1:7800".to_string(),
+            is_self: true,
+        }));
+        assert!(manager.is_leader());
+        assert_eq!(manager.leader_address(), Some("10.0.0.1:7800".to_string()));
+
+        // Leadership lost again.
+        manager.set_raft_leader(None);
+        assert!(!manager.is_leader());
+        assert_eq!(manager.leader_address(), None);
+    }
+
+    /// Member-order ownership is a separate concept (Nacos `isFirstIp()`) and
+    /// must not be confused with Raft leadership.
+    #[test]
+    fn test_first_member_is_independent_of_raft_leader() {
+        let manager = ServerMemberManager::new(&cluster_test_config());
+
+        // Self is the only member, so it is first by member order even though
+        // Raft has not elected anyone yet.
+        assert!(manager.is_first_member());
+        assert!(!manager.is_leader());
     }
 
     #[test]

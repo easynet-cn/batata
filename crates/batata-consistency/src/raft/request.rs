@@ -182,6 +182,8 @@ pub struct PersistentInstanceRegisterPayload {
     pub metadata: String,
     /// Cluster name the instance is registered under.
     pub cluster_name: String,
+    /// Leader wall clock at propose time, in milliseconds since epoch.
+    pub now_ms: i64,
 }
 
 /// Payload for `RaftRequest::PersistentInstanceUpdate`.
@@ -207,6 +209,8 @@ pub struct PersistentInstanceUpdatePayload {
     pub enabled: Option<bool>,
     /// Optional new metadata blob.
     pub metadata: Option<String>,
+    /// Leader wall clock at propose time, in milliseconds since epoch.
+    pub now_ms: i64,
 }
 
 /// All operations that go through Raft consensus.
@@ -241,6 +245,8 @@ pub enum RaftRequest {
         namespace_name: String,
         /// Optional namespace description.
         namespace_desc: Option<String>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Update an existing namespace
@@ -251,6 +257,8 @@ pub enum RaftRequest {
         namespace_name: String,
         /// Optional namespace description.
         namespace_desc: Option<String>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Delete a namespace
@@ -273,6 +281,8 @@ pub enum RaftRequest {
         /// predate this field.
         #[serde(default = "crate::raft::request::default_user_source")]
         source: String,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Update user information
@@ -283,6 +293,8 @@ pub enum RaftRequest {
         password_hash: Option<String>,
         /// Optional new enabled flag.
         enabled: Option<bool>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Delete a user
@@ -298,6 +310,8 @@ pub enum RaftRequest {
         role: String,
         /// Username the role is granted to.
         username: String,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Delete a role assignment
@@ -317,6 +331,8 @@ pub enum RaftRequest {
         resource: String,
         /// Action the permission allows.
         action: String,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        now_ms: i64,
     },
 
     /// Revoke a permission from a role
@@ -413,6 +429,13 @@ pub enum RaftRequest {
         fence_token: u64,
         /// Optional owner metadata.
         owner_metadata: Option<String>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        ///
+        /// Carried inside the log entry so every replica derives the same
+        /// `expires_at`. Taking a local clock during apply would make
+        /// replicas disagree about when the lock expires, which breaks
+        /// mutual exclusion.
+        now_ms: i64,
     },
 
     /// Release a distributed lock
@@ -437,6 +460,12 @@ pub enum RaftRequest {
         owner: String,
         /// Optional new TTL in milliseconds.
         ttl_ms: Option<u64>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        ///
+        /// Same rationale as [`RaftRequest::LockAcquire::now_ms`]: the
+        /// expiry check and the refreshed `expires_at` must be identical on
+        /// every replica.
+        now_ms: i64,
     },
 
     /// Force release a distributed lock (admin operation)

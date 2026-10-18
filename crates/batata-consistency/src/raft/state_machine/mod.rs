@@ -1015,13 +1015,19 @@ impl RocksStateMachine {
                 namespace_id,
                 namespace_name,
                 namespace_desc,
-            } => self.apply_namespace_create(&namespace_id, &namespace_name, namespace_desc),
+                now_ms,
+            } => {
+                self.apply_namespace_create(&namespace_id, &namespace_name, namespace_desc, now_ms)
+            }
 
             RaftRequest::NamespaceUpdate {
                 namespace_id,
                 namespace_name,
                 namespace_desc,
-            } => self.apply_namespace_update(&namespace_id, &namespace_name, namespace_desc),
+                now_ms,
+            } => {
+                self.apply_namespace_update(&namespace_id, &namespace_name, namespace_desc, now_ms)
+            }
 
             RaftRequest::NamespaceDelete { namespace_id } => {
                 self.apply_namespace_delete(&namespace_id)
@@ -1032,17 +1038,23 @@ impl RocksStateMachine {
                 password_hash,
                 enabled,
                 source,
-            } => self.apply_user_create(&username, &password_hash, enabled, &source),
+                now_ms,
+            } => self.apply_user_create(&username, &password_hash, enabled, &source, now_ms),
 
             RaftRequest::UserUpdate {
                 username,
                 password_hash,
                 enabled,
-            } => self.apply_user_update(&username, password_hash, enabled),
+                now_ms,
+            } => self.apply_user_update(&username, password_hash, enabled, now_ms),
 
             RaftRequest::UserDelete { username } => self.apply_user_delete(&username),
 
-            RaftRequest::RoleCreate { role, username } => self.apply_role_create(&role, &username),
+            RaftRequest::RoleCreate {
+                role,
+                username,
+                now_ms,
+            } => self.apply_role_create(&role, &username, now_ms),
 
             RaftRequest::RoleDelete { role, username } => self.apply_role_delete(&role, &username),
 
@@ -1050,7 +1062,8 @@ impl RocksStateMachine {
                 role,
                 resource,
                 action,
-            } => self.apply_permission_grant(&role, &resource, &action),
+                now_ms,
+            } => self.apply_permission_grant(&role, &resource, &action, now_ms),
 
             RaftRequest::PermissionRevoke {
                 role,
@@ -1125,6 +1138,7 @@ impl RocksStateMachine {
                     enabled,
                     metadata,
                     cluster_name,
+                    now_ms,
                 } = *payload;
                 let resp = self.apply_instance_register(
                     &namespace_id,
@@ -1138,6 +1152,7 @@ impl RocksStateMachine {
                     enabled,
                     &metadata,
                     &cluster_name,
+                    now_ms,
                 );
                 if resp.success
                     && let Some(hook) = self.naming_hook.read().await.as_ref()
@@ -1191,6 +1206,7 @@ impl RocksStateMachine {
                     healthy,
                     enabled,
                     metadata,
+                    now_ms,
                 } = *payload;
                 let ip_c = ip.clone();
                 let metadata_c = metadata.clone();
@@ -1205,6 +1221,7 @@ impl RocksStateMachine {
                     healthy,
                     enabled,
                     metadata,
+                    now_ms,
                 );
                 if resp.success
                     && let Some(hook) = self.naming_hook.read().await.as_ref()
@@ -1235,6 +1252,7 @@ impl RocksStateMachine {
                 ttl_ms,
                 fence_token,
                 owner_metadata,
+                now_ms,
             } => self.apply_lock_acquire(
                 &namespace,
                 &name,
@@ -1242,6 +1260,7 @@ impl RocksStateMachine {
                 ttl_ms,
                 fence_token,
                 owner_metadata,
+                now_ms,
             ),
 
             RaftRequest::LockRelease {
@@ -1256,7 +1275,8 @@ impl RocksStateMachine {
                 name,
                 owner,
                 ttl_ms,
-            } => self.apply_lock_renew(&namespace, &name, &owner, ttl_ms),
+                now_ms,
+            } => self.apply_lock_renew(&namespace, &name, &owner, ttl_ms, now_ms),
 
             RaftRequest::LockForceRelease { namespace, name } => {
                 self.apply_lock_force_release(&namespace, &name)
@@ -1329,9 +1349,10 @@ impl RocksStateMachine {
         namespace_id: &str,
         namespace_name: &str,
         namespace_desc: Option<String>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::namespace_key(namespace_id);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = now_ms;
         let stored = StoredNamespace {
             namespace_id: namespace_id.to_string(),
             namespace_name: namespace_name.to_string(),
@@ -1367,9 +1388,10 @@ impl RocksStateMachine {
         namespace_id: &str,
         namespace_name: &str,
         namespace_desc: Option<String>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::namespace_key(namespace_id);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = now_ms;
 
         // Preserve created_time from existing entry if present.
         let created_time = match self.db.get_cf(self.cf_namespace(), key.as_bytes()) {
@@ -1434,9 +1456,10 @@ impl RocksStateMachine {
         password_hash: &str,
         enabled: bool,
         source: &str,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::user_key(username);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = now_ms;
         let stored = StoredUser {
             username: username.to_string(),
             password_hash: password_hash.to_string(),
@@ -1469,6 +1492,7 @@ impl RocksStateMachine {
         username: &str,
         password_hash: Option<String>,
         enabled: Option<bool>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::user_key(username);
 
@@ -1488,7 +1512,7 @@ impl RocksStateMachine {
         if let Some(en) = enabled {
             stored.enabled = en;
         }
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
+        stored.modified_time = now_ms;
 
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -1528,12 +1552,12 @@ impl RocksStateMachine {
     }
 
     // Role operations
-    fn apply_role_create(&self, role: &str, username: &str) -> RaftResponse {
+    fn apply_role_create(&self, role: &str, username: &str, now_ms: i64) -> RaftResponse {
         let key = Self::role_key(role, username);
         let stored = StoredRole {
             role: role.to_string(),
             username: username.to_string(),
-            created_time: chrono::Utc::now().timestamp_millis(),
+            created_time: now_ms,
         };
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -1573,13 +1597,19 @@ impl RocksStateMachine {
     }
 
     // Permission operations
-    fn apply_permission_grant(&self, role: &str, resource: &str, action: &str) -> RaftResponse {
+    fn apply_permission_grant(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+        now_ms: i64,
+    ) -> RaftResponse {
         let key = Self::permission_key(role, resource, action);
         let stored = StoredPermission {
             role: role.to_string(),
             resource: resource.to_string(),
             action: action.to_string(),
-            created_time: chrono::Utc::now().timestamp_millis(),
+            created_time: now_ms,
         };
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -1634,9 +1664,10 @@ impl RocksStateMachine {
         enabled: bool,
         metadata: &str,
         cluster_name: &str,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = now_ms;
         let stored = StoredInstance {
             namespace_id: namespace_id.to_string(),
             group_name: group_name.to_string(),
@@ -1713,6 +1744,7 @@ impl RocksStateMachine {
         healthy: Option<bool>,
         enabled: Option<bool>,
         metadata: Option<String>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::instance_key(namespace_id, group_name, service_name, instance_id);
 
@@ -1746,7 +1778,7 @@ impl RocksStateMachine {
         if let Some(metadata) = metadata {
             stored.metadata = metadata;
         }
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
+        stored.modified_time = now_ms;
 
         let encoded = match bincode::serialize(&stored) {
             Ok(bytes) => bytes,
@@ -2128,6 +2160,11 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
 mod tests {
     use super::*;
 
+    /// Fixed leader clock for lock tests: assertions must not depend on the
+    /// wall clock, and two replicas applying the same entry must see the
+    /// same value.
+    const TEST_NOW_MS: i64 = 1_700_000_000_000;
+
     #[test]
     fn test_key_generation() {
         let config_key = RocksStateMachine::config_key("test", "DEFAULT_GROUP", "public");
@@ -2160,6 +2197,78 @@ mod tests {
     /// lock twice must increment `lock_count` and require matching releases
     /// to fully unlock. Previously acquire+acquire+release would drop the
     /// lock — incompatible with Nacos AtomicLockService semantics.
+    /// Two replicas applying the same acquire entry must derive the same
+    /// `expires_at`. Each replica used to call `Utc::now()` during apply, so
+    /// the lock expired at different instants on different nodes and mutual
+    /// exclusion was silently lost.
+    #[tokio::test]
+    async fn lock_acquire_expires_at_is_replica_independent() {
+        let a_dir = tempfile::tempdir().expect("tempdir");
+        let b_dir = tempfile::tempdir().expect("tempdir");
+        let a = RocksStateMachine::new(a_dir.path())
+            .await
+            .expect("state machine a");
+        let b = RocksStateMachine::new(b_dir.path())
+            .await
+            .expect("state machine b");
+
+        let ra = a.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None, TEST_NOW_MS);
+        let rb = b.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None, TEST_NOW_MS);
+        assert!(ra.success && rb.success, "both replicas must acquire");
+
+        let key = RocksStateMachine::lock_key("public", "k1");
+        let va =
+            a.db.get_cf(a.cf_locks(), key.as_bytes())
+                .expect("read a")
+                .expect("lock present on a");
+        let vb =
+            b.db.get_cf(b.cf_locks(), key.as_bytes())
+                .expect("read b")
+                .expect("lock present on b");
+        assert_eq!(va, vb, "replicas must store byte-identical lock state");
+
+        let v: serde_json::Value = serde_json::from_slice(&va).expect("lock json");
+        assert_eq!(
+            v["expires_at"].as_i64(),
+            Some(TEST_NOW_MS + 60_000),
+            "expires_at must come from the leader clock carried in the log entry"
+        );
+    }
+
+    /// Two replicas applying the same namespace create entry must store
+    /// byte-identical state. Each replica used to stamp its own `Utc::now()`,
+    /// so `created_time`/`modified_time` differed from node to node.
+    #[tokio::test]
+    async fn namespace_create_is_replica_independent() {
+        let a_dir = tempfile::tempdir().expect("tempdir");
+        let b_dir = tempfile::tempdir().expect("tempdir");
+        let a = RocksStateMachine::new(a_dir.path())
+            .await
+            .expect("state machine a");
+        let b = RocksStateMachine::new(b_dir.path())
+            .await
+            .expect("state machine b");
+
+        let ra = a.apply_namespace_create("ns", "name", None, TEST_NOW_MS);
+        let rb = b.apply_namespace_create("ns", "name", None, TEST_NOW_MS);
+        assert!(ra.success && rb.success, "both replicas must create");
+
+        let key = RocksStateMachine::namespace_key("ns");
+        let va =
+            a.db.get_cf(a.cf_namespace(), key.as_bytes())
+                .expect("read a")
+                .expect("namespace present on a");
+        let vb =
+            b.db.get_cf(b.cf_namespace(), key.as_bytes())
+                .expect("read b")
+                .expect("namespace present on b");
+        assert_eq!(va, vb, "replicas must store byte-identical namespace state");
+
+        let stored: StoredNamespace = bincode::deserialize(&va).expect("decode namespace");
+        assert_eq!(stored.created_time, TEST_NOW_MS);
+        assert_eq!(stored.modified_time, TEST_NOW_MS);
+    }
+
     #[tokio::test]
     async fn test_lock_reentrant_semantics() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -2168,7 +2277,7 @@ mod tests {
             .expect("state machine");
 
         // First acquire: fresh lock, depth = 1
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None, TEST_NOW_MS);
         assert!(resp.success, "first acquire must succeed");
         let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
         assert_eq!(v["lock_count"].as_u64(), Some(1));
@@ -2176,7 +2285,7 @@ mod tests {
         assert_eq!(v["owner"].as_str(), Some("owner-a"));
 
         // Second acquire by same owner: depth = 2, same fence token
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 99, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 99, None, TEST_NOW_MS);
         assert!(resp.success, "reentrant acquire must succeed");
         let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
         assert_eq!(v["lock_count"].as_u64(), Some(2));
@@ -2187,13 +2296,13 @@ mod tests {
         );
 
         // Third acquire by same owner: depth = 3
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 77, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 77, None, TEST_NOW_MS);
         assert!(resp.success);
         let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
         assert_eq!(v["lock_count"].as_u64(), Some(3));
 
         // Different owner is rejected while held
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None, TEST_NOW_MS);
         assert!(!resp.success, "different owner must fail to acquire");
 
         // Release once: depth 3 -> 2, still locked
@@ -2204,7 +2313,7 @@ mod tests {
         assert_eq!(v["state"].as_str(), Some("Locked"));
 
         // Different owner still rejected
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 5, None, TEST_NOW_MS);
         assert!(!resp.success);
 
         // Release again: depth 2 -> 1, still locked
@@ -2216,7 +2325,7 @@ mod tests {
         assert!(resp.success);
 
         // Now another owner can acquire
-        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 42, None);
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 42, None, TEST_NOW_MS);
         assert!(resp.success, "new owner must acquire after full release");
         let v: serde_json::Value = serde_json::from_slice(&resp.data.unwrap()).unwrap();
         assert_eq!(v["owner"].as_str(), Some("owner-b"));
@@ -2264,7 +2373,8 @@ mod tests {
         // Single release must fully free it (legacy depth is 1).
         let resp = sm.apply_lock_release("public", "legacy", "owner-a", None);
         assert!(resp.success);
-        let resp = sm.apply_lock_acquire("public", "legacy", "owner-b", 60_000, 8, None);
+        let resp =
+            sm.apply_lock_acquire("public", "legacy", "owner-b", 60_000, 8, None, TEST_NOW_MS);
         assert!(resp.success, "legacy entry must fully release in one call");
     }
 }

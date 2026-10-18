@@ -204,6 +204,7 @@ impl LockOperationHandler {
             ttl_ms,
             fence_token,
             owner_metadata: None,
+            now_ms: chrono::Utc::now().timestamp_millis(),
         };
         match raft.write(req).await {
             Ok(resp) => resp.success,

@@ -187,6 +187,7 @@ impl ClientOperationService for PersistentClientOperationService {
                 } else {
                     instance.cluster_name.clone()
                 },
+                now_ms: chrono::Utc::now().timestamp_millis(),
             },
         ));
         match raft.write(req).await {
@@ -271,6 +272,7 @@ pub async fn register_instance_dispatch(
             enabled: instance.enabled,
             metadata: metadata_json,
             cluster_name: cluster.to_string(),
+            now_ms: chrono::Utc::now().timestamp_millis(),
         },
     ));
     match raft.write(req).await {

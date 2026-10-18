@@ -24,7 +24,9 @@ pub use traits::ClientConnectionManager;
 
 /// Re-export cluster module
 pub mod cluster {
-    pub use crate::service::cluster::{ServerMemberManager, ServerMemberManagerConfig};
+    pub use crate::service::cluster::{
+        RaftLeaderView, ServerMemberManager, ServerMemberManagerConfig,
+    };
     pub use batata_common::ClusterHealthSummary;
 }
 
