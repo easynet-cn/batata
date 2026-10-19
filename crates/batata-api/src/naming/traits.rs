@@ -37,6 +37,35 @@ pub trait NamingServiceProvider: Send + Sync {
         instance: &Instance,
     ) -> bool;
 
+    /// Service-level ephemeral flag, or `None` when the service has not been
+    /// created by a client write yet.
+    ///
+    /// Nacos equivalent: `ServiceManager.getSingletonIfExist(service)`.
+    /// `.map(Service::isEphemeral)`.
+    fn service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Option<bool>;
+
+    /// Resolve — and on first sighting, fix — the service-level ephemeral flag.
+    ///
+    /// Nacos equivalent: `ServiceManager.getSingleton(service)` +
+    /// `Service#isEphemeral()`. `Service.equals()` ignores `ephemeral`, so the
+    /// **first** registration fixes the flag and later ones inherit it.
+    /// Returns the flag the caller must obey.
+    fn resolve_service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ephemeral: bool,
+    ) -> bool;
+
+    /// Drop the resolved flag (`ServiceManager.removeSingleton`).
+    fn forget_service_ephemeral(&self, namespace: &str, group_name: &str, service_name: &str);
+
     /// Returns the instances.
     fn get_instances(
         &self,

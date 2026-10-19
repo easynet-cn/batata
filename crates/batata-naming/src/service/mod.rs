@@ -13,7 +13,9 @@ mod cluster;
 mod disconnect_listener;
 mod empty_service_cleaner;
 mod fuzzy_watch;
-mod instance;
+// Distro ownership markers live here; the module is `pub(crate)` so the distro
+// handler can gate publication on them.
+pub(crate) mod instance;
 mod metadata;
 mod provider;
 mod subscription;
@@ -24,8 +26,13 @@ pub use disconnect_listener::{
 
 pub use client_op::{
     ClientOperationService, ClientOperationServiceProxy, EphemeralClientOperationService,
-    PersistentClientOperationService, deregister_instance_dispatch, register_instance_dispatch,
+    PersistentClientOperationService, deregister_instance_dispatch, effective_update_ephemeral,
+    register_instance_dispatch,
 };
+
+// `PATCH` semantics shared by the REST handlers so the merge rules can be
+// asserted without booting an HTTP server.
+pub use instance::{InstancePatch, apply_instance_patch};
 
 pub use empty_service_cleaner::EmptyServiceCleaner;
 
@@ -131,6 +138,21 @@ pub struct NamingService {
     /// the revision, so a revision-based clock would be refreshed forever and no
     /// empty service would ever expire.
     service_empty_since: Arc<DashMap<String, i64>>,
+    /// Key: service_key, Value: the service-level ephemeral flag.
+    ///
+    /// This is batata's equivalent of Nacos `ServiceManager.singletonRepository`
+    /// plus `Service#ephemeral`. Two upstream details it has to reproduce:
+    /// - `Service.equals()/hashCode()` cover **only** (namespace, group, name),
+    ///   so `ephemeral` is *not* part of the identity: the flag is fixed by the
+    ///   **first** registration (`computeIfAbsent`) and every later
+    ///   registration reuses it, whatever flag that caller asked for.
+    /// - "absent from the map" means "not resolved yet", which is why this is
+    ///   a keyed map rather than a field on `ServiceMetadata` (whose `bool`
+    ///   cannot express "unset", and whose default `false` reads as
+    ///   "persistent" for a service nobody has registered into yet).
+    ///
+    /// The flag gates the AP/CP split — see `service::client_op`.
+    service_ephemeral: Arc<DashMap<String, bool>>,
     /// Key: service_key, Value: distro version counter.
     ///
     /// Deliberately **not** the same counter as `ServiceMetadata::revision`:
@@ -167,6 +189,7 @@ impl NamingService {
             closing_connections: Arc::new(DashMap::new()),
             service_name_index: Arc::new(DashMap::new()),
             service_empty_since: Arc::new(DashMap::new()),
+            service_ephemeral: Arc::new(DashMap::new()),
             distro_versions: Arc::new(DashMap::new()),
         }
     }

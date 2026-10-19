@@ -872,12 +872,23 @@ impl DistroProtocol {
                 }
 
                 // NOTE: Distro keeps a full replica of every key on every node
-                // (Nacos semantics). `is_responsible()` only decides which node
-                // *drives* sync/verify for a key - it is NOT an ownership claim.
-                // Deleting keys the local node is not responsible for would drop
-                // replicas that peers just pushed, so cross-node instance lookups
-                // would fail on every non-responsible node. Responsibility
-                // changes are reconciled by sync/verify, never by deletion.
+                // (Nacos semantics) and this loop walks *all* of them, so
+                // `is_responsible()` is NOT a gate here.
+                //
+                // Ownership of what gets published is decided one layer down,
+                // by the handler: `NamingInstanceDistroHandler::get_data`
+                // publishes only the instances this node's own clients
+                // registered (no `_distro_remote` marker), the batata
+                // counterpart of Nacos' `isResponsibleClient`. Keys the node
+                // owns nothing for are still published — with an empty
+                // instance list, which is how peers garbage-collect the
+                // replicas this node previously replicated to them.
+                //
+                // Deleting keys the local node is not responsible for would
+                // drop replicas that peers just pushed, so cross-node instance
+                // lookups would fail on every non-responsible node.
+                // Responsibility changes are reconciled by sync/verify, never
+                // by deletion.
 
                 // Get all members except self
                 let other_members: Vec<String> = members

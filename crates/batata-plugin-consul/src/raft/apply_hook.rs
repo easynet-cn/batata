@@ -27,6 +27,19 @@ pub trait ConsulApplyHook: Send + Sync {
     /// A `CatalogDeregister` was committed.
     fn on_catalog_deregister(&self, _key: &str) {}
 
+    /// A `HealthCheckRegister` was committed. `check_key` is the
+    /// node-qualified registry key, `config_json` the serialized
+    /// `InstanceCheckConfig`. Implementations should mirror the config into
+    /// their local registry so queries on any node see the check.
+    ///
+    /// The check must NOT be scheduled for probing here: only the node that
+    /// owns it executes the probe, and its result arrives separately through
+    /// the health-status replication channel.
+    fn on_health_check_register(&self, _check_key: &str, _config_json: &str) {}
+
+    /// A `HealthCheckDeregister` was committed.
+    fn on_health_check_deregister(&self, _check_key: &str) {}
+
     /// Any ACL write (token/policy/role/auth-method/binding-rule set or
     /// delete, or bootstrap) was committed. Implementations should
     /// invalidate their in-memory ACL caches so follower authorization

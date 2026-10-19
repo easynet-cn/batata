@@ -359,6 +359,20 @@ pub async fn update_instance(
         .and_then(|m| serde_json::from_str(m).ok())
         .unwrap_or_default();
 
+    // An update must never silently re-route a service between AP and CP:
+    // when the form omits `ephemeral`, inherit the stored flag instead of
+    // defaulting to `true`.
+    let ephemeral = crate::service::effective_update_ephemeral(
+        &naming_service,
+        namespace_id,
+        group_name,
+        &form.service_name,
+        &form.ip,
+        form.port,
+        cluster_name,
+        form.ephemeral,
+    );
+
     // Build updated instance
     let instance = Instance {
         instance_id: batata_api::naming::model::generate_instance_id(
@@ -372,7 +386,7 @@ pub async fn update_instance(
         weight: form.weight.unwrap_or(1.0),
         healthy: form.healthy.unwrap_or(true),
         enabled: form.enabled.unwrap_or(true),
-        ephemeral: form.ephemeral.unwrap_or(true),
+        ephemeral,
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
@@ -401,9 +415,7 @@ pub async fn update_instance(
         );
 
         // Trigger distro sync only for ephemeral — persistent uses Raft.
-        if form.ephemeral.unwrap_or(true)
-            && let Some(ref distro) = distro_protocol
-        {
+        if ephemeral && let Some(ref distro) = distro_protocol {
             let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
             let distro = distro.get_ref().clone();
             tokio::spawn(async move {
@@ -887,6 +899,7 @@ pub async fn patch_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
     if let Some(err) = validate_instance_params(&form.service_name, &form.ip, form.port) {
@@ -925,27 +938,21 @@ pub async fn patch_instance(
         .find(|i| i.key() == instance_key)
         .map(|arc| (*arc).clone())
     {
-        // Patch only provided fields
-        if let Some(weight) = form.weight {
-            existing.weight = weight;
-        }
-        if let Some(healthy) = form.healthy {
-            existing.healthy = healthy;
-        }
-        if let Some(enabled) = form.enabled {
-            existing.enabled = enabled;
-        }
-        if let Some(ephemeral) = form.ephemeral {
-            existing.ephemeral = ephemeral;
-        }
-        if let Some(ref metadata_str) = form.metadata
-            && let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
-        {
-            for (k, v) in metadata {
-                existing.metadata.insert(k, v);
-            }
-        }
+        // Patch only the fields the caller actually sent. Merge rules live in
+        // `apply_instance_patch` so they can be asserted without HTTP.
+        let patch = crate::service::InstancePatch {
+            weight: form.weight,
+            healthy: form.healthy,
+            enabled: form.enabled,
+            ephemeral: form.ephemeral,
+            metadata: form
+                .metadata
+                .as_ref()
+                .and_then(|m| serde_json::from_str::<HashMap<String, String>>(m).ok()),
+        };
+        crate::service::apply_instance_patch(&mut existing, patch);
 
+        let is_ephemeral = existing.ephemeral;
         let result = crate::service::register_instance_dispatch(
             &naming_service,
             data.raft_node.as_ref(),
@@ -957,6 +964,20 @@ pub async fn patch_instance(
         .await;
 
         if result {
+            // Same propagation rule as PUT: only ephemeral instances travel
+            // over Distro, persistent ones are replicated by Raft. Without
+            // this the patched state would diverge from every other node
+            // until the next verify cycle.
+            if is_ephemeral && let Some(ref distro) = distro_protocol {
+                let service_key =
+                    format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+                let distro = distro.get_ref().clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
+            }
             Result::<String>::http_success("ok".to_string())
         } else {
             Result::<String>::http_response(

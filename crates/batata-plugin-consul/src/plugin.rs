@@ -14,6 +14,7 @@ use std::time::Duration;
 use rocksdb::DB;
 
 use batata_naming::InstanceCheckRegistry;
+use batata_naming::healthcheck::registry::InstanceCheckConfig;
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_plugin::{PluginStateProvider, ProtocolAdapterPlugin};
 
@@ -41,13 +42,19 @@ use crate::xds_sync::{ConsulSyncBridge, create_xds_server};
 /// Bridge from the Consul Raft plugin handler's apply-back hook to the
 /// in-memory `ConsulNamingStore`. Keeps follower-side query state
 /// consistent with committed Raft log.
+///
+/// Also mirrors committed health-check configs into the local
+/// `InstanceCheckRegistry`: a check registered through node A's agent API
+/// is otherwise invisible on node B, so `/v1/health/service` on B would
+/// report the instance as healthy regardless of A's probe result.
 struct NamingStoreApplyHook {
     store: Arc<ConsulNamingStore>,
+    registry: Arc<InstanceCheckRegistry>,
 }
 
 impl NamingStoreApplyHook {
-    fn new(store: Arc<ConsulNamingStore>) -> Self {
-        Self { store }
+    fn new(store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
+        Self { store, registry }
     }
 }
 
@@ -73,6 +80,21 @@ impl crate::raft::ConsulApplyHook for NamingStoreApplyHook {
                 e
             );
         }
+    }
+
+    fn on_health_check_register(&self, _check_key: &str, config_json: &str) {
+        match serde_json::from_str::<InstanceCheckConfig>(config_json) {
+            Ok(config) => {
+                self.registry.restore_check(config);
+            }
+            Err(e) => {
+                tracing::warn!("NamingStoreApplyHook: bad health check config: {}", e);
+            }
+        }
+    }
+
+    fn on_health_check_deregister(&self, check_key: &str) {
+        self.registry.deregister_check(check_key);
     }
 
     fn on_acl_change(&self) {
@@ -285,7 +307,10 @@ impl ConsulPlugin {
                 >(&value_bytes)
                 {
                     Ok(config) => {
-                        registry.register_check(config);
+                        // Preserve any status that is already present (e.g. a
+                        // check registered by this node before the DB was
+                        // opened) and never schedule a probe from here.
+                        registry.restore_check(config);
                         restored += 1;
                     }
                     Err(e) => {
@@ -613,6 +638,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             Arc::new(inner.session.clone()),
             Arc::new(inner.kv.clone()),
             inner.raft_writer.clone(),
+            self.dc_config.node_name.clone(),
         );
 
         self.inner
@@ -785,30 +811,31 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 tracing::info!("Consul reactor wired to Raft for cluster-wide health status sync");
             }
 
-            // Cluster mode: shard active probes by target address so each
-            // backend is probed once per interval cluster-wide instead of once
-            // per node. Safe now that probe results replicate through Raft —
-            // see the gate comment in `HealthCheckReactor`'s
-            // `ScheduleRegistryCheck` arm.
+            // NOTE: deliberately **no** target-address sharding here, unlike
+            // the Nacos path.
             //
-            // This is a batata deviation from upstream Consul: upstream has an
-            // agent/server split where every agent probes only its own local
-            // checks, so nothing needs sharding. Batata serves agent endpoints
-            // from the server itself, so without a gate the same backend is
-            // probed once per server node.
-            if let (Some(distro), Some(_)) = (&inner.distro_protocol, &inner.raft_node_for_health) {
-                let chain =
-                    batata_naming::healthcheck::interceptor::HealthCheckInterceptorChain::cluster(
-                        hc_config.clone(),
-                        distro.mapper().clone(),
-                        distro.local_address().to_string(),
-                    );
-                reactor.set_interceptor_chain(Arc::new(chain));
-                tracing::info!(
-                    "Consul health check reactor gated to responsible node (local_address={})",
-                    distro.local_address()
-                );
-            }
+            // The sharding gate in `HealthCheckReactor`'s
+            // `ScheduleRegistryCheck` arm assumes every node schedules every
+            // check. That assumption holds for Nacos (distro replicates the
+            // instance, so every node creates a probe task and exactly the
+            // hashed owner runs it), but not for Consul: an agent check
+            // exists only on the node that served `/v1/agent/*/register`, and
+            // only that node schedules a probe task for it (via
+            // `set_check_scheduler` and the local-registry scan below).
+            //
+            // Gating that node by `responsible_id()` (the probed `ip:port`)
+            // therefore leaves the check with no prober at all whenever the
+            // hashed owner is a different node: the owner has no task for a
+            // check it never saw, and the registering node keeps skipping its
+            // own. Observed as `TestHealthCheckTCPExecutes` /
+            // `TestHealthCheckTCPReachableStaysPassing` failing only in
+            // cluster mode (e.g. `127.0.0.1:8500` hashes to node 2 while the
+            // client registered on node 1).
+            //
+            // Upstream Consul behaves exactly like the un-gated version:
+            // each agent probes its own local checks and nothing is sharded.
+            // Cluster-wide visibility is preserved because results still
+            // replicate through the `RaftHealthReplicator` wired above.
 
             // Wire the check scheduler so new active check registrations are auto-scheduled
             let reactor_ref = Arc::new(reactor);
@@ -817,10 +844,13 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 reactor_for_scheduler.schedule_registry_check(check_key);
             }));
 
-            // Schedule any active checks that were registered before this point
+            // Schedule any active checks that were registered before this
+            // point. Checks replicated from another node are skipped: only
+            // the node that registered a check probes it, and its result
+            // arrives here through the Raft health channel.
             for (config, _status) in inner.registry.get_all_checks() {
-                if config.check_type.is_active() {
-                    reactor_ref.schedule_registry_check(&config.check_id);
+                if config.check_type.is_active() && inner.health.owns_check(&config.node) {
+                    reactor_ref.schedule_registry_check(&config.registry_key());
                 }
             }
 
@@ -1009,7 +1039,10 @@ impl ConsulPlugin {
         // path — returns stale/empty results.
         {
             let hook: Arc<dyn crate::raft::ConsulApplyHook> =
-                Arc::new(NamingStoreApplyHook::new(consul_naming_store.clone()));
+                Arc::new(NamingStoreApplyHook::new(
+                    consul_naming_store.clone(),
+                    consul_registry.clone(),
+                ));
             *apply_hook_slot.write().await = Some(hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
         }

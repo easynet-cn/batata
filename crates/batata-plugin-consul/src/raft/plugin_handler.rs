@@ -49,6 +49,15 @@ enum HookDispatch {
     /// Any ACL mutation (token/policy/role/auth-method/binding-rule).
     /// The hook clears all ACL caches — no per-entity dispatch needed.
     AclChange,
+    /// A health check config was persisted/removed. `check_key` is the
+    /// node-qualified registry key.
+    HealthCheckRegister {
+        check_key: String,
+        config_json: String,
+    },
+    HealthCheckDeregister {
+        check_key: String,
+    },
 }
 
 /// Represents `ConsulRaftPluginHandler`.
@@ -159,6 +168,18 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
             | ConsulRaftRequest::ACLBindingRuleSet { .. }
             | ConsulRaftRequest::ACLBindingRuleDelete { .. }
             | ConsulRaftRequest::ACLBootstrap { .. } => Some(HookDispatch::AclChange),
+            ConsulRaftRequest::HealthCheckRegister {
+                check_id,
+                config_json,
+            } => Some(HookDispatch::HealthCheckRegister {
+                check_key: check_id.clone(),
+                config_json: config_json.clone(),
+            }),
+            ConsulRaftRequest::HealthCheckDeregister { check_id } => {
+                Some(HookDispatch::HealthCheckDeregister {
+                    check_key: check_id.clone(),
+                })
+            }
             _ => None,
         };
 
@@ -180,6 +201,13 @@ impl RaftPluginHandler for ConsulRaftPluginHandler {
                 } => hook.on_catalog_register(key, registration_json),
                 HookDispatch::CatalogDeregister { key } => hook.on_catalog_deregister(key),
                 HookDispatch::AclChange => hook.on_acl_change(),
+                HookDispatch::HealthCheckRegister {
+                    check_key,
+                    config_json,
+                } => hook.on_health_check_register(check_key, config_json),
+                HookDispatch::HealthCheckDeregister { check_key } => {
+                    hook.on_health_check_deregister(check_key)
+                }
             }
         }
 

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::service::NamingService;
+use crate::service::instance::is_distro_replica;
 
 // Re-export DistroProtocol for convenience
 pub use batata_core::service::distro::DistroProtocol;
@@ -163,7 +164,13 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
     }
 
     async fn get_all_keys(&self) -> Vec<String> {
-        // Get all service keys from naming service
+        // Deliberately NOT filtered to "keys we own". A node with no instances
+        // of its own for a key still publishes it — with an empty instance
+        // list, which is exactly the signal peers need to garbage-collect the
+        // replicas they hold on this node's behalf (see `get_data`). Dropping
+        // the key instead would strand those replicas: nothing would ever
+        // contradict them. The empty payload is a no-op at peers that hold no
+        // replica tagged with this node as `_distro_source`.
         self.naming_service.get_all_service_keys()
     }
 
@@ -181,10 +188,34 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             false, // include unhealthy
         );
 
-        // Only sync ephemeral instances. Clone only the survivors.
+        // Only sync ephemeral instances **this node owns** — i.e. the ones its
+        // own clients registered, which are exactly the ones without the
+        // `_distro_remote` marker. Replicas received from a peer must never be
+        // republished.
+        //
+        // This is batata's counterpart of Nacos' `isResponsibleClient` gate
+        // (`naming/.../distro/v2/DistroClientDataProcessor.java`). There the
+        // distro key is a *client id*, and a node publishes a client only when
+        // `ConnectionBasedClientManager.isResponsibleClient(client)` holds —
+        // which is `client instanceof ConnectionBasedClient && client.isNative()`,
+        // i.e. "the connection terminates on this node". The same gate guards
+        // `syncToAllServer`/`syncToVerifyFailedServer` (via `isInvalidClient`)
+        // and `getVerifyData()`, and `getDatumSnapshot()` skips
+        // connection-based clients outright. Replicas are therefore never
+        // relayed, and every piece of data has exactly one publisher.
+        //
+        // batata keys distro data by *service*, so the equivalent gate has to
+        // be per instance. Without it two things break at once:
+        //   1. a relayed replica is re-tagged with the relayer as
+        //      `_distro_source`, so the real owner's later sync — scoped to its
+        //      own source — can no longer garbage-collect it;
+        //   2. the owner's empty sync (its deregistration signal) removes
+        //      nothing, while the relayer keeps republishing the instance.
+        // The observed result was that deregistering an instance on the owning
+        // node resurrected it on every node within one sync round.
         let ephemeral_instances: Vec<DistroInstance> = snapshot
             .iter()
-            .filter(|inst| inst.ephemeral)
+            .filter(|inst| inst.ephemeral && !is_distro_replica(inst))
             .map(|inst| DistroInstance {
                 instance_id: inst.instance_id.clone(),
                 ip: inst.ip.clone(),
@@ -227,6 +258,22 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
 
     async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
         debug!("Processing naming instance sync data: key={}", data.key);
+
+        // NOTE: no "is this newer than what I already applied?" guard here, and
+        // that is deliberate — it matches upstream. Nacos'
+        // `DistroClientDataProcessor.upgradeClient` applies the received client
+        // data unconditionally: it adds/updates every published instance, then
+        // removes every service the client holds that is absent from the sync
+        // (`client.removeServiceInstance`) and finally stores the revision.
+        // The revision is only ever *compared* — in
+        // `ClientManager.verifyClient` — never used to reject a sync.
+        //
+        // Adding an ordering guard on top of `last_sync_versions` would be
+        // actively harmful here: `DistroData::version` is a per-node in-memory
+        // counter, so a peer that restarts legitimately starts again at 0 and
+        // every one of its syncs would be discarded as "older". Convergence
+        // relies on the payload being authoritative for its source, which is
+        // guaranteed by the ownership gate in `get_data`.
 
         // Parse the content
         let instance_data: DistroInstanceData =
@@ -606,5 +653,187 @@ mod tests {
         let after = naming.get_instances_snapshot("public", "DEFAULT_GROUP", "svc-x", "", false);
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].ip, "10.1.1.2", "re-sync must populate the new IP");
+    }
+
+    /// A node publishes only what its own clients registered. Replicas carry
+    /// the `_distro_remote` marker and must never leave the node again — see
+    /// the ownership note on `get_data`.
+    #[tokio::test]
+    async fn get_data_publishes_only_locally_owned_instances() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+        let key = "public@@DEFAULT_GROUP@@svc-owned";
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "svc-owned",
+            crate::Instance {
+                instance_id: "local#9000#DEFAULT#svc-owned".to_string(),
+                ip: "10.1.0.1".to_string(),
+                port: 9000,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "svc-owned".to_string(),
+                metadata: std::collections::HashMap::new(),
+            },
+        );
+        // A replica that arrived from a peer.
+        handler
+            .process_sync_data(build_sync_data(
+                "public",
+                "DEFAULT_GROUP",
+                "svc-owned",
+                "10.9.9.9",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            naming
+                .get_instances_snapshot("public", "DEFAULT_GROUP", "svc-owned", "", false)
+                .len(),
+            2,
+            "locally owned instance plus one replica"
+        );
+
+        let data = handler.get_data(key).await.expect("payload must exist");
+        let parsed: DistroInstanceData = serde_json::from_slice(&data.content).unwrap();
+        assert_eq!(
+            parsed.instances.len(),
+            1,
+            "a node must publish only what it owns; got {:?}",
+            parsed
+                .instances
+                .iter()
+                .map(|i| i.ip.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(parsed.instances[0].ip, "10.1.0.1");
+        assert!(
+            !parsed.instances[0]
+                .metadata
+                .contains_key(crate::service::instance::DISTRO_REMOTE_MARKER),
+            "published instances must not carry the replica marker"
+        );
+    }
+
+    /// Push every key `from` publishes into `to`, exactly like one distro sync
+    /// round would.
+    async fn push_all(from: &NamingInstanceDistroHandler, to: &NamingInstanceDistroHandler) {
+        for key in from.get_all_keys().await {
+            if let Some(data) = from.get_data(&key).await {
+                let _ = to.process_sync_data(data).await;
+            }
+        }
+    }
+
+    fn endpoints(naming: &NamingService, service: &str) -> Vec<String> {
+        let mut v: Vec<String> = naming
+            .get_instances_snapshot("public", "DEFAULT_GROUP", service, "", false)
+            .iter()
+            .map(|i| i.ip.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Regression: deregistering on the owning node must survive a peer that
+    /// would otherwise relay the instance back.
+    ///
+    /// This is the two-node projection of the bug: B receives X from A, then
+    /// republishes it — which used to re-tag X with `_distro_source = B`, so
+    /// A's "X is gone" sync no longer matched anything and B's relay
+    /// re-inserted X on A.
+    #[tokio::test]
+    async fn deregistration_on_owner_is_not_resurrected_by_a_peer() {
+        let a_svc = Arc::new(NamingService::new());
+        let b_svc = Arc::new(NamingService::new());
+        let a = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), a_svc.clone());
+        let b = NamingInstanceDistroHandler::new("10.0.0.2:8848".to_string(), b_svc.clone());
+
+        a_svc.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "svc-relay",
+            crate::Instance {
+                instance_id: "x#8080#DEFAULT#svc-relay".to_string(),
+                ip: "10.0.0.9".to_string(),
+                port: 8080,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "svc-relay".to_string(),
+                metadata: std::collections::HashMap::new(),
+            },
+        );
+
+        push_all(&a, &b).await;
+        assert_eq!(endpoints(&b_svc, "svc-relay"), vec!["10.0.0.9"]);
+
+        // B publishes back — it owns nothing, so this must be a no-op.
+        push_all(&b, &a).await;
+        assert_eq!(endpoints(&a_svc, "svc-relay"), vec!["10.0.0.9"]);
+
+        // Owner deregisters and the removal must stick on both sides.
+        a_svc.deregister_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "svc-relay",
+            &crate::Instance {
+                instance_id: "x#8080#DEFAULT#svc-relay".to_string(),
+                ip: "10.0.0.9".to_string(),
+                port: 8080,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "svc-relay".to_string(),
+                metadata: std::collections::HashMap::new(),
+            },
+        );
+        push_all(&a, &b).await;
+        assert!(
+            endpoints(&b_svc, "svc-relay").is_empty(),
+            "the replica must be garbage-collected"
+        );
+        push_all(&b, &a).await;
+        assert!(
+            endpoints(&a_svc, "svc-relay").is_empty(),
+            "the instance must not be resurrected on the owner"
+        );
+    }
+
+    /// Empty payloads are the garbage-collection channel: a node keeps
+    /// publishing keys it owns nothing for so peers can drop its replicas.
+    #[tokio::test]
+    async fn key_without_owned_instances_is_published_empty() {
+        let naming = Arc::new(NamingService::new());
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+
+        handler
+            .process_sync_data(build_sync_data(
+                "public",
+                "DEFAULT_GROUP",
+                "svc-empty",
+                "10.9.9.9",
+            ))
+            .await
+            .unwrap();
+
+        let data = handler
+            .get_data("public@@DEFAULT_GROUP@@svc-empty")
+            .await
+            .expect("the key must still be published");
+        let parsed: DistroInstanceData = serde_json::from_slice(&data.content).unwrap();
+        assert!(
+            parsed.instances.is_empty(),
+            "a node holding only replicas publishes an empty list, which is the GC signal"
+        );
     }
 }

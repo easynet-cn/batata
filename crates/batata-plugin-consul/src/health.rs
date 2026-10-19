@@ -9,6 +9,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 
 use batata_naming::healthcheck::registry::{
     CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig, InstanceCheckRegistry,
+    build_instance_key, qualify_check_key,
 };
 
 /// Convert Consul status string to CheckStatus
@@ -132,6 +133,16 @@ impl ConsulHealthService {
         self.check_index.clone()
     }
 
+    /// Registry key for a check id coming from this agent's API surface.
+    ///
+    /// Consul identifies a check by `(node, check_id)`, and the registry is
+    /// keyed accordingly, so every agent-level lookup by bare id (what the
+    /// HTTP API — `/v1/agent/check/pass/<id>`, `/v1/agent/check/deregister/<id>`
+    /// — talks in) has to be qualified with the owning node first.
+    pub fn check_key(&self, check_id: &str) -> String {
+        qualify_check_key(&self.node_name, check_id)
+    }
+
     /// Update check status (pass/warn/fail). Immediately syncs to NamingService.
     /// Also syncs alias checks so they mirror the updated status.
     pub async fn update_check_status_async(
@@ -141,8 +152,9 @@ impl ConsulHealthService {
         output: Option<String>,
     ) -> Result<(), String> {
         let check_status = check_status_from_consul(status);
+        let check_key = self.check_key(check_id);
         self.registry
-            .ttl_update(check_id, check_status, output)
+            .ttl_update(&check_key, check_status, output)
             .await;
         // Sync alias checks after any status change
         self.sync_alias_checks().await;
@@ -245,6 +257,12 @@ impl ConsulHealthService {
             initial_status,
             notes: registration.notes.clone().unwrap_or_default(),
             service_tags: vec![],
+            // Consul identifies a check by (node, check_id). Stamping the
+            // owning node here makes the registry key node-qualified, which is
+            // what keeps `serfHealth` on one agent from being overwritten by
+            // `serfHealth` on another when status updates replicate through
+            // Raft.
+            node: self.node_name.clone(),
         };
 
         // Register in check index for service_id → instance lookup
@@ -280,6 +298,8 @@ impl ConsulHealthService {
         }
 
         let is_active = config.check_type.is_active();
+        // The reactor keys tasks by the registry key, which is node-qualified.
+        let check_key = config.registry_key();
         self.registry.register_check(config);
 
         // Schedule active checks (HTTP/TCP/gRPC/MySQL) for periodic execution
@@ -290,7 +310,7 @@ impl ConsulHealthService {
                 .unwrap_or_else(|e| e.into_inner())
                 .as_ref()
         {
-            scheduler(&check_id);
+            scheduler(&check_key);
         }
 
         Ok(())
@@ -298,12 +318,13 @@ impl ConsulHealthService {
 
     /// Deregister a health check
     pub async fn deregister_check(&self, check_id: &str) -> Result<(), String> {
-        if !self.registry.has_check(check_id) {
+        let check_key = self.check_key(check_id);
+        if !self.registry.has_check(&check_key) {
             return Err(format!("Check not found: {}", check_id));
         }
         self.check_index.remove_check(check_id);
         self.alias_map.remove(check_id);
-        self.registry.deregister_check(check_id);
+        self.registry.deregister_check(&check_key);
         Ok(())
     }
 
@@ -400,9 +421,19 @@ impl ConsulHealthService {
 
             // Update the alias check's status via TTL
             self.registry
-                .ttl_update(&alias_check_id, aliased_status, None)
+                .ttl_update(&self.check_key(&alias_check_id), aliased_status, None)
                 .await;
         }
+    }
+
+    /// Whether `node` is this node.
+    ///
+    /// Checks carry the node that registered them; a config replicated from
+    /// another cluster member must not be probed or rescheduled locally.
+    /// An empty node (checks from facades without the node concept, or
+    /// pre-#83 persisted data) counts as local.
+    pub fn owns_check(&self, node: &str) -> bool {
+        node.is_empty() || node == self.node_name
     }
 
     /// Get all checks for a service (by Consul service_id)
@@ -417,9 +448,42 @@ impl ConsulHealthService {
             .collect()
     }
 
+    /// Get checks attached to the instance identified by Consul coordinates.
+    ///
+    /// [`Self::get_service_checks`] resolves through `ConsulCheckIndex`,
+    /// which is only populated on the node that received the registration —
+    /// a replica would report zero checks for an instance registered
+    /// elsewhere and then fall back to a synthetic healthy check. Rebuilding
+    /// the instance key from the catalog entry works on every node because
+    /// check configs are replicated through Raft.
+    pub async fn get_instance_checks_by_coords(
+        &self,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+    ) -> Vec<HealthCheck> {
+        let instance_key = build_instance_key(
+            CONSUL_INTERNAL_NAMESPACE,
+            CONSUL_INTERNAL_GROUP,
+            service_name,
+            ip,
+            port,
+            CONSUL_INTERNAL_CLUSTER,
+        );
+        self.registry
+            .get_instance_checks(&instance_key)
+            .into_iter()
+            .map(|(config, status)| {
+                let svc_id = self.resolve_service_id(&config);
+                self.to_health_check(&config, &status, &svc_id)
+            })
+            .collect()
+    }
+
     /// Get a check by ID
     pub async fn get_check(&self, check_id: &str) -> Option<HealthCheck> {
-        let (config, status) = self.registry.get_check(check_id)?;
+        let check_key = self.check_key(check_id);
+        let (config, status) = self.registry.get_check(&check_key)?;
         let svc_id = self.resolve_service_id(&config);
         Some(self.to_health_check(&config, &status, &svc_id))
     }
@@ -462,9 +526,24 @@ impl ConsulHealthService {
     }
 
     /// Resolve the Consul service_id for a check from the check_index reverse mapping
+    /// Resolve the Consul service id a check belongs to.
+    ///
+    /// The index is only populated on the node that served the registration,
+    /// so a check replicated from another node would resolve to "" and be
+    /// mistaken for a node-level check — which would then be attached to
+    /// every instance owned by that node. `config.service_name` survives
+    /// replication and is empty for genuine node-level checks (serfHealth),
+    /// so it is a safe fallback.
     fn resolve_service_id(&self, config: &InstanceCheckConfig) -> String {
         self.check_index
             .lookup_service_id(&config.check_id)
+            .or_else(|| {
+                if config.service_name.is_empty() {
+                    None
+                } else {
+                    Some(config.service_name.clone())
+                }
+            })
             .unwrap_or_default()
     }
 
@@ -555,7 +634,15 @@ impl ConsulHealthService {
         };
 
         HealthCheck {
-            node: self.node_name.clone(),
+            // Report the check's owning node, not always the local one: a check
+            // whose node differs from this agent's must not be presented as
+            // ours (see `build_service_health_results`, which matches node
+            // checks against the node hosting the service instance).
+            node: if config.node.is_empty() {
+                self.node_name.clone()
+            } else {
+                config.node.clone()
+            },
             check_id: config.check_id.clone(),
             name: config.name.clone(),
             status: status.status.as_str().to_string(),
@@ -806,6 +893,27 @@ async fn build_service_health_results(
         // Get checks for this service instance from registry
         let mut checks = health_service.get_service_checks(&service_id).await;
 
+        // Merge in checks found by instance coordinates. The index lookup
+        // above only knows about registrations received by *this* node, so
+        // an instance registered on another node would come back with no
+        // checks and be reported healthy. Check configs are Raft-replicated,
+        // so the coordinate lookup finds them here too.
+        for check in health_service
+            .get_instance_checks_by_coords(
+                &reg.name,
+                &reg.effective_address(),
+                reg.effective_port() as i32,
+            )
+            .await
+        {
+            if !checks
+                .iter()
+                .any(|c| c.check_id == check.check_id && c.node == check.node)
+            {
+                checks.push(check);
+            }
+        }
+
         // Also include maintenance checks if they exist
         let maintenance_check_id = format!("_service_maintenance:{}", service_id);
         if let Some(maint_check) = health_service.get_check(&maintenance_check_id).await {
@@ -815,9 +923,27 @@ async fn build_service_health_results(
         // Include node-level checks (e.g., serfHealth) — Consul always includes
         // node checks alongside service checks in health/service responses.
         // Node checks have empty ServiceID/ServiceName.
+        //
+        // Only that node's checks may be attached: upstream
+        // `parseCheckServiceNodes` builds the health entry from the checks
+        // registered on the node that hosts the service instance, so a node
+        // check owned by another node is not part of this instance's health.
+        // Without the filter, a remote node's critical serfHealth would mark
+        // every local service instance unhealthy and `?passing` would return
+        // nothing anywhere in the cluster.
+        //
+        // The owning node is derived from the instance's own checks (their
+        // config carries the registering node); when the instance has no
+        // replicated check yet we fall back to the local node.
+        let owning_node = checks
+            .iter()
+            .find(|c| !c.service_id.is_empty() && !c.node.is_empty())
+            .map(|c| c.node.clone())
+            .unwrap_or_else(|| dc_config.node_name.clone());
+
         let all_checks = health_service.get_all_checks().await;
         for check in &all_checks {
-            if check.service_id.is_empty() {
+            if check.service_id.is_empty() && check.node == owning_node {
                 // This is a node-level check (like serfHealth)
                 let already_included = checks.iter().any(|c| c.check_id == check.check_id);
                 if !already_included {
@@ -2401,7 +2527,7 @@ mod tests {
         service.register_check(reg).await.unwrap();
 
         // Verify the check was registered via the registry
-        let (config, _status) = service.registry().get_check("ttl-chk").unwrap();
+        let (config, _status) = service.registry().get_check(&service.check_key("ttl-chk")).unwrap();
         assert_eq!(config.ttl, Some(Duration::from_secs(60)));
         assert_eq!(
             config.deregister_critical_after,
@@ -2554,6 +2680,144 @@ mod tests {
         (service, registry)
     }
 
+    /// A check is identified by (node, check_id), so the registry key is
+    /// node-qualified while the id stays bare on the wire.
+    #[tokio::test]
+    async fn check_keys_are_node_qualified_and_ids_stay_bare() {
+        let service = ConsulHealthService::new(
+            Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
+                NamingService::new(),
+            ))),
+            Arc::new(ConsulCheckIndex::new()),
+        )
+        .with_node_name("c2".to_string());
+        let registry = service.registry();
+
+        let reg = CheckRegistration {
+            name: "svc-ttl".to_string(),
+            check_id: Some("svc:web-1".to_string()),
+            service_id: Some("web-1".to_string()),
+            ttl: Some("30s".to_string()),
+            ..Default::default()
+        };
+        service.register_check(reg).await.unwrap();
+
+        assert_eq!(service.check_key("svc:web-1"), "c2#svc:web-1");
+        assert!(registry.has_check("c2#svc:web-1"));
+
+        // The agent-facing API keeps talking in bare ids.
+        let (config, _) = registry.get_check(&service.check_key("svc:web-1")).unwrap();
+        assert_eq!(config.check_id, "svc:web-1", "wire id must stay bare");
+        assert_eq!(config.node, "c2", "config carries the owning node");
+
+        let check = service.get_check("svc:web-1").await.expect("check visible");
+        assert_eq!(check.check_id, "svc:web-1");
+        assert_eq!(check.node, "c2", "health response reports the owning node");
+    }
+
+    /// A status change on one node must not touch another node's check.
+    #[tokio::test]
+    async fn status_updates_do_not_cross_node_boundaries() {
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
+            NamingService::new(),
+        )));
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        let node1 = ConsulHealthService::new(registry.clone(), check_index.clone())
+            .with_node_name("c1".to_string());
+        let node2 =
+            ConsulHealthService::new(registry.clone(), check_index).with_node_name("c2".to_string());
+
+        let mk = |id: &str| CheckRegistration {
+            name: id.to_string(),
+            check_id: Some(id.to_string()),
+            ttl: Some("30s".to_string()),
+            status: Some("passing".to_string()),
+            ..Default::default()
+        };
+        node1.register_check(mk("serfHealth")).await.unwrap();
+        node2.register_check(mk("serfHealth")).await.unwrap();
+        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "passing");
+        assert_eq!(node2.get_check("serfHealth").await.unwrap().status, "passing");
+
+        // Failing the check on c1 must leave c2's identically-named check
+        // untouched — that is what the node qualifier buys us (before it, the
+        // two collapsed into one entry and the whole cluster went critical).
+        node1
+            .update_check_status_async("serfHealth", "critical", Some("c1 down".into()))
+            .await
+            .unwrap();
+
+        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "critical");
+        assert_eq!(
+            node2.get_check("serfHealth").await.unwrap().status,
+            "passing",
+            "c2's serfHealth must be unaffected by c1"
+        );
+
+        // …and the reverse direction is independent too.
+        node2
+            .update_check_status_async("serfHealth", "warning", Some("c2 warn".into()))
+            .await
+            .unwrap();
+        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "critical");
+        assert_eq!(node2.get_check("serfHealth").await.unwrap().status, "warning");
+    }
+
+    #[tokio::test]
+    async fn replicated_checks_are_visible_by_instance_coordinates() {
+        // A check registered through another node's agent API reaches this
+        // node only as a replicated config. `ConsulCheckIndex` is populated
+        // solely on the node that handled the registration, so the
+        // index-driven lookup cannot see it and the instance would be
+        // reported healthy regardless of the owning node's probe result.
+        let service = ConsulHealthService::new(
+            Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
+                NamingService::new(),
+            ))),
+            Arc::new(ConsulCheckIndex::new()),
+        )
+        .with_node_name("c1".to_string());
+        let registry = service.registry();
+
+        let reg = CheckRegistration {
+            name: "svc-health".to_string(),
+            check_id: Some("svc:web-1".to_string()),
+            service_id: Some("web-1".to_string()),
+            ttl: Some("30s".to_string()),
+            ..Default::default()
+        };
+        service.register_check(reg).await.unwrap();
+
+        let (mut remote, _) = registry.get_check("c1#svc:web-1").unwrap();
+        let (name, ip, port) = (
+            remote.service_name.clone(),
+            remote.ip.clone(),
+            remote.port,
+        );
+        remote.node = "c2".to_string(); // pretend this arrived from node c2
+        registry.restore_check(remote);
+
+        let found = service
+            .get_instance_checks_by_coords(&name, &ip, port)
+            .await;
+        assert_eq!(
+            found.len(),
+            2,
+            "both the local copy and the replicated one are visible"
+        );
+        assert!(
+            found.iter().any(|c| c.node == "c2"),
+            "the replicated copy keeps reporting its owning node"
+        );
+        let replicated = found.iter().find(|c| c.node == "c2").unwrap();
+        assert!(
+            !replicated.service_id.is_empty(),
+            "a replicated service check must still resolve a service id, \
+             otherwise the health aggregation treats it as node-level and \
+             attaches it to every instance of that node"
+        );
+    }
+
     #[test]
     fn test_health_service_creation() {
         let (service, _) = create_test_health_service_with_registry();
@@ -2603,7 +2867,7 @@ mod tests {
             .await
             .expect("script check should be accepted");
         let (config, _) = registry
-            .get_check("svc:script-1")
+            .get_check(&service.check_key("svc:script-1"))
             .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Script);
         assert_eq!(config.script.as_deref(), Some("/bin/check.sh"));
@@ -2624,7 +2888,7 @@ mod tests {
             .await
             .expect("args check should be accepted");
         let (config, _) = registry
-            .get_check("svc:args-1")
+            .get_check(&service.check_key("svc:args-1"))
             .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Script);
         assert_eq!(
@@ -2649,7 +2913,7 @@ mod tests {
             .await
             .expect("docker check should be accepted");
         let (config, _) = registry
-            .get_check("svc:docker-1")
+            .get_check(&service.check_key("svc:docker-1"))
             .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Docker);
         assert_eq!(config.docker_container_id.as_deref(), Some("abc123"));
@@ -2670,7 +2934,7 @@ mod tests {
             .expect("alias check should be accepted");
         // Alias checks are registered internally as TTL checks
         let (config, _) = registry
-            .get_check("svc:alias-1")
+            .get_check(&service.check_key("svc:alias-1"))
             .expect("check should be registered");
         assert_eq!(config.check_type, RegistryCheckType::Ttl);
     }
@@ -2710,7 +2974,7 @@ mod tests {
 
         // Sync alias checks so the alias mirrors the (passing) service check
         service.sync_alias_checks().await;
-        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Passing);
 
         // Update the service check to critical — update_check_status_async
@@ -2720,7 +2984,7 @@ mod tests {
             .await
             .expect("update should succeed");
 
-        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Critical);
 
         // Update the service check back to passing
@@ -2729,7 +2993,7 @@ mod tests {
             .await
             .expect("update should succeed");
 
-        let (_, alias_status) = registry.get_check("alias:web").expect("alias check exists");
+        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Passing);
     }
 
@@ -2768,7 +3032,9 @@ mod tests {
                 .expect("alias check should register");
 
             service.sync_alias_checks().await;
-            let (_, alias_status) = registry.get_check(check_id).expect("alias check exists");
+            let (_, alias_status) = registry
+                .get_check(&service.check_key(check_id))
+                .expect("alias check exists");
             assert_eq!(
                 alias_status.status,
                 CheckStatus::Passing,
@@ -2812,7 +3078,7 @@ mod tests {
             .expect("update should succeed");
 
         let (_, alias_status) = registry
-            .get_check("alias:warn")
+            .get_check(&service.check_key("alias:warn"))
             .expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Warning);
     }
@@ -2829,7 +3095,7 @@ mod tests {
         };
         service.register_check(reg).await.unwrap();
         assert!(
-            registry.has_check("svc:http-1"),
+            registry.has_check(&service.check_key("svc:http-1")),
             "registry should contain accepted HTTP check"
         );
     }
@@ -2864,6 +3130,7 @@ mod tests {
             initial_status: CheckStatus::Critical,
             notes: String::new(),
             service_tags: vec![],
+            node: String::new(),
         };
         registry.register_check(config);
 
@@ -2917,6 +3184,7 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
+            node: String::new(),
         };
         registry.register_check(config);
 
@@ -3036,15 +3304,15 @@ mod tests {
 
         let ids = scheduled_ids.lock().unwrap();
         assert!(
-            ids.contains(&"tcp-active-1".to_string()),
+            ids.contains(&health_service.check_key("tcp-active-1")),
             "TCP check should be scheduled"
         );
         assert!(
-            ids.contains(&"http-active-1".to_string()),
+            ids.contains(&health_service.check_key("http-active-1")),
             "HTTP check should be scheduled"
         );
         assert!(
-            !ids.contains(&"ttl-passive-1".to_string()),
+            !ids.contains(&health_service.check_key("ttl-passive-1")),
             "TTL check should NOT be scheduled"
         );
     }

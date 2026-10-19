@@ -202,6 +202,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node1" \
             --batata.logs.path="${BASE_DIR}/logs/node1" \
             --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
+            --batata.plugin.consul.node_name=${CLUSTER_CONSUL_NODE_NAMES[0]} \
             --batata.plugin.apollo.port=${NODE1_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node1/stdout.log" 2>&1 &
@@ -215,6 +216,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node2" \
             --batata.logs.path="${BASE_DIR}/logs/node2" \
             --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
+            --batata.plugin.consul.node_name=${CLUSTER_CONSUL_NODE_NAMES[1]} \
             --batata.plugin.apollo.port=${NODE2_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node2/stdout.log" 2>&1 &
@@ -228,6 +230,7 @@ if [ "$SUBCMD" = "cluster" ]; then
             --batata.persistence.embedded.data_dir="${BASE_DIR}/data/node3" \
             --batata.logs.path="${BASE_DIR}/logs/node3" \
             --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \
+            --batata.plugin.consul.node_name=${CLUSTER_CONSUL_NODE_NAMES[2]} \
             --batata.plugin.apollo.port=${NODE3_APOLLO_PORT} \
             ${common_args} \
             > "${BASE_DIR}/logs/node3/stdout.log" 2>&1 &

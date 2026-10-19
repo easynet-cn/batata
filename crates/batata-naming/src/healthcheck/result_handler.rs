@@ -41,6 +41,15 @@ impl CoreResultHandler {
     }
 
     /// Trigger Distro sync to propagate health state change to cluster peers.
+    ///
+    /// Note the asymmetry: distro publishes only the instances **this node
+    /// owns** (see `NamingInstanceDistroHandler::get_data`), so a health change
+    /// observed on a *replica* is not relayed onward. That is intentional —
+    /// relaying replicas is what used to re-tag them with the relayer as
+    /// `_distro_source`, which broke deregistration propagation (instances
+    /// resurrected on every node). Replica health needs a dedicated channel,
+    /// the way Consul-side checks use Raft replication; do not "fix" this by
+    /// making `get_data` publish replicas again.
     fn trigger_distro_sync(&self, namespace: &str, group: &str, service: &str) {
         let distro = self
             .distro_protocol

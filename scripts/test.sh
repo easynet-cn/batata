@@ -447,6 +447,7 @@ cmd_sdk_matrix() {
         rm -rf "${ROOT}/data/sdk-node1" "${ROOT}/data/sdk-node2" "${ROOT}/data/sdk-node3" \
                "${ROOT}/logs/sdk-node1" "${ROOT}/logs/sdk-node2" "${ROOT}/logs/sdk-node3" \
                "${ROOT}/data/rock-n1" "${ROOT}/data/rock-n2" "${ROOT}/data/rock-n3" \
+               "${ROOT}/data/standalone-store" \
                "${ROOT}/data/batata_rocksdb" 2>/dev/null || true
         rm -f "${ROOT}/conf/cluster.conf" 2>/dev/null || true
         mkdir -p "${ROOT}/logs/sdk-node1" "${ROOT}/logs/sdk-node2" "${ROOT}/logs/sdk-node3"
@@ -483,10 +484,16 @@ cmd_sdk_matrix() {
 
     start_standalone() { # platform_flag..., db_args...
         local args=("$@")
+        # Pin the embedded store into the project tree. Without this the server
+        # defaults to `${HOME}/batata`, which `clean_dirs` never removes (so
+        # state leaks between combos) and which macOS marks with
+        # `com.apple.provenance` — RocksDB's `rename(IDENTITY)` then fails with
+        # EPERM and the node never becomes ready.
         "${BINARY}" -m standalone -d merged \
             --batata.server.main.port=8848 --batata.console.port=8081 \
             --batata.plugin.consul.enabled=true --batata.plugin.consul.port=8500 \
             --batata.plugin.apollo.enabled=true --batata.plugin.apollo.port=18080 \
+            --batata.persistence.embedded.data_dir="${ROOT}/data/standalone-store" \
             "${args[@]}" \
             > "${ROOT}/logs/sdk-node1/stdout.log" 2>&1 &
         SERVER_PIDS+=("$!")
@@ -511,8 +518,9 @@ cmd_sdk_matrix() {
                 --batata.server.main.port="${CLUSTER_NODE_PORTS[$i]}" \
                 --batata.console.port="${CLUSTER_CONSOLE_PORTS[$i]}" \
                 --batata.plugin.consul.port="${CLUSTER_CONSUL_PORTS[$i]}" \
+                --batata.plugin.consul.node_name="${CLUSTER_CONSUL_NODE_NAMES[$i]}" \
                 --batata.plugin.apollo.port="${CLUSTER_APOLLO_PORTS[$i]}" \
-                "${data_arg[@]}" \
+                ${data_arg[@]+"${data_arg[@]}"} \
                 > "${ROOT}/logs/sdk-node$((i+1))/stdout.log" 2>&1 &
             SERVER_PIDS+=("$!")
         done
@@ -598,7 +606,10 @@ cmd_sdk_matrix() {
     log "将执行 ${#COMBOS[@]} 个组合: ${COMBOS[*]}"
     RESULTS=()
     for combo in "${COMBOS[@]}"; do
-        if [[ " ${SKIP[*]} " == *" ${combo} "* ]]; then warn "跳过 ${combo}"; continue; fi
+        # `${SKIP[*]:-}` — the array is empty unless --skip was passed, and
+        # `set -u` rejects a bare `${SKIP[*]}` on bash 4.x, which aborted the
+        # whole matrix before the first combo ran.
+        if [[ " ${SKIP[*]:-} " == *" ${combo} "* ]]; then warn "跳过 ${combo}"; continue; fi
         rc=0
         case "$combo" in
             standalone-rock)     run_combo "$combo" embedded  standalone || rc=$? ;;

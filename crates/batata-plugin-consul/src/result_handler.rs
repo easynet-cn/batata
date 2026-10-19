@@ -30,6 +30,9 @@ struct ConsulServices {
     /// Raft writer for routing auto-deregister through the cluster.
     /// `None` in standalone mode; present in cluster mode.
     raft_writer: Option<Arc<ConsulRaftWriter>>,
+    /// This agent's node name, used to tell "our" checks apart from another
+    /// node's when a status update arrives through Raft replication.
+    node_name: String,
 }
 
 /// Consul-specific result handler.
@@ -74,12 +77,14 @@ impl ConsulResultHandler {
         session_service: Arc<ConsulSessionService>,
         kv_service: Arc<ConsulKVService>,
         raft_writer: Option<Arc<ConsulRaftWriter>>,
+        node_name: String,
     ) {
         let _ = self.services.set(ConsulServices {
             check_index,
             session_service,
             kv_service,
             raft_writer,
+            node_name,
         });
     }
 
@@ -251,7 +256,19 @@ impl HealthCheckResultHandler for ConsulResultHandler {
     }
 
     fn on_check_critical(&self, check_id: &str) {
-        self.invalidate_sessions_for_check(check_id);
+        // `check_id` is the registry key, i.e. node-qualified for checks that
+        // belong to a node. Sessions are bound to *this* node's checks
+        // (`NodeChecks: ["serfHealth"]`), so another node's identically-named
+        // check going critical must not invalidate them — that is exactly the
+        // cross-node contamination the qualifier was introduced to prevent.
+        let (node, bare_id) = batata_naming::healthcheck::registry::split_check_key(check_id);
+        if let Some(node) = node
+            && let Some(services) = self.services.get()
+            && node != services.node_name
+        {
+            return;
+        }
+        self.invalidate_sessions_for_check(bare_id);
     }
 
     fn on_deregister(
@@ -338,7 +355,13 @@ mod tests {
         let check_index = Arc::new(ConsulCheckIndex::new());
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
-        handler.set_services(check_index.clone(), session_service, kv_service, None);
+        handler.set_services(
+            check_index.clone(),
+            session_service,
+            kv_service,
+            None,
+            "c1".to_string(),
+        );
 
         // Register a service in NamingStore
         let data = serde_json::to_vec(&serde_json::json!({
@@ -406,7 +429,13 @@ mod tests {
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
         let check_index = Arc::new(ConsulCheckIndex::new());
-        handler.set_services(check_index, session_service.clone(), kv_service, None);
+        handler.set_services(
+            check_index,
+            session_service.clone(),
+            kv_service,
+            None,
+            "c1".to_string(),
+        );
 
         // Create a session linked to serfHealth (default)
         let _session = session_service
@@ -451,7 +480,13 @@ mod tests {
         let session_service = Arc::new(ConsulSessionService::new());
         let kv_service = Arc::new(ConsulKVService::new());
         let check_index = Arc::new(ConsulCheckIndex::new());
-        handler.set_services(check_index, session_service.clone(), kv_service, None);
+        handler.set_services(
+            check_index,
+            session_service.clone(),
+            kv_service,
+            None,
+            "c1".to_string(),
+        );
 
         let _session = session_service
             .create_session(crate::model::SessionCreateRequest {

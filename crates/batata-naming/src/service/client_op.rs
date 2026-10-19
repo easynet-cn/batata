@@ -46,6 +46,22 @@ pub trait ClientOperationService: Send + Sync {
 
 /// AP path: DashMap write + Distro broadcast. Distro sync is fire-and-forget
 /// so register latency stays low; the transport layer handles retries.
+///
+/// Registration is rejected when the **service** is persistent. Upstream Nacos
+/// throws `NacosRuntimeException("Current service %s is persistent service,
+/// can't register ephemeral instance.")` from
+/// `EphemeralClientOperationServiceImpl#registerInstance`, after resolving the
+/// service through `ServiceManager.getSingleton(service)` — see
+/// `NamingService::resolve_service_ephemeral` for why the flag is fixed by the
+/// first registration rather than by the caller.
+///
+/// On top of the upstream check there is a batata-specific guard on the
+/// *instance* flag: batata's Distro publisher ships instances individually and
+/// filters on `instance.ephemeral`, so admitting a `ephemeral=false` instance
+/// into an already-ephemeral service — which upstream accepts — would leave a
+/// locally-stored instance that no peer ever receives. Unreachable for
+/// conforming clients (REST and gRPC both route by the instance flag), so it
+/// only turns misuse into a visible error instead of silent divergence.
 pub struct EphemeralClientOperationService {
     naming: Arc<NamingService>,
     distro: Option<Arc<batata_core::service::distro::DistroProtocol>>,
@@ -83,9 +99,35 @@ impl ClientOperationService for EphemeralClientOperationService {
         namespace: &str,
         group_name: &str,
         service_name: &str,
-        mut instance: Instance,
+        instance: Instance,
     ) -> bool {
-        instance.ephemeral = true;
+        // Nacos: `ServiceManager.getSingleton(service)` then
+        // `if (!singleton.isEphemeral()) throw NacosRuntimeException(...)`.
+        // batata reports failure through `false`, which the gRPC handler turns
+        // into a FAILED InstanceResponse.
+        if !self.naming.resolve_service_ephemeral(
+            namespace,
+            group_name,
+            service_name,
+            instance.ephemeral,
+        ) {
+            warn!(
+                "EphemeralClientOperationService refusing instance {}:{} — service {} is \
+                 persistent, route it through PersistentClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
+        // batata-only hardening on top of the upstream check — see the
+        // struct-level note for why the instance flag is checked as well.
+        if !instance.ephemeral {
+            warn!(
+                "EphemeralClientOperationService refusing persistent instance \
+                 {}:{} (service {}) — route it through PersistentClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
         let ok = self
             .naming
             .register_instance(namespace, group_name, service_name, instance);
@@ -158,9 +200,35 @@ impl ClientOperationService for PersistentClientOperationService {
         namespace: &str,
         group_name: &str,
         service_name: &str,
-        mut instance: Instance,
+        instance: Instance,
     ) -> bool {
-        instance.ephemeral = false;
+        // Mirror of the AP-path gate:
+        // `PersistentClientOperationServiceImpl#registerInstance` resolves the
+        // singleton and throws "Current service %s is ephemeral service, can't
+        // register persistent instance." when it is ephemeral.
+        if self.naming.resolve_service_ephemeral(
+            namespace,
+            group_name,
+            service_name,
+            instance.ephemeral,
+        ) {
+            warn!(
+                "PersistentClientOperationService refusing instance {}:{} — service {} is \
+                 ephemeral, route it through EphemeralClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
+        // Same batata-only hardening as on the AP path: never let an ephemeral
+        // instance slip into the CP path.
+        if instance.ephemeral {
+            warn!(
+                "PersistentClientOperationService refusing ephemeral instance \
+                 {}:{} (service {}) — route it through EphemeralClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
         let Some(ref raft) = self.raft_node else {
             // Dev-mode fallback: direct DashMap write. No Raft → no durability.
             return self
@@ -228,6 +296,38 @@ impl ClientOperationService for PersistentClientOperationService {
     }
 }
 
+/// Effective ephemeral flag for an **update** request.
+///
+/// Nacos `InstanceOperatorClientImpl#updateInstance` only rewrites instance
+/// metadata — it never moves a service between the AP and CP paths. batata
+/// implements an update as a re-registration, so an `ephemeral` field the
+/// update form omits must inherit the stored instance's flag (falling back to
+/// the resolved service flag) rather than defaulting to `true`; otherwise
+/// updating a persistent instance would flip it onto the Distro path and drop
+/// its Raft durability.
+pub fn effective_update_ephemeral(
+    naming_service: &Arc<dyn NamingServiceProvider>,
+    namespace: &str,
+    group_name: &str,
+    service_name: &str,
+    ip: &str,
+    port: i32,
+    cluster_name: &str,
+    requested: Option<bool>,
+) -> bool {
+    if let Some(flag) = requested {
+        return flag;
+    }
+    let instance_key = crate::service::build_instance_key_parts(ip, port, cluster_name);
+    naming_service
+        .get_instances_snapshot(namespace, group_name, service_name, "", false)
+        .into_iter()
+        .find(|i| i.key() == instance_key)
+        .map(|i| i.ephemeral)
+        .or_else(|| naming_service.service_ephemeral(namespace, group_name, service_name))
+        .unwrap_or(true)
+}
+
 /// Helper for REST handlers that have a `NamingServiceProvider` (from
 /// `web::Data<Arc<dyn NamingServiceProvider>>`) and an optional
 /// `Arc<RaftNode>` from `AppState`. Dispatches by `instance.ephemeral`
@@ -244,6 +344,28 @@ pub async fn register_instance_dispatch(
     service_name: &str,
     instance: Instance,
 ) -> bool {
+    // Nacos `InstanceOperatorClientImpl#registerInstance` builds
+    // `Service.newService(namespaceId, groupName, serviceName, instance.isEphemeral())`
+    // and lets the proxy's chosen operation service enforce the
+    // service-level flag. Resolve it here for the same effect.
+    if instance.ephemeral
+        && !naming_service.resolve_service_ephemeral(namespace, group_name, service_name, true)
+    {
+        warn!(
+            "REST register refused: service {} is persistent, cannot register ephemeral instance",
+            service_name
+        );
+        return false;
+    }
+    if !instance.ephemeral
+        && naming_service.resolve_service_ephemeral(namespace, group_name, service_name, false)
+    {
+        warn!(
+            "REST register refused: service {} is ephemeral, cannot register persistent instance",
+            service_name
+        );
+        return false;
+    }
     if instance.ephemeral {
         return naming_service.register_instance(namespace, group_name, service_name, instance);
     }

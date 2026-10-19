@@ -561,7 +561,8 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
-        }
+            node: String::new(),
+            }
     }
 
     #[test]

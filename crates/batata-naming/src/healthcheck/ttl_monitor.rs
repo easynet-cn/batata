@@ -63,23 +63,24 @@ impl TtlMonitor {
             if let Some(ttl) = config.ttl
                 && TtlHealthCheckProcessor::check_expiration(&status, ttl)
             {
+                // `registry_key()` (not `check_id`): the registry is keyed by
+                // the node-qualified id, so passing the bare id would silently
+                // target nothing for checks that carry a node.
+                let check_key = config.registry_key();
                 warn!(
                     "TTL expired for check {}: last_updated={}ms ago, ttl={}ms",
-                    config.check_id,
+                    check_key,
                     current_timestamp_ms() - status.last_updated,
                     ttl.as_millis()
                 );
                 self.registry
                     .ttl_update(
-                        &config.check_id,
+                        &check_key,
                         CheckStatus::Critical,
                         Some("TTL expired".to_string()),
                     )
                     .await;
-                debug!(
-                    "Marked check {} as Critical due to TTL expiration",
-                    config.check_id
-                );
+                debug!("Marked check {} as Critical due to TTL expiration", check_key);
             }
         }
     }
@@ -131,7 +132,8 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
-        }
+            node: String::new(),
+            }
     }
 
     #[tokio::test]

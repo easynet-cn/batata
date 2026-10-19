@@ -496,6 +496,20 @@ async fn update_instance(
         .and_then(|m| serde_json::from_str(m).ok())
         .unwrap_or_default();
 
+    // Same rule as the OpenAPI update: an omitted `ephemeral` inherits the
+    // stored flag so an update cannot silently move a service between the AP
+    // and CP paths.
+    let ephemeral = crate::service::effective_update_ephemeral(
+        &naming_service,
+        namespace_id,
+        group_name,
+        &form.service_name,
+        &form.ip,
+        form.port,
+        cluster_name,
+        form.ephemeral,
+    );
+
     let instance = Instance {
         instance_id: batata_api::naming::model::generate_instance_id(
             &form.ip,
@@ -508,7 +522,7 @@ async fn update_instance(
         weight: form.weight.unwrap_or(1.0),
         healthy: form.healthy.unwrap_or(true),
         enabled: form.enabled.unwrap_or(true),
-        ephemeral: form.ephemeral.unwrap_or(true),
+        ephemeral,
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,

@@ -460,12 +460,33 @@ impl PayloadHandler for BatchInstanceRequestHandler {
                 })
                 .collect();
 
-            let ok = self.naming_service.batch_register_instances(
+            // Upstream `BatchInstanceRequestHandler` builds the service with
+            // `Service.newService(ns, group, name, true)` and
+            // `EphemeralClientOperationServiceImpl#batchRegisterInstance`
+            // rejects a persistent singleton. `PersistentClientOperationService
+            // Impl#batchRegisterInstance` is still an empty TODO upstream, so
+            // batch registration is ephemeral-only by construction.
+            let service_is_ephemeral = self.naming_service.resolve_service_ephemeral(
                 namespace,
                 group_name,
                 service_name,
-                instances,
+                true,
             );
+            let ok = if service_is_ephemeral {
+                self.naming_service.batch_register_instances(
+                    namespace,
+                    group_name,
+                    service_name,
+                    instances,
+                )
+            } else {
+                warn!(
+                    "BatchInstanceRequest refused: service {} is persistent, \
+                     batch registration is ephemeral-only",
+                    service_name
+                );
+                false
+            };
             if ok {
                 self.naming_service.add_publisher(
                     connection_id,
@@ -895,7 +916,27 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
         // Mark instance as persistent (non-ephemeral)
         instance.ephemeral = false;
 
-        let result = if let Some(ref raft) = self.raft_node {
+        // Upstream `PersistentInstanceRequestHandler` builds the service with
+        // `Service.newService(ns, group, name, false)`, and
+        // `PersistentClientOperationServiceImpl#registerInstance` then rejects
+        // the write when the singleton turns out to be ephemeral. Same gate
+        // here; deregister is deliberately not gated (neither is upstream's).
+        let service_is_persistent = req_type != REGISTER_INSTANCE
+            || !self.naming_service.resolve_service_ephemeral(
+                namespace,
+                group_name,
+                service_name,
+                false,
+            );
+
+        let result = if !service_is_persistent {
+            warn!(
+                "PersistentInstanceRequest refused: service {} is ephemeral, cannot register a \
+                 persistent instance",
+                service_name
+            );
+            false
+        } else if let Some(ref raft) = self.raft_node {
             // CP path: replicate via Raft. The apply-back hook installed on
             // the state machine updates NamingService DashMap on every node
             // (leader + followers) so reads see the change immediately.

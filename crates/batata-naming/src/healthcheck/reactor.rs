@@ -230,6 +230,15 @@ impl HealthCheckReactor {
                             // checks and nothing is sharded. Batata has no
                             // agent/server split, so without a gate the same
                             // backend would be probed N times per interval.
+                            //
+                            // The deviation only applies where *every* node
+                            // schedules every check — true for the Nacos
+                            // facade (distro replicates the instance to all
+                            // nodes). The Consul facade deliberately does not
+                            // install this chain: an agent check lives only on
+                            // the node that served the registration, so
+                            // gating here would leave it with no prober at
+                            // all. See `plugin.rs` in batata-plugin-consul.
                             let chain_lock = Arc::clone(&interceptor_chain_lock);
 
                             let handle = tokio::spawn(async move {
@@ -651,6 +660,7 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
+            node: String::new(),
         };
         registry.register_check(check_config);
         reactor.set_registry(registry.clone());
@@ -739,6 +749,7 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
+            node: String::new(),
         };
         registry.register_check(check_config);
 
@@ -827,6 +838,7 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
+            node: String::new(),
         };
         registry.register_check(check_config);
 

@@ -78,6 +78,11 @@ impl NamingService {
     pub fn delete_service_metadata(&self, namespace: &str, group_name: &str, service_name: &str) {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.remove(&service_key);
+        // Dropping the metadata is how a service is deleted (see
+        // `DELETE /nacos/v2/ns/service`); the singleton goes with it, so the
+        // service-level ephemeral flag must be released as well — otherwise a
+        // re-created service would stay locked to the old flag.
+        self.service_ephemeral.remove(&service_key);
         self.maybe_unindex_service_name(&service_key);
     }
 }

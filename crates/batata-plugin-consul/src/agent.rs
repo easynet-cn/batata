@@ -194,10 +194,16 @@ impl ConsulAgentService {
                 initial_status: CheckStatus::Passing,
                 notes: String::new(),
                 service_tags: vec![],
+                // Node-level check owned by *this* agent. Node-qualifying the
+                // key is what keeps one node's serfHealth from being clobbered
+                // by another's when the status replicates through Raft.
+                node: dc_config.node_name.clone(),
             });
+            // Must match the node-qualified registry key used at registration.
+            let serf_key = qualify_check_key(&dc_config.node_name, "serfHealth");
             self.registry
                 .update_check_result(
-                    "serfHealth",
+                    &serf_key,
                     true,
                     "Agent alive and reachable".to_string(),
                     0,
@@ -423,13 +429,16 @@ pub async fn register_service(
                 e
             );
         } else if let Some(ref raft) = agent.raft_node {
-            // Persist check config for restart recovery
-            if let Some(config) = agent.registry.get_check_config(&check_id)
+            // Persist check config for restart recovery. The persisted key is
+            // the node-qualified one so two nodes that register a check with
+            // the same id do not overwrite each other's config.
+            let persisted_key = health_service.check_key(&check_id);
+            if let Some(config) = agent.registry.get_check_config(&persisted_key)
                 && let Ok(config_json) = serde_json::to_string(&config)
             {
                 let _ = raft
                     .write(ConsulRaftRequest::HealthCheckRegister {
-                        check_id: check_id.clone(),
+                        check_id: persisted_key,
                         config_json,
                     })
                     .await;
@@ -1534,8 +1543,13 @@ fn reload_active_checks(health_service: &ConsulHealthService) -> usize {
 
     let mut count = 0usize;
     for (config, _status) in registry.get_all_checks() {
-        if config.check_type.is_active() {
-            scheduler(&config.check_id);
+        // Only this node's own checks may be probed here. The registry also
+        // holds configs replicated from other cluster members, and their
+        // status arrives through the Raft health channel — probing them
+        // again would duplicate traffic and let two nodes fight over the
+        // same status.
+        if config.check_type.is_active() && health_service.owns_check(&config.node) {
+            scheduler(&config.registry_key());
             count += 1;
         }
     }
@@ -2196,7 +2210,7 @@ mod tests {
         assert!(meta.contains_key("raft_version"));
 
         // Verify serfHealth check is registered
-        let check = registry.get_check("serfHealth");
+        let check = registry.get_check(&qualify_check_key(&dc_config.node_name, "serfHealth"));
         assert!(check.is_some(), "serfHealth check should be registered");
         let (config, status) = check.unwrap();
         assert_eq!(config.check_type, CheckType::None);

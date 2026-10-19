@@ -36,6 +36,29 @@ impl NamingServiceProvider for NamingService {
         self.deregister_instance(namespace, group_name, service_name, instance)
     }
 
+    fn service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Option<bool> {
+        self.service_ephemeral(namespace, group_name, service_name)
+    }
+
+    fn resolve_service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ephemeral: bool,
+    ) -> bool {
+        self.resolve_service_ephemeral(namespace, group_name, service_name, ephemeral)
+    }
+
+    fn forget_service_ephemeral(&self, namespace: &str, group_name: &str, service_name: &str) {
+        self.forget_service_ephemeral(namespace, group_name, service_name)
+    }
+
     fn get_instances(
         &self,
         namespace: &str,

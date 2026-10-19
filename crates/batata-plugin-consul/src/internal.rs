@@ -215,10 +215,16 @@ fn build_node_from_store(
         }
     }
 
+    // Only checks owned by this node belong on this node's UI entry. The
+    // registry also holds check configs replicated from the other cluster
+    // members, and stamping them with the local node name (as this used to
+    // do) both duplicated them and misattributed them.
     let all_checks = health_service.get_all_checks_sync();
     let mut checks = Vec::new();
     for mut check in all_checks {
-        check.node = dc_config.node_name.clone();
+        if check.node != dc_config.node_name {
+            continue;
+        }
         if check.definition.is_none() {
             check.definition = Some(crate::model::HealthCheckDefinition::default());
         }

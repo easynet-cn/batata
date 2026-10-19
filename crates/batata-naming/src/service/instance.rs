@@ -1,6 +1,7 @@
 //! Instance CRUD operations: register, deregister, query, heartbeat, health
 
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -11,6 +12,75 @@ use super::{
     NamingService, build_instance_key, build_instance_key_parts, build_service_key,
     parse_service_key,
 };
+
+/// Metadata key marking an instance as a replica received via distro sync.
+///
+/// Instances registered by a client connected to *this* node never carry it.
+/// The marker is what lets `NamingInstanceDistroHandler::get_data` publish only
+/// the instances this node owns — see the Nacos `isResponsibleClient` comment
+/// there for why that gate exists.
+pub(crate) const DISTRO_REMOTE_MARKER: &str = "_distro_remote";
+
+/// Metadata key recording which node published a replica.
+///
+/// Only ever set together with [`DISTRO_REMOTE_MARKER`]. It is the scope used
+/// to garbage-collect replicas: a sync from node X may only delete instances
+/// tagged as coming from node X.
+pub(crate) const DISTRO_SOURCE_MARKER: &str = "_distro_source";
+
+/// True when `instance` is a distro replica rather than a locally registered one.
+pub(crate) fn is_distro_replica(instance: &Instance) -> bool {
+    instance
+        .metadata
+        .get(DISTRO_REMOTE_MARKER)
+        .map(|v| v == "true")
+        .unwrap_or(false)
+}
+
+/// Partial update payload — the `PATCH` counterpart to a full `PUT` update.
+///
+/// `None` means "leave the stored value alone". This is the whole point of the
+/// distinction: a `PUT` rebuilds the instance from defaults and therefore
+/// drops any metadata key the caller did not repeat, while a `PATCH` keeps
+/// them.
+#[derive(Clone, Debug, Default)]
+pub struct InstancePatch {
+    /// The `weight` value.
+    pub weight: Option<f64>,
+    /// The `healthy` value.
+    pub healthy: Option<bool>,
+    /// The `enabled` value.
+    pub enabled: Option<bool>,
+    /// The `ephemeral` value.
+    pub ephemeral: Option<bool>,
+    /// Metadata entries to merge (add or overwrite) into the stored map.
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+/// Applies `patch` to `existing` in place.
+///
+/// Fields left as `None` keep their stored value; `metadata` entries are
+/// merged key-by-key, so previously stored keys survive unless the patch
+/// carries the same key. Mirrors `PATCH /nacos/v2/ns/instance`.
+pub fn apply_instance_patch(existing: &mut Instance, patch: InstancePatch) {
+    if let Some(weight) = patch.weight {
+        existing.weight = weight;
+    }
+    if let Some(healthy) = patch.healthy {
+        existing.healthy = healthy;
+    }
+    if let Some(enabled) = patch.enabled {
+        existing.enabled = enabled;
+    }
+    if let Some(ephemeral) = patch.ephemeral {
+        existing.ephemeral = ephemeral;
+    }
+    if let Some(metadata) = patch.metadata {
+        for (k, v) in metadata {
+            existing.metadata.insert(k, v);
+        }
+    }
+}
 
 impl NamingService {
     /// Lookup a single instance by its storage key (`ip#port#cluster`).
@@ -31,6 +101,54 @@ impl NamingService {
         instances.get(instance_key).map(|e| (**e.value()).clone())
     }
 
+    /// Service-level ephemeral flag, or `None` when the service has not been
+    /// created by a client write yet.
+    ///
+    /// Equivalent of Nacos `ServiceManager.getSingletonIfExist(...)`.
+    /// `.map(Service::isEphemeral)`.
+    pub fn service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Option<bool> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_ephemeral.get(&service_key).map(|v| *v)
+    }
+
+    /// Resolve — and on first sighting, fix — the service-level ephemeral flag.
+    ///
+    /// Equivalent of Nacos `ServiceManager.getSingleton(service)` followed by
+    /// `Service#isEphemeral()`. Because `Service.equals()` ignores `ephemeral`,
+    /// the first caller wins: `Service.newService(..., ephemeral)` seeds the
+    /// singleton and every later registration for the same
+    /// (namespace, group, name) gets that original flag back, never its own.
+    ///
+    /// Returns the flag the caller must obey.
+    pub fn resolve_service_ephemeral(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ephemeral: bool,
+    ) -> bool {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        *self
+            .service_ephemeral
+            .entry(service_key)
+            .or_insert(ephemeral)
+    }
+
+    /// Drop the resolved flag so the next registration can fix it again.
+    ///
+    /// Equivalent of Nacos `ServiceManager.removeSingleton(service)`, which
+    /// `ServiceOperatorV2Impl#delete` and `EmptyServiceAutoCleanerV2` call when
+    /// a service goes away.
+    pub fn forget_service_ephemeral(&self, namespace: &str, group_name: &str, service_name: &str) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_ephemeral.remove(&service_key);
+    }
+
     /// Register a service instance
     pub fn register_instance(
         &self,
@@ -47,6 +165,7 @@ impl NamingService {
             instance.cluster_name = "DEFAULT".to_string();
         }
         instance.service_name = service_name.to_string();
+        let instance_ephemeral = instance.ephemeral;
 
         let instance_key = build_instance_key(&instance);
 
@@ -54,10 +173,20 @@ impl NamingService {
         let instances = self.services.entry(service_key.clone()).or_default();
         instances.insert(instance_key, Arc::new(instance));
 
-        // Auto-create ServiceMetadata if it doesn't exist yet
-        self.service_metadata
-            .entry(service_key.clone())
-            .or_default();
+        // Auto-create ServiceMetadata if it doesn't exist yet. The
+        // service-level ephemeral flag is captured once, at creation, so the
+        // published metadata reports how the service was actually first
+        // registered instead of always exposing the `bool` default (`false`,
+        // which would read as "persistent" for an ephemeral service).
+        if !self.service_metadata.contains_key(&service_key) {
+            let mut metadata = super::ServiceMetadata::default();
+            metadata.ephemeral = self
+                .service_ephemeral
+                .get(&service_key)
+                .map(|flag| *flag)
+                .unwrap_or(instance_ephemeral);
+            self.service_metadata.insert(service_key.clone(), metadata);
+        }
 
         // Update service name index and revision
         self.index_service_name(&service_key);
@@ -553,6 +682,10 @@ impl NamingService {
             self.services.remove(&key);
             self.service_empty_since.remove(&key);
             self.service_metadata.remove(&key);
+            // The singleton is gone, so the ephemeral flag it carried is gone
+            // too — the next registration fixes the flag again (Nacos
+            // `EmptyServiceAutoCleanerV2` → `ServiceManager.removeSingleton`).
+            self.service_ephemeral.remove(&key);
             self.maybe_unindex_service_name(&key);
             removed += 1;
         }
@@ -604,13 +737,13 @@ impl NamingService {
             // Mark as remotely synced and record the origin source node.
             instance
                 .metadata
-                .insert("_distro_remote".to_string(), "true".to_string());
+                .insert(DISTRO_REMOTE_MARKER.to_string(), "true".to_string());
             if source.is_empty() {
-                instance.metadata.remove("_distro_source");
+                instance.metadata.remove(DISTRO_SOURCE_MARKER);
             } else {
                 instance
                     .metadata
-                    .insert("_distro_source".to_string(), source.to_string());
+                    .insert(DISTRO_SOURCE_MARKER.to_string(), source.to_string());
             }
             let instance_key = build_instance_key(&instance);
             incoming_keys.insert(instance_key.clone());
@@ -618,15 +751,15 @@ impl NamingService {
             // instance (without _distro_remote marker). This prevents distro sync
             // from overwriting local gRPC-registered instances with remote-marked
             // copies, which would cause cleanup_non_responsible_keys to delete them.
+            //
+            // A replica from a *previous* owner (src metadata pointing at another
+            // node) IS overwritten, so `_distro_source` follows the current owner.
+            // That is what lets ownership transfer when a client reconnects to a
+            // different node: the new owner's syncs re-tag the replica, and only
+            // then can the new owner's empty sync garbage-collect it.
             let should_insert = entry
                 .get(&instance_key)
-                .map(|existing| {
-                    existing
-                        .metadata
-                        .get("_distro_remote")
-                        .map(|v| v == "true")
-                        .unwrap_or(false)
-                })
+                .map(|existing| is_distro_replica(existing.value()))
                 .unwrap_or(true); // No existing entry → insert
             if should_insert {
                 entry.insert(instance_key, Arc::new(instance));
@@ -641,19 +774,14 @@ impl NamingService {
         let keys_to_remove: Vec<String> = entry
             .iter()
             .filter(|e| {
-                let is_remote = e.value().ephemeral
-                    && e.value()
-                        .metadata
-                        .get("_distro_remote")
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
+                let is_remote = e.value().ephemeral && is_distro_replica(e.value());
                 if !is_remote {
                     return false;
                 }
                 let same_source = source.is_empty()
                     || e.value()
                         .metadata
-                        .get("_distro_source")
+                        .get(DISTRO_SOURCE_MARKER)
                         .map(|v| v == source)
                         .unwrap_or(false);
                 same_source && !incoming_keys.contains(e.key())

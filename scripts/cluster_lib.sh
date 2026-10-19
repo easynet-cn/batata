@@ -20,6 +20,15 @@ CLUSTER_CONSOLE_PORTS=(8081 8082 8083)
 CLUSTER_CONSUL_PORTS=(8500 8510 8520)
 CLUSTER_APOLLO_PORTS=(18080 18090 18100)
 
+# Consul node name per cluster node (`consul.node_name`, Consul's `-node` flag).
+#
+# Must be distinct: a Consul check is identified by (node, check_id), and every
+# agent registers a check called `serfHealth`. With three nodes sharing one name
+# the check entries collide, so a status change on any node overwrites the
+# others and `?passing` health queries go empty cluster-wide. Real deployments
+# get the name from `-node` / the hostname, which is unique per host.
+CLUSTER_CONSUL_NODE_NAMES=(c1 c2 c3)
+
 # Comma-separated member list used for --batata.member.list.
 CLUSTER_MEMBER_LIST="127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
 

@@ -30,12 +30,35 @@ sdk_run_consul() {
     local filter="${1:-}"
     local run_flag=""
     [ -n "$filter" ] && run_flag="-run $filter"
+    # Only advertise the cluster peers that are actually listening.
+    #
+    # `cluster_test.go` skips itself unless CONSUL_CLUSTER_NODE1/2/3 are all
+    # set, so passing them unconditionally makes a single-node deployment
+    # *run* the cross-node tests instead of skipping them, which shows up as 6
+    # failures that are really just "there is no node2/node3". Probing first
+    # keeps standalone runs clean (skipped, not failed) without touching the
+    # cluster runs. Same probe `sdk_run_nacos` already does for 8858/8868.
+    local peers_up=0
+    local code
+    for peer in 8510 8520; do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+            "http://127.0.0.1:${peer}/v1/status/leader" 2>/dev/null || echo 000)
+        [ "${code}" = "200" ] && peers_up=$((peers_up + 1))
+    done
+
+    # `export` (not a bare `VAR=...` prefix): `${VAR:+VAR="$VAR"}` expands with
+    # the quotes as literal characters, so bash treated it as a command name
+    # and every run exited 127 without ever invoking `go test`.
     ( cd "${SDK_PROJECT_ROOT}/sdk-tests/consul-go-tests" && \
-        CONSUL_HTTP_ADDR=127.0.0.1:8500 \
-        CONSUL_CLUSTER_NODE1=127.0.0.1:8500 \
-        CONSUL_CLUSTER_NODE2=127.0.0.1:8510 \
-        CONSUL_CLUSTER_NODE3=127.0.0.1:8520 \
-        ${CONSUL_HTTP_TOKEN:+CONSUL_HTTP_TOKEN="$CONSUL_HTTP_TOKEN"} \
+        export CONSUL_HTTP_ADDR=127.0.0.1:8500 && \
+        if [ "${peers_up}" -eq 2 ]; then
+            export CONSUL_CLUSTER_NODE1=127.0.0.1:8500 \
+                   CONSUL_CLUSTER_NODE2=127.0.0.1:8510 \
+                   CONSUL_CLUSTER_NODE3=127.0.0.1:8520
+        else
+            unset CONSUL_CLUSTER_NODE1 CONSUL_CLUSTER_NODE2 CONSUL_CLUSTER_NODE3
+        fi && \
+        { [ -z "${CONSUL_HTTP_TOKEN:-}" ] || export CONSUL_HTTP_TOKEN; } && \
         go test ./... -v -count=1 -timeout 600s $run_flag )
 }
 

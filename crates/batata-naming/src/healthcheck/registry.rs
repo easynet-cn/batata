@@ -193,6 +193,58 @@ pub struct InstanceCheckConfig {
     /// Service tags (carried from service registration for health check responses)
     #[cfg_attr(test, allow(dead_code))]
     pub service_tags: Vec<String>,
+    /// Owning node of the check, in the Consul sense (a check is identified
+    /// by `(node, check_id)`, see `structs.go` `CheckID` / `HealthCheck`).
+    ///
+    /// Empty for facades that have no node concept (the Nacos side), in which
+    /// case [`Self::registry_key`] degrades to the bare `check_id` and nothing
+    /// changes for them.
+    ///
+    /// Why it lives in the config rather than beside it: the registry key is
+    /// derived from the config, so the identity has to travel with the config
+    /// — including through snapshots and through the Raft status-replication
+    /// payload, which carries the key and is applied on every node. Two nodes
+    /// that register an identically-named check (the canonical case is
+    /// `serfHealth`, which every Consul agent registers) otherwise collapse
+    /// into one entry and a status change on either node overwrites the other.
+    #[serde(default)]
+    pub node: String,
+}
+
+impl InstanceCheckConfig {
+    /// Registry key for this check.
+    ///
+    /// `node#check_id` when the check belongs to a node, bare `check_id`
+    /// otherwise. This is the identity used everywhere — including the Raft
+    /// health-status replication payload — so a node-scoped status update can
+    /// never land on another node's entry.
+    pub fn registry_key(&self) -> String {
+        qualify_check_key(&self.node, &self.check_id)
+    }
+}
+
+/// Build the registry key for a check owned by `node`.
+///
+/// `node` may be empty (facades without nodes), in which case the bare
+/// `check_id` is returned unchanged.
+pub fn qualify_check_key(node: &str, check_id: &str) -> String {
+    if node.is_empty() {
+        check_id.to_string()
+    } else {
+        format!("{node}#{check_id}")
+    }
+}
+
+/// Split a qualified check key back into `(node, check_id)`.
+///
+/// Returns `(None, key)` for keys that carry no node qualifier. Note that the
+/// split is by the *first* `#`, because check ids themselves may contain `#`
+/// (Consul service check ids look like `service:<id>`).
+pub fn split_check_key(key: &str) -> (Option<&str>, &str) {
+    match key.find('#') {
+        Some(idx) if idx > 0 => (Some(&key[..idx]), &key[idx + 1..]),
+        _ => (None, key),
+    }
 }
 
 /// Check runtime status (updated frequently)
@@ -335,8 +387,12 @@ impl InstanceCheckRegistry {
     }
 
     /// Register a new health check. Returns the check key.
+    ///
+    /// The key is [`InstanceCheckConfig::registry_key`] — node-qualified for
+    /// facades that own a node concept, so two nodes registering the same
+    /// check id (e.g. Consul's `serfHealth`) get independent entries.
     pub fn register_check(&self, config: InstanceCheckConfig) -> String {
-        let check_key = config.check_id.clone();
+        let check_key = config.registry_key();
         let instance_key = build_instance_key(
             &config.namespace,
             &config.group_name,
@@ -368,6 +424,47 @@ impl InstanceCheckRegistry {
         self.configs.insert(check_key.clone(), config);
 
         info!("Registered health check: {}", check_key);
+        check_key
+    }
+
+    /// Upsert a check configuration without resetting its runtime status.
+    ///
+    /// Used where the same config can already be present — the Raft apply
+    /// path (leader replays its own entry) and restart recovery. Unlike
+    /// `register_check` this never overwrites a committed status with
+    /// `initial_status`, never duplicates the key in `instance_checks`, and
+    /// never schedules a probe: only the node that owns a check executes it,
+    /// so a replica must not start probing the same target on its own.
+    pub fn restore_check(&self, config: InstanceCheckConfig) -> String {
+        let check_key = config.registry_key();
+        let instance_key = build_instance_key(
+            &config.namespace,
+            &config.group_name,
+            &config.service_name,
+            &config.ip,
+            config.port,
+            &config.cluster_name,
+        );
+        let service_key =
+            build_check_service_key(&config.namespace, &config.group_name, &config.service_name);
+
+        self.statuses
+            .entry(check_key.clone())
+            .or_insert_with(|| InstanceCheckStatus::new(config.initial_status.clone()));
+
+        {
+            let mut keys = self.instance_checks.entry(instance_key.clone()).or_default();
+            if !keys.contains(&check_key) {
+                keys.push(check_key.clone());
+            }
+        }
+
+        self.service_instances
+            .entry(service_key)
+            .or_default()
+            .insert(instance_key);
+
+        self.configs.insert(check_key.clone(), config);
         check_key
     }
 
@@ -1095,6 +1192,106 @@ mod tests {
         assert_eq!(status.status, CheckStatus::Critical);
     }
 
+    #[test]
+    fn qualify_and_split_check_key_roundtrip() {
+        assert_eq!(qualify_check_key("", "serfHealth"), "serfHealth");
+        assert_eq!(qualify_check_key("c1", "serfHealth"), "c1#serfHealth");
+
+        assert_eq!(split_check_key("serfHealth"), (None, "serfHealth"));
+        assert_eq!(
+            split_check_key("c1#serfHealth"),
+            (Some("c1"), "serfHealth"),
+            "split must be by the FIRST '#': check ids may contain one too"
+        );
+        assert_eq!(split_check_key("c1#service:a#b"), (Some("c1"), "service:a#b"));
+    }
+
+    #[tokio::test]
+    async fn same_check_id_on_different_nodes_stays_independent() {
+        // Every Consul agent registers a check called `serfHealth`. Without the
+        // node qualifier these collapse into one entry and a status update from
+        // either node overwrites the other (see #83).
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+
+        let mut c1 = make_config("serfHealth", CheckType::None, CheckStatus::Passing);
+        c1.node = "c1".to_string();
+        let mut c2 = make_config("serfHealth", CheckType::None, CheckStatus::Passing);
+        c2.node = "c2".to_string();
+
+        assert_eq!(registry.register_check(c1), "c1#serfHealth");
+        assert_eq!(registry.register_check(c2), "c2#serfHealth");
+        assert_eq!(registry.check_count(), 2, "both nodes keep their own entry");
+
+        // `check_id` stays the user-facing identity.
+        let (cfg, _) = registry.get_check("c1#serfHealth").unwrap();
+        assert_eq!(cfg.check_id, "serfHealth");
+
+        registry.apply_ttl_local(
+            "c2#serfHealth",
+            CheckStatus::Critical,
+            Some("node c2 down".to_string()),
+        );
+
+        assert_eq!(
+            registry.get_check_status("c1#serfHealth").unwrap().status,
+            CheckStatus::Passing,
+            "node c1's serfHealth must not be affected by node c2"
+        );
+        assert_eq!(
+            registry.get_check_status("c2#serfHealth").unwrap().status,
+            CheckStatus::Critical
+        );
+    }
+
+    #[test]
+    fn checks_without_a_node_keep_the_bare_check_id_as_key() {
+        // Facades with no node concept (Nacos) must be unaffected.
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+        let config = make_config("nacos-check", CheckType::Tcp, CheckStatus::Passing);
+        assert_eq!(config.registry_key(), "nacos-check");
+        assert_eq!(registry.register_check(config), "nacos-check");
+        assert!(registry.has_check("nacos-check"));
+    }
+
+    #[tokio::test]
+    async fn restore_check_keeps_a_committed_status() {
+        // Raft replays every node's own entry back through the apply hook, so
+        // the upsert path must not reset a status that was already committed
+        // — otherwise a probe result would be silently reverted to the
+        // config's `initial_status` the moment registration is replayed.
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+        let mut cfg = make_config("svc:http-1", CheckType::Http, CheckStatus::Passing);
+        cfg.node = "c1".to_string();
+        registry.register_check(cfg.clone());
+        registry.apply_ttl_local("c1#svc:http-1", CheckStatus::Critical, None);
+
+        // The config still advertises Passing as its initial status.
+        registry.restore_check(cfg);
+
+        assert_eq!(
+            registry.get_check_status("c1#svc:http-1").unwrap().status,
+            CheckStatus::Critical,
+            "a replayed registration must not revive a critical check"
+        );
+    }
+
+    #[test]
+    fn restore_check_is_idempotent_in_the_instance_index() {
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+        let mut cfg = make_config("svc:http-1", CheckType::Http, CheckStatus::Passing);
+        cfg.node = "c1".to_string();
+        registry.restore_check(cfg.clone());
+        registry.restore_check(cfg);
+
+        let instance_key = "public#DEFAULT_GROUP#test-service#127.0.0.1#8080#DEFAULT";
+        assert_eq!(
+            registry.get_instance_checks(instance_key).len(),
+            1,
+            "replaying a registration must not duplicate the index entry"
+        );
+        assert_eq!(registry.check_count(), 1);
+    }
+
     fn make_config(
         check_id: &str,
         check_type: CheckType,
@@ -1126,7 +1323,8 @@ mod tests {
             initial_status,
             notes: String::new(),
             service_tags: vec![],
-        }
+            node: String::new(),
+            }
     }
 
     #[test]
@@ -1366,7 +1564,8 @@ mod tests {
             initial_status: CheckStatus::Passing,
             notes: String::new(),
             service_tags: vec![],
-        }
+            node: String::new(),
+            }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
