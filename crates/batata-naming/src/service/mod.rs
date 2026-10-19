@@ -43,7 +43,9 @@ use dashmap::DashMap;
 use crate::model::Instance;
 
 // Re-export model types from batata-api
-pub use batata_api::naming::{ClusterConfig, ClusterStatistics, ProtectionInfo, ServiceMetadata};
+pub use batata_api::naming::{
+    ClusterConfig, ClusterStatistics, DeleteServiceError, ProtectionInfo, ServiceMetadata,
+};
 
 // Re-export centralized key builders from batata-common
 pub use batata_common::{build_service_key, parse_service_key};

@@ -8,4 +8,4 @@ pub mod model;
 pub mod traits;
 
 pub use model::*;
-pub use traits::NamingServiceProvider;
+pub use traits::{DeleteServiceError, NamingServiceProvider};

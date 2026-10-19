@@ -16,6 +16,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
+use crate::service::DeleteServiceError;
 use crate::service::ServiceMetadata;
 use batata_api::naming::NamingServiceProvider;
 
@@ -643,37 +644,25 @@ async fn delete_service(
             .build()
     );
 
-    if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<bool>::http_response(
-            404,
-            error::RESOURCE_NOT_FOUND.code,
-            format!("service {} not found", params.service_name),
-            false,
-        );
-    }
-
-    // Zero-copy snapshot — empty-check only.
-    let instances = naming_service.get_instances_snapshot(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
-    if !instances.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            format!(
-                "service {} has {} instances, cannot delete",
-                params.service_name,
-                instances.len()
+    // Same gate as the v2 open API — see `ServiceOperatorV2Impl.delete`.
+    if let Err(err) = naming_service.delete_service(namespace_id, group_name, &params.service_name) {
+        let (status, code, message) = match err {
+            DeleteServiceError::NotFound => (
+                404,
+                error::RESOURCE_NOT_FOUND.code,
+                format!("service {} not found", params.service_name),
             ),
-            false,
-        );
+            DeleteServiceError::NotEmpty { count } => (
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                format!(
+                    "service {} has {} instances, cannot delete",
+                    params.service_name, count
+                ),
+            ),
+        };
+        return Result::<bool>::http_response(status, code, message, false);
     }
-
-    naming_service.delete_service_metadata(namespace_id, group_name, &params.service_name);
 
     Result::<bool>::http_success(true)
 }

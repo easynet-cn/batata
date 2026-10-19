@@ -11,6 +11,34 @@ use super::model::{
     ClusterConfig, ClusterStatistics, Instance, ProtectionInfo, Service, ServiceMetadata,
 };
 
+/// Why a service could not be deleted.
+///
+/// Mirrors the two `NacosApiException` branches of
+/// `ServiceOperatorV2Impl.delete`: an unknown service and a service that still
+/// holds instances. The HTTP layer maps them onto 404 / 400 respectively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteServiceError {
+    /// No such service — upstream `ErrorCode.SERVICE_NOT_EXIST` (HTTP 404).
+    NotFound,
+    /// The service still has instances — upstream
+    /// `ErrorCode.SERVICE_DELETE_FAILURE` (HTTP 400).
+    NotEmpty {
+        /// Number of instances still registered under the service.
+        count: usize,
+    },
+}
+
+impl std::fmt::Display for DeleteServiceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "service not found"),
+            Self::NotEmpty { count } => write!(f, "service has {count} instances, cannot delete"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteServiceError {}
+
 /// Naming service provider trait for service discovery operations
 ///
 /// This trait abstracts the naming service interface, enabling consumers
@@ -131,6 +159,19 @@ pub trait NamingServiceProvider: Send + Sync {
 
     /// The `service_exists` method.
     fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool;
+
+    /// Delete an **empty** service.
+    ///
+    /// `Err(NotFound)` when the service does not exist, `Err(NotEmpty)` when it
+    /// still holds instances — the two branches of
+    /// `ServiceOperatorV2Impl.delete`. Implementors that have no such gate may
+    /// return `Err(NotFound)` for unknown services and otherwise delete.
+    fn delete_service(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<(), DeleteServiceError>;
 
     /// Returns the all service keys.
     fn get_all_service_keys(&self) -> Vec<String>;

@@ -20,6 +20,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
+use crate::service::DeleteServiceError;
 use crate::service::ServiceMetadata;
 use batata_api::naming::NamingServiceProvider;
 
@@ -181,40 +182,26 @@ pub async fn delete_service(
             .build()
     );
 
-    // Check if service exists
-    if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<String>::http_response(
-            404,
-            error::SERVICE_NOT_EXIST.code,
-            format!("service {} not found", params.service_name),
-            String::new(),
-        );
-    }
-
-    // Check if service has Batata-registered instances (zero-copy snapshot).
-    let instances = naming_service.get_instances_snapshot(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
-
-    if !instances.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            format!(
-                "service {} has {} instances, cannot delete",
-                params.service_name,
-                instances.len()
+    // `delete_service` enforces both upstream preconditions (must exist, must
+    // be empty) in one place — see `ServiceOperatorV2Impl.delete`.
+    if let Err(err) = naming_service.delete_service(namespace_id, group_name, &params.service_name) {
+        let (status, code, message) = match err {
+            DeleteServiceError::NotFound => (
+                404,
+                error::SERVICE_NOT_EXIST.code,
+                format!("service {} not found", params.service_name),
             ),
-            String::new(),
-        );
+            DeleteServiceError::NotEmpty { count } => (
+                400,
+                error::PARAMETER_MISSING.code,
+                format!(
+                    "service {} has {} instances, cannot delete",
+                    params.service_name, count
+                ),
+            ),
+        };
+        return Result::<String>::http_response(status, code, message, String::new());
     }
-
-    // Delete service metadata
-    naming_service.delete_service_metadata(namespace_id, group_name, &params.service_name);
 
     info!(
         namespace_id = %namespace_id,

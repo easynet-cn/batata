@@ -9,8 +9,8 @@ use std::{
 use crate::model::{Instance, Service};
 
 use super::{
-    NamingService, build_instance_key, build_instance_key_parts, build_service_key,
-    parse_service_key,
+    DeleteServiceError, NamingService, build_instance_key, build_instance_key_parts,
+    build_service_key, parse_service_key,
 };
 
 /// Metadata key marking an instance as a replica received via distro sync.
@@ -521,11 +521,18 @@ impl NamingService {
         all_names.sort(); // deterministic ordering for pagination
 
         let total = all_names.len() as i32;
-        let start = ((page_no - 1) * page_size) as usize;
+
+        // Mirrors `ServiceUtil.pageServiceName`: a negative offset is clamped
+        // to 0, so `pageNo <= 0` yields the first page instead of wrapping a
+        // negative `i32` through `as usize` into an enormous `skip`. Saturating
+        // arithmetic keeps `pageSize = i32::MAX` (used by the admin list to
+        // fetch everything in one page) from overflowing.
+        let offset = (page_no.saturating_sub(1)).max(0) as i64 * page_size.max(0) as i64;
+        let start = (offset as usize).min(all_names.len());
         let paginated = all_names
             .into_iter()
             .skip(start)
-            .take(page_size as usize)
+            .take(page_size.max(0) as usize)
             .collect();
 
         (total, paginated)
@@ -940,5 +947,43 @@ impl NamingService {
     pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.contains_key(&service_key) || self.services.contains_key(&service_key)
+    }
+
+    /// Delete an **empty** service.
+    ///
+    /// Both `DELETE /nacos/v2/ns/service` and `DELETE /v3/admin/ns/service`
+    /// route through here so the "must exist and must be empty" gate cannot
+    /// drift between the two handlers. Upstream applies exactly the same two
+    /// checks in `ServiceOperatorV2Impl.delete`, and unlike upstream it counts
+    /// instances across *all* clusters (matching `getPushData().getHosts()`).
+    pub fn delete_service(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<(), DeleteServiceError> {
+        if !self.service_exists(namespace, group_name, service_name) {
+            return Err(DeleteServiceError::NotFound);
+        }
+        let count = self.get_instance_count(namespace, group_name, service_name);
+        if count > 0 {
+            return Err(DeleteServiceError::NotEmpty { count });
+        }
+        self.delete_service_metadata(namespace, group_name, service_name);
+
+        // Upstream's apply side (`ServiceMetadataProcessor.deleteServiceMetadata`)
+        // also does `removeSingleton` + `serviceStorage.removeData`, so the
+        // service stops existing entirely rather than lingering as an empty
+        // shell. Dropping the shell is what makes a repeat delete report
+        // `NotFound` instead of silently succeeding.
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let removed = self
+            .services
+            .remove_if(&service_key, |_, instances| instances.is_empty());
+        if removed.is_some() {
+            self.service_empty_since.remove(&service_key);
+            self.maybe_unindex_service_name(&service_key);
+        }
+        Ok(())
     }
 }

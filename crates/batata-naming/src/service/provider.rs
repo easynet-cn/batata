@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use batata_api::naming::{
-    ClusterConfig, ClusterStatistics, Instance, NamingServiceProvider, ProtectionInfo, Service,
-    ServiceMetadata,
+    ClusterConfig, ClusterStatistics, DeleteServiceError, Instance, NamingServiceProvider,
+    ProtectionInfo, Service, ServiceMetadata,
 };
 
 use super::NamingService;
@@ -121,6 +121,15 @@ impl NamingServiceProvider for NamingService {
 
     fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
         self.service_exists(namespace, group_name, service_name)
+    }
+
+    fn delete_service(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<(), DeleteServiceError> {
+        NamingService::delete_service(self, namespace, group_name, service_name)
     }
 
     fn get_all_service_keys(&self) -> Vec<String> {
