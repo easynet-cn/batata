@@ -42,8 +42,10 @@ pub struct HeartbeatEntry {
 pub struct UnhealthyInstanceChecker {
     naming_service: Arc<NamingService>,
     config: Arc<HealthCheckConfig>,
-    /// The `heartbeat_map` value.
-    pub(crate) heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
+    /// Shared with [`ExpiredInstanceChecker`], which reuses this map instead of
+    /// tracking beats a second time. Public so the pair can be wired (and
+    /// exercised) without going through `HealthCheckManager`.
+    pub heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
     running: Arc<std::sync::atomic::AtomicBool>,
     interceptor_chain: std::sync::RwLock<Arc<HealthCheckInterceptorChain>>,
 }

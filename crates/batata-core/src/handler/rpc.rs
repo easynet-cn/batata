@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
 
 use crate::{
-    GrpcAuthContext, GrpcAuthService, GrpcResource, PermissionAction,
+    GrpcAuthContext, GrpcAuthService, GrpcResource, PermissionAction, ServerIdentityStatus,
     model::{Connection, GrpcClient},
     service::remote::ConnectionManager,
 };
@@ -227,13 +227,32 @@ pub fn check_server_identity(
         return Ok(());
     }
 
-    if auth_service.check_server_identity(payload_headers(payload)) {
-        Ok(())
-    } else {
-        Err(Status::permission_denied(
+    // INNER_API is the only api type eligible for the server-identity shortcut;
+    // a mismatch (or a misconfigured identity) is rejected outright.
+    match server_identity_status_for(auth_service, payload, AuthRequirement::Internal) {
+        ServerIdentityStatus::Matched => Ok(()),
+        ServerIdentityStatus::NotMatched => Err(Status::permission_denied(
             "request not from authorized cluster node",
-        ))
+        )),
+        ServerIdentityStatus::Fail(message) => Err(Status::permission_denied(message)),
     }
+}
+
+/// Whether the shared server-identity header may satisfy `requirement`.
+///
+/// Nacos `RemoteRequestAuthFilter` + `GrpcProtocolAuthService#checkServerIdentity`:
+/// the identity is only ever evaluated — and can only ever return `MATCHED` — for
+/// INNER_API handlers. Every other api type gets `noMatched()` and must go through
+/// the regular token/permission flow.
+pub fn server_identity_status_for(
+    auth_service: &GrpcAuthService,
+    payload: &Payload,
+    requirement: AuthRequirement,
+) -> ServerIdentityStatus {
+    auth_service.server_identity_status(
+        payload_headers(payload),
+        matches!(requirement, AuthRequirement::Internal),
+    )
 }
 
 /// Build an auth error response as a gRPC Payload (not a Status error).
@@ -598,13 +617,17 @@ impl batata_api::grpc::request_server::Request for GrpcRequestService {
                     }
                 }
                 AuthRequirement::Read | AuthRequirement::Write => {
-                    // Non-INNER_API: full auth flow
+                    // Non-INNER_API: always the full auth flow.
+                    //
+                    // Nacos parity: `GrpcProtocolAuthService#checkServerIdentity`
+                    // returns `noMatched()` for every non-INNER_API handler, so the
+                    // shared server-identity header must NOT short-circuit the token
+                    // and permission checks here — otherwise anyone holding that
+                    // secret (it is injected into every cluster request by
+                    // `ClusterRpcClientProxy`) could bypass naming/config RBAC.
                     let auth_service = self.handler_registry.auth_service();
 
-                    // Check server identity first (MATCHED case skips remaining auth)
-                    if auth_service.check_server_identity(payload_headers(payload)) {
-                        // Server identity matched - skip remaining auth checks
-                    } else {
+                    {
                         // Check if auth should be enabled for this sign type
                         let sign_type = handler.sign_type();
                         if !enable_auth(auth_service, sign_type) {
@@ -884,14 +907,12 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     check_server_identity(handler_registry.auth_service(), &payload)
                                 }
                                 AuthRequirement::Read | AuthRequirement::Write => {
+                                    // Non-INNER_API: always the full auth flow — see the
+                                    // unary branch for why the shared server-identity
+                                    // header must not short-circuit it.
                                     let auth_service = handler_registry.auth_service();
 
-                                    // Check server identity first
-                                    if auth_service.check_server_identity(payload_headers(&payload))
                                     {
-                                        // Server identity matched - skip remaining auth checks
-                                        Ok(())
-                                    } else {
                                         // Check if auth should be enabled for this sign type
                                         let sign_type = handler.sign_type();
                                         if !enable_auth(auth_service, sign_type) {
@@ -1164,5 +1185,99 @@ mod status_gate_tests {
             &AuthRequirement::None,
             "ConfigQueryRequest"
         ));
+    }
+}
+
+#[cfg(test)]
+mod server_identity_channel_tests {
+    use super::*;
+    use batata_api::grpc::{Metadata, Payload};
+
+    const KEY: &str = "serverIdentity";
+    const VALUE: &str = "cluster-node-1";
+
+    fn payload_with(pairs: &[(&str, &str)]) -> Payload {
+        let headers = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        Payload {
+            metadata: Some(Metadata {
+                r#type: "InstanceRequest".to_string(),
+                client_ip: String::new(),
+                headers,
+            }),
+            body: None,
+        }
+    }
+
+    fn auth_service(key: &str, value: &str) -> GrpcAuthService {
+        GrpcAuthService::new(true, "secret".to_string(), key.to_string(), value.to_string())
+    }
+
+    /// Cluster traffic (`DistroDataSyncRequest`, `MemberReportRequest`, ...) may be
+    /// satisfied by the shared server identity instead of a user token.
+    #[test]
+    fn internal_handlers_accept_peer_identity() {
+        let svc = auth_service(KEY, VALUE);
+        assert_eq!(
+            server_identity_status_for(
+                &svc,
+                &payload_with(&[(KEY, VALUE)]),
+                AuthRequirement::Internal
+            ),
+            ServerIdentityStatus::Matched
+        );
+    }
+
+    #[test]
+    fn internal_handlers_reject_foreign_identity() {
+        let svc = auth_service(KEY, VALUE);
+        assert_eq!(
+            server_identity_status_for(
+                &svc,
+                &payload_with(&[(KEY, "attacker")]),
+                AuthRequirement::Internal
+            ),
+            ServerIdentityStatus::NotMatched
+        );
+    }
+
+    /// The regression guard: `GrpcProtocolAuthService#checkServerIdentity` returns
+    /// `noMatched()` unless the api type is INNER_API, so an SDK-facing handler must
+    /// never be satisfied by the shared server identity — `ClusterRpcClientProxy`
+    /// injects that header into every cluster request, and letting it shortcut here
+    /// would hand anyone who learns the secret a full RBAC bypass.
+    #[test]
+    fn sdk_facing_handlers_are_never_satisfied_by_peer_identity() {
+        let svc = auth_service(KEY, VALUE);
+        let payload = payload_with(&[(KEY, VALUE)]);
+        for requirement in [
+            AuthRequirement::Read,
+            AuthRequirement::Write,
+            AuthRequirement::None,
+        ] {
+            assert_eq!(
+                server_identity_status_for(&svc, &payload, requirement),
+                ServerIdentityStatus::NotMatched,
+                "{requirement:?} must fall through to the token flow"
+            );
+        }
+    }
+
+    /// A misconfigured identity is a hard failure for internal traffic but is simply
+    /// irrelevant to SDK-facing handlers, which never consult it.
+    #[test]
+    fn unconfigured_identity_fails_only_for_internal_handlers() {
+        let svc = auth_service("", "");
+        let payload = payload_with(&[(KEY, VALUE)]);
+        assert!(matches!(
+            server_identity_status_for(&svc, &payload, AuthRequirement::Internal),
+            ServerIdentityStatus::Fail(_)
+        ));
+        assert_eq!(
+            server_identity_status_for(&svc, &payload, AuthRequirement::Write),
+            ServerIdentityStatus::NotMatched
+        );
     }
 }

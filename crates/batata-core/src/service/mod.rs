@@ -29,5 +29,6 @@ pub use config_subscriber::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager
 pub use datacenter::{DatacenterConfig, DatacenterManager, DatacenterStatistics};
 pub use grpc_auth::{
     GrpcAuthContext, GrpcAuthRoleProvider, GrpcAuthService, GrpcPermissionInfo, GrpcResource,
-    GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, extract_auth_context,
+    GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, ServerIdentityStatus,
+    extract_auth_context,
 };

@@ -21,6 +21,28 @@ pub const PASSWORD: &str = "password";
 /// Role name reserved for global administrators.
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 
+/// Outcome of the server-identity check.
+///
+/// Mirror of `com.alibaba.nacos.auth.serveridentity.ServerIdentityResult.ResultStatus`:
+/// `MATCHED` short-circuits the remaining auth flow, `NOT_MATCHED` falls through to
+/// the regular token/permission flow, and `FAIL` is rejected outright because the
+/// server itself cannot tell peers apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerIdentityStatus {
+    /// The request carries a valid peer-server identity.
+    Matched,
+    /// Not a peer request — continue with the regular auth flow.
+    NotMatched,
+    /// The check could not be performed because the server is misconfigured.
+    Fail(String),
+}
+
+/// Message for the misconfigured case, mirroring
+/// `AbstractProtocolAuthService#isInvalidServerIdentity`.
+const INVALID_SERVER_IDENTITY_MSG: &str =
+    "Invalid server identity key or value, Please make sure set \
+     `batata.core.auth.server.identity.key` and `batata.core.auth.server.identity.value`";
+
 /// Trait for looking up user roles and permissions from the database.
 /// This decouples the gRPC auth service from the persistence layer.
 #[async_trait::async_trait]
@@ -434,19 +456,51 @@ impl GrpcAuthService {
 
     /// Check if request is from internal server
     pub fn check_server_identity(&self, headers: &HashMap<String, String>) -> bool {
-        if self.server_identity_key.is_empty() {
-            return false;
-        }
+        self.server_identity_status(headers, true) == ServerIdentityStatus::Matched
+    }
 
-        headers
-            .get(&self.server_identity_key)
-            .map(|v| {
-                bool::from(subtle::ConstantTimeEq::ct_eq(
+    /// Nacos `GrpcProtocolAuthService#checkServerIdentity` parity.
+    ///
+    /// Upstream only evaluates the server identity for `ApiType.INNER_API`:
+    ///
+    /// ```java
+    /// if (ApiType.INNER_API != secured.apiType()) {
+    ///     return ServerIdentityResult.noMatched();
+    /// }
+    /// return super.checkServerIdentity(request, secured);
+    /// ```
+    ///
+    /// So a non-internal handler can never be `MATCHED` — a client that happens to
+    /// know the shared server-identity secret still has to pass the regular token
+    /// and permission checks. Letting an SDK-facing handler short-circuit on the
+    /// identity header would let anyone holding that secret bypass naming/config
+    /// RBAC entirely, so the `inner_api` flag is what decides eligibility here.
+    pub fn server_identity_status(
+        &self,
+        headers: &HashMap<String, String>,
+        inner_api: bool,
+    ) -> ServerIdentityStatus {
+        if !inner_api {
+            return ServerIdentityStatus::NotMatched;
+        }
+        // `AbstractProtocolAuthService#isInvalidServerIdentity` — a misconfigured
+        // server cannot tell peers apart, so it must refuse rather than guess.
+        if self.server_identity_key.trim().is_empty()
+            || self.server_identity_value.trim().is_empty()
+        {
+            return ServerIdentityStatus::Fail(INVALID_SERVER_IDENTITY_MSG.to_string());
+        }
+        match headers.get(&self.server_identity_key) {
+            Some(v)
+                if bool::from(subtle::ConstantTimeEq::ct_eq(
                     v.as_bytes(),
                     self.server_identity_value.as_bytes(),
-                ))
-            })
-            .unwrap_or(false)
+                )) =>
+            {
+                ServerIdentityStatus::Matched
+            }
+            _ => ServerIdentityStatus::NotMatched,
+        }
     }
 
     /// Check permission for a resource and action
@@ -616,6 +670,109 @@ mod tests {
     fn test_permission_action_str() {
         assert_eq!(PermissionAction::Read.as_str(), "r");
         assert_eq!(PermissionAction::Write.as_str(), "w");
+    }
+
+    // -----------------------------------------------------------------------
+    // Server identity: Nacos `ServerIdentityResult` three-state parity
+    // -----------------------------------------------------------------------
+
+    const KEY: &str = "serverIdentity";
+    const VALUE: &str = "cluster-node-1";
+
+    fn auth_with(key: &str, value: &str) -> GrpcAuthService {
+        GrpcAuthService::new(true, "secret".to_string(), key.to_string(), value.to_string())
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    /// A peer carrying the shared secret is `Matched` — this is what lets cluster
+    /// traffic skip the token flow.
+    #[test]
+    fn internal_api_matches_valid_peer_identity() {
+        let svc = auth_with(KEY, VALUE);
+        let h = headers(&[(KEY, VALUE)]);
+        assert_eq!(
+            svc.server_identity_status(&h, true),
+            ServerIdentityStatus::Matched
+        );
+    }
+
+    #[test]
+    fn internal_api_rejects_wrong_identity_value() {
+        let svc = auth_with(KEY, VALUE);
+        assert_eq!(
+            svc.server_identity_status(&headers(&[(KEY, "attacker")]), true),
+            ServerIdentityStatus::NotMatched
+        );
+        // Trailing whitespace is not trimmed by upstream either — comparison is exact.
+        let padded = format!("{VALUE} ");
+        assert_eq!(
+            svc.server_identity_status(&headers(&[(KEY, &padded)]), true),
+            ServerIdentityStatus::NotMatched
+        );
+    }
+
+    #[test]
+    fn internal_api_without_header_is_not_matched() {
+        let svc = auth_with(KEY, VALUE);
+        assert_eq!(
+            svc.server_identity_status(&headers(&[]), true),
+            ServerIdentityStatus::NotMatched
+        );
+    }
+
+    /// `AbstractProtocolAuthService#isInvalidServerIdentity`: a server that cannot
+    /// tell peers apart must refuse instead of guessing.
+    #[test]
+    fn internal_api_fails_when_identity_not_configured() {
+        for (key, value) in [("", VALUE), (KEY, ""), ("", ""), ("   ", VALUE)] {
+            let svc = auth_with(key, value);
+            match svc.server_identity_status(&headers(&[(KEY, VALUE)]), true) {
+                ServerIdentityStatus::Fail(message) => {
+                    assert!(
+                        message.contains("server.identity.key")
+                            && message.contains("server.identity.value"),
+                        "message should point at the missing configuration: {message}"
+                    );
+                }
+                other => panic!("expected Fail for key={key:?} value={value:?}, got {other:?}"),
+            }
+        }
+    }
+
+    /// The regression this file exists for: `GrpcProtocolAuthService#checkServerIdentity`
+    /// returns `noMatched()` for every non-INNER_API api type. A client that knows the
+    /// shared secret must therefore still pass the token and permission checks —
+    /// otherwise holding that secret would bypass naming/config RBAC entirely.
+    #[test]
+    fn non_internal_api_never_matches_even_with_valid_identity() {
+        let svc = auth_with(KEY, VALUE);
+        let h = headers(&[(KEY, VALUE)]);
+        assert_eq!(
+            svc.server_identity_status(&h, false),
+            ServerIdentityStatus::NotMatched,
+            "a valid peer identity must not satisfy a non-INNER_API handler"
+        );
+        // And it must not be reported as a configuration failure either: upstream
+        // simply never looks at the header for these handlers.
+        assert_eq!(
+            auth_with("", "").server_identity_status(&h, false),
+            ServerIdentityStatus::NotMatched
+        );
+    }
+
+    /// The boolean helper used elsewhere must agree with the three-state result.
+    #[test]
+    fn check_server_identity_helper_agrees_with_three_state_result() {
+        let svc = auth_with(KEY, VALUE);
+        assert!(svc.check_server_identity(&headers(&[(KEY, VALUE)])));
+        assert!(!svc.check_server_identity(&headers(&[(KEY, "x")])));
+        assert!(!svc.check_server_identity(&headers(&[])));
     }
 
     #[test]

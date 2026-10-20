@@ -101,29 +101,35 @@ impl ClientOperationService for EphemeralClientOperationService {
         service_name: &str,
         instance: Instance,
     ) -> bool {
-        // Nacos: `ServiceManager.getSingleton(service)` then
-        // `if (!singleton.isEphemeral()) throw NacosRuntimeException(...)`.
-        // batata reports failure through `false`, which the gRPC handler turns
-        // into a FAILED InstanceResponse.
-        if !self.naming.resolve_service_ephemeral(
-            namespace,
-            group_name,
-            service_name,
-            instance.ephemeral,
-        ) {
-            warn!(
-                "EphemeralClientOperationService refusing instance {}:{} — service {} is \
-                 persistent, route it through PersistentClientOperationService",
-                instance.ip, instance.port, service_name
-            );
-            return false;
-        }
         // batata-only hardening on top of the upstream check — see the
-        // struct-level note for why the instance flag is checked as well.
+        // struct-level note for why the instance flag is inspected as well.
+        //
+        // It runs **before** `resolve_service_ephemeral` because that call fixes
+        // the flag on first sight: resolving first would let a rejected write
+        // brand the service persistent and then refuse every later ephemeral
+        // registration for it.
         if !instance.ephemeral {
             warn!(
                 "EphemeralClientOperationService refusing persistent instance \
                  {}:{} (service {}) — route it through PersistentClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
+        // Nacos: `ServiceManager.getSingleton(service)` then
+        // `if (!singleton.isEphemeral()) throw NacosRuntimeException(...)`.
+        // batata reports failure through `false`, which the gRPC handler turns
+        // into a FAILED InstanceResponse.
+        //
+        // The `Service` handed to `getSingleton` is built by the *route*, not
+        // from the instance: `InstanceRequestHandler` uses
+        // `Service.newService(namespace, group, name, true)`, so the AP path
+        // always seeds/resolves `true` regardless of what the caller sent in
+        // `instance.ephemeral`.
+        if !self.naming.resolve_service_ephemeral(namespace, group_name, service_name, true) {
+            warn!(
+                "EphemeralClientOperationService refusing instance {}:{} — service {} is \
+                 persistent, route it through PersistentClientOperationService",
                 instance.ip, instance.port, service_name
             );
             return false;
@@ -202,29 +208,31 @@ impl ClientOperationService for PersistentClientOperationService {
         service_name: &str,
         instance: Instance,
     ) -> bool {
-        // Mirror of the AP-path gate:
-        // `PersistentClientOperationServiceImpl#registerInstance` resolves the
-        // singleton and throws "Current service %s is ephemeral service, can't
-        // register persistent instance." when it is ephemeral.
-        if self.naming.resolve_service_ephemeral(
-            namespace,
-            group_name,
-            service_name,
-            instance.ephemeral,
-        ) {
-            warn!(
-                "PersistentClientOperationService refusing instance {}:{} — service {} is \
-                 ephemeral, route it through EphemeralClientOperationService",
-                instance.ip, instance.port, service_name
-            );
-            return false;
-        }
         // Same batata-only hardening as on the AP path: never let an ephemeral
-        // instance slip into the CP path.
+        // instance slip into the CP path. It runs before the singleton is
+        // resolved for the same reason as there — see the AP-path note.
         if instance.ephemeral {
             warn!(
                 "PersistentClientOperationService refusing ephemeral instance \
                  {}:{} (service {}) — route it through EphemeralClientOperationService",
+                instance.ip, instance.port, service_name
+            );
+            return false;
+        }
+        // Mirror of the AP-path gate:
+        // `PersistentClientOperationServiceImpl#registerInstance` resolves the
+        // singleton and throws "Current service %s is ephemeral service, can't
+        // register persistent instance." when it is ephemeral. As on the AP
+        // path the `Service` is built by the route
+        // (`Service.newService(..., false)`), so the flag resolved here is the
+        // route's own.
+        if self
+            .naming
+            .resolve_service_ephemeral(namespace, group_name, service_name, false)
+        {
+            warn!(
+                "PersistentClientOperationService refusing instance {}:{} — service {} is \
+                 ephemeral, route it through EphemeralClientOperationService",
                 instance.ip, instance.port, service_name
             );
             return false;

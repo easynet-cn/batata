@@ -40,7 +40,8 @@ pub use service::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 // Re-export gRPC auth types
 pub use service::{
     GrpcAuthContext, GrpcAuthRoleProvider, GrpcAuthService, GrpcPermissionInfo, GrpcResource,
-    GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, extract_auth_context,
+    GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, ServerIdentityStatus,
+    extract_auth_context,
 };
 
 // Re-export server lifecycle types
