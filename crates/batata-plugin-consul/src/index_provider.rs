@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 /// Maximum blocking query wait time (10 minutes, consistent with Consul).
 const MAX_BLOCKING_WAIT: Duration = Duration::from_secs(600);
@@ -49,19 +49,26 @@ pub enum ConsulTable {
 }
 
 /// Per-table state: high water mark + change notification.
+///
+/// The `watch` channel carries the index so a waiter can never miss an update:
+/// `Notify::notify_waiters()` only wakes waiters registered **at that moment**,
+/// so a waiter sitting between "notification consumed" and "re-registered"
+/// would sleep until the timeout even though the index had already moved.
+/// `watch::Receiver::wait_for` re-checks the latest value instead.
 struct TableState {
     /// Highest Raft log index that affected this table.
     /// In standalone mode, this is a local counter.
     index: AtomicU64,
-    /// Notification channel for blocking queries on this table.
-    notify: Notify,
+    /// Broadcast channel used to wake blocking queries.
+    tx: watch::Sender<u64>,
 }
 
 impl TableState {
     fn new(initial_index: u64) -> Self {
+        let (tx, _rx) = watch::channel(initial_index);
         Self {
             index: AtomicU64::new(initial_index),
-            notify: Notify::new(),
+            tx,
         }
     }
 }
@@ -150,8 +157,11 @@ impl ConsulTableIndex {
     /// Notifies all blocking queries waiting on this table.
     pub fn update(&self, table: ConsulTable, raft_log_index: u64) {
         let state = self.table(table);
-        state.index.fetch_max(raft_log_index, Ordering::SeqCst);
-        state.notify.notify_waiters();
+        let new_index = state.index.fetch_max(raft_log_index, Ordering::SeqCst);
+        let new_index = new_index.max(raft_log_index);
+        // A missing receiver is not an error: nobody is waiting, and the
+        // atomic above is the source of truth for future waiters.
+        let _ = state.tx.send(new_index);
     }
 
     /// Increment a table's index locally (for standalone mode without Raft).
@@ -159,7 +169,7 @@ impl ConsulTableIndex {
     pub fn increment(&self, table: ConsulTable) -> u64 {
         let state = self.table(table);
         let new_idx = state.index.fetch_add(1, Ordering::SeqCst) + 1;
-        state.notify.notify_waiters();
+        let _ = state.tx.send(new_idx);
         new_idx
     }
 
@@ -175,25 +185,19 @@ impl ConsulTableIndex {
     ) -> bool {
         let state = self.table(table);
 
-        // Already past target — return immediately
+        // Already past target — return immediately. `index == 0` means "do not
+        // block", matching Consul: a client that has never queried before sends
+        // 0 and expects the current value back at once.
         if target_index == 0 || state.index.load(Ordering::SeqCst) > target_index {
             return true;
         }
 
         let timeout = wait.unwrap_or(DEFAULT_BLOCKING_WAIT).min(MAX_BLOCKING_WAIT);
 
+        let mut rx = state.tx.subscribe();
         tokio::select! {
-            _ = async {
-                loop {
-                    state.notify.notified().await;
-                    if state.index.load(Ordering::SeqCst) > target_index {
-                        break;
-                    }
-                }
-            } => true,
-            _ = tokio::time::sleep(timeout) => {
-                state.index.load(Ordering::SeqCst) > target_index
-            }
+            changed = rx.wait_for(|i| *i > target_index) => changed.is_ok(),
+            _ = tokio::time::sleep(timeout) => state.index.load(Ordering::SeqCst) > target_index,
         }
     }
 

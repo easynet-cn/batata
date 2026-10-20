@@ -18,13 +18,15 @@
 //!
 //! The `_distro_remote` / `_distro_source` markers are `pub(crate)` in
 //! `batata-naming`; the literals below mirror `DISTRO_REMOTE_MARKER` and
-//! `DISTRO_SOURCE_MARKER` so this suite stays an external-crate test.
+//! `DISTRO_SOURCE_MARKER` so this suite stays an external-crate test. They are
+//! storage-only: `stored()` reads them, `snapshot()` is what a caller sees and
+//! never carries them.
 
 mod common;
 
 use std::sync::Arc;
 
-use batata_naming::service::{build_service_key, ClientOperationService};
+use batata_naming::service::{ClientOperationService, build_service_key};
 use common::{GROUP, NS, instance, persistent_instance, query, service};
 
 const SVC: &str = "svc";
@@ -38,8 +40,20 @@ const SOURCE: &str = "_distro_source";
 const N1: &str = "10.0.0.1:8848";
 const N2: &str = "10.0.0.2:8848";
 
+/// The instances as this node answers a query — distro bookkeeping stripped.
 fn snapshot(svc: &batata_naming::NamingService) -> Vec<batata_api::naming::model::Instance> {
     svc.get_instances_snapshot(NS, GROUP, SVC, "", false)
+        .into_iter()
+        .map(|arc| (*arc).clone())
+        .collect()
+}
+
+/// The instances as *stored*, ownership markers included.
+///
+/// Only the internals that reconcile replicas may look at these; everything a
+/// caller sees comes from [`snapshot`].
+fn stored(svc: &batata_naming::NamingService) -> Vec<batata_api::naming::model::Instance> {
+    svc.get_instances_snapshot_raw(NS, GROUP, SVC, "", false)
         .into_iter()
         .map(|arc| (*arc).clone())
         .collect()
@@ -49,10 +63,12 @@ fn find<'a>(
     instances: &'a [batata_api::naming::model::Instance],
     ip: &str,
 ) -> &'a batata_api::naming::model::Instance {
-    instances
-        .iter()
-        .find(|i| i.ip == ip)
-        .unwrap_or_else(|| panic!("instance {ip} is missing from {:?}", common::endpoints(instances)))
+    instances.iter().find(|i| i.ip == ip).unwrap_or_else(|| {
+        panic!(
+            "instance {ip} is missing from {:?}",
+            common::endpoints(instances)
+        )
+    })
 }
 
 fn marker(
@@ -93,7 +109,7 @@ fn locally_registered_instance_is_not_marked_as_a_replica() {
     let svc = service();
     svc.register_instance(NS, GROUP, SVC, instance("10.0.0.1", 8080));
 
-    let all = snapshot(&svc);
+    let all = stored(&svc);
     assert_eq!(marker(&all, "10.0.0.1", REMOTE), None);
     assert_eq!(marker(&all, "10.0.0.1", SOURCE), None);
 }
@@ -103,9 +119,18 @@ fn synced_instances_carry_the_source_node() {
     let svc = service();
     sync(&svc, vec![instance("10.0.0.1", 8080)], N1);
 
-    let all = snapshot(&svc);
+    let all = stored(&svc);
     assert_eq!(marker(&all, "10.0.0.1", REMOTE).as_deref(), Some("true"));
     assert_eq!(marker(&all, "10.0.0.1", SOURCE).as_deref(), Some(N1));
+
+    // ...and none of that is visible to a caller reading the service back.
+    let public = snapshot(&svc);
+    assert_eq!(
+        marker(&public, "10.0.0.1", REMOTE),
+        None,
+        "storage markers must not leak through the read path"
+    );
+    assert_eq!(marker(&public, "10.0.0.1", SOURCE), None);
 }
 
 /// Deregistration propagates as an *empty* sync from the owner: every replica
@@ -121,7 +146,10 @@ fn empty_sync_from_the_owner_removes_its_replicas() {
     assert_eq!(ips(&svc), vec!["10.0.0.1", "10.0.0.2"]);
 
     sync(&svc, vec![], N1);
-    assert!(ips(&svc).is_empty(), "the owner's empty sync is the GC signal");
+    assert!(
+        ips(&svc).is_empty(),
+        "the owner's empty sync is the GC signal"
+    );
 }
 
 /// A sync from node Y must never garbage-collect node X's replicas — the
@@ -188,11 +216,14 @@ fn locally_registered_instance_survives_an_empty_sync() {
 fn ownership_transfer_retags_the_replica() {
     let svc = service();
     sync(&svc, vec![instance("10.0.0.1", 8080)], N1);
-    assert_eq!(marker(&snapshot(&svc), "10.0.0.1", SOURCE).as_deref(), Some(N1));
+    assert_eq!(
+        marker(&stored(&svc), "10.0.0.1", SOURCE).as_deref(),
+        Some(N1)
+    );
 
     sync(&svc, vec![instance("10.0.0.1", 8080)], N2);
     assert_eq!(
-        marker(&snapshot(&svc), "10.0.0.1", SOURCE).as_deref(),
+        marker(&stored(&svc), "10.0.0.1", SOURCE).as_deref(),
         Some(N2),
         "the new owner's sync must be able to adopt the replica"
     );

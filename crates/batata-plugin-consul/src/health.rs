@@ -859,7 +859,7 @@ async fn build_service_health_results(
     config_entry_service: &crate::config_entry::ConsulConfigEntryService,
     coord_service: &crate::coordinate::ConsulCoordinateService,
     namespace: &str,
-) -> Vec<ServiceHealth> {
+) -> Result<Vec<ServiceHealth>, String> {
     let passing_only = query.passing.unwrap_or(false);
 
     // Get service entries from ConsulNamingStore (Consul-native data)
@@ -1002,9 +1002,11 @@ async fn build_service_health_results(
         });
     }
 
-    // Apply filter expression if specified
+    // Apply filter expression if specified. A malformed expression propagates
+    // as an error so the endpoint can reject the request: returning the
+    // unfiltered set would hand the client rows it explicitly excluded.
     let mut results = if let Some(ref filter) = query.filter {
-        apply_service_health_filter(results, filter)
+        apply_service_health_filter(results, filter)?
     } else {
         results
     };
@@ -1076,7 +1078,7 @@ async fn build_service_health_results(
         });
     }
 
-    results
+    Ok(results)
 }
 
 /// GET /v1/health/service/:service
@@ -1144,7 +1146,7 @@ pub async fn get_service_health(
             .json(results);
     }
 
-    let results = build_service_health_results(
+    let results = match build_service_health_results(
         &req,
         &naming_store,
         &health_service,
@@ -1155,7 +1157,15 @@ pub async fn get_service_health(
         &coord_service,
         &namespace,
     )
-    .await;
+    .await
+    {
+        Ok(results) => results,
+        Err(err) => {
+            return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                "Failed to compile filter expression: {err}"
+            )));
+        }
+    };
 
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
@@ -1245,8 +1255,10 @@ pub fn stream_service_health(
 
         let current_index = index_provider.current_index(ConsulTable::Catalog);
 
-        // Re-query the current health state.
-        let results = build_service_health_results(
+        // Re-query the current health state. A malformed filter cannot be
+        // reported mid-stream, so end the stream instead of pushing rows the
+        // caller asked to exclude.
+        let results = match build_service_health_results(
             &req,
             &naming_store,
             &health_service,
@@ -1257,7 +1269,14 @@ pub fn stream_service_health(
             &coord_service,
             &namespace,
         )
-        .await;
+        .await
+        {
+            Ok(results) => results,
+            Err(err) => {
+                tracing::warn!("health stream: bad filter expression: {}", err);
+                return None;
+            }
+        };
 
         let json = match serde_json::to_string(&results) {
             Ok(j) => j,
@@ -1302,22 +1321,22 @@ pub fn stream_service_health(
 /// - Logical: `and`, `or`, `not`
 /// - Grouping: `(expr)`
 /// - Field paths: dotted, bracketed
-fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec<ServiceHealth> {
+fn apply_service_health_filter(
+    results: Vec<ServiceHealth>,
+    filter: &str,
+) -> Result<Vec<ServiceHealth>, String> {
     let filter = filter.trim();
     if filter.is_empty() {
-        return results;
+        return Ok(results);
     }
-    let expr = match crate::filter::parse(filter) {
-        Ok(e) => e,
-        Err(err) => {
-            tracing::debug!("filter parse error '{}': {}", filter, err);
-            return results;
-        }
-    };
-    results
+    // Consul surfaces a bad filter expression as an error rather than quietly
+    // dropping it: returning the *unfiltered* set would hand the client rows it
+    // explicitly asked to exclude, which is far worse than a 400.
+    let expr = crate::filter::parse(filter)?;
+    Ok(results
         .into_iter()
         .filter(|sh| crate::filter::evaluate(&expr, sh))
-        .collect()
+        .collect())
 }
 
 impl crate::filter::Filterable for ServiceHealth {
@@ -1433,7 +1452,14 @@ pub async fn get_service_checks(
 
     // Apply filter expression if provided
     if let Some(ref filter) = query.filter {
-        all_checks = apply_health_check_filter(all_checks, filter);
+        match apply_health_check_filter(all_checks, filter) {
+            Ok(filtered) => all_checks = filtered,
+            Err(err) => {
+                return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                    "Failed to compile filter expression: {err}"
+                )));
+            }
+        }
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -1468,26 +1494,33 @@ pub async fn get_checks_by_state(
 
     // Validate state. Consul accepts: passing, warning, critical, any.
     // Empty is treated as "any" to match Consul's router default.
-    let valid_states = ["passing", "warning", "critical", "any"];
+    // Consul validates the state inside the state store: `maintenance` is a
+    // real state, and anything unrecognized simply matches nothing (an empty
+    // list), it is not a client error. Only an empty path segment is rejected.
+    let known_states = ["passing", "warning", "critical", "maintenance", "any"];
     let effective_state = if state.is_empty() {
         "any"
     } else {
         state.as_str()
     };
-    if !valid_states.contains(&effective_state) {
-        return HttpResponse::BadRequest()
-            .consul_error(ConsulError::new(format!("Invalid state: {}", state)));
-    }
-
-    let mut checks = if effective_state == "any" {
-        health_service.get_all_checks().await
-    } else {
-        health_service.get_checks_by_status(effective_state).await
+    let checks = match effective_state {
+        "any" => health_service.get_all_checks().await,
+        // An unrecognized state filters everything out, matching Consul.
+        other if !known_states.contains(&other) => Vec::new(),
+        other => health_service.get_checks_by_status(other).await,
     };
+    let mut checks = checks;
 
     // Apply filter expression if provided
     if let Some(ref filter) = query.filter {
-        checks = apply_health_check_filter(checks, filter);
+        match apply_health_check_filter(checks, filter) {
+            Ok(filtered) => checks = filtered,
+            Err(err) => {
+                return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                    "Failed to compile filter expression: {err}"
+                )));
+            }
+        }
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -1525,7 +1558,14 @@ pub async fn get_node_checks(
 
     // Apply filter expression if provided
     if let Some(ref filter) = query.filter {
-        checks = apply_health_check_filter(checks, filter);
+        match apply_health_check_filter(checks, filter) {
+            Ok(filtered) => checks = filtered,
+            Err(err) => {
+                return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                    "Failed to compile filter expression: {err}"
+                )));
+            }
+        }
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
@@ -2037,76 +2077,22 @@ fn parse_duration(s: &str) -> Option<u64> {
 /// - `<Field> != "<value>"`
 ///
 /// Supported fields: Name, CheckID, Status, ServiceName, ServiceID.
-fn apply_health_check_filter(checks: Vec<HealthCheck>, filter: &str) -> Vec<HealthCheck> {
+fn apply_health_check_filter(
+    checks: Vec<HealthCheck>,
+    filter: &str,
+) -> Result<Vec<HealthCheck>, String> {
     let filter = filter.trim();
-
-    let get_field = |check: &HealthCheck, field: &str| -> Option<String> {
-        match field {
-            "Name" => Some(check.name.clone()),
-            "CheckID" => Some(check.check_id.clone()),
-            "Status" => Some(check.status.clone()),
-            "ServiceName" => Some(check.service_name.clone()),
-            "ServiceID" => Some(check.service_id.clone()),
-            _ => None,
-        }
-    };
-
-    // Parse filter expression. Supports both:
-    //   Status == "passing"     (quoted, Consul API format)
-    //   Status == passing       (unquoted, Go SDK sends this)
-    // Matching go-bexpr behavior from Consul original.
-    let (before, value) = if let Some(rest) = filter.strip_suffix('"')
-        && let Some(pos) = rest.rfind('"')
-    {
-        // Quoted value: `field op "value"`
-        (rest[..pos].trim(), &rest[pos + 1..])
-    } else {
-        // Unquoted value: `field op value` — split on last space
-        match filter.rfind(' ') {
-            Some(pos) => (filter[..pos].trim(), filter[pos + 1..].trim()),
-            None => return checks, // unparseable
-        }
-    };
-
-    {
-        if let Some(field) = before.strip_suffix("contains") {
-            let field = field.trim();
-            return checks
-                .into_iter()
-                .filter(|check| {
-                    get_field(check, field)
-                        .map(|actual| actual.contains(value))
-                        .unwrap_or(true)
-                })
-                .collect();
-        }
-
-        if let Some(field) = before.strip_suffix("==") {
-            let field = field.trim();
-            return checks
-                .into_iter()
-                .filter(|check| {
-                    get_field(check, field)
-                        .map(|actual| actual == value)
-                        .unwrap_or(true)
-                })
-                .collect();
-        }
-
-        if let Some(field) = before.strip_suffix("!=") {
-            let field = field.trim();
-            return checks
-                .into_iter()
-                .filter(|check| {
-                    get_field(check, field)
-                        .map(|actual| actual != value)
-                        .unwrap_or(true)
-                })
-                .collect();
-        }
+    if filter.is_empty() {
+        return Ok(checks);
     }
-
-    checks
+    // Same parser as every other `?filter=`, so `and`/`or`/`not` and quoted or
+    // unquoted values all behave alike. An unparseable expression is an error:
+    // silently returning every check would hand back rows the caller excluded.
+    let expr = crate::filter::parse(filter)?;
+    Ok(checks
+        .into_iter()
+        .filter(|check| crate::filter::evaluate(&expr, check))
+        .collect())
 }
 
 #[cfg(test)]
@@ -2527,7 +2513,10 @@ mod tests {
         service.register_check(reg).await.unwrap();
 
         // Verify the check was registered via the registry
-        let (config, _status) = service.registry().get_check(&service.check_key("ttl-chk")).unwrap();
+        let (config, _status) = service
+            .registry()
+            .get_check(&service.check_key("ttl-chk"))
+            .unwrap();
         assert_eq!(config.ttl, Some(Duration::from_secs(60)));
         assert_eq!(
             config.deregister_critical_after,
@@ -2724,8 +2713,8 @@ mod tests {
         let check_index = Arc::new(ConsulCheckIndex::new());
         let node1 = ConsulHealthService::new(registry.clone(), check_index.clone())
             .with_node_name("c1".to_string());
-        let node2 =
-            ConsulHealthService::new(registry.clone(), check_index).with_node_name("c2".to_string());
+        let node2 = ConsulHealthService::new(registry.clone(), check_index)
+            .with_node_name("c2".to_string());
 
         let mk = |id: &str| CheckRegistration {
             name: id.to_string(),
@@ -2736,8 +2725,14 @@ mod tests {
         };
         node1.register_check(mk("serfHealth")).await.unwrap();
         node2.register_check(mk("serfHealth")).await.unwrap();
-        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "passing");
-        assert_eq!(node2.get_check("serfHealth").await.unwrap().status, "passing");
+        assert_eq!(
+            node1.get_check("serfHealth").await.unwrap().status,
+            "passing"
+        );
+        assert_eq!(
+            node2.get_check("serfHealth").await.unwrap().status,
+            "passing"
+        );
 
         // Failing the check on c1 must leave c2's identically-named check
         // untouched — that is what the node qualifier buys us (before it, the
@@ -2747,7 +2742,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "critical");
+        assert_eq!(
+            node1.get_check("serfHealth").await.unwrap().status,
+            "critical"
+        );
         assert_eq!(
             node2.get_check("serfHealth").await.unwrap().status,
             "passing",
@@ -2759,8 +2757,14 @@ mod tests {
             .update_check_status_async("serfHealth", "warning", Some("c2 warn".into()))
             .await
             .unwrap();
-        assert_eq!(node1.get_check("serfHealth").await.unwrap().status, "critical");
-        assert_eq!(node2.get_check("serfHealth").await.unwrap().status, "warning");
+        assert_eq!(
+            node1.get_check("serfHealth").await.unwrap().status,
+            "critical"
+        );
+        assert_eq!(
+            node2.get_check("serfHealth").await.unwrap().status,
+            "warning"
+        );
     }
 
     #[tokio::test]
@@ -2789,11 +2793,7 @@ mod tests {
         service.register_check(reg).await.unwrap();
 
         let (mut remote, _) = registry.get_check("c1#svc:web-1").unwrap();
-        let (name, ip, port) = (
-            remote.service_name.clone(),
-            remote.ip.clone(),
-            remote.port,
-        );
+        let (name, ip, port) = (remote.service_name.clone(), remote.ip.clone(), remote.port);
         remote.node = "c2".to_string(); // pretend this arrived from node c2
         registry.restore_check(remote);
 
@@ -2974,7 +2974,9 @@ mod tests {
 
         // Sync alias checks so the alias mirrors the (passing) service check
         service.sync_alias_checks().await;
-        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
+        let (_, alias_status) = registry
+            .get_check(&service.check_key("alias:web"))
+            .expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Passing);
 
         // Update the service check to critical — update_check_status_async
@@ -2984,7 +2986,9 @@ mod tests {
             .await
             .expect("update should succeed");
 
-        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
+        let (_, alias_status) = registry
+            .get_check(&service.check_key("alias:web"))
+            .expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Critical);
 
         // Update the service check back to passing
@@ -2993,7 +2997,9 @@ mod tests {
             .await
             .expect("update should succeed");
 
-        let (_, alias_status) = registry.get_check(&service.check_key("alias:web")).expect("alias check exists");
+        let (_, alias_status) = registry
+            .get_check(&service.check_key("alias:web"))
+            .expect("alias check exists");
         assert_eq!(alias_status.status, CheckStatus::Passing);
     }
 

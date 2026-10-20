@@ -1038,11 +1038,10 @@ impl ConsulPlugin {
         // and `ConsulNamingStore::get_service_entries` — the actual query
         // path — returns stale/empty results.
         {
-            let hook: Arc<dyn crate::raft::ConsulApplyHook> =
-                Arc::new(NamingStoreApplyHook::new(
-                    consul_naming_store.clone(),
-                    consul_registry.clone(),
-                ));
+            let hook: Arc<dyn crate::raft::ConsulApplyHook> = Arc::new(NamingStoreApplyHook::new(
+                consul_naming_store.clone(),
+                consul_registry.clone(),
+            ));
             *apply_hook_slot.write().await = Some(hook);
             tracing::info!("Consul apply-back hook installed (NamingStoreApplyHook)");
         }

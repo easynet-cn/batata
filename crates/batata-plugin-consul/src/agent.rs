@@ -202,12 +202,7 @@ impl ConsulAgentService {
             // Must match the node-qualified registry key used at registration.
             let serf_key = qualify_check_key(&dc_config.node_name, "serfHealth");
             self.registry
-                .update_check_result(
-                    &serf_key,
-                    true,
-                    "Agent alive and reachable".to_string(),
-                    0,
-                )
+                .update_check_result(&serf_key, true, "Agent alive and reachable".to_string(), 0)
                 .await;
         }
 
@@ -365,18 +360,25 @@ pub async fn register_service(
         }
     };
 
-    if let Err(e) = agent
-        .naming_store
-        .register(&store_key, bytes::Bytes::from(reg_data.clone()))
-        .map_err(|e| e.to_string())
-    {
-        tracing::error!("Failed to store service in ConsulNamingStore: {}", e);
-        return HttpResponse::InternalServerError()
-            .consul_error(ConsulError::new("Failed to register service"));
-    }
+    // Registration is an upsert keyed by service ID, not by (name, ID): a
+    // re-registration that renames the service must not leave the old name
+    // behind (upstream: `local/state.go` stores `l.services[id]`).
+    let stale_key = agent.naming_store.upsert_by_service_id(
+        &namespace,
+        &store_key,
+        &service_id,
+        bytes::Bytes::from(reg_data.clone()),
+    );
 
     // Replicate through Raft in cluster mode
     if let Some(ref raft) = agent.raft_node {
+        // Followers must drop the replaced entry too, otherwise the renamed
+        // service keeps showing up under its old name on every other node.
+        if let Some(ref stale) = stale_key {
+            let _ = raft
+                .write(ConsulRaftRequest::CatalogDeregister { key: stale.clone() })
+                .await;
+        }
         let registration_json = String::from_utf8_lossy(&reg_data).to_string();
         match raft
             .write(ConsulRaftRequest::CatalogRegister {
@@ -487,11 +489,19 @@ pub async fn register_service(
         let sidecar_id = sidecar.service_id();
         let sidecar_key = ConsulNamingStore::build_key(&namespace, &sidecar.name, &sidecar_id);
         if let Ok(sidecar_data) = serde_json::to_vec(&sidecar) {
-            let _ = agent
-                .naming_store
-                .register(&sidecar_key, bytes::Bytes::from(sidecar_data.clone()));
+            let stale_sidecar_key = agent.naming_store.upsert_by_service_id(
+                &namespace,
+                &sidecar_key,
+                &sidecar_id,
+                bytes::Bytes::from(sidecar_data.clone()),
+            );
 
             if let Some(ref raft) = agent.raft_node {
+                if let Some(ref stale) = stale_sidecar_key {
+                    let _ = raft
+                        .write(ConsulRaftRequest::CatalogDeregister { key: stale.clone() })
+                        .await;
+                }
                 let sidecar_json = String::from_utf8_lossy(&sidecar_data).to_string();
                 let _ = raft
                     .write(ConsulRaftRequest::CatalogRegister {
@@ -613,7 +623,9 @@ pub async fn deregister_service(
         consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().consul_error(ConsulError::new(format!(
-            "Service not found: {}",
+            // Upstream wording (agent/acl.go vetServiceUpdateWithAuthorizer):
+            // SDKs and scripts match on this string, not just the status code.
+            "Unknown service ID {:?}. Ensure that the service ID is passed, not the service name.",
             service_id
         )))
     }
@@ -667,7 +679,12 @@ pub async fn list_services(
                     services.retain(|_, svc| crate::filter::evaluate(&expr, svc));
                 }
                 Err(err) => {
-                    tracing::debug!("filter parse error '{}': {}", filter_expr, err);
+                    // Consul surfaces a bad expression as an error instead of
+                    // quietly returning everything: a caller that filtered by
+                    // (say) Meta must not receive rows it excluded.
+                    return HttpResponse::BadRequest().consul_error(ConsulError::new(format!(
+                        "Failed to compile filter expression: {err}"
+                    )));
                 }
             }
         }

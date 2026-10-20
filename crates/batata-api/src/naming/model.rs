@@ -94,7 +94,135 @@ pub fn clamp_weight(weight: f64) -> f64 {
     }
 }
 
+/// Default group name. Mirrors Nacos `Constants.DEFAULT_GROUP`.
+pub const DEFAULT_GROUP_NAME: &str = "DEFAULT_GROUP";
+
+/// Compose `group@@serviceName`.
+///
+/// Nacos `NamingUtils.getGroupedName` rejects blank inputs, but the ID
+/// generator path uses the non-validating composition, so an empty group falls
+/// back to `DEFAULT_GROUP` here.
+///
+/// A `service_name` that is **already** grouped is returned untouched: SDKs
+/// routinely send `group@@name` as the service name, and re-grouping it would
+/// yield `DEFAULT_GROUP@@group@@name`.
+pub fn grouped_service_name(group_name: &str, service_name: &str) -> String {
+    if service_name.contains(crate::model::SERVICE_INFO_SPLITER) {
+        return service_name.to_string();
+    }
+    let group = if group_name.is_empty() {
+        DEFAULT_GROUP_NAME
+    } else {
+        group_name
+    };
+    format!(
+        "{}{}{}",
+        group,
+        crate::model::SERVICE_INFO_SPLITER,
+        service_name
+    )
+}
+
+/// Generate the client-facing instance ID the way Nacos
+/// `DefaultInstanceIdGenerator` does:
+/// `ip#port#clusterName#group@@serviceName` (4 segments).
+pub fn default_instance_id(
+    ip: &str,
+    port: i32,
+    cluster_name: &str,
+    group_name: &str,
+    service_name: &str,
+) -> String {
+    let cluster = if cluster_name.is_empty() {
+        crate::model::DEFAULT_CLUSTER_NAME
+    } else {
+        cluster_name
+    };
+    generate_instance_id(
+        ip,
+        port,
+        cluster,
+        &grouped_service_name(group_name, service_name),
+    )
+}
+
+/// Fill in the fields Nacos `InstanceUtil.setInstanceIdIfEmpty` is responsible
+/// for, on the gRPC path.
+///
+/// * empty `cluster_name` → `DEFAULT` (this is the *only* default Nacos fills
+///   in on the gRPC path — namespace, group and service name are left exactly
+///   as the SDK sent them);
+/// * blank `service_name` → `group@@serviceName`;
+/// * empty `instance_id` → [`default_instance_id`]. A client-supplied ID is
+///   **preserved**: Nacos keeps it as `Constants.CUSTOM_INSTANCE_ID` and hands
+///   it back verbatim on queries, so overwriting it would break clients that
+///   reconcile instances by that ID.
+pub fn normalize_instance(group_name: &str, service_name: &str, instance: &mut Instance) {
+    if instance.cluster_name.is_empty() {
+        instance.cluster_name = crate::model::DEFAULT_CLUSTER_NAME.to_string();
+    }
+    let grouped = grouped_service_name(group_name, service_name);
+    if instance.service_name.trim().is_empty() {
+        instance.service_name = grouped.clone();
+    }
+    if instance.instance_id.trim().is_empty() {
+        instance.instance_id = generate_instance_id(
+            &instance.ip,
+            instance.port,
+            &instance.cluster_name,
+            &grouped,
+        );
+    }
+}
+
+/// Highest accepted port number. Mirrors `Instance.MAX_PORT`.
+pub const MAX_PORT: i32 = 65535;
+
+/// Why an instance was rejected before it ever reached the store.
+///
+/// Nacos `Instance#validate` throws `NacosApiException(INVALID_PARAM, ...)`;
+/// batata reports the same two conditions as a value so the gRPC handler can
+/// map them onto `PARAMETER_MISSING` / `PARAMETER_VALIDATE_ERROR`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceParamError {
+    /// `ip` is blank. Upstream: `PARAMETER_MISSING`.
+    MissingIp,
+    /// `port` is outside `0..=65535`. Upstream: `PARAMETER_VALIDATE_ERROR`.
+    InvalidPort(i32),
+}
+
+impl InstanceParamError {
+    /// The upstream message text, so SDK-side logs match.
+    pub fn message(&self) -> String {
+        match self {
+            Self::MissingIp => "Required parameter 'ip' type String is not present".to_string(),
+            Self::InvalidPort(_) => {
+                "Required parameter 'port' type int is require 0 ~ 65535".to_string()
+            }
+        }
+    }
+}
+
+/// The gRPC-path parameter check, mirroring `Instance#validate`.
+///
+/// Note that upstream accepts `port == 0` — only a negative port or one above
+/// 65535 is rejected. The HTTP layer is stricter (it rejects `port <= 0`), and
+/// that asymmetry is upstream's, not an accident.
+pub fn validate_instance(instance: &Instance) -> Result<(), InstanceParamError> {
+    if instance.ip.trim().is_empty() {
+        return Err(InstanceParamError::MissingIp);
+    }
+    if instance.port < 0 || instance.port > MAX_PORT {
+        return Err(InstanceParamError::InvalidPort(instance.port));
+    }
+    Ok(())
+}
+
 /// Generate the client-facing instance ID: ip#port#clusterName#serviceName
+///
+/// `service_name` is used verbatim as the 4th segment — pass
+/// [`grouped_service_name`] output (or call [`default_instance_id`]) so the ID
+/// keeps the upstream `group@@serviceName` shape.
 pub fn generate_instance_id(ip: &str, port: i32, cluster_name: &str, service_name: &str) -> String {
     format!("{}#{}#{}#{}", ip, port, cluster_name, service_name)
 }

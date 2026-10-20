@@ -609,6 +609,43 @@ pub struct CatalogQueryParams {
 // Consul Catalog Service
 // ============================================================================
 
+/// Metadata key carrying the node a registered service belongs to.
+///
+/// `AgentServiceRegistration` has no node field, so catalog registrations
+/// keep it here. Keys prefixed with `consul_` are stripped from every API
+/// response (see `AgentService::from` / `CatalogService::from_registration`),
+/// so it stays internal bookkeeping.
+pub const NODE_NAME_META_KEY: &str = "consul_node_name";
+
+/// Resolve the Consul node a registered service lives on.
+///
+/// Precedence: the recorded node name, then the address-derived name used for
+/// services registered straight through the agent API.
+fn node_of(reg: &crate::model::AgentServiceRegistration) -> String {
+    let ip = reg.effective_address();
+    reg.meta
+        .as_ref()
+        .and_then(|m| m.get(NODE_NAME_META_KEY))
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| derived_node_name(&ip))
+}
+
+/// Node name implied by an address when nothing was recorded explicitly.
+fn derived_node_name(ip: &str) -> String {
+    format!("node-{}", ip.replace('.', "-"))
+}
+
+/// Whether a registered service lives on `node`.
+///
+/// Services registered before the node name was recorded are still reachable
+/// under their address-derived name, so both spellings resolve.
+fn node_matches(reg: &crate::model::AgentServiceRegistration, node: &str) -> bool {
+    let ip = reg.effective_address();
+    node_of(reg) == node || derived_node_name(&ip) == node || ip == node
+}
+
 /// Consul Catalog service
 /// Provides catalog operations using ConsulNamingStore as backend
 #[derive(Clone)]
@@ -787,12 +824,7 @@ impl ConsulCatalogService {
                     if ip.is_empty() {
                         continue;
                     }
-                    let node_name = reg
-                        .meta
-                        .as_ref()
-                        .and_then(|m| m.get("consul_node_name"))
-                        .cloned()
-                        .unwrap_or_else(|| format!("node-{}", ip.replace('.', "-")));
+                    let node_name = node_of(&reg);
                     if let std::collections::hash_map::Entry::Vacant(e) =
                         nodes.entry(node_name.clone())
                     {
@@ -852,10 +884,9 @@ impl ConsulCatalogService {
                         continue;
                     };
                     let ip = reg.effective_address();
-                    let instance_node = format!("node-{}", ip.replace('.', "-"));
-
-                    // Match by: self.node_name, generated "node-{ip}", raw IP
-                    if is_local_node || instance_node == node_name || ip == node_name {
+                    // Match by: self.node_name, recorded node name, generated
+                    // "node-{ip}", raw IP
+                    if is_local_node || node_matches(&reg, node_name) {
                         if node.is_none() {
                             node = Some(CatalogNode {
                                 id: self.node_id.clone(),
@@ -907,7 +938,7 @@ impl ConsulCatalogService {
                 .unwrap_or_else(|| registration.address.clone());
 
             // Build AgentServiceRegistration from CatalogServiceRegistration
-            let reg = crate::model::AgentServiceRegistration {
+            let mut reg = crate::model::AgentServiceRegistration {
                 name: svc.service.clone(),
                 id: Some(service_id.clone()),
                 tags: svc.tags.clone(),
@@ -926,6 +957,15 @@ impl ConsulCatalogService {
                 socket_path: None,
             };
 
+            // Record the node so `/v1/catalog/nodes`, `/v1/catalog/node/<n>`
+            // and node-scoped deregistration resolve to the name the caller
+            // registered with, not an address-derived guess.
+            if !registration.node.is_empty() {
+                reg.meta
+                    .get_or_insert_with(Default::default)
+                    .insert(NODE_NAME_META_KEY.to_string(), registration.node.clone());
+            }
+
             let data = match serde_json::to_vec(&reg) {
                 Ok(v) => bytes::Bytes::from(v),
                 Err(_) => return false,
@@ -936,46 +976,77 @@ impl ConsulCatalogService {
                 &svc.service,
                 &service_id,
             );
-            use batata_plugin::PluginNamingStore;
-            self.naming_store.register(&key, data).is_ok()
+            // Upsert by service ID: re-registering an existing ID under a new
+            // name replaces the old entry instead of leaving a ghost behind.
+            self.naming_store
+                .upsert_by_service_id(namespace, &key, &service_id, data);
+            true
         } else {
             // Just node registration, we don't track nodes separately
             true
         }
     }
 
-    /// Deregister a service via catalog
-    pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
-        if let Some(ref service_id) = deregistration.service_id {
-            // Deregister by service_id
-            self.naming_store
-                .remove_by_service_id(namespace, service_id)
-        } else {
-            // Node deregistration - remove all services on this node
-            let node = &deregistration.node;
-            let mut deregistered = false;
+    /// Deregister a service via catalog.
+    ///
+    /// Mirrors the precedence of Consul's `DeregisterRequest` handling
+    /// (`Catalog.Deregister` → `FSM.applyDeregister`): a `ServiceID` wins over
+    /// a `CheckID`, which wins over a bare node deregistration. Callers must
+    /// therefore never fall through to the node branch when only a check was
+    /// named — deleting the whole node would take every service down with it.
+    pub fn deregister_service(&self, namespace: &str, service_id: &str) -> bool {
+        self.naming_store
+            .remove_by_service_id(namespace, service_id)
+    }
 
-            for service_name in self.naming_store.service_names(namespace) {
-                for entry_bytes in self
-                    .naming_store
-                    .get_service_entries(namespace, &service_name)
-                {
-                    let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
-                        &entry_bytes,
-                    ) else {
-                        continue;
-                    };
-                    let ip = reg.effective_address();
-                    let instance_node = format!("node-{}", ip.replace('.', "-"));
-                    if &instance_node == node || &ip == node {
-                        self.naming_store
-                            .remove_by_service_id(namespace, &reg.service_id());
-                        deregistered = true;
+    /// Remove every service registered on `node`, returning their service IDs.
+    ///
+    /// Upstream drops the whole node along with its services and checks, so
+    /// the caller is responsible for tearing the checks down too.
+    pub fn remove_node_services(&self, namespace: &str, node: &str) -> Vec<String> {
+        let mut removed = Vec::new();
+
+        for service_name in self.naming_store.service_names(namespace) {
+            for entry_bytes in self
+                .naming_store
+                .get_service_entries(namespace, &service_name)
+            {
+                let Ok(reg) =
+                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
+                else {
+                    continue;
+                };
+                if node_matches(&reg, node) {
+                    let service_id = reg.service_id();
+                    if self
+                        .naming_store
+                        .remove_by_service_id(namespace, &service_id)
+                    {
+                        removed.push(service_id);
                     }
                 }
             }
+        }
 
-            deregistered
+        removed
+    }
+
+    /// Deregister a service via catalog.
+    ///
+    /// Kept for callers that only care about the service / node cases; use
+    /// [`Self::deregister_service`] and [`Self::remove_node_services`] when
+    /// the `CheckID` branch has to be distinguished.
+    pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
+        if let Some(ref service_id) = deregistration.service_id {
+            self.deregister_service(namespace, service_id)
+        } else if deregistration.check_id.is_some() {
+            // A check-only deregistration removes nothing from the catalog's
+            // service view; the handler tears the check down instead.
+            false
+        } else {
+            !self
+                .remove_node_services(namespace, &deregistration.node)
+                .is_empty()
         }
     }
 
@@ -1678,6 +1749,20 @@ pub async fn register(
     }
 }
 
+/// Remove the checks owned by a service that was just dropped.
+///
+/// Consul drops a service's checks along with the service, whether the
+/// removal came from an explicit deregistration or from a node going away.
+fn drop_service_checks(health_service: &crate::health::ConsulHealthService, service_id: &str) {
+    let check_index = health_service.check_index();
+    if let Some((_, instance_key)) = check_index.lookup(service_id) {
+        health_service
+            .registry()
+            .deregister_all_instance_checks(&instance_key);
+    }
+    check_index.remove(service_id);
+}
+
 /// PUT /v1/catalog/deregister
 /// Deregister a node, service, or check
 pub async fn deregister(
@@ -1685,6 +1770,7 @@ pub async fn deregister(
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    health_service: web::Data<crate::health::ConsulHealthService>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogDeregistration>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -1696,6 +1782,7 @@ pub async fn deregister(
     let resource = deregistration
         .service_id
         .as_deref()
+        .or(deregistration.check_id.as_deref())
         .or(Some(&deregistration.node))
         .unwrap_or("");
     let resource_type = if deregistration.service_id.is_some() {
@@ -1708,7 +1795,29 @@ pub async fn deregister(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    let success = catalog.deregister(&deregistration, &namespace);
+    // Consul resolves a deregistration in a fixed order — service, then
+    // check, then the whole node (FSM.applyDeregister). Collapsing the check
+    // case into the node case would take every service on the node down.
+    let success = if let Some(ref service_id) = deregistration.service_id {
+        let removed = catalog.deregister_service(&namespace, service_id);
+        if removed {
+            drop_service_checks(&health_service, service_id);
+        }
+        removed
+    } else if let Some(ref check_id) = deregistration.check_id {
+        let check_key = health_service.check_key(check_id);
+        health_service.registry().deregister_check(&check_key);
+        health_service.check_index().remove_check(check_id);
+        health_service.check_index().remove(check_id);
+        true
+    } else {
+        let removed = catalog.remove_node_services(&namespace, &deregistration.node);
+        for service_id in &removed {
+            drop_service_checks(&health_service, service_id);
+        }
+        !removed.is_empty()
+    };
+
     if !success {
         let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
         return consul_ok(&meta).json(false);

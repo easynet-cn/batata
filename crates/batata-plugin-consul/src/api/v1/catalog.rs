@@ -16,6 +16,7 @@ use crate::catalog::{
     CatalogDeregistration, CatalogQueryParams, CatalogRegistration, ConsulCatalogService,
 };
 use crate::config_entry::ConsulConfigEntryService;
+use crate::health::ConsulHealthService;
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;
 use crate::peering::ConsulPeeringService;
@@ -129,6 +130,7 @@ async fn deregister(
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    health_service: web::Data<ConsulHealthService>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogDeregistration>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -138,6 +140,7 @@ async fn deregister(
         catalog,
         acl_service,
         dc_config,
+        health_service,
         query,
         body,
         index_provider,

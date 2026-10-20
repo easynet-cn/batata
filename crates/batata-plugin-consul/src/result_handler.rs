@@ -94,25 +94,31 @@ impl ConsulResultHandler {
     /// to call `RemoveService()`, NOT IP:Port matching.
     ///
     /// Cluster mode: routes through `ConsulRaftRequest::CatalogDeregister`
-    /// so the removal replicates to all nodes. Only the leader initiates
-    /// the Raft write — followers' check reactors will skip because of
-    /// the leader gate. Standalone mode: direct naming_store mutation.
-    fn deregister_by_check_id(&self, check_id: &str) -> bool {
+    /// so the removal replicates to all nodes. The write is *not* gated on
+    /// this node being the leader: `RaftNode::write_with_index` forwards to
+    /// the leader on a follower, so gating here would strand the one node
+    /// that can actually resolve the check (see `ReapOutcome::UnknownCheck`).
+    fn deregister_by_check_id(&self, check_id: &str) -> ReapOutcome {
         let Some(services) = self.services.get() else {
             warn!(
                 "ConsulResultHandler: services not set, cannot deregister by check_id '{}'",
                 check_id
             );
-            return false;
+            return ReapOutcome::UnknownCheck;
         };
 
         // Step 1: check_id → service_id
         let Some(service_id) = services.check_index.lookup_service_id(check_id) else {
+            // This node does not own the check: the mapping is only built by
+            // the agent that accepted the registration, while the check
+            // itself replicates to every node. Guessing here is what used to
+            // delete an unrelated service sharing the same IP:Port.
             warn!(
-                "ConsulResultHandler: no service_id found for check_id '{}'",
+                "ConsulResultHandler: no service_id found for check_id '{}' \
+                 (check is replicated from another agent; leaving reap to its owner)",
                 check_id
             );
-            return false;
+            return ReapOutcome::UnknownCheck;
         };
 
         // Step 2: service_id → find store_key in NamingStore
@@ -122,17 +128,9 @@ impl ConsulResultHandler {
             if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
                 && reg.service_id() == service_id
             {
-                // Cluster mode: leader-only Raft write. Followers
-                // observe the cascade via `CatalogDeregister` apply
-                // which runs the naming-store hook installed at
-                // plugin init. Short-circuit on follower to avoid
-                // the race where multiple nodes each try to delete.
                 if let Some(ref writer) = services.raft_writer {
-                    if !writer.is_leader() {
-                        return false;
-                    }
                     info!(
-                        "Leader deregistering service '{}' (check_id='{}', store_key='{}') via Raft",
+                        "Deregistering service '{}' (check_id='{}', store_key='{}') via Raft",
                         service_id, check_id, key
                     );
                     let writer = writer.clone();
@@ -168,7 +166,7 @@ impl ConsulResultHandler {
                             }
                         }
                     });
-                    return true;
+                    return ReapOutcome::Removed;
                 }
                 // Standalone mode: direct mutation.
                 info!(
@@ -179,7 +177,7 @@ impl ConsulResultHandler {
                 services.check_index.remove(&service_id);
                 services.check_index.remove_check(check_id);
                 self.index_provider.increment(ConsulTable::Catalog);
-                return true;
+                return ReapOutcome::Removed;
             }
         }
 
@@ -187,7 +185,7 @@ impl ConsulResultHandler {
             "ConsulResultHandler: service_id '{}' not found in NamingStore (check_id='{}')",
             service_id, check_id
         );
-        false
+        ReapOutcome::MissingService
     }
 
     /// Invalidate sessions linked to a check that became Critical.
@@ -277,39 +275,49 @@ impl HealthCheckResultHandler for ConsulResultHandler {
         _namespace: &str,
         _group: &str,
         _service: &str,
-        ip: &str,
-        port: i32,
+        _ip: &str,
+        _port: i32,
         _cluster: &str,
     ) {
-        // Primary: use check_id → service_id → store_key chain (Consul approach)
-        if self.deregister_by_check_id(check_id) {
-            return;
-        }
-
-        // Fallback: IP:Port match (for checks registered outside the index)
-        let entries = PluginNamingStore::scan(&*self.naming_store, "");
-        for (key, data) in &entries {
-            if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
-            {
-                let reg_port = reg.port.unwrap_or(0) as i32;
-                let reg_addr = reg.effective_address();
-                if reg_addr == ip && reg_port == port {
-                    info!(
-                        "Deregistering service by IP:Port fallback: key='{}', addr={}:{}",
-                        key, ip, port
-                    );
-                    let _ = PluginNamingStore::deregister(&*self.naming_store, key);
-                    self.index_provider.increment(ConsulTable::Catalog);
-                    return;
-                }
+        // Consul reaps strictly by ServiceID (`Agent.reapServicesInternal`):
+        // a check with no resolvable ServiceID is skipped
+        // (`if serviceID.ID == "" { continue }`). There is deliberately no
+        // IP:Port fallback — in a cluster the check replicates to every node
+        // while the check_id → service_id mapping stays on the agent that
+        // accepted the registration, so address matching made every follower
+        // delete whichever service happened to share the address.
+        match self.deregister_by_check_id(check_id) {
+            ReapOutcome::Removed => {}
+            ReapOutcome::UnknownCheck => {
+                warn!(
+                    "ConsulResultHandler: skipping reap of check '{}' — \
+                     no local service mapping",
+                    check_id
+                );
+            }
+            ReapOutcome::MissingService => {
+                warn!(
+                    "ConsulResultHandler: could not find service to deregister (check_id='{}')",
+                    check_id
+                );
             }
         }
-
-        warn!(
-            "ConsulResultHandler: could not find service to deregister (check_id='{}', ip='{}', port={})",
-            check_id, ip, port
-        );
     }
+}
+
+/// Result of a reap attempt.
+///
+/// The distinction matters because a miss must **not** fall back to address
+/// matching: `UnknownCheck` means "another agent owns this check", which is a
+/// normal, expected condition in a cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReapOutcome {
+    /// The service was removed, or a Raft removal was initiated.
+    Removed,
+    /// No `check_id → service_id` mapping on this node.
+    UnknownCheck,
+    /// Mapped, but the service is no longer in the store.
+    MissingService,
 }
 
 #[cfg(test)]
@@ -394,13 +402,18 @@ mod tests {
         );
     }
 
+    /// A check this node cannot resolve to a service must be skipped, never
+    /// guessed at by address.
+    ///
+    /// Upstream `Agent.reapServicesInternal` does the same:
+    /// `if serviceID.ID == "" { continue }`.
     #[test]
-    fn test_deregister_fallback_ip_port() {
+    fn test_deregister_unknown_check_does_not_guess_by_ip_port() {
         let store = Arc::new(ConsulNamingStore::new());
         let index = Arc::new(ConsulIndexProvider::new());
         let handler = ConsulResultHandler::new(store.clone(), index.clone());
 
-        // NO services set — primary path will fail, fallback to IP:Port
+        // NO services set — no check_id → service_id mapping exists.
 
         let data = serde_json::to_vec(&serde_json::json!({
             "Name": "web", "ID": "web-1", "Port": 8080, "Address": "10.0.0.1"
@@ -415,8 +428,102 @@ mod tests {
 
         assert_eq!(
             store.len(),
-            0,
-            "Service should be deregistered via IP:Port fallback"
+            1,
+            "an unresolvable check must not delete a service that matches by IP:Port"
+        );
+    }
+
+    /// The regression this guards: in a cluster the check replicates to every
+    /// node but the check_id → service_id mapping stays on the registering
+    /// agent. Followers used to fall back to IP:Port and delete whichever
+    /// service shared the address — here, the decoy.
+    #[test]
+    fn test_unknown_check_spares_unrelated_service_sharing_address() {
+        let store = Arc::new(ConsulNamingStore::new());
+        let index = Arc::new(ConsulIndexProvider::new());
+        let handler = ConsulResultHandler::new(store.clone(), index.clone());
+
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        handler.set_services(
+            check_index,
+            Arc::new(ConsulSessionService::new()),
+            Arc::new(ConsulKVService::new()),
+            None,
+            "c1".to_string(),
+        );
+
+        // Decoy registered first, so it is what an address scan hits first.
+        let decoy = serde_json::to_vec(&serde_json::json!({
+            "Name": "decoy", "ID": "decoy-1", "Port": 8080, "Address": "10.0.0.1"
+        }))
+        .unwrap();
+        store
+            .register("default/decoy/decoy-1", Bytes::from(decoy))
+            .unwrap();
+
+        let target = serde_json::to_vec(&serde_json::json!({
+            "Name": "web", "ID": "web-1", "Port": 8080, "Address": "10.0.0.1"
+        }))
+        .unwrap();
+        store
+            .register("default/web/web-1", Bytes::from(target))
+            .unwrap();
+
+        // Replicated check: no local mapping, same address as both services.
+        handler.on_deregister("service:web-1", "", "", "web", "10.0.0.1", 8080, "");
+
+        assert_eq!(
+            store.len(),
+            2,
+            "neither service may be deleted from a node that does not own the check"
+        );
+    }
+
+    /// The positive counterpart: when the mapping *is* known, only the mapped
+    /// service is removed even though another service shares its address.
+    #[test]
+    fn test_known_check_removes_only_the_mapped_service() {
+        let store = Arc::new(ConsulNamingStore::new());
+        let index = Arc::new(ConsulIndexProvider::new());
+        let handler = ConsulResultHandler::new(store.clone(), index.clone());
+
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        handler.set_services(
+            check_index.clone(),
+            Arc::new(ConsulSessionService::new()),
+            Arc::new(ConsulKVService::new()),
+            None,
+            "c1".to_string(),
+        );
+
+        let decoy = serde_json::to_vec(&serde_json::json!({
+            "Name": "decoy", "ID": "decoy-1", "Port": 8080, "Address": "10.0.0.1"
+        }))
+        .unwrap();
+        store
+            .register("default/decoy/decoy-1", Bytes::from(decoy))
+            .unwrap();
+
+        let target = serde_json::to_vec(&serde_json::json!({
+            "Name": "web", "ID": "web-1", "Port": 8080, "Address": "10.0.0.1"
+        }))
+        .unwrap();
+        store
+            .register("default/web/web-1", Bytes::from(target))
+            .unwrap();
+
+        check_index.register_check("service:web-1", "web-1");
+
+        handler.on_deregister("service:web-1", "", "", "web", "10.0.0.1", 8080, "");
+
+        let remaining = PluginNamingStore::scan(&*store, "")
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            remaining,
+            vec!["default/decoy/decoy-1".to_string()],
+            "only the mapped service may be removed"
         );
     }
 

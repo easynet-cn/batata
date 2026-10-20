@@ -42,12 +42,25 @@ impl DeregisterMonitor {
         }
     }
 
-    /// Scan for instances that should be auto-deregistered
-    pub(crate) fn reap_critical_instances(&self) {
+    /// Scan for instances that should be auto-deregistered.
+    ///
+    /// Exposed so callers (and tests) can drive a sweep deterministically
+    /// instead of waiting for the background interval to fire.
+    pub fn reap_critical_instances(&self) {
         let critical_checks = self.registry.get_checks_by_status(&CheckStatus::Critical);
         let now = current_timestamp_ms();
 
         for (config, status) in critical_checks {
+            // A check with no owning service (Consul node-level checks) has
+            // nothing to deregister. Upstream `Agent.reapServicesInternal`
+            // skips these too (`if serviceID.ID == "" { continue }`); without
+            // the guard the result handler falls back to IP:Port matching and
+            // can remove an unrelated service that happens to share the
+            // address.
+            if config.service_name.is_empty() {
+                continue;
+            }
+
             // Only process checks with deregister_critical_after configured
             let deregister_after = match config.deregister_critical_after {
                 Some(d) => d,
@@ -158,7 +171,7 @@ mod tests {
             notes: String::new(),
             service_tags: vec![],
             node: String::new(),
-            }
+        }
     }
 
     #[tokio::test]

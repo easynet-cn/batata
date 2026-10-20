@@ -1840,8 +1840,6 @@ pub struct CheckUpdateParams {
 
 impl From<&AgentServiceRegistration> for AgentService {
     fn from(reg: &AgentServiceRegistration) -> Self {
-        let weight = reg.weight().max(1.0) as i32;
-
         // Filter out internal metadata keys
         let meta = reg.meta.as_ref().map(|m| {
             m.iter()
@@ -1849,20 +1847,42 @@ impl From<&AgentServiceRegistration> for AgentService {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect::<HashMap<String, String>>()
         });
-        let meta = meta.filter(|m| !m.is_empty());
+
+        // Upstream `buildAgentService` (agent/agent_endpoint.go) always emits a
+        // non-nil Tags slice and Meta map — clients iterate them without a nil
+        // check. Only an *empty* Meta map is dropped from the payload.
+        let tags = Some(reg.tags.clone().unwrap_or_default());
+        let meta = match meta {
+            Some(m) if !m.is_empty() => Some(m),
+            _ => Some(HashMap::new()),
+        };
+
+        // `Weights.Passing` falls back to 1 when unset or non-positive; Warning
+        // is taken verbatim (0 is legal).
+        let weights = match reg.weights {
+            Some(ref w) => Weights {
+                passing: if w.passing > 0 { w.passing } else { 1 },
+                warning: w.warning,
+            },
+            None => Weights {
+                passing: 1,
+                warning: 1,
+            },
+        };
 
         AgentService {
             id: reg.service_id(),
             service: reg.name.clone(),
-            tags: reg.tags.clone(),
+            tags,
             port: reg.effective_port(),
-            address: reg.effective_address(),
+            // Address is echoed back exactly as registered: Consul leaves it
+            // empty when the caller omits it and lets the node address carry
+            // the location. `effective_address()` is the internal fallback used
+            // for probing and instance keys, not what the API returns.
+            address: reg.address.clone().unwrap_or_default(),
             meta,
             enable_tag_override: reg.enable_tag_override.unwrap_or(false),
-            weights: reg.weights.clone().unwrap_or(Weights {
-                passing: weight,
-                warning: 1,
-            }),
+            weights,
             datacenter: None,
             kind: reg.kind.clone(),
             proxy: reg.proxy.clone(),

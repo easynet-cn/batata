@@ -81,6 +81,24 @@ impl NamingServiceProvider for NamingService {
         self.get_instances_snapshot(namespace, group_name, service_name, cluster, healthy_only)
     }
 
+    fn get_instances_snapshot_raw(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> Vec<Arc<Instance>> {
+        NamingService::get_instances_snapshot_raw(
+            self,
+            namespace,
+            group_name,
+            service_name,
+            cluster,
+            healthy_only,
+        )
+    }
+
     fn get_service(
         &self,
         namespace: &str,

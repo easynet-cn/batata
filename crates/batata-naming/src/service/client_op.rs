@@ -126,7 +126,10 @@ impl ClientOperationService for EphemeralClientOperationService {
         // `Service.newService(namespace, group, name, true)`, so the AP path
         // always seeds/resolves `true` regardless of what the caller sent in
         // `instance.ephemeral`.
-        if !self.naming.resolve_service_ephemeral(namespace, group_name, service_name, true) {
+        if !self
+            .naming
+            .resolve_service_ephemeral(namespace, group_name, service_name, true)
+        {
             warn!(
                 "EphemeralClientOperationService refusing instance {}:{} — service {} is \
                  persistent, route it through PersistentClientOperationService",

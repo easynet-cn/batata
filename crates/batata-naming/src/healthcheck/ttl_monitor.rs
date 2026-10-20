@@ -40,8 +40,16 @@ impl TtlMonitor {
 
         loop {
             interval.tick().await;
-            self.scan_expired_ttl_checks().await;
+            self.run_once().await;
         }
+    }
+
+    /// Run a single scan pass.
+    ///
+    /// Exposed so callers (and tests) can drive the sweep deterministically
+    /// instead of waiting for the background interval to fire.
+    pub async fn run_once(&self) {
+        self.scan_expired_ttl_checks().await;
     }
 
     /// Scan all checks and mark expired TTL checks as Critical
@@ -80,7 +88,10 @@ impl TtlMonitor {
                         Some("TTL expired".to_string()),
                     )
                     .await;
-                debug!("Marked check {} as Critical due to TTL expiration", check_key);
+                debug!(
+                    "Marked check {} as Critical due to TTL expiration",
+                    check_key
+                );
             }
         }
     }
@@ -133,7 +144,7 @@ mod tests {
             notes: String::new(),
             service_tags: vec![],
             node: String::new(),
-            }
+        }
     }
 
     #[tokio::test]

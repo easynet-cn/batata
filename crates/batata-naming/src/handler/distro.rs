@@ -13,8 +13,8 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::service::NamingService;
 use crate::service::instance::is_distro_replica;
+use crate::service::{ConnectionManagerPusher, NamingService, SubscriberPusher};
 
 // Re-export DistroProtocol for convenience
 pub use batata_core::service::distro::DistroProtocol;
@@ -71,9 +71,14 @@ fn sync_version_key(key: &str, source: &str) -> String {
 pub struct NamingInstanceDistroHandler {
     local_address: String,
     naming_service: Arc<NamingService>,
-    /// Connection manager used to push updates to subscribers connected to
-    /// this node. `None` in unit tests / standalone wiring.
-    connection_manager: Option<Arc<ConnectionManager>>,
+    /// Sink used to push updates to subscribers connected to this node.
+    ///
+    /// Abstracted as a trait (rather than holding a concrete
+    /// `ConnectionManager`) so the push path is testable without a gRPC
+    /// runtime: `with_pusher` accepts any implementation. `None` means
+    /// "no subscribers to notify" — standalone wiring and unit tests that
+    /// only care about data movement.
+    pusher: Option<Arc<dyn SubscriberPusher>>,
     /// Key: `sync_version_key(service_key, source)`, Value: version of the
     /// most recent sync applied from that source. Consumed by
     /// `process_verify_data` to answer "am I up to date with peer X?".
@@ -86,7 +91,7 @@ impl NamingInstanceDistroHandler {
         Self {
             local_address,
             naming_service,
-            connection_manager: None,
+            pusher: None,
             last_sync_versions: Arc::new(DashMap::new()),
         }
     }
@@ -101,7 +106,25 @@ impl NamingInstanceDistroHandler {
         Self {
             local_address,
             naming_service,
-            connection_manager: Some(connection_manager),
+            pusher: Some(Arc::new(ConnectionManagerPusher::new(connection_manager))),
+            last_sync_versions: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Creates a new instance with an explicit push sink.
+    ///
+    /// Production wiring uses [`Self::with_connection_manager`]; this is the
+    /// seam tests use to observe what a node would have pushed, without
+    /// standing up a gRPC connection manager.
+    pub fn with_pusher(
+        local_address: String,
+        naming_service: Arc<NamingService>,
+        pusher: Arc<dyn SubscriberPusher>,
+    ) -> Self {
+        Self {
+            local_address,
+            naming_service,
+            pusher: Some(pusher),
             last_sync_versions: Arc::new(DashMap::new()),
         }
     }
@@ -113,7 +136,7 @@ impl NamingInstanceDistroHandler {
     /// stale) instance list. Nacos publishes a client-changed event on distro
     /// sync for exactly the same reason.
     fn notify_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) {
-        let Some(ref cm) = self.connection_manager else {
+        let Some(ref pusher) = self.pusher else {
             return;
         };
 
@@ -132,9 +155,9 @@ impl NamingInstanceDistroHandler {
         let payload = notification.build_server_push_payload();
 
         let subscriber_count = subscribers.len();
-        let cm = cm.clone();
+        let pusher = pusher.clone();
         tokio::spawn(async move {
-            let sent = cm.push_message_to_many(&subscribers, payload).await;
+            let sent = pusher.push_to_many(&subscribers, payload).await;
             debug!(
                 "Distro sync: pushed updated instances to {}/{} subscribers",
                 sent, subscriber_count
@@ -180,7 +203,10 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
 
         // Snapshot instances (zero-copy Arc clones). We filter ephemerals
         // before any deep-clone, so persistent instances cost nothing here.
-        let snapshot = self.naming_service.get_instances_snapshot(
+        //
+        // `*_raw` on purpose: the gate below reads the ownership markers, and
+        // this is the one read path that must see them.
+        let snapshot = self.naming_service.get_instances_snapshot_raw(
             &namespace,
             &group_name,
             &service_name,

@@ -207,10 +207,11 @@ async fn update_instance(
     let weight = batata_api::naming::model::clamp_weight(form.weight);
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &form.ip,
             form.port,
             cluster_name,
+            group_name,
             &form.service_name,
         ),
         ip: form.ip.clone(),

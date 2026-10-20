@@ -98,6 +98,9 @@ pub mod query;
 pub mod result_handler;
 /// The `route` module.
 pub mod route;
+
+#[cfg(test)]
+mod check_lifecycle_tests;
 /// The `session` module.
 pub mod session;
 /// The `snapshot` module.

@@ -222,6 +222,59 @@ impl ConsulNamingStore {
         }
     }
 
+    /// Store an entry, replacing any previous entry that shares the same
+    /// (namespace, service_id) but lives under a different key.
+    ///
+    /// Upstream Consul keys agent services by ID alone (`local/state.go`:
+    /// `l.services[id] = ...`), so re-registering a service ID under a new
+    /// *name* replaces the old entry instead of adding a second one. Here the
+    /// key embeds the service name, so without this cleanup a rename leaves a
+    /// ghost under the old name that keeps showing up in
+    /// `/v1/catalog/services`, `/v1/catalog/service/<old>` and the health
+    /// endpoints.
+    ///
+    /// Returns the stale key that was removed, if any. Callers replicating
+    /// through Raft must forward a `CatalogDeregister` for it, otherwise the
+    /// followers keep the ghost.
+    pub fn upsert_by_service_id(
+        &self,
+        ns: &str,
+        key: &str,
+        service_id: &str,
+        data: Bytes,
+    ) -> Option<String> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
+
+        // Collect first: mutating the map while holding an iterator deadlocks
+        // on the shard lock.
+        let stale = self
+            .entries
+            .iter()
+            .find(|e| {
+                e.value().namespace == ns && e.value().service_id == service_id && e.key() != key
+            })
+            .map(|e| e.key().clone());
+        if let Some(ref stale_key) = stale {
+            self.entries.remove(stale_key);
+        }
+
+        let (namespace, service_name, parsed_id) = match Self::parse_key(key) {
+            Some(parsed) => parsed,
+            None => return stale,
+        };
+        self.entries.insert(
+            key.to_string(),
+            StoredEntry {
+                data,
+                namespace,
+                service_name,
+                service_id: parsed_id,
+            },
+        );
+        self.bump_revision();
+        stale
+    }
+
     /// Scan all entries in a namespace (for internal/metrics)
     pub fn scan_ns(&self, ns: &str) -> Vec<(String, Bytes)> {
         let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
@@ -555,6 +608,75 @@ mod tests {
     fn test_empty_namespace_defaults_to_default() {
         let key = ConsulNamingStore::build_key("", "web", "web-1");
         assert!(key.starts_with("default/"));
+    }
+
+    #[test]
+    fn test_upsert_by_service_id_replaces_renamed_entry() {
+        let store = ConsulNamingStore::new();
+        let old_key = ConsulNamingStore::build_key("default", "web", "svc-1");
+        store
+            .register(&old_key, sample_registration("web", "svc-1"))
+            .unwrap();
+
+        // Same service ID, new service name: the old entry must disappear.
+        let new_key = ConsulNamingStore::build_key("default", "api", "svc-1");
+        let stale = store.upsert_by_service_id(
+            "default",
+            &new_key,
+            "svc-1",
+            sample_registration("api", "svc-1"),
+        );
+
+        assert_eq!(stale.as_deref(), Some(old_key.as_str()));
+        assert_eq!(store.len(), 1, "the renamed service must not duplicate");
+        assert!(store.get_service_entries("default", "web").is_empty());
+        assert_eq!(store.get_service_entries("default", "api").len(), 1);
+        assert!(store.get_by_service_id("default", "svc-1").is_some());
+    }
+
+    #[test]
+    fn test_upsert_by_service_id_returns_none_when_key_is_stable() {
+        let store = ConsulNamingStore::new();
+        let key = ConsulNamingStore::build_key("default", "web", "svc-1");
+        store
+            .register(&key, sample_registration("web", "svc-1"))
+            .unwrap();
+
+        // Re-registering under the same key (same name, same ID) is a plain
+        // overwrite — nothing stale to clean up.
+        let stale = store.upsert_by_service_id(
+            "default",
+            &key,
+            "svc-1",
+            sample_registration("web", "svc-1"),
+        );
+        assert!(stale.is_none());
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_by_service_id_is_namespace_scoped() {
+        let store = ConsulNamingStore::new();
+        store
+            .register(
+                &ConsulNamingStore::build_key("default", "web", "svc-1"),
+                sample_registration("web", "svc-1"),
+            )
+            .unwrap();
+
+        // Same service ID in a different namespace is a different service.
+        let staging_key = ConsulNamingStore::build_key("staging", "api", "svc-1");
+        let stale = store.upsert_by_service_id(
+            "staging",
+            &staging_key,
+            "svc-1",
+            sample_registration("api", "svc-1"),
+        );
+
+        assert!(stale.is_none());
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.get_service_entries("default", "web").len(), 1);
+        assert_eq!(store.get_service_entries("staging", "api").len(), 1);
     }
 
     #[test]

@@ -39,8 +39,7 @@ pub enum ServerIdentityStatus {
 
 /// Message for the misconfigured case, mirroring
 /// `AbstractProtocolAuthService#isInvalidServerIdentity`.
-const INVALID_SERVER_IDENTITY_MSG: &str =
-    "Invalid server identity key or value, Please make sure set \
+const INVALID_SERVER_IDENTITY_MSG: &str = "Invalid server identity key or value, Please make sure set \
      `batata.core.auth.server.identity.key` and `batata.core.auth.server.identity.value`";
 
 /// Trait for looking up user roles and permissions from the database.
@@ -680,7 +679,12 @@ mod tests {
     const VALUE: &str = "cluster-node-1";
 
     fn auth_with(key: &str, value: &str) -> GrpcAuthService {
-        GrpcAuthService::new(true, "secret".to_string(), key.to_string(), value.to_string())
+        GrpcAuthService::new(
+            true,
+            "secret".to_string(),
+            key.to_string(),
+            value.to_string(),
+        )
     }
 
     fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {

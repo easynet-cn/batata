@@ -24,6 +24,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use batata_naming::NamingService;
 use batata_naming::healthcheck::config::HealthCheckConfig;
 use batata_naming::healthcheck::interceptor::HealthCheckInterceptorChain;
 use batata_naming::healthcheck::registry::{
@@ -31,7 +32,6 @@ use batata_naming::healthcheck::registry::{
 };
 use batata_naming::healthcheck::ttl_processor::TtlHealthCheckProcessor;
 use batata_naming::healthcheck::{ExpiredInstanceChecker, UnhealthyInstanceChecker};
-use batata_naming::NamingService;
 use common::{GROUP, NS, instance, persistent_instance, service};
 
 const SVC: &str = "svc";
@@ -40,7 +40,12 @@ const SVC: &str = "svc";
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn check_config(id: &str, node: &str, kind: CheckType, ttl: Option<Duration>) -> InstanceCheckConfig {
+fn check_config(
+    id: &str,
+    node: &str,
+    kind: CheckType,
+    ttl: Option<Duration>,
+) -> InstanceCheckConfig {
     InstanceCheckConfig {
         check_id: id.to_string(),
         name: format!("check {id}"),
@@ -387,12 +392,7 @@ async fn the_same_check_id_on_two_nodes_is_independent() {
 #[test]
 fn a_node_qualified_check_is_reachable_only_by_its_registry_key() {
     let reg = registry();
-    let key = reg.register_check(check_config(
-        "serfHealth",
-        "c1",
-        CheckType::Tcp,
-        None,
-    ));
+    let key = reg.register_check(check_config("serfHealth", "c1", CheckType::Tcp, None));
 
     assert_eq!(key, "c1#serfHealth");
     assert!(reg.get_check(&key).is_some());

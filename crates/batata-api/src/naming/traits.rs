@@ -128,6 +128,26 @@ pub trait NamingServiceProvider: Send + Sync {
             .collect()
     }
 
+    /// Snapshot that keeps distro ownership markers intact.
+    ///
+    /// Only for callers that write the value back: they must not strip the
+    /// markers, because re-registering a stripped replica silently turns it
+    /// into a locally owned instance and breaks garbage collection. Everything
+    /// that answers a query uses [`Self::get_instances_snapshot`].
+    ///
+    /// Default impl falls back to the public snapshot, which is correct for
+    /// providers whose storage carries no markers of its own.
+    fn get_instances_snapshot_raw(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> Vec<Arc<Instance>> {
+        self.get_instances_snapshot(namespace, group_name, service_name, cluster, healthy_only)
+    }
+
     /// Returns the service.
     fn get_service(
         &self,

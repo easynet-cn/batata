@@ -37,6 +37,34 @@ pub(crate) fn is_distro_replica(instance: &Instance) -> bool {
         .unwrap_or(false)
 }
 
+/// A copy of `instance` with the distro bookkeeping keys removed.
+///
+/// The markers live in `metadata` because that is the only per-instance slot
+/// that travels with the value, but they are storage concerns: nothing outside
+/// this crate knows they exist, and Nacos has no equivalent. Two things go
+/// wrong if they are handed out:
+///
+/// - every read on a node that holds replicas reports metadata the client never
+///   set, so three nodes answer the same query differently;
+/// - an SDK that echoes the metadata back on its next registration would mark
+///   its own instance as a replica, and the ownership gate in
+///   `NamingInstanceDistroHandler::get_data` would then never publish it —
+///   making the instance invisible to the rest of the cluster.
+///
+/// Returns `Arc::clone` untouched when there is nothing to strip, so the
+/// zero-copy read path stays zero-copy for instances this node owns.
+pub(crate) fn public_instance(instance: &Arc<Instance>) -> Arc<Instance> {
+    if !instance.metadata.contains_key(DISTRO_REMOTE_MARKER)
+        && !instance.metadata.contains_key(DISTRO_SOURCE_MARKER)
+    {
+        return Arc::clone(instance);
+    }
+    let mut clean = Instance::clone(instance);
+    clean.metadata.remove(DISTRO_REMOTE_MARKER);
+    clean.metadata.remove(DISTRO_SOURCE_MARKER);
+    Arc::new(clean)
+}
+
 /// Partial update payload — the `PATCH` counterpart to a full `PUT` update.
 ///
 /// `None` means "leave the stored value alone". This is the whole point of the
@@ -259,7 +287,34 @@ impl NamingService {
     ///
     /// Shard lock is held only while cloning the `Arc` pointers (not while
     /// filtering), matching the existing `get_instances` pattern.
+    ///
+    /// Distro bookkeeping keys are stripped on the way out — see
+    /// [`public_instance`]. Callers that need to see ownership markers (the
+    /// distro publisher, and update paths that clone-then-re-register) must use
+    /// [`NamingService::get_instances_snapshot_raw`] instead: writing a
+    /// stripped value back would silently turn a replica into a locally owned
+    /// instance.
     pub fn get_instances_snapshot(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> Vec<Arc<Instance>> {
+        self.get_instances_snapshot_raw(namespace, group_name, service_name, cluster, healthy_only)
+            .into_iter()
+            .map(|arc| public_instance(&arc))
+            .collect()
+    }
+
+    /// [`NamingService::get_instances_snapshot`] without the marker stripping.
+    ///
+    /// Only for code that inspects or rewrites storage: the distro publisher's
+    /// ownership gate, and handlers that merge a patch into the stored value and
+    /// register it again. Everything that answers a query must use the public
+    /// variant.
+    pub fn get_instances_snapshot_raw(
         &self,
         namespace: &str,
         group_name: &str,
@@ -357,7 +412,14 @@ impl NamingService {
                 let health_match = protection_triggered || !healthy_only || inst.healthy;
                 cluster_match && health_match
             })
-            .map(|inst| Instance::clone(inst))
+            .map(|inst| {
+                // Storage markers must not reach the caller — see
+                // `public_instance`.
+                let mut clean = Instance::clone(inst);
+                clean.metadata.remove(DISTRO_REMOTE_MARKER);
+                clean.metadata.remove(DISTRO_SOURCE_MARKER);
+                clean
+            })
             .collect();
 
         let now = SystemTime::now()
@@ -443,7 +505,14 @@ impl NamingService {
                 let health_match = protection_triggered || !healthy_only || inst.healthy;
                 cluster_match && health_match
             })
-            .map(|inst| Instance::clone(inst))
+            .map(|inst| {
+                // Storage markers must not reach the caller — see
+                // `public_instance`.
+                let mut clean = Instance::clone(inst);
+                clean.metadata.remove(DISTRO_REMOTE_MARKER);
+                clean.metadata.remove(DISTRO_SOURCE_MARKER);
+                clean
+            })
             .collect();
 
         let now = SystemTime::now()

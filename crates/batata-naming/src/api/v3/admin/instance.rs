@@ -283,10 +283,11 @@ async fn register_instance(
         .unwrap_or_default();
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &form.ip,
             form.port,
             cluster_name,
+            group_name,
             &form.service_name,
         ),
         ip: form.ip.clone(),
@@ -379,10 +380,11 @@ async fn deregister_instance(
     );
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &params.ip,
             params.port,
             cluster_name,
+            group_name,
             &params.service_name,
         ),
         ip: params.ip.clone(),
@@ -511,10 +513,11 @@ async fn update_instance(
     );
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &form.ip,
             form.port,
             cluster_name,
+            group_name,
             &form.service_name,
         ),
         ip: form.ip.clone(),
@@ -755,7 +758,7 @@ async fn update_metadata(
     let instance_keys = parse_instance_keys(&form.instances);
 
     // Zero-copy snapshot — only matching instances get deep-cloned.
-    let snapshot = naming_service.get_instances_snapshot(
+    let snapshot = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &form.service_name,
@@ -857,7 +860,7 @@ async fn partial_update_instance(
     );
 
     // Zero-copy snapshot — only target instance gets deep-cloned.
-    let instances = naming_service.get_instances_snapshot(
+    let instances = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &form.service_name,
@@ -1054,7 +1057,7 @@ async fn delete_metadata_batch(
     }
 
     // Zero-copy snapshot — only matching instances get deep-cloned.
-    let snapshot = naming_service.get_instances_snapshot(
+    let snapshot = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &params.service_name,

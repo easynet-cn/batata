@@ -710,7 +710,7 @@ pub async fn batch_update_metadata(
     }
 
     // Snapshot existing instances — only matching ones get cloned.
-    let snapshot = naming_service.get_instances_snapshot(
+    let snapshot = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &form.service_name,
@@ -846,7 +846,7 @@ pub async fn batch_delete_metadata(
     }
 
     // Snapshot existing instances — only matching ones get cloned.
-    let snapshot = naming_service.get_instances_snapshot(
+    let snapshot = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &params.service_name,
@@ -923,7 +923,7 @@ pub async fn patch_instance(
     );
 
     // Snapshot and find one. Only the target instance gets deep-cloned.
-    let snapshot = naming_service.get_instances_snapshot(
+    let snapshot = naming_service.get_instances_snapshot_raw(
         namespace_id,
         group_name,
         &form.service_name,

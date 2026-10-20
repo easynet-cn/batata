@@ -4758,3 +4758,991 @@ async fn test_http_connect_proxy_config_not_found() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404);
 }
+
+// ========================================================================
+// Blocking query (X-Consul-Index) end-to-end tests
+//
+// Consul's blocking-query contract: a request carrying `?index=N` hangs until
+// the queried table's index passes N, or until `?wait` elapses — whichever
+// comes first. `X-Consul-Index` is echoed back so the client can feed it into
+// the next request. Only the *relevant* table wakes a waiter.
+// ========================================================================
+
+/// Read `X-Consul-Index` from a response, defaulting to 0 when absent.
+fn consul_index_of(resp: &actix_web::dev::ServiceResponse) -> u64 {
+    resp.headers()
+        .get("X-Consul-Index")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+async fn kv_put(
+    app: &impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+    key: &str,
+    value: &str,
+) -> u64 {
+    let resp = test::call_service(
+        app,
+        test::TestRequest::put()
+            .uri(&format!("/v1/kv/{key}"))
+            .set_payload(value.to_string())
+            .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success(), "PUT /v1/kv/{key} failed");
+    consul_index_of(&resp)
+}
+
+async fn kv_get_index(
+    app: &impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    >,
+    key: &str,
+) -> u64 {
+    let resp = test::call_service(
+        app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/kv/{key}"))
+            .to_request(),
+    )
+    .await;
+    consul_index_of(&resp)
+}
+
+/// Every response on a blocking-capable endpoint carries the header, and it is
+/// never 0 — Consul clamps it to 1 so a client that feeds it back cannot spin.
+#[actix_web::test]
+async fn test_blocking_query_always_reports_an_index() {
+    let app = create_test_app().await;
+    let idx = kv_put(&app, "bq/idx", "v1").await;
+    assert!(idx >= 1, "X-Consul-Index must be >= 1, got {idx}");
+    assert_eq!(kv_get_index(&app, "bq/idx").await, idx);
+}
+
+/// The core contract: the request hangs, then returns once the key changes.
+#[actix_web::test]
+async fn test_blocking_query_wakes_when_the_key_changes() {
+    let app = create_test_app().await;
+    let base = kv_put(&app, "bq/wake", "v1").await;
+
+    let start = std::time::Instant::now();
+    let blocking = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/kv/bq/wake?index={base}&wait=5s"))
+            .to_request(),
+    );
+    let writer = async {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        kv_put(&app, "bq/wake", "v2").await
+    };
+
+    let (blocked, _) = tokio::join!(blocking, writer);
+    let elapsed = start.elapsed();
+    assert!(
+        consul_index_of(&blocked) > base,
+        "blocking query must observe the write"
+    );
+    // The write lands at ~50ms; a waiter that is only released by the 5s
+    // timeout would report the new index too, so the timing is what proves it
+    // was actually woken.
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "should wake on the write, not on the 5s timeout, took {elapsed:?}"
+    );
+}
+
+/// With nothing changing, the wait expires and the *unchanged* index comes back.
+#[actix_web::test]
+async fn test_blocking_query_times_out_when_nothing_changes() {
+    let app = create_test_app().await;
+    let base = kv_put(&app, "bq/idle", "v1").await;
+
+    let start = std::time::Instant::now();
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/kv/bq/idle?index={base}&wait=150ms"))
+            .to_request(),
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        consul_index_of(&resp),
+        base,
+        "no write means no index movement"
+    );
+    assert!(
+        elapsed >= std::time::Duration::from_millis(120),
+        "should have blocked for the wait duration, took {elapsed:?}"
+    );
+}
+
+/// `index=0` means "I have never queried before" — Consul answers immediately.
+#[actix_web::test]
+async fn test_blocking_query_index_zero_never_blocks() {
+    let app = create_test_app().await;
+    kv_put(&app, "bq/zero", "v1").await;
+
+    let start = std::time::Instant::now();
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/v1/kv/bq/zero?index=0&wait=10s")
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "index=0 must not block"
+    );
+}
+
+/// Table isolation, one direction: a catalog write must not wake a KV waiter.
+#[actix_web::test]
+async fn test_catalog_write_does_not_wake_a_kv_blocking_query() {
+    let app = create_test_app().await;
+    let base = kv_put(&app, "bq/iso", "v1").await;
+
+    let blocking = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/kv/bq/iso?index={base}&wait=200ms"))
+            .to_request(),
+    );
+    let writer = async {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let reg = serde_json::json!({
+            "Node": "bq-iso-node",
+            "Address": "10.9.0.1",
+            "Service": { "Service": "bq-iso-svc", "ID": "bq-iso-svc-1", "Port": 7070 }
+        });
+        test::call_service(
+            &app,
+            test::TestRequest::put()
+                .uri("/v1/catalog/register")
+                .set_json(&reg)
+                .to_request(),
+        )
+        .await
+    };
+
+    let (blocked, _) = tokio::join!(blocking, writer);
+    assert_eq!(
+        consul_index_of(&blocked),
+        base,
+        "a catalog write must not advance the KV index"
+    );
+}
+
+/// Table isolation, other direction: a KV write must not wake a catalog waiter.
+#[actix_web::test]
+async fn test_kv_write_does_not_wake_a_catalog_blocking_query() {
+    let app = create_test_app().await;
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/v1/catalog/nodes")
+            .to_request(),
+    )
+    .await;
+    let base = consul_index_of(&resp);
+    assert!(base >= 1, "catalog endpoints report an index too");
+
+    let blocking = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/catalog/nodes?index={base}&wait=200ms"))
+            .to_request(),
+    );
+    let writer = async {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        kv_put(&app, "bq/reverse", "v1").await
+    };
+
+    let (blocked, _) = tokio::join!(blocking, writer);
+    assert_eq!(consul_index_of(&blocked), base);
+}
+
+/// A catalog blocking query is woken by a catalog write.
+#[actix_web::test]
+async fn test_catalog_blocking_query_wakes_on_catalog_write() {
+    let app = create_test_app().await;
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/v1/catalog/nodes")
+            .to_request(),
+    )
+    .await;
+    let base = consul_index_of(&resp);
+
+    let start = std::time::Instant::now();
+    let blocking = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/v1/catalog/nodes?index={base}&wait=5s"))
+            .to_request(),
+    );
+    let writer = async {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let reg = serde_json::json!({
+            "Node": "bq-cat-node",
+            "Address": "10.9.0.2",
+            "Service": { "Service": "bq-cat-svc", "ID": "bq-cat-svc-1", "Port": 7071 }
+        });
+        test::call_service(
+            &app,
+            test::TestRequest::put()
+                .uri("/v1/catalog/register")
+                .set_json(&reg)
+                .to_request(),
+        )
+        .await
+    };
+
+    let (blocked, _) = tokio::join!(blocking, writer);
+    assert!(consul_index_of(&blocked) > base);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "catalog waiter should wake on the write, took {:?}",
+        start.elapsed()
+    );
+}
+
+/// Monotonicity: the index only ever moves forward, so a client can safely
+/// reuse the value it received.
+#[actix_web::test]
+async fn test_kv_index_is_monotonic_across_writes() {
+    let app = create_test_app().await;
+    let mut last = kv_put(&app, "bq/mono", "v1").await;
+    for i in 0..5 {
+        let next = kv_put(&app, "bq/mono", &format!("v{i}")).await;
+        assert!(next > last, "index must advance: {last} -> {next}");
+        last = next;
+    }
+    assert_eq!(kv_get_index(&app, "bq/mono").await, last);
+}
+
+/// Regression guard for lost wakeups: each of several consecutive writes must
+/// be observed before the (generous) wait expires. An implementation that only
+/// woke waiters registered at notify time could sleep past a write.
+#[actix_web::test]
+async fn test_blocking_query_observes_consecutive_writes() {
+    let app = create_test_app().await;
+    let mut base = kv_put(&app, "bq/consec", "v0").await;
+
+    for i in 1..=3 {
+        let start = std::time::Instant::now();
+        let blocking = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/v1/kv/bq/consec?index={base}&wait=2s"))
+                .to_request(),
+        );
+        let writer = async {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            kv_put(&app, "bq/consec", &format!("v{i}")).await
+        };
+        let (blocked, _) = tokio::join!(blocking, writer);
+        let observed = consul_index_of(&blocked);
+        assert!(
+            observed > base,
+            "write {i} must wake the waiter: {base} -> {observed}"
+        );
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "write {i} should wake the waiter before the 2s timeout, took {:?}",
+            start.elapsed()
+        );
+        base = observed;
+    }
+}
+
+// ========================================================================
+// Service registration semantics (upstream parity)
+//
+// Upstream Consul keys an agent service by its *ID* alone
+// (`agent/local/state.go`: `l.services[id] = ...`), so registration is an
+// upsert: re-registering an ID replaces whatever was stored under it, even
+// when the service was renamed. Responses also normalize a few fields
+// (`buildAgentService` in agent/agent_endpoint.go) — empty Tags/Meta come back
+// as `[]` / `{}`, never `null`.
+// ========================================================================
+
+macro_rules! put_json {
+    ($app:expr, $uri:expr, $body:expr) => {
+        test::call_service(
+            $app,
+            test::TestRequest::put()
+                .uri($uri)
+                .set_json(&$body)
+                .to_request(),
+        )
+        .await
+    };
+}
+
+/// GET a URI, returning `(X-Consul-Index, parsed body)`.
+macro_rules! get_json {
+    ($app:expr, $uri:expr) => {{
+        let resp = test::call_service($app, test::TestRequest::get().uri($uri).to_request()).await;
+        let index = consul_index_of(&resp);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        (index, body)
+    }};
+}
+
+/// Re-registering a service ID under a new name must replace the old entry
+/// instead of leaving a ghost behind in the catalog.
+#[actix_web::test]
+async fn test_register_rename_replaces_previous_name() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({"Name": "rn-old", "ID": "rn-1", "Port": 8080, "Address": "10.9.0.1"})
+    );
+    assert_eq!(resp.status(), 200);
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({"Name": "rn-new", "ID": "rn-1", "Port": 8080, "Address": "10.9.0.1"})
+    );
+    assert_eq!(resp.status(), 200);
+
+    // The old name must be gone everywhere.
+    let (_, services) = get_json!(&app, "/v1/catalog/services");
+    let services = services.as_object().expect("catalog/services is a map");
+    assert!(
+        !services.contains_key("rn-old"),
+        "renamed service must not keep its old name: {services:?}"
+    );
+    assert!(services.contains_key("rn-new"));
+
+    let (_, old) = get_json!(&app, "/v1/catalog/service/rn-old");
+    assert_eq!(
+        old.as_array().map(|a| a.len()).unwrap_or_default(),
+        0,
+        "old name must resolve to no instance: {old:?}"
+    );
+
+    let (_, new) = get_json!(&app, "/v1/catalog/service/rn-new");
+    let new = new.as_array().expect("catalog/service is an array");
+    assert_eq!(new.len(), 1, "exactly one instance: {new:?}");
+    assert_eq!(new[0]["ServiceID"], "rn-1");
+    assert_eq!(new[0]["ServiceName"], "rn-new");
+
+    // The agent view is keyed by service ID, so it holds a single entry.
+    let (_, agent_services) = get_json!(&app, "/v1/agent/services");
+    let agent_services = agent_services.as_object().expect("agent/services is a map");
+    assert_eq!(agent_services.len(), 1, "one service: {agent_services:?}");
+    assert_eq!(agent_services["rn-1"]["Service"], "rn-new");
+}
+
+/// Re-registering the same ID with a new address/port replaces the instance
+/// rather than adding a second one.
+#[actix_web::test]
+async fn test_register_same_id_updates_address_and_port() {
+    let app = create_test_app().await;
+
+    for body in [
+        serde_json::json!({"Name": "ru-svc", "ID": "ru-1", "Port": 8080, "Address": "10.9.1.1"}),
+        serde_json::json!({"Name": "ru-svc", "ID": "ru-1", "Port": 9090, "Address": "10.9.1.2"}),
+    ] {
+        let resp = put_json!(&app, "/v1/agent/service/register", body);
+        assert_eq!(resp.status(), 200);
+    }
+
+    let (_, services) = get_json!(&app, "/v1/catalog/service/ru-svc");
+    let services = services.as_array().expect("catalog/service is an array");
+    assert_eq!(
+        services.len(),
+        1,
+        "re-registration is an upsert: {services:?}"
+    );
+    assert_eq!(services[0]["ServicePort"], 9090);
+    assert_eq!(services[0]["ServiceAddress"], "10.9.1.2");
+}
+
+/// `/v1/catalog/register` upserts by service ID too.
+#[actix_web::test]
+async fn test_catalog_register_rename_replaces_previous_name() {
+    let app = create_test_app().await;
+
+    for name in ["cr-old", "cr-new"] {
+        let resp = put_json!(
+            &app,
+            "/v1/catalog/register",
+            serde_json::json!({
+                "Node": "cr-node",
+                "Address": "10.9.2.1",
+                "Service": {"Service": name, "ID": "cr-1", "Port": 7070}
+            })
+        );
+        assert_eq!(resp.status(), 200);
+    }
+
+    let (_, services) = get_json!(&app, "/v1/catalog/services");
+    let services = services.as_object().expect("catalog/services is a map");
+    assert!(
+        !services.contains_key("cr-old"),
+        "old name must be replaced: {services:?}"
+    );
+    assert!(services.contains_key("cr-new"));
+}
+
+/// Read-your-write: a registration is visible on the very next read, and the
+/// catalog index moves forward so blocking queries wake up.
+#[actix_web::test]
+async fn test_register_is_immediately_visible_and_advances_index() {
+    let app = create_test_app().await;
+
+    let (_, before) = get_json!(&app, "/v1/catalog/service/ryw-svc");
+    assert_eq!(before.as_array().map(|a| a.len()).unwrap_or_default(), 0);
+    let (index_before, _) = get_json!(&app, "/v1/catalog/services");
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({"Name": "ryw-svc", "ID": "ryw-1", "Port": 6060, "Address": "10.9.3.1"})
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/ryw-svc");
+    let catalog = catalog.as_array().expect("catalog/service is an array");
+    assert_eq!(
+        catalog.len(),
+        1,
+        "registration must be readable at once: {catalog:?}"
+    );
+
+    let (_, health) = get_json!(&app, "/v1/health/service/ryw-svc");
+    let health = health.as_array().expect("health/service is an array");
+    assert_eq!(
+        health.len(),
+        1,
+        "health view must see the new instance: {health:?}"
+    );
+
+    let (index_after, _) = get_json!(&app, "/v1/catalog/services");
+    assert!(
+        index_after > index_before,
+        "registration must advance the catalog index: {index_before} -> {index_after}"
+    );
+}
+
+/// Fields survive the register → read round trip unchanged.
+#[actix_web::test]
+async fn test_register_field_round_trip() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "rt-svc",
+            "ID": "rt-1",
+            "Port": 7070,
+            "Address": "10.8.0.1",
+            "Tags": ["primary", "v2"],
+            "Meta": {"env": "prod", "owner": "sre"},
+            "Weights": {"Passing": 5, "Warning": 2},
+            "EnableTagOverride": true
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, services) = get_json!(&app, "/v1/agent/services");
+    let svc = &services["rt-1"];
+    assert_eq!(svc["ID"], "rt-1");
+    assert_eq!(svc["Service"], "rt-svc");
+    assert_eq!(svc["Port"], 7070);
+    assert_eq!(svc["Address"], "10.8.0.1");
+    assert_eq!(svc["Tags"], serde_json::json!(["primary", "v2"]));
+    assert_eq!(svc["Meta"]["env"], "prod");
+    assert_eq!(svc["Meta"]["owner"], "sre");
+    assert_eq!(svc["Weights"]["Passing"], 5);
+    assert_eq!(svc["Weights"]["Warning"], 2);
+    assert_eq!(svc["EnableTagOverride"], true);
+
+    // Same values through the catalog view.
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/rt-svc");
+    let catalog = catalog.as_array().expect("catalog/service is an array");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0]["ServiceID"], "rt-1");
+    assert_eq!(catalog[0]["ServicePort"], 7070);
+    assert_eq!(catalog[0]["ServiceAddress"], "10.8.0.1");
+    assert_eq!(
+        catalog[0]["ServiceTags"],
+        serde_json::json!(["primary", "v2"])
+    );
+    assert_eq!(catalog[0]["ServiceMeta"]["env"], "prod");
+    assert_eq!(catalog[0]["ServiceWeights"]["Passing"], 5);
+}
+
+/// Omitted fields come back with Consul's documented defaults, and an omitted
+/// ID falls back to the service name.
+#[actix_web::test]
+async fn test_register_defaults_for_omitted_fields() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({"Name": "rt-defaults", "Port": 9090})
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, services) = get_json!(&app, "/v1/agent/services");
+    let services = services.as_object().expect("agent/services is a map");
+    let svc = services
+        .get("rt-defaults")
+        .expect("an omitted ID defaults to the service name");
+    assert_eq!(svc["Service"], "rt-defaults");
+    assert_eq!(svc["Port"], 9090);
+    // Consul emits `[]` / `{}` rather than null, and defaults weights to 1/1.
+    assert_eq!(svc["Tags"], serde_json::json!([]), "empty tags must be []");
+    assert_eq!(
+        svc["Meta"],
+        serde_json::json!({}),
+        "empty meta must be {{}}"
+    );
+    assert_eq!(svc["Weights"]["Passing"], 1);
+    assert_eq!(svc["Weights"]["Warning"], 1);
+    // Address is echoed back exactly as registered — empty stays empty.
+    assert_eq!(svc["Address"], "");
+}
+
+/// A deregistration for an unknown ID reports the upstream error text so SDKs
+/// and scripts that match on it keep working.
+#[actix_web::test]
+async fn test_deregister_unknown_id_reports_upstream_message() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(&app, "/v1/agent/service/deregister/no-such-id", ());
+    assert_eq!(resp.status(), 404);
+
+    let body = actix_web::test::read_body(resp).await;
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("Unknown service ID")
+            && text.contains("Ensure that the service ID is passed, not the service name"),
+        "error body should match upstream wording, got: {text}"
+    );
+}
+
+// ========================================================================
+// Query filters and endpoint coverage
+//
+// `?tag=` and `?filter=` are the two query-side filters Consul clients rely
+// on; `/v1/health/state/<state>` and `/v1/health/checks/<service>` expose the
+// check view of the same data.
+// ========================================================================
+
+/// `?tag=` keeps only the instances carrying that tag.
+#[actix_web::test]
+async fn test_health_and_catalog_service_tag_filter() {
+    let app = create_test_app().await;
+
+    for (id, tag) in [("qf-blue", "blue"), ("qf-green", "green")] {
+        let resp = put_json!(
+            &app,
+            "/v1/agent/service/register",
+            serde_json::json!({
+                "Name": "qf-svc", "ID": id, "Port": 8080,
+                "Address": "10.7.0.1", "Tags": [tag]
+            })
+        );
+        assert_eq!(resp.status(), 200);
+    }
+
+    let (_, all) = get_json!(&app, "/v1/health/service/qf-svc");
+    assert_eq!(all.as_array().map(|a| a.len()).unwrap_or_default(), 2);
+
+    let (_, blue) = get_json!(&app, "/v1/health/service/qf-svc?tag=blue");
+    let blue = blue.as_array().expect("health/service is an array");
+    assert_eq!(blue.len(), 1, "only the tagged instance: {blue:?}");
+    assert_eq!(blue[0]["Service"]["ID"], "qf-blue");
+
+    let (_, none) = get_json!(&app, "/v1/health/service/qf-svc?tag=missing");
+    assert_eq!(none.as_array().map(|a| a.len()).unwrap_or_default(), 0);
+
+    // The catalog view applies the same filter.
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/qf-svc?tag=green");
+    let catalog = catalog.as_array().expect("catalog/service is an array");
+    assert_eq!(catalog.len(), 1, "catalog tag filter: {catalog:?}");
+    assert_eq!(catalog[0]["ServiceID"], "qf-green");
+}
+
+/// `?filter=` evaluates a Consul filter expression over the result set.
+#[actix_web::test]
+async fn test_health_service_filter_expression() {
+    let app = create_test_app().await;
+
+    for (id, port, env) in [("qf-p1", 8080, "prod"), ("qf-p2", 9090, "dev")] {
+        let resp = put_json!(
+            &app,
+            "/v1/agent/service/register",
+            serde_json::json!({
+                "Name": "qf-filter", "ID": id, "Port": port,
+                "Address": "10.7.1.1", "Tags": ["web"],
+                "Meta": {"env": env}
+            })
+        );
+        assert_eq!(resp.status(), 200);
+    }
+
+    let (_, by_meta) = get_json!(
+        &app,
+        "/v1/health/service/qf-filter?filter=ServiceMeta.env%20==%20prod"
+    );
+    let by_meta = by_meta.as_array().expect("health/service is an array");
+    assert_eq!(by_meta.len(), 1, "meta filter: {by_meta:?}");
+    assert_eq!(by_meta[0]["Service"]["ID"], "qf-p1");
+
+    let (_, by_port) = get_json!(
+        &app,
+        "/v1/health/service/qf-filter?filter=ServicePort%20==%209090"
+    );
+    let by_port = by_port.as_array().expect("health/service is an array");
+    assert_eq!(by_port.len(), 1, "port filter: {by_port:?}");
+    assert_eq!(by_port[0]["Service"]["ID"], "qf-p2");
+
+    let (_, by_tag) = get_json!(
+        &app,
+        "/v1/health/service/qf-filter?filter=ServiceTags%20contains%20%22web%22"
+    );
+    let by_tag = by_tag.as_array().expect("health/service is an array");
+    assert_eq!(by_tag.len(), 2, "tag contains filter: {by_tag:?}");
+}
+
+/// `/v1/health/state/<state>` groups checks by status; an unknown state is a
+/// client error in Consul.
+#[actix_web::test]
+async fn test_health_state_by_status() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "qf-state", "ID": "qf-state-1", "Port": 8080,
+            "Address": "10.7.2.1",
+            "Check": {"CheckID": "qf-state-chk", "TTL": "15s"}
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let resp = put_json!(&app, "/v1/agent/check/fail/qf-state-chk", ());
+    assert_eq!(resp.status(), 200, "check should exist");
+
+    let (_, critical) = get_json!(&app, "/v1/health/state/critical");
+    let critical = critical.as_array().expect("health/state is an array");
+    assert!(
+        critical.iter().any(|c| c["CheckID"] == "qf-state-chk"),
+        "the failing check must appear under critical: {critical:?}"
+    );
+
+    let (_, passing) = get_json!(&app, "/v1/health/state/passing");
+    let passing = passing.as_array().expect("health/state is an array");
+    assert!(
+        !passing.iter().any(|c| c["CheckID"] == "qf-state-chk"),
+        "a failing check must not appear under passing: {passing:?}"
+    );
+
+    let (_, any) = get_json!(&app, "/v1/health/state/any");
+    let any = any.as_array().expect("health/state is an array");
+    assert!(
+        any.iter().any(|c| c["CheckID"] == "qf-state-chk"),
+        "'any' must include every status: {any:?}"
+    );
+
+    // Consul only rejects an *empty* state; anything unrecognized simply
+    // matches nothing and comes back as an empty list.
+    let (_, unknown) = get_json!(&app, "/v1/health/state/whatever");
+    assert_eq!(
+        unknown.as_array().map(|a| a.len()).unwrap_or_default(),
+        0,
+        "an unknown state must match nothing: {unknown:?}"
+    );
+}
+
+/// `/v1/health/checks/<service>` returns that service's checks.
+#[actix_web::test]
+async fn test_health_checks_for_service() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "qf-checks", "ID": "qf-checks-1", "Port": 8080,
+            "Address": "10.7.3.1",
+            "Check": {"CheckID": "qf-checks-chk", "TTL": "15s"}
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, checks) = get_json!(&app, "/v1/health/checks/qf-checks");
+    let checks = checks.as_array().expect("health/checks is an array");
+    assert_eq!(checks.len(), 1, "one check: {checks:?}");
+    assert_eq!(checks[0]["CheckID"], "qf-checks-chk");
+    assert_eq!(checks[0]["ServiceID"], "qf-checks-1");
+    assert_eq!(checks[0]["ServiceName"], "qf-checks");
+
+    // An unknown service yields an empty list, not an error.
+    let (_, unknown) = get_json!(&app, "/v1/health/checks/qf-none");
+    assert_eq!(unknown.as_array().map(|a| a.len()).unwrap_or_default(), 0);
+}
+
+/// The agent-scoped health lookups mirror the global ones, keyed by ID.
+#[actix_web::test]
+async fn test_agent_health_service_by_id_and_name() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "qf-agent", "ID": "qf-agent-1", "Port": 8080, "Address": "10.7.4.1"
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    // `/v1/agent/health/service/id/{id}` answers with a single object (upstream
+    // `api.AgentServiceChecksInfo`), while the name variant answers with a list.
+    let (_, by_id) = get_json!(&app, "/v1/agent/health/service/id/qf-agent-1");
+    assert_eq!(
+        by_id["Service"]["ID"], "qf-agent-1",
+        "lookup by service ID: {by_id:?}"
+    );
+    assert_eq!(by_id["AggregatedStatus"], "passing");
+
+    let (_, by_name) = get_json!(&app, "/v1/agent/health/service/name/qf-agent");
+    assert_eq!(
+        by_name[0]["Service"]["ID"], "qf-agent-1",
+        "lookup by service name: {by_name:?}"
+    );
+
+    // Consul answers 404 for an unknown service ID.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/v1/agent/health/service/id/qf-nope")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 404, "unknown service ID must be 404");
+}
+
+/// A filter that cannot be compiled is an error, not an unfiltered result
+/// set — returning everything would silently undo what the caller asked for.
+#[actix_web::test]
+async fn test_invalid_filter_expression_is_rejected() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "qf-bad", "ID": "qf-bad-1", "Port": 8080,
+            "Address": "10.7.5.1", "Tags": ["web"]
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    for uri in [
+        // Missing operand.
+        "/v1/health/service/qf-bad?filter=ServicePort%20==",
+        // Unbalanced grouping.
+        "/v1/health/service/qf-bad?filter=(ServicePort%20==%208080",
+        "/v1/agent/services?filter=(Service%20==%20%22qf-bad%22",
+        "/v1/health/checks/qf-bad?filter=Status%20==",
+    ] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert_eq!(
+            resp.status(),
+            400,
+            "{uri} must be rejected instead of returning unfiltered rows"
+        );
+    }
+
+    // A valid expression still works.
+    let (_, ok) = get_json!(
+        &app,
+        "/v1/health/service/qf-bad?filter=ServiceTags%20contains%20%22web%22"
+    );
+    assert_eq!(ok.as_array().map(|a| a.len()).unwrap_or_default(), 1);
+}
+
+// ========================================================================
+// Check lifecycle and deregistration cascade
+//
+// Consul resolves a `/v1/catalog/deregister` request in a fixed order —
+// ServiceID, then CheckID, then the whole node (FSM.applyDeregister). A
+// service's checks die with it, and deleting a node takes every service and
+// check on it down.
+// ========================================================================
+
+/// A check-only deregistration removes that check and nothing else.
+#[actix_web::test]
+async fn test_catalog_deregister_check_id_keeps_services() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "cd-svc", "ID": "cd-1", "Port": 8080, "Address": "10.6.0.1",
+            "Check": {"CheckID": "cd-chk", "TTL": "30s"}
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, checks) = get_json!(&app, "/v1/agent/checks");
+    assert!(
+        checks.get("cd-chk").is_some(),
+        "the check should be registered: {checks:?}"
+    );
+
+    let resp = put_json!(
+        &app,
+        "/v1/catalog/deregister",
+        serde_json::json!({"Node": "cd-node", "CheckID": "cd-chk"})
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, checks) = get_json!(&app, "/v1/agent/checks");
+    assert!(
+        checks.get("cd-chk").is_none(),
+        "the check must be gone: {checks:?}"
+    );
+
+    // The service itself must survive — naming a CheckID says nothing about
+    // the node it belongs to.
+    let (_, services) = get_json!(&app, "/v1/catalog/service/cd-svc");
+    assert_eq!(
+        services.as_array().map(|a| a.len()).unwrap_or_default(),
+        1,
+        "deregistering a check must not touch the service: {services:?}"
+    );
+    let (_, agent_services) = get_json!(&app, "/v1/agent/services");
+    assert!(agent_services.get("cd-1").is_some());
+}
+
+/// Deleting a node takes its services *and* their checks down with it.
+#[actix_web::test]
+async fn test_catalog_deregister_node_removes_services_and_checks() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/agent/service/register",
+        serde_json::json!({
+            "Name": "nd-svc", "ID": "nd-1", "Port": 8080, "Address": "10.5.0.1",
+            "Check": {"CheckID": "nd-chk", "TTL": "30s"}
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let resp = put_json!(
+        &app,
+        "/v1/catalog/deregister",
+        serde_json::json!({"Node": "node-10-5-0-1"})
+    );
+    assert_eq!(resp.status(), 200);
+    let body = actix_web::test::read_body(resp).await;
+    assert_eq!(
+        String::from_utf8_lossy(&body).trim(),
+        "true",
+        "node deregistration should report success"
+    );
+
+    let (_, services) = get_json!(&app, "/v1/agent/services");
+    assert!(
+        services.get("nd-1").is_none(),
+        "the service must be gone: {services:?}"
+    );
+
+    let (_, checks) = get_json!(&app, "/v1/agent/checks");
+    assert!(
+        checks.get("nd-chk").is_none(),
+        "a service's checks die with it: {checks:?}"
+    );
+
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/nd-svc");
+    assert_eq!(catalog.as_array().map(|a| a.len()).unwrap_or_default(), 0);
+}
+
+/// The node name a catalog registration carries is kept, so the node can be
+/// listed, inspected and removed under the name it was registered with.
+#[actix_web::test]
+async fn test_catalog_register_keeps_node_name() {
+    let app = create_test_app().await;
+
+    let resp = put_json!(
+        &app,
+        "/v1/catalog/register",
+        serde_json::json!({
+            "Node": "cn-node", "Address": "10.4.0.1",
+            "Service": {"Service": "cn-svc", "ID": "cn-1", "Port": 8080}
+        })
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, nodes) = get_json!(&app, "/v1/catalog/nodes");
+    let names: Vec<&str> = nodes
+        .as_array()
+        .expect("catalog/nodes is an array")
+        .iter()
+        .filter_map(|n| n["Node"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"cn-node"),
+        "the registered node name must be preserved: {names:?}"
+    );
+
+    let (_, node) = get_json!(&app, "/v1/catalog/node/cn-node");
+    let services = node["Services"].as_object().expect("node services map");
+    assert!(
+        services.contains_key("cn-1"),
+        "the node must own its service: {services:?}"
+    );
+
+    // The bookkeeping key is internal and must not leak into API output.
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/cn-svc");
+    let meta = &catalog.as_array().expect("array")[0]["ServiceMeta"];
+    assert!(
+        meta.get("consul_node_name").is_none(),
+        "internal consul_* metadata must be filtered: {meta:?}"
+    );
+
+    let resp = put_json!(
+        &app,
+        "/v1/catalog/deregister",
+        serde_json::json!({"Node": "cn-node"})
+    );
+    assert_eq!(resp.status(), 200);
+
+    let (_, catalog) = get_json!(&app, "/v1/catalog/service/cn-svc");
+    assert_eq!(
+        catalog.as_array().map(|a| a.len()).unwrap_or_default(),
+        0,
+        "deregistering by node name must remove its services: {catalog:?}"
+    );
+}

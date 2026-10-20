@@ -1212,7 +1212,12 @@ mod server_identity_channel_tests {
     }
 
     fn auth_service(key: &str, value: &str) -> GrpcAuthService {
-        GrpcAuthService::new(true, "secret".to_string(), key.to_string(), value.to_string())
+        GrpcAuthService::new(
+            true,
+            "secret".to_string(),
+            key.to_string(),
+            value.to_string(),
+        )
     }
 
     /// Cluster traffic (`DistroDataSyncRequest`, `MemberReportRequest`, ...) may be

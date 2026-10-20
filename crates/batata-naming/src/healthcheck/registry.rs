@@ -453,7 +453,10 @@ impl InstanceCheckRegistry {
             .or_insert_with(|| InstanceCheckStatus::new(config.initial_status.clone()));
 
         {
-            let mut keys = self.instance_checks.entry(instance_key.clone()).or_default();
+            let mut keys = self
+                .instance_checks
+                .entry(instance_key.clone())
+                .or_default();
             if !keys.contains(&check_key) {
                 keys.push(check_key.clone());
             }
@@ -1203,7 +1206,10 @@ mod tests {
             (Some("c1"), "serfHealth"),
             "split must be by the FIRST '#': check ids may contain one too"
         );
-        assert_eq!(split_check_key("c1#service:a#b"), (Some("c1"), "service:a#b"));
+        assert_eq!(
+            split_check_key("c1#service:a#b"),
+            (Some("c1"), "service:a#b")
+        );
     }
 
     #[tokio::test]
@@ -1324,7 +1330,7 @@ mod tests {
             notes: String::new(),
             service_tags: vec![],
             node: String::new(),
-            }
+        }
     }
 
     #[test]
@@ -1565,7 +1571,7 @@ mod tests {
             notes: String::new(),
             service_tags: vec![],
             node: String::new(),
-            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

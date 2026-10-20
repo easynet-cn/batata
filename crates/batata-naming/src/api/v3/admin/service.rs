@@ -645,7 +645,8 @@ async fn delete_service(
     );
 
     // Same gate as the v2 open API — see `ServiceOperatorV2Impl.delete`.
-    if let Err(err) = naming_service.delete_service(namespace_id, group_name, &params.service_name) {
+    if let Err(err) = naming_service.delete_service(namespace_id, group_name, &params.service_name)
+    {
         let (status, code, message) = match err {
             DeleteServiceError::NotFound => (
                 404,

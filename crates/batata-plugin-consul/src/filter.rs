@@ -243,6 +243,26 @@ impl<'a> Tokenizer<'a> {
                     let s = self.read_string()?;
                     tokens.push(Token::Str(s));
                 }
+                // Numeric literals: Consul's filter language compares numeric
+                // fields without quoting them (`ServicePort == 9090`). Without
+                // this branch the tokenizer rejected the expression outright
+                // and callers silently returned the unfiltered result.
+                c if c.is_ascii_digit() => {
+                    let start = self.pos;
+                    let mut seen_dot = false;
+                    while self.pos < bytes.len() {
+                        let b = bytes[self.pos];
+                        if b.is_ascii_digit() {
+                            self.pos += 1;
+                        } else if b == b'.' && !seen_dot {
+                            seen_dot = true;
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    tokens.push(Token::Str(self.input[start..self.pos].to_string()));
+                }
                 c if c.is_ascii_alphabetic() || c == b'_' => {
                     let start = self.pos;
                     while self.pos < bytes.len() {
@@ -260,6 +280,11 @@ impl<'a> Tokenizer<'a> {
                         "not" | "NOT" => tokens.push(Token::Not),
                         "in" | "IN" => tokens.push(Token::In),
                         "contains" | "CONTAINS" => tokens.push(Token::Contains),
+                        // Consul's filter language spells the regex operator
+                        // `matches` / `not matches`; `=~` is batata's alias.
+                        // Note the operator is evaluated as a *substring* test,
+                        // not a real regex (see `CompareOp::Matches`).
+                        "matches" | "MATCHES" => tokens.push(Token::Matches),
                         "is" | "IS" => tokens.push(Token::Is),
                         "empty" | "EMPTY" => tokens.push(Token::Empty),
                         other => tokens.push(Token::Ident(other.to_string())),

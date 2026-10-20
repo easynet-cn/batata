@@ -326,6 +326,42 @@ impl DistroCounters {
     }
 }
 
+/// Members that take part in the responsibility hash ring.
+///
+/// The rule is "everything except `Down`", and it has to be the **only** rule
+/// in the codebase. The mapper is shared: `DistroProtocol::mapper()` is handed
+/// to the naming health check (`HealthCheckResponsibleInterceptor` decides
+/// which node probes an instance from exactly this ring), so two different
+/// filters would mean two different owners for the same key and probing would
+/// jump between nodes whenever a member flickered.
+///
+/// Upstream builds the same list with `UP || SUSPICIOUS`
+/// (`DistroMapper.onEvent`), for the same underlying reason: a single failed
+/// health check flips a member to `Suspicious`, and shrinking the ring
+/// redistributes responsibility, which makes healthy replicas look "not
+/// responsible" for keys they still hold. batata additionally keeps
+/// `Starting` / `Isolation` in the ring so a booting or isolated cluster still
+/// distributes responsibility instead of every node falling back to
+/// `is_responsible() == true` (the empty-ring answer) and probing everything.
+fn ring_members(members: &DashMap<String, Member>) -> Vec<String> {
+    members
+        .iter()
+        .filter(|e| !matches!(e.value().state, batata_api::model::NodeState::Down))
+        .map(|e| e.key().clone())
+        .collect()
+}
+
+/// Install the current member set as the responsibility ring on `mapper`.
+///
+/// Both refresh sites — the member-change listener (`refresh_mapper`) and the
+/// verify loop — go through this so they cannot drift apart again. They did
+/// once: the verify loop filtered on `Up` alone, so a member flickering to
+/// `Suspicious` shrank the ring every ~5s and re-partitioned every key while
+/// `refresh_mapper` still had the full ring.
+fn install_ring(members: &DashMap<String, Member>, mapper: &DistroMapper) {
+    mapper.update_members(ring_members(members));
+}
+
 /// Distro protocol manager
 ///
 /// # Lock Ordering
@@ -492,19 +528,18 @@ impl DistroProtocol {
 
     /// Refresh the mapper with the current member list.
     ///
-    /// Only `Down` members are excluded. Nacos keeps every node in the hash
-    /// ring unless it is really gone, so a single failed health check (which
-    /// flips a member to `Suspicious`) must not shrink the ring: shrinking
-    /// redistributes responsibility and would make healthy replicas look
-    /// "not responsible" for keys they still hold.
+    /// Only `Down` members are excluded — see [`ring_members`] for why that
+    /// rule must be the only one in the codebase.
     pub fn refresh_mapper(&self) {
-        let healthy: Vec<String> = self
-            .members
-            .iter()
-            .filter(|e| !matches!(e.value().state, batata_api::model::NodeState::Down))
-            .map(|e| e.key().clone())
-            .collect();
-        self.mapper.update_members(healthy);
+        install_ring(&self.members, &self.mapper);
+    }
+
+    /// Members that this node considers to be in the responsibility ring.
+    ///
+    /// Exposed so callers that need to reason about responsibility (tests,
+    /// admin surfaces) use the same list the mapper was built from.
+    pub fn ring_members(&self) -> Vec<String> {
+        ring_members(&self.members)
     }
 
     /// Subscribe to cluster member change events and immediately trigger
@@ -862,14 +897,14 @@ impl DistroProtocol {
                 // cause sync/verify targeting a down node, or keeping keys
                 // owned by a new node. This replaces the need for an
                 // external member-change event subscription.
-                {
-                    let healthy: Vec<String> = members
-                        .iter()
-                        .filter(|e| matches!(e.value().state, batata_api::model::NodeState::Up))
-                        .map(|e| e.key().clone())
-                        .collect();
-                    mapper.update_members(healthy);
-                }
+                //
+                // MUST go through `install_ring` — the same rule as
+                // `refresh_mapper()`. This loop used to filter on `Up` alone,
+                // which shrank the ring the moment a member flickered to
+                // `Suspicious` and re-partitioned every key; because the
+                // mapper is shared with the naming health check, that also
+                // moved instance probing to a different node.
+                install_ring(&members, &mapper);
 
                 // NOTE: Distro keeps a full replica of every key on every node
                 // (Nacos semantics) and this loop walks *all* of them, so
@@ -1662,6 +1697,157 @@ mod tests {
         assert_eq!(counts.len(), 3, "All 3 members should have keys assigned");
         for count in counts.values() {
             assert!(*count > 0, "Each member should have at least one key");
+        }
+    }
+
+    /// Build a `Member` for the ring tests. Only `address` and `state` matter
+    /// here — the mapper hashes addresses.
+    fn member_with_state(address: &str, state: batata_api::model::NodeState) -> Member {
+        Member {
+            ip: address.split(':').next().unwrap_or("").to_string(),
+            port: 8848,
+            state,
+            extend_info: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            address: address.to_string(),
+            fail_access_cnt: 0,
+        }
+    }
+
+    /// A `DistroProtocol` over an explicit member set. `ClusterClientManager`
+    /// is inert until something is sent to it, so this needs no I/O.
+    fn protocol_with_members(entries: Vec<(&str, batata_api::model::NodeState)>) -> DistroProtocol {
+        use super::super::cluster_client::ClusterClientConfig;
+        let members = Arc::new(DashMap::new());
+        for (address, state) in entries {
+            members.insert(address.to_string(), member_with_state(address, state));
+        }
+        DistroProtocol::new(
+            "10.0.0.1:8848".to_string(),
+            DistroConfig::default(),
+            Arc::new(ClusterClientManager::new(
+                "10.0.0.1:8848".to_string(),
+                ClusterClientConfig::default(),
+            )),
+            members,
+        )
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v
+    }
+
+    /// The ring rule: only a `Down` member leaves it.
+    #[test]
+    fn test_ring_members_excludes_only_down() {
+        use batata_api::model::NodeState;
+        let members = Arc::new(DashMap::new());
+        for (address, state) in [
+            ("10.0.0.1:8848", NodeState::Up),
+            ("10.0.0.2:8848", NodeState::Suspicious),
+            ("10.0.0.3:8848", NodeState::Starting),
+            ("10.0.0.4:8848", NodeState::Isolation),
+            ("10.0.0.5:8848", NodeState::Down),
+        ] {
+            members.insert(address.to_string(), member_with_state(address, state));
+        }
+
+        assert_eq!(
+            ring_members(&members).len(),
+            4,
+            "a single failed health check must not shrink the ring"
+        );
+        assert!(!ring_members(&members).contains(&"10.0.0.5:8848".to_string()));
+    }
+
+    /// `refresh_mapper` and the verify loop must build the ring from the *same*
+    /// list — the mapper is shared with the naming health check, so two rules
+    /// would mean two owners for one key.
+    #[test]
+    fn test_refresh_mapper_matches_ring_members() {
+        use batata_api::model::NodeState;
+        let protocol = protocol_with_members(vec![
+            ("10.0.0.1:8848", NodeState::Up),
+            ("10.0.0.2:8848", NodeState::Suspicious),
+            ("10.0.0.3:8848", NodeState::Up),
+        ]);
+
+        protocol.refresh_mapper();
+        assert_eq!(
+            sorted(protocol.mapper().get_members()),
+            sorted(protocol.ring_members())
+        );
+        assert_eq!(
+            protocol.mapper().get_members().len(),
+            3,
+            "the verify-loop rule must not drop the Suspicious member"
+        );
+    }
+
+    /// A member flapping to `Suspicious` must not move any key's owner.
+    #[test]
+    fn test_suspicious_flap_does_not_move_responsibility() {
+        use batata_api::model::NodeState;
+        let protocol = protocol_with_members(vec![
+            ("10.0.0.1:8848", NodeState::Up),
+            ("10.0.0.2:8848", NodeState::Up),
+            ("10.0.0.3:8848", NodeState::Up),
+        ]);
+        protocol.refresh_mapper();
+
+        let keys: Vec<String> = (0..64).map(|i| format!("service-{}", i)).collect();
+        let before: Vec<Option<String>> = keys
+            .iter()
+            .map(|k| protocol.mapper().responsible_node(k))
+            .collect();
+
+        // One failed health check.
+        protocol.members.insert(
+            "10.0.0.2:8848".to_string(),
+            member_with_state("10.0.0.2:8848", NodeState::Suspicious),
+        );
+        protocol.refresh_mapper();
+
+        let after: Vec<Option<String>> = keys
+            .iter()
+            .map(|k| protocol.mapper().responsible_node(k))
+            .collect();
+        assert_eq!(
+            before, after,
+            "a Suspicious member must stay in the ring: re-partitioning would also \
+             move health-check probing to another node"
+        );
+    }
+
+    /// A member that is really gone does shrink the ring — and every key must
+    /// still land on exactly one of the survivors.
+    #[test]
+    fn test_down_member_hands_its_keys_to_the_survivors() {
+        use batata_api::model::NodeState;
+        let protocol = protocol_with_members(vec![
+            ("10.0.0.1:8848", NodeState::Up),
+            ("10.0.0.2:8848", NodeState::Up),
+            ("10.0.0.3:8848", NodeState::Up),
+        ]);
+        protocol.refresh_mapper();
+
+        protocol.members.insert(
+            "10.0.0.3:8848".to_string(),
+            member_with_state("10.0.0.3:8848", NodeState::Down),
+        );
+        protocol.refresh_mapper();
+
+        let ring = protocol.ring_members();
+        assert_eq!(ring.len(), 2, "a Down member must leave the ring");
+        assert!(!ring.contains(&"10.0.0.3:8848".to_string()));
+
+        for i in 0..64 {
+            let key = format!("service-{}", i);
+            let owner = protocol
+                .mapper()
+                .responsible_node(&key)
+                .expect("every key must have an owner");
+            assert!(ring.contains(&owner), "owner {owner} is not in the ring");
         }
     }
 

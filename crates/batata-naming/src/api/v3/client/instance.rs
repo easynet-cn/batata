@@ -166,10 +166,11 @@ async fn register_or_beat(
         .unwrap_or_default();
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &form.ip,
             form.port,
             cluster_name,
+            group_name,
             &form.service_name,
         ),
         ip: form.ip.clone(),
@@ -230,10 +231,11 @@ async fn deregister(
     );
 
     let instance = Instance {
-        instance_id: batata_api::naming::model::generate_instance_id(
+        instance_id: batata_api::naming::model::default_instance_id(
             &params.ip,
             params.port,
             cluster_name,
+            group_name,
             &params.service_name,
         ),
         ip: params.ip.clone(),

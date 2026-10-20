@@ -73,8 +73,20 @@ impl PayloadHandler for InstanceRequestHandler {
         let group_name = &request.naming_request.group_name;
         let service_name = &request.naming_request.service_name;
         let mut instance = request.instance;
-        if instance.cluster_name.is_empty() {
-            instance.cluster_name = "DEFAULT".to_string();
+        // `InstanceUtil.setInstanceIdIfEmpty` on the gRPC path: fills the
+        // cluster default and — when the SDK left it blank — the instance ID
+        // (`ip#port#cluster#group@@service`). Namespace, group and service name
+        // are deliberately NOT defaulted here; Nacos leaves them as sent.
+        batata_api::naming::model::normalize_instance(group_name, service_name, &mut instance);
+        // `Instance#validate` — reject before touching the store. The HTTP
+        // layer already does the equivalent in its form validation.
+        let param_error = batata_api::naming::model::validate_instance(&instance).err();
+        if let Some(ref e) = param_error {
+            warn!(
+                "InstanceRequest rejected: {} (service {})",
+                e.message(),
+                service_name
+            );
         }
         // Capture ephemeral flag before `instance` is moved into the write
         // call. Distro broadcast only applies to the AP path; persistent
@@ -112,7 +124,9 @@ impl PayloadHandler for InstanceRequestHandler {
             &instance.cluster_name,
         );
 
-        let result = if req_type == REGISTER_INSTANCE {
+        let result = if param_error.is_some() {
+            false
+        } else if req_type == REGISTER_INSTANCE {
             // Route through the ClientOperationServiceProxy when available —
             // this ensures persistent instances (ephemeral=false) arriving
             // through InstanceRequest are written via Raft, not just the
@@ -220,9 +234,28 @@ impl PayloadHandler for InstanceRequestHandler {
 
         if !result {
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = batata_common::error::INSTANCE_ERROR.code;
             response.response.success = false;
-            response.response.message = "Operation failed".to_string();
+            match &param_error {
+                // A rejected parameter carries its own error code — the SDK
+                // surfaces `errorCode` verbatim, so a generic instance error
+                // here would hide the real cause from the client.
+                Some(e) => {
+                    use batata_api::naming::model::InstanceParamError;
+                    response.response.error_code = match e {
+                        InstanceParamError::MissingIp => {
+                            batata_common::error::PARAMETER_MISSING.code
+                        }
+                        InstanceParamError::InvalidPort(_) => {
+                            batata_common::error::PARAMETER_VALIDATE_ERROR.code
+                        }
+                    };
+                    response.response.message = e.message();
+                }
+                None => {
+                    response.response.error_code = batata_common::error::INSTANCE_ERROR.code;
+                    response.response.message = "Operation failed".to_string();
+                }
+            }
         }
 
         Ok(response.build_payload())
@@ -417,9 +450,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         let service_name = &request.naming_request.service_name;
         let mut instances = request.instances;
         for inst in &mut instances {
-            if inst.cluster_name.is_empty() {
-                inst.cluster_name = "DEFAULT".to_string();
-            }
+            batata_api::naming::model::normalize_instance(group_name, service_name, inst);
         }
         // Nacos 3.x BatchInstanceRequest is defined only for ephemeral
         // instances. If any incoming instance is non-ephemeral, skip
@@ -908,8 +939,18 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
         let group_name = &request.naming_request.group_name;
         let service_name = &request.naming_request.service_name;
         let mut instance = request.instance;
-        if instance.cluster_name.is_empty() {
-            instance.cluster_name = "DEFAULT".to_string();
+        // `InstanceUtil.setInstanceIdIfEmpty` on the gRPC path: fills the
+        // cluster default and — when the SDK left it blank — the instance ID
+        // (`ip#port#cluster#group@@service`). Namespace, group and service name
+        // are deliberately NOT defaulted here; Nacos leaves them as sent.
+        batata_api::naming::model::normalize_instance(group_name, service_name, &mut instance);
+        let param_error = batata_api::naming::model::validate_instance(&instance).err();
+        if let Some(ref e) = param_error {
+            warn!(
+                "PersistentInstanceRequest rejected: {} (service {})",
+                e.message(),
+                service_name
+            );
         }
         let req_type = &request.r#type;
 
@@ -929,7 +970,9 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
                 false,
             );
 
-        let result = if !service_is_persistent {
+        let result = if param_error.is_some() {
+            false
+        } else if !service_is_persistent {
             warn!(
                 "PersistentInstanceRequest refused: service {} is ephemeral, cannot register a \
                  persistent instance",
@@ -1022,9 +1065,25 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
 
         if !result {
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = batata_common::error::INSTANCE_ERROR.code;
             response.response.success = false;
-            response.response.message = "Operation failed".to_string();
+            match &param_error {
+                Some(e) => {
+                    use batata_api::naming::model::InstanceParamError;
+                    response.response.error_code = match e {
+                        InstanceParamError::MissingIp => {
+                            batata_common::error::PARAMETER_MISSING.code
+                        }
+                        InstanceParamError::InvalidPort(_) => {
+                            batata_common::error::PARAMETER_VALIDATE_ERROR.code
+                        }
+                    };
+                    response.response.message = e.message();
+                }
+                None => {
+                    response.response.error_code = batata_common::error::INSTANCE_ERROR.code;
+                    response.response.message = "Operation failed".to_string();
+                }
+            }
         }
 
         Ok(response.build_payload())

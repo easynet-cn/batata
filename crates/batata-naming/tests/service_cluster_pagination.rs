@@ -131,7 +131,12 @@ fn group_and_namespace_scope_the_listing() {
     let svc = service();
     svc.register_instance(NS, GROUP, "in-default", instance("10.0.0.1", 8080));
     svc.register_instance(NS, "OTHER_GROUP", "in-other", instance("10.0.0.2", 8080));
-    svc.register_instance("other-ns", GROUP, "other-ns-svc", instance("10.0.0.3", 8080));
+    svc.register_instance(
+        "other-ns",
+        GROUP,
+        "other-ns-svc",
+        instance("10.0.0.3", 8080),
+    );
 
     let (total_default, page_default) = svc.list_services(NS, GROUP, 1, 10);
     assert_eq!(total_default, 1);
@@ -207,9 +212,10 @@ fn comma_separated_cluster_filter_is_a_union() {
 fn a_single_cluster_name_filters_to_that_cluster() {
     let svc = multi_cluster_service();
 
-    assert_eq!(endpoints(&query(&svc, SVC, "B", false)), vec![
-        "10.0.0.2:8080"
-    ]);
+    assert_eq!(
+        endpoints(&query(&svc, SVC, "B", false)),
+        vec!["10.0.0.2:8080"]
+    );
 }
 
 #[test]
@@ -218,9 +224,10 @@ fn unknown_cluster_name_returns_nothing() {
 
     assert!(query(&svc, SVC, "NOPE", false).is_empty());
     // A partially unknown list still yields the clusters that do exist.
-    assert_eq!(endpoints(&query(&svc, SVC, "A,NOPE", false)), vec![
-        "10.0.0.1:8080"
-    ]);
+    assert_eq!(
+        endpoints(&query(&svc, SVC, "A,NOPE", false)),
+        vec!["10.0.0.1:8080"]
+    );
 }
 
 #[test]
@@ -239,10 +246,10 @@ fn cluster_filter_is_not_a_prefix_match() {
 fn whitespace_around_cluster_names_is_trimmed() {
     let svc = multi_cluster_service();
 
-    assert_eq!(endpoints(&query(&svc, SVC, "A, B", false)), vec![
-        "10.0.0.1:8080",
-        "10.0.0.2:8080"
-    ]);
+    assert_eq!(
+        endpoints(&query(&svc, SVC, "A, B", false)),
+        vec!["10.0.0.1:8080", "10.0.0.2:8080"]
+    );
 }
 
 /// Deviation: `"*"` is a batata-only "all clusters" wildcard; upstream would
@@ -388,9 +395,10 @@ fn creating_a_cluster_for_an_unknown_service_fails() {
 #[test]
 fn creating_the_same_cluster_twice_fails() {
     let svc = multi_cluster_service();
-    assert!(svc
-        .create_cluster_config(NS, GROUP, SVC, "A", "tcp", 80, true, HashMap::new())
-        .is_ok());
+    assert!(
+        svc.create_cluster_config(NS, GROUP, SVC, "A", "tcp", 80, true, HashMap::new())
+            .is_ok()
+    );
 
     let err = svc
         .create_cluster_config(NS, GROUP, SVC, "A", "http", 8080, false, HashMap::new())
@@ -435,7 +443,11 @@ fn cluster_configs_are_scoped_to_their_service() {
         .into_iter()
         .map(|c| c.name)
         .collect();
-    assert_eq!(names, vec!["A"], "the `svc##` prefix must not leak into `other`");
+    assert_eq!(
+        names,
+        vec!["A"],
+        "the `svc##` prefix must not leak into `other`"
+    );
 }
 
 #[test]
@@ -474,8 +486,12 @@ fn cluster_statistics_group_instances_by_cluster() {
 fn cluster_statistics_for_an_unknown_cluster_is_none() {
     let svc = multi_cluster_service();
 
-    assert!(svc
-        .get_single_cluster_statistics(NS, GROUP, SVC, "NOPE")
-        .is_none());
-    assert!(svc.get_cluster_statistics(NS, GROUP, "unknown-svc").is_empty());
+    assert!(
+        svc.get_single_cluster_statistics(NS, GROUP, SVC, "NOPE")
+            .is_none()
+    );
+    assert!(
+        svc.get_cluster_statistics(NS, GROUP, "unknown-svc")
+            .is_empty()
+    );
 }
