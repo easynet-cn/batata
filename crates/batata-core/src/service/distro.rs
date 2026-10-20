@@ -749,6 +749,125 @@ impl DistroProtocol {
         }
     }
 
+    /// Number of parallel workers that drain ready sync tasks.
+    ///
+    /// Mirrors upstream `NacosExecuteTaskExecuteEngine`, which dispatches to
+    /// `ThreadUtils.getSuitableThreadCount(1)` workers (smallest power of two
+    /// >= core count) and routes a task by its distro key, so one key is always
+    /// serialised onto one worker while distinct keys sync in parallel.
+    /// batata drained every ready task on a single serial loop, which meant a
+    /// newly registered key waited for the RPC round-trip of every older key
+    /// queued in the same tick before it was even sent — under a registration
+    /// burst that pushed a fresh key's broadcast hundreds of milliseconds past
+    /// its scheduled time.
+    fn sync_worker_count() -> usize {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .max(1);
+        let mut workers = 1usize;
+        while workers < cores {
+            workers <<= 1;
+        }
+        workers
+    }
+
+    /// Pick the worker that owns a distro key.
+    ///
+    /// Upstream routes with `addTask(distroKey, task)` into
+    /// `getWorker(tag)`, i.e. `tag.hashCode() % workers`, so the tag is the
+    /// distro key *without* the target: a key's tasks all land on one worker
+    /// (serial, so a peer never sees two versions of one key out of order)
+    /// while different keys spread across workers.
+    fn sync_shard_index(data_type: &DistroDataType, key: &str, worker_count: usize) -> usize {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{}:{}", data_type, key).hash(&mut hasher);
+        (hasher.finish() % worker_count as u64) as usize
+    }
+
+    /// Send one ready sync task, re-queueing it with backoff when the RPC fails.
+    ///
+    /// `now` is the tick timestamp shared by every task claimed in the same
+    /// loop iteration so backoff is measured from one instant.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_sync_task(
+        handlers: &Arc<DashMap<DistroDataType, Arc<dyn DistroDataHandler>>>,
+        client_manager: &Arc<ClusterClientManager>,
+        config: &DistroConfig,
+        counters: &Arc<DistroCounters>,
+        sync_tasks: &Arc<DashMap<String, DistroSyncTask>>,
+        task_key: String,
+        task: DistroSyncTask,
+        now: i64,
+    ) {
+        // Get data from handler and send sync request
+        if let Some(handler) = handlers.get(&task.data_type)
+            && let Some(data) = handler.get_data(&task.key).await
+        {
+            // Send sync request
+            let result =
+                Self::send_sync_data(&client_manager, &task.target_address, data.clone()).await;
+
+            if result.is_ok() {
+                counters.sync_success.fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "Sync completed for {}:{} to {}",
+                    task.data_type, task.key, task.target_address
+                );
+            } else {
+                counters.sync_failure.fetch_add(1, Ordering::Relaxed);
+                // Nacos-compatible retry: unlimited attempts with
+                // capped exponential backoff. The task stays in
+                // the queue until it succeeds OR the target is
+                // removed from cluster membership (handled by the
+                // verify loop's cleanup_non_responsible_keys /
+                // member refresh). Dropping after N attempts
+                // risks losing registration under a long network
+                // partition.
+                //
+                // Backoff schedule (cap at 2^6 = 64x base):
+                //   attempt 1: base * 2
+                //   attempt 2: base * 4
+                //   ...
+                //   attempt 6+: base * 64 (ceiling)
+                const BACKOFF_CEILING_SHIFT: u32 = 6;
+                let mut updated_task = task.clone();
+                updated_task.retry_count = updated_task.retry_count.saturating_add(1);
+                let base_delay = config.sync_retry_delay.as_millis() as i64;
+                let shift = updated_task.retry_count.min(BACKOFF_CEILING_SHIFT);
+                let backoff = base_delay.saturating_mul(1i64 << shift);
+                // ~25% jitter to prevent thundering herd
+                let jitter = (now % (backoff / 4 + 1)).max(0);
+                updated_task.scheduled_time = now + backoff + jitter;
+                sync_tasks.insert(task_key, updated_task);
+                // Log level rises with retry count so chronic
+                // failures surface without spamming on transient ones.
+                let rc = task.retry_count + 1;
+                if rc <= 3 {
+                    debug!(
+                        "Sync retry {} for {}:{} to {} (backoff={}ms)",
+                        rc, task.data_type, task.key, task.target_address, backoff
+                    );
+                } else if rc <= 10 {
+                    warn!(
+                        "Sync retry {} for {}:{} to {} (backoff={}ms)",
+                        rc, task.data_type, task.key, task.target_address, backoff
+                    );
+                } else if rc.is_multiple_of(10) {
+                    // Every 10th retry above 10, surface an error
+                    error!(
+                        "Sync still failing after {} retries for {}:{} to {} — \
+                         check network connectivity to peer",
+                        rc, task.data_type, task.key, task.target_address
+                    );
+                }
+            }
+        }
+        // Data no longer exists — task was already removed, nothing to do
+    }
+
     /// Start the sync task processor
     async fn start_sync_task_processor(&self) {
         let sync_tasks = self.sync_tasks.clone();
@@ -782,75 +901,49 @@ impl DistroProtocol {
                     .filter_map(|key| sync_tasks.remove(&key))
                     .collect();
 
-                for (task_key, task) in ready_tasks {
-                    // Get data from handler and send sync request
-                    if let Some(handler) = handlers.get(&task.data_type)
-                        && let Some(data) = handler.get_data(&task.key).await
-                    {
-                        // Send sync request
-                        let result = Self::send_sync_data(
-                            &client_manager,
-                            &task.target_address,
-                            data.clone(),
-                        )
-                        .await;
-
-                        if result.is_ok() {
-                            counters.sync_success.fetch_add(1, Ordering::Relaxed);
-                            debug!(
-                                "Sync completed for {}:{} to {}",
-                                task.data_type, task.key, task.target_address
-                            );
-                        } else {
-                            counters.sync_failure.fetch_add(1, Ordering::Relaxed);
-                            // Nacos-compatible retry: unlimited attempts with
-                            // capped exponential backoff. The task stays in
-                            // the queue until it succeeds OR the target is
-                            // removed from cluster membership (handled by the
-                            // verify loop's cleanup_non_responsible_keys /
-                            // member refresh). Dropping after N attempts
-                            // risks losing registration under a long network
-                            // partition.
-                            //
-                            // Backoff schedule (cap at 2^6 = 64x base):
-                            //   attempt 1: base * 2
-                            //   attempt 2: base * 4
-                            //   ...
-                            //   attempt 6+: base * 64 (ceiling)
-                            const BACKOFF_CEILING_SHIFT: u32 = 6;
-                            let mut updated_task = task.clone();
-                            updated_task.retry_count = updated_task.retry_count.saturating_add(1);
-                            let base_delay = config.sync_retry_delay.as_millis() as i64;
-                            let shift = updated_task.retry_count.min(BACKOFF_CEILING_SHIFT);
-                            let backoff = base_delay.saturating_mul(1i64 << shift);
-                            // ~25% jitter to prevent thundering herd
-                            let jitter = (now % (backoff / 4 + 1)).max(0);
-                            updated_task.scheduled_time = now + backoff + jitter;
-                            sync_tasks.insert(task_key, updated_task);
-                            // Log level rises with retry count so chronic
-                            // failures surface without spamming on transient ones.
-                            let rc = task.retry_count + 1;
-                            if rc <= 3 {
-                                debug!(
-                                    "Sync retry {} for {}:{} to {} (backoff={}ms)",
-                                    rc, task.data_type, task.key, task.target_address, backoff
-                                );
-                            } else if rc <= 10 {
-                                warn!(
-                                    "Sync retry {} for {}:{} to {} (backoff={}ms)",
-                                    rc, task.data_type, task.key, task.target_address, backoff
-                                );
-                            } else if rc.is_multiple_of(10) {
-                                // Every 10th retry above 10, surface an error
-                                error!(
-                                    "Sync still failing after {} retries for {}:{} to {} — \
-                                     check network connectivity to peer",
-                                    rc, task.data_type, task.key, task.target_address
-                                );
-                            }
-                        }
+                if !ready_tasks.is_empty() {
+                    // Shard by distro key — upstream `addTask(distroKey, task)`
+                    // routes a task to one worker by key, so tasks for the same
+                    // key stay serial (no out-of-order overwrite on the peer)
+                    // while distinct keys are sent in parallel. Sending the
+                    // whole tick serially instead let one slow peer delay every
+                    // unrelated key behind it.
+                    let worker_count = Self::sync_worker_count();
+                    let mut shards: Vec<Vec<(String, DistroSyncTask)>> =
+                        vec![Vec::new(); worker_count];
+                    for entry in ready_tasks {
+                        let idx =
+                            Self::sync_shard_index(&entry.1.data_type, &entry.1.key, worker_count);
+                        shards[idx].push(entry);
                     }
-                    // Data no longer exists — task was already removed, nothing to do
+
+                    let mut workers = Vec::with_capacity(shards.len());
+                    for shard in shards {
+                        if shard.is_empty() {
+                            continue;
+                        }
+                        let handlers = handlers.clone();
+                        let client_manager = client_manager.clone();
+                        let config = config.clone();
+                        let counters = counters.clone();
+                        let sync_tasks = sync_tasks.clone();
+                        workers.push(async move {
+                            for (task_key, task) in shard {
+                                Self::run_sync_task(
+                                    &handlers,
+                                    &client_manager,
+                                    &config,
+                                    &counters,
+                                    &sync_tasks,
+                                    task_key,
+                                    task,
+                                    now,
+                                )
+                                .await;
+                            }
+                        });
+                    }
+                    futures::future::join_all(workers).await;
                 }
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1581,6 +1674,65 @@ mod tests {
         set.insert(DistroDataType::NamingInstance);
 
         assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn test_sync_shard_index_pins_one_key_to_one_worker() {
+        // Upstream hashes the distro key (target excluded), so every task for
+        // one key — one per peer — serialises on the same worker. Syncing the
+        // same key to two peers in parallel could deliver them out of order.
+        let workers = 8;
+        let to_a =
+            DistroProtocol::sync_shard_index(&DistroDataType::NamingInstance, "svc-a", workers);
+        let to_b =
+            DistroProtocol::sync_shard_index(&DistroDataType::NamingInstance, "svc-a", workers);
+        assert_eq!(to_a, to_b, "one key must not be split across workers");
+
+        // A different key may land anywhere, but always in range.
+        let other =
+            DistroProtocol::sync_shard_index(&DistroDataType::NamingInstance, "svc-b", workers);
+        assert!(other < workers);
+
+        // The data type is part of the key: same name under another type is a
+        // different distro key.
+        assert_eq!(
+            DistroProtocol::sync_shard_index(
+                &DistroDataType::Custom("ns".into()),
+                "svc-a",
+                workers
+            ),
+            DistroProtocol::sync_shard_index(
+                &DistroDataType::Custom("ns".into()),
+                "svc-a",
+                workers
+            )
+        );
+    }
+
+    #[test]
+    fn test_sync_worker_count_is_a_power_of_two_at_or_above_cores() {
+        let workers = DistroProtocol::sync_worker_count();
+        assert!(workers >= 1);
+        assert_eq!(
+            workers & (workers - 1),
+            0,
+            "{} is not a power of two",
+            workers
+        );
+
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .max(1);
+        assert!(
+            workers >= cores,
+            "{} workers cannot cover {} cores",
+            workers,
+            cores
+        );
+        // `getSuitableThreadCount(1)` stops at the first power of two that
+        // reaches the core count, so doubling again must overshoot.
+        assert!(workers < cores * 2);
     }
 
     #[test]

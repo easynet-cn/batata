@@ -321,11 +321,18 @@ public class NacosClusterTest {
         inst.setWeight(1.0);
         namingNode1.registerInstance(serviceName, inst);
 
-        // Wait for Distro sync (poll Node 2)
+        // Wait for Distro sync on both readers — the assertions below cover
+        // Node 2 *and* Node 3, so polling Node 2 alone would only prove that
+        // one broadcast arrived.
         TestSupport.waitFor(() -> {
             try {
-                return namingNode2.getAllInstances(serviceName).stream()
-                        .anyMatch(i -> "10.0.1.1".equals(i.getIp()));
+                for (NamingService ns : List.of(namingNode2, namingNode3)) {
+                    if (ns.getAllInstances(serviceName).stream()
+                            .noneMatch(i -> "10.0.1.1".equals(i.getIp()))) {
+                        return false;
+                    }
+                }
+                return true;
             } catch (NacosException e) {
                 return false;
             }
@@ -362,14 +369,28 @@ public class NacosClusterTest {
         namingNode2.registerInstance(serviceName, "10.0.2.2", 8080);
         namingNode3.registerInstance(serviceName, "10.0.2.3", 8080);
 
-        // Wait for Distro sync (poll Node 1 sees all 3 registered IPs)
+        // Wait for Distro sync: poll until *every* node sees all three IPs.
+        //
+        // The assertions below check all three nodes, so the wait has to as
+        // well. Waiting on node1 alone is satisfied as soon as node2's and
+        // node3's broadcasts reach it, which can happen before node1's own
+        // broadcast reaches them — distro sync is fire-and-forget with a 1s
+        // delay, and a node's own sync task is queued behind every other key
+        // registered in the same window. Waiting on a subset while asserting
+        // on the whole set is a race, not a stronger assertion.
+        Set<String> expectedIps = Set.of("10.0.2.1", "10.0.2.2", "10.0.2.3");
         TestSupport.waitFor(() -> {
             try {
-                Set<String> ips = new HashSet<>();
-                for (Instance i : namingNode1.getAllInstances(serviceName)) {
-                    ips.add(i.getIp());
+                for (NamingService ns : List.of(namingNode1, namingNode2, namingNode3)) {
+                    Set<String> ips = new HashSet<>();
+                    for (Instance i : ns.getAllInstances(serviceName)) {
+                        ips.add(i.getIp());
+                    }
+                    if (!ips.containsAll(expectedIps)) {
+                        return false;
+                    }
                 }
-                return ips.contains("10.0.2.1") && ips.contains("10.0.2.2") && ips.contains("10.0.2.3");
+                return true;
             } catch (NacosException e) {
                 return false;
             }
