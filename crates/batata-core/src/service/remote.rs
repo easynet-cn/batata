@@ -553,8 +553,11 @@ impl ConnectionManager {
             outdated_ids.len()
         );
 
-        // Send ClientDetectionRequest to each outdated connection and wait for response
-        let mut success_ids = std::collections::HashSet::new();
+        // Send ClientDetectionRequest to each outdated connection.
+        //
+        // Nacos parity: the response arrives on the bi-stream, which refreshes
+        // the connection's active time, so the second pass below can tell which
+        // clients are still alive.
         let detection_timeout = std::time::Duration::from_secs(5);
 
         for connection_id in &outdated_ids {
@@ -562,12 +565,9 @@ impl ConnectionManager {
                 let req = ClientDetectionRequest::default();
                 let payload = req.build_server_push_payload();
 
-                // Push detection request and mark as success if push succeeds
-                // (the client will respond via bi-stream, which calls touch_connection)
                 match tokio::time::timeout(detection_timeout, client.tx.send(Ok(payload))).await {
                     Ok(Ok(_)) => {
                         tracing::debug!("Sent detection request to {}", connection_id);
-                        success_ids.insert(connection_id.clone());
                     }
                     _ => {
                         tracing::debug!("Failed to send detection request to {}", connection_id);
@@ -579,8 +579,8 @@ impl ConnectionManager {
         // Wait for responses (clients respond via bi-stream which touches their last_active)
         tokio::time::sleep(detection_timeout).await;
 
-        // Now check again: only eject connections that are STILL outdated
-        // (successful detection response would have refreshed last_active via touch_connection)
+        // Only eject connections that are STILL outdated: a client that answered
+        // the detection request has refreshed its active time in the meantime.
         for id in &outdated_ids {
             if let Some(client) = self.clients.get(id) {
                 if client.connection.idle_millis() > stale_threshold_ms {

@@ -852,7 +852,8 @@ pub fn start_grpc_servers(
         };
 
     // Create gRPC services (reuse connection_manager created earlier)
-    let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
+    let grpc_request_service =
+        GrpcRequestService::from_arc(handler_registry_arc.clone(), connection_manager.clone());
     let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(
         handler_registry_arc.clone(),
         connection_manager,

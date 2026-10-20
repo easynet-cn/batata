@@ -494,19 +494,27 @@ impl HandlerRegistry {
 /// Represents GRPC Request Service.
 pub struct GrpcRequestService {
     handler_registry: Arc<HandlerRegistry>,
+    connection_manager: Arc<ConnectionManager>,
 }
 
 impl GrpcRequestService {
     /// Creates a new instance.
-    pub fn new(handler_registry: HandlerRegistry) -> Self {
+    pub fn new(handler_registry: HandlerRegistry, connection_manager: ConnectionManager) -> Self {
         Self {
             handler_registry: Arc::new(handler_registry),
+            connection_manager: Arc::new(connection_manager),
         }
     }
 
-    /// Builds an instance from the given arc.
-    pub fn from_arc(handler_registry: Arc<HandlerRegistry>) -> Self {
-        Self { handler_registry }
+    /// Builds an instance from the given arcs.
+    pub fn from_arc(
+        handler_registry: Arc<HandlerRegistry>,
+        connection_manager: Arc<ConnectionManager>,
+    ) -> Self {
+        Self {
+            handler_registry,
+            connection_manager,
+        }
     }
 }
 
@@ -522,6 +530,15 @@ impl batata_api::grpc::request_server::Request for GrpcRequestService {
                 .get::<Connection>()
                 .cloned()
                 .unwrap_or_default();
+
+            // Nacos parity (`GrpcRequestAcceptor#request`): the active time is
+            // refreshed for every unary request too, not only for bi-stream
+            // traffic. SDKs keep their connection alive with a periodic
+            // `HealthCheckRequest` that arrives on this unary path, so without
+            // this refresh a healthy but quiet client is treated as stale and
+            // ejected, which deregisters all of its ephemeral instances.
+            self.connection_manager
+                .touch_connection(&connection.meta_info.connection_id);
 
             let message_type = &metadata.r#type;
             let payload = request.get_ref();
@@ -1284,5 +1301,115 @@ mod server_identity_channel_tests {
             server_identity_status_for(&svc, &payload, AuthRequirement::Write),
             ServerIdentityStatus::NotMatched
         );
+    }
+}
+
+#[cfg(test)]
+mod unary_active_time_tests {
+    use super::*;
+    use crate::model::AtomicLastActive;
+
+    /// Minimal handler so the unary path reaches the handler stage.
+    struct EchoHandler;
+
+    #[tonic::async_trait]
+    impl PayloadHandler for EchoHandler {
+        async fn handle(
+            &self,
+            _connection: &Connection,
+            payload: &Payload,
+        ) -> Result<Payload, Status> {
+            Ok(payload.clone())
+        }
+
+        fn can_handle(&self) -> &'static str {
+            "HealthCheckRequest"
+        }
+    }
+
+    /// Nacos parity (`GrpcRequestAcceptor#request`): every unary request refreshes
+    /// the connection active time. SDKs keep connections alive with a periodic
+    /// `HealthCheckRequest` that arrives on this path, so a healthy but quiet
+    /// client must never be treated as stale.
+    #[tokio::test]
+    async fn unary_request_refreshes_active_time() {
+        let registry = Arc::new(HandlerRegistry::new());
+        registry.register_handler(Arc::new(EchoHandler));
+
+        let manager = Arc::new(ConnectionManager::new());
+        let (tx, _rx) = mpsc::channel(4);
+        let mut conn = Connection::default();
+        conn.meta_info.connection_id = "conn-1".to_string();
+        conn.last_active = AtomicLastActive::now();
+        manager
+            .register("conn-1", GrpcClient::new(conn.clone(), tx))
+            .await;
+
+        // Age the connection well past the stale threshold.
+        manager
+            .get_client("conn-1")
+            .expect("registered")
+            .connection
+            .last_active
+            .set(0);
+
+        let service = GrpcRequestService::from_arc(registry, manager.clone());
+        let payload = Payload {
+            metadata: Some(Metadata {
+                r#type: "HealthCheckRequest".to_string(),
+                ..Default::default()
+            }),
+            body: None,
+        };
+        let mut request = Request::new(payload);
+        request.extensions_mut().insert(conn.clone());
+
+        let response = batata_api::grpc::request_server::Request::request(&service, request).await;
+        assert!(response.is_ok(), "unary request should be handled");
+
+        let idle = manager
+            .get_client("conn-1")
+            .expect("registered")
+            .connection
+            .idle_millis();
+        assert!(
+            idle < 1000,
+            "unary request must refresh the connection active time, idle={idle}ms"
+        );
+    }
+
+    /// Without the refresh an idle-but-healthy client is ejected, which
+    /// deregisters all of its ephemeral instances.
+    #[tokio::test]
+    async fn stale_connection_is_still_detected() {
+        let manager = Arc::new(ConnectionManager::new());
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut conn = Connection::default();
+        conn.meta_info.connection_id = "conn-2".to_string();
+        manager
+            .register("conn-2", GrpcClient::new(conn.clone(), tx))
+            .await;
+        manager
+            .get_client("conn-2")
+            .expect("registered")
+            .connection
+            .last_active
+            .set(0);
+
+        manager.clone().start_health_checker(1);
+
+        // The detector sends a ClientDetectionRequest; the client is gone, so the
+        // connection is ejected on the second pass.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+
+        let mut ejected = false;
+        for _ in 0..40 {
+            if !manager.has_connection("conn-2") {
+                ejected = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        assert!(ejected, "an unresponsive connection must be ejected");
     }
 }
