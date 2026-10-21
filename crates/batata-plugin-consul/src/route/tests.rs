@@ -3307,19 +3307,50 @@ async fn test_http_partition_delete() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // Read it back — should still exist with DeletedAt set
+    // Read it back — a deleted partition is gone. Consul drops soft-deleted
+    // entries from every read path, so the endpoint answers 404 rather than
+    // returning the tombstone. The soft-delete marker itself is asserted
+    // where it is observable: `partition::tests::test_delete_partition`
+    // (DeletedAt is set and the entry stays in storage) and
+    // `test_http_partition_list_excludes_deleted` / `..._delete_is_idempotent`
+    // below for the HTTP surface.
     let req = test::TestRequest::get()
         .uri("/v1/partition/delete-test")
         .to_request();
     let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
+}
+
+/// Deleting twice keeps answering 200: the entry is only marked deleted, not
+/// removed, so the second delete finds it and returns success. This is what
+/// distinguishes a soft delete from a hard delete on the HTTP surface — an
+/// unknown name answers 404 instead.
+#[actix_web::test]
+async fn test_http_partition_delete_is_idempotent() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/partition")
+        .set_json(serde_json::json!({"Name": "delete-twice"}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["Name"], "delete-test");
-    assert!(
-        body["DeletedAt"].as_str().is_some(),
-        "DeletedAt should be set after soft delete"
-    );
+    for _ in 0..2 {
+        let req = test::TestRequest::delete()
+            .uri("/v1/partition/delete-twice")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    // An unknown partition is still a 404, so the repeated 200 above really
+    // means "the tombstone is still there".
+    let req = test::TestRequest::delete()
+        .uri("/v1/partition/never-existed")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
 }
 
 #[actix_web::test]

@@ -289,6 +289,7 @@ mod tests {
     #[test]
     fn test_encrypted_data_key_processor() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let _env = crate::local_config::lock_snapshot_env();
         unsafe { std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path()) };
 
         let processor = LocalEncryptedDataKeyProcessor::new("test".to_string());
@@ -319,6 +320,7 @@ mod tests {
     #[test]
     fn test_failover_encrypted_data_key() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let _env = crate::local_config::lock_snapshot_env();
         unsafe { std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path()) };
 
         let processor = LocalEncryptedDataKeyProcessor::new("test".to_string());

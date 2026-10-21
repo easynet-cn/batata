@@ -62,9 +62,15 @@ check_tools() {
 }
 
 # Get auth token
+#
+# Every local curl goes through `--noproxy '*'`: with an HTTP proxy exported in
+# the environment, `curl http://127.0.0.1:8848/...` is sent to the proxy and
+# comes back as `502 upstream connect failed`, which is indistinguishable from
+# "the server is down" and yields an empty token — i.e. the whole benchmark
+# would then measure the rejected-request path.
 get_token() {
     local token
-    token=$(curl -s -X POST "http://${SERVER}/nacos/v3/auth/user/login" \
+    token=$(curl -s --noproxy '*' -X POST "http://${SERVER}/nacos/v3/auth/user/login" \
         -d "username=${USERNAME}&password=${PASSWORD}" 2>/dev/null | \
         python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
     echo "$token"
@@ -113,12 +119,14 @@ run_wrk() {
     result=$(wrk ${wrk_args} "$url" 2>&1)
 
     # Extract key metrics (use || true to prevent set -e from aborting on missing lines)
-    local rps latency_avg latency_p50 latency_p99 latency_p999 total_requests errors
+    # Note on percentiles: wrk's `--latency` distribution only prints
+    # 50/75/90/99 (its percentile table is fixed), so there is no P99.9 to
+    # extract — a `grep "99.900%"` here silently yields "N/A" on every run.
+    local rps latency_avg latency_p50 latency_p99 total_requests errors
     rps=$(echo "$result" | grep "Requests/sec" | awk '{print $2}' || true)
     latency_avg=$(echo "$result" | grep "Latency" | head -1 | awk '{print $2}' || true)
     latency_p50=$(echo "$result" | grep "50%" | awk '{print $2}' || true)
     latency_p99=$(echo "$result" | grep "99%" | head -1 | awk '{print $2}' || true)
-    latency_p999=$(echo "$result" | grep "99.900%" | awk '{print $2}' || true)
     total_requests=$(echo "$result" | grep "requests in" | awk '{print $1}' || true)
     errors=$(echo "$result" | grep -i "socket errors\|non-2xx" || true)
 
@@ -126,7 +134,6 @@ run_wrk() {
     log_result "Avg Latency" "${latency_avg:-N/A}"
     log_result "P50 Latency" "${latency_p50:-N/A}"
     log_result "P99 Latency" "${latency_p99:-N/A}"
-    log_result "P99.9 Latency" "${latency_p999:-N/A}"
     log_result "Total Requests" "${total_requests:-N/A}"
     [ -n "$errors" ] && log_result "Errors" "$errors"
 
@@ -174,20 +181,20 @@ setup_data() {
     token=$(get_token)
 
     # Create test config
-    curl -s -X POST "http://${SERVER}/nacos/v2/cs/config" \
+    curl -s --noproxy '*' -X POST "http://${SERVER}/nacos/v2/cs/config" \
         -H "Authorization: Bearer ${token}" \
         -d "dataId=bench-config&group=DEFAULT_GROUP&content=benchmark.key=value&type=text" > /dev/null 2>&1
 
     # Register test instance
-    curl -s -X POST "http://${SERVER}/nacos/v2/ns/instance" \
+    curl -s --noproxy '*' -X POST "http://${SERVER}/nacos/v2/ns/instance" \
         -H "Authorization: Bearer ${token}" \
         -d "serviceName=bench-service&ip=10.0.0.1&port=8080&ephemeral=true" > /dev/null 2>&1
 
     # Consul KV
-    curl -s -X PUT "http://${CONSUL}/v1/kv/bench/key1" -d "benchmark-value" > /dev/null 2>&1
+    curl -s --noproxy '*' -X PUT "http://${CONSUL}/v1/kv/bench/key1" -d "benchmark-value" > /dev/null 2>&1
 
     # Consul service
-    curl -s -X PUT "http://${CONSUL}/v1/agent/service/register" \
+    curl -s --noproxy '*' -X PUT "http://${CONSUL}/v1/agent/service/register" \
         -H "Content-Type: application/json" \
         -d '{"ID":"bench-svc","Name":"bench-service","Port":8080,"Address":"10.0.0.1"}' > /dev/null 2>&1
 
@@ -200,12 +207,12 @@ setup_data() {
 cleanup_data() {
     local token="$1"
     log_info "Cleaning up..."
-    curl -s -X DELETE "http://${SERVER}/nacos/v2/cs/config?dataId=bench-config&group=DEFAULT_GROUP" \
+    curl -s --noproxy '*' -X DELETE "http://${SERVER}/nacos/v2/cs/config?dataId=bench-config&group=DEFAULT_GROUP" \
         -H "Authorization: Bearer ${token}" > /dev/null 2>&1
-    curl -s -X DELETE "http://${SERVER}/nacos/v2/ns/instance?serviceName=bench-service&ip=10.0.0.1&port=8080&ephemeral=true" \
+    curl -s --noproxy '*' -X DELETE "http://${SERVER}/nacos/v2/ns/instance?serviceName=bench-service&ip=10.0.0.1&port=8080&ephemeral=true" \
         -H "Authorization: Bearer ${token}" > /dev/null 2>&1
-    curl -s -X DELETE "http://${CONSUL}/v1/kv/bench/key1" > /dev/null 2>&1
-    curl -s -X PUT "http://${CONSUL}/v1/agent/service/deregister/bench-svc" > /dev/null 2>&1
+    curl -s --noproxy '*' -X DELETE "http://${CONSUL}/v1/kv/bench/key1" > /dev/null 2>&1
+    curl -s --noproxy '*' -X PUT "http://${CONSUL}/v1/agent/service/deregister/bench-svc" > /dev/null 2>&1
 }
 
 # ==================== Benchmark Suites ====================

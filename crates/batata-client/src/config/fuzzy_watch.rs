@@ -200,31 +200,49 @@ impl ConfigFuzzyWatchService {
             }
         };
 
-        // Track the received key for each matching watch pattern
+        // Two-phase: record the key and collect the listeners while the shard
+        // guards are held, then deliver the callbacks once they are released.
+        // A callback that re-enters this service would otherwise deadlock on
+        // the shard we are still holding.
+        let mut listeners: Vec<Arc<dyn ConfigFuzzyWatchListener>> = Vec::new();
         for mut entry in self.watches.iter_mut() {
             if matches_structured_pattern(&entry.pattern, &namespace, &group, &data_id) {
                 entry.received_group_keys.insert(group_key.to_string());
-                for listener in &entry.listeners {
-                    listener.on_change(event.clone());
-                }
+                listeners.extend(entry.listeners.iter().cloned());
             }
+        }
+
+        for listener in &listeners {
+            listener.on_change(event.clone());
         }
     }
 
     /// Handle a fuzzy watch sync request from the server (batch notification)
     pub fn handle_sync_request(&self, pattern: &str, contexts: &HashSet<Context>) {
-        if let Some(mut entry) = self.watches.get_mut(pattern) {
+        // Same two-phase pattern as `handle_change_notify`: mutate + collect
+        // under the guard, deliver after it is released.
+        let (listeners, events) = {
+            let Some(mut entry) = self.watches.get_mut(pattern) else {
+                return;
+            };
+
+            let mut events = Vec::with_capacity(contexts.len());
             for ctx in contexts {
                 entry.received_group_keys.insert(ctx.group_key.clone());
-                let event = ConfigFuzzyWatchEvent {
+                events.push(ConfigFuzzyWatchEvent {
                     group_key: ctx.group_key.clone(),
                     change_type: ctx.change_type.clone(),
-                };
-                for listener in &entry.listeners {
-                    listener.on_change(event.clone());
-                }
+                });
             }
             entry.is_initializing = false;
+
+            (entry.listeners.clone(), events)
+        };
+
+        for event in &events {
+            for listener in &listeners {
+                listener.on_change(event.clone());
+            }
         }
     }
 

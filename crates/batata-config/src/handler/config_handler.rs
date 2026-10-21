@@ -1410,6 +1410,16 @@ impl PayloadHandler for ConfigBatchListenHandler {
                             });
                         }
                     } else if is_listen {
+                        // No formal config on the server. Upstream
+                        // `ConfigCacheService.isUptodate()` compares the client MD5
+                        // with the server MD5, which is the "null" sentinel for a
+                        // missing config. A client that already knows there is
+                        // nothing to fetch (empty MD5) must not be told "changed"
+                        // again, otherwise it re-queries on every listen cycle and
+                        // the entry never becomes consistent.
+                        if client_md5.is_empty() {
+                            return None;
+                        }
                         return Some(ConfigContext {
                             data_id,
                             group,

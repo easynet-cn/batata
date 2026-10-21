@@ -8,7 +8,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use md5::{Digest, Md5};
 
+use super::change_parser::{self, ConfigChangeEvent};
 use super::listener::{ConfigChangeEventListener, ConfigChangeListener, ConfigResponse};
+
+/// Resets a listener's `in_notifying` flag when a pending notification is
+/// dropped.
+///
+/// Holding the flag in an `Arc` lets the notification outlive the cache entry
+/// guard, and resetting it on drop means a panicking callback cannot leave the
+/// listener permanently marked as "being notified" (which would silently stop
+/// all future deliveries to it).
+struct NotifyingReset(Arc<AtomicBool>);
+
+impl Drop for NotifyingReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Wraps a config listener with per-listener state tracking.
 ///
@@ -24,7 +40,11 @@ pub struct ManagerListenerWrap {
     /// Content last delivered to this listener.
     pub last_content: String,
     /// Whether a notification is currently in progress for this listener.
-    pub in_notifying: AtomicBool,
+    ///
+    /// Shared with [`PendingConfigNotification`] so the flag stays set until
+    /// the callback has actually run, even though the callback is invoked
+    /// after the cache entry has been released.
+    pub in_notifying: Arc<AtomicBool>,
 }
 
 impl ManagerListenerWrap {
@@ -34,7 +54,7 @@ impl ManagerListenerWrap {
             listener,
             last_call_md5: md5.to_string(),
             last_content: content.to_string(),
-            in_notifying: AtomicBool::new(false),
+            in_notifying: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -48,7 +68,7 @@ pub struct ManagerChangeEventListenerWrap {
     /// Content last delivered to this listener.
     pub last_content: String,
     /// Whether a notification is currently in progress for this listener.
-    pub in_notifying: AtomicBool,
+    pub in_notifying: Arc<AtomicBool>,
 }
 
 impl ManagerChangeEventListenerWrap {
@@ -58,7 +78,7 @@ impl ManagerChangeEventListenerWrap {
             listener,
             last_call_md5: md5.to_string(),
             last_content: content.to_string(),
-            in_notifying: AtomicBool::new(false),
+            in_notifying: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -195,57 +215,126 @@ impl CacheData {
         count
     }
 
+    /// Mark this entry as "the config does not exist on the server".
+    ///
+    /// The MD5 falls back to the empty "no content" sentinel — the same value a
+    /// client sends for a config it has never seen. The server treats that
+    /// sentinel as up to date for a missing config, so the entry converges
+    /// instead of being reported as changed on every listen cycle.
+    ///
+    /// Listeners are deliberately NOT notified: there is no content to deliver.
+    pub fn mark_missing(&mut self) {
+        self.content.clear();
+        self.md5.clear();
+        self.config_type.clear();
+        self.encrypted_data_key.clear();
+        self.is_initializing = false;
+        self.is_consistent_with_server
+            .store(true, Ordering::Relaxed);
+    }
+
     /// Check if there are any registered listeners.
     pub fn has_listeners(&self) -> bool {
         !self.listeners.is_empty() || !self.change_event_listeners.is_empty()
     }
 
-    /// Check each listener's `last_call_md5` against the current MD5.
-    /// If different, notify the listener and update `last_call_md5`.
+    /// Collect the content notifications that are due, without invoking any
+    /// listener.
     ///
-    /// This is the core notification mechanism matching Nacos `CacheData.checkListenerMd5()`.
-    /// Returns the number of listeners that were notified.
-    pub fn check_listener_md5(&self) -> usize {
-        let mut notified = 0;
+    /// This is the core notification mechanism matching Nacos
+    /// `CacheData.checkListenerMd5()`: a listener fires when its
+    /// `last_call_md5` differs from the current MD5. Here the listener is
+    /// marked as notified up front and handed back as a
+    /// [`PendingConfigNotification`], which the caller delivers **after**
+    /// releasing the cache entry — see
+    /// [`PendingConfigNotification::deliver`] for why that matters.
+    pub fn take_content_notifications(&mut self) -> Vec<PendingConfigNotification> {
+        let response = ConfigResponse {
+            data_id: self.data_id.clone(),
+            group: self.group.clone(),
+            tenant: self.tenant.clone(),
+            content: self.content.clone(),
+        };
 
-        for wrap in &self.listeners {
-            if wrap.last_call_md5 != self.md5 {
-                // Skip if already notifying (prevent concurrent notification)
-                if wrap
-                    .in_notifying
-                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_err()
-                {
-                    continue;
-                }
-
-                let response = ConfigResponse {
-                    data_id: self.data_id.clone(),
-                    group: self.group.clone(),
-                    tenant: self.tenant.clone(),
-                    content: self.content.clone(),
-                };
-
-                wrap.listener.receive_config_info(response);
-
-                // SAFETY: We have exclusive write access through compare_exchange
-                // Update last_call_md5 — this is a &self method so we use interior mutability
-                // pattern. In practice, the listen loop holds the DashMap entry guard.
-                // Since ManagerListenerWrap fields are not behind AtomicBool,
-                // we cast through a raw pointer. This is safe because the listen loop
-                // is single-threaded per CacheData.
-                unsafe {
-                    let wrap_ptr = wrap as *const ManagerListenerWrap as *mut ManagerListenerWrap;
-                    (*wrap_ptr).last_call_md5 = self.md5.clone();
-                    (*wrap_ptr).last_content = self.content.clone();
-                }
-
-                wrap.in_notifying.store(false, Ordering::SeqCst);
-                notified += 1;
+        let mut pending = Vec::new();
+        for wrap in &mut self.listeners {
+            if wrap.last_call_md5 == self.md5 {
+                continue;
             }
+            // Skip if already notifying (prevent concurrent notification)
+            if wrap
+                .in_notifying
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                continue;
+            }
+
+            pending.push(PendingConfigNotification {
+                listener: Arc::clone(&wrap.listener),
+                response: response.clone(),
+                in_notifying: Arc::clone(&wrap.in_notifying),
+            });
+
+            wrap.last_call_md5 = self.md5.clone();
+            wrap.last_content = self.content.clone();
         }
 
-        notified
+        pending
+    }
+
+    /// Collect the change-event notifications that are due, without invoking
+    /// any listener.
+    ///
+    /// Mirrors [`Self::take_content_notifications`]: the field-level diff is
+    /// computed here (from the first listener's last content, matching the
+    /// existing behavior) and the delivery itself is deferred to the caller.
+    pub fn take_change_event_notifications(&mut self) -> Vec<PendingChangeEventNotification> {
+        if self.change_event_listeners.is_empty() {
+            return Vec::new();
+        }
+
+        let old_content = self
+            .change_event_listeners
+            .first()
+            .map(|w| w.last_content.clone())
+            .unwrap_or_default();
+
+        let items =
+            change_parser::parse_change_items(&self.config_type, &old_content, &self.content);
+        if items.is_empty() {
+            return Vec::new();
+        }
+
+        let event = ConfigChangeEvent {
+            data_id: self.data_id.clone(),
+            group: self.group.clone(),
+            tenant: self.tenant.clone(),
+            items,
+        };
+
+        let mut pending = Vec::new();
+        for wrap in &mut self.change_event_listeners {
+            // Skip if already notifying (prevent concurrent notification)
+            if wrap
+                .in_notifying
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                continue;
+            }
+
+            pending.push(PendingChangeEventNotification {
+                listener: Arc::clone(&wrap.listener),
+                event: event.clone(),
+                in_notifying: Arc::clone(&wrap.in_notifying),
+            });
+
+            wrap.last_call_md5 = self.md5.clone();
+            wrap.last_content = self.content.clone();
+        }
+
+        pending
     }
 
     /// Check if all listeners have been notified with the current MD5.
@@ -260,6 +349,51 @@ impl CacheData {
     /// Build the cache key for this config.
     pub fn key(&self) -> String {
         build_cache_key(&self.data_id, &self.group, &self.tenant)
+    }
+}
+
+/// A content notification detached from its cache entry.
+///
+/// Listener callbacks must never run while the cache entry guard is held: the
+/// callback runs on the client's listen-loop task, so a callback that
+/// re-enters the same `BatataConfigService` (a `get_config`, another
+/// `add_listener`, ...) deadlocks on the very DashMap shard being held, and a
+/// callback that blocks stalls every other config on the client.
+///
+/// [`CacheData::take_content_notifications`] therefore marks the listener as
+/// notified and returns everything needed to invoke it later.
+pub struct PendingConfigNotification {
+    /// The listener to invoke.
+    pub listener: Arc<dyn ConfigChangeListener>,
+    /// The config payload to hand to the listener.
+    pub response: ConfigResponse,
+    in_notifying: Arc<AtomicBool>,
+}
+
+impl PendingConfigNotification {
+    /// Invoke the listener. Call only after the cache entry guard is released.
+    pub fn deliver(self) {
+        let _reset = NotifyingReset(Arc::clone(&self.in_notifying));
+        self.listener.receive_config_info(self.response);
+    }
+}
+
+/// A change-event notification detached from its cache entry.
+///
+/// See [`PendingConfigNotification`] for why delivery is deferred.
+pub struct PendingChangeEventNotification {
+    /// The listener to invoke.
+    pub listener: Arc<dyn ConfigChangeEventListener>,
+    /// The field-level change event to hand to the listener.
+    pub event: ConfigChangeEvent,
+    in_notifying: Arc<AtomicBool>,
+}
+
+impl PendingChangeEventNotification {
+    /// Invoke the listener. Call only after the cache entry guard is released.
+    pub fn deliver(self) {
+        let _reset = NotifyingReset(Arc::clone(&self.in_notifying));
+        self.listener.receive_config_change(self.event);
     }
 }
 
@@ -421,17 +555,55 @@ mod tests {
 
         // Add listener with current MD5 — should NOT trigger
         cache.add_listener(listener);
-        assert_eq!(cache.check_listener_md5(), 0);
+        assert_eq!(deliver(cache.take_content_notifications()), 0);
         assert_eq!(call_count.load(Ordering::SeqCst), 0);
 
         // Change content — listener's last_call_md5 differs from cache.md5
         cache.update_content("changed");
-        assert_eq!(cache.check_listener_md5(), 1);
+        assert_eq!(deliver(cache.take_content_notifications()), 1);
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
 
         // Call again — should NOT trigger (md5 now matches)
-        assert_eq!(cache.check_listener_md5(), 0);
+        assert_eq!(deliver(cache.take_content_notifications()), 0);
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_take_content_notifications_releases_before_delivery() {
+        // Regression guard: the pending notification must carry everything
+        // needed to invoke the listener, so the caller can drop the cache
+        // entry guard first. A callback that re-enters the config service
+        // (for example another `get_config`) would otherwise deadlock.
+        let mut cache = CacheData::new("id", "group", "");
+        cache.update_content("v1");
+
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            move |info: ConfigResponse| {
+                assert_eq!(info.content, "v2");
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+            },
+        ));
+        cache.add_listener(listener);
+        assert_eq!(deliver(cache.take_content_notifications()), 0);
+
+        cache.update_content("v2");
+        let pending = cache.take_content_notifications();
+        assert_eq!(pending.len(), 1);
+        // Drop the (borrowed) cache before delivering, mimicking the caller.
+        drop(cache);
+        assert_eq!(deliver(pending), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Deliver every pending notification, returning how many listeners ran.
+    fn deliver(pending: Vec<PendingConfigNotification>) -> usize {
+        let count = pending.len();
+        for notification in pending {
+            notification.deliver();
+        }
+        count
     }
 
     #[test]

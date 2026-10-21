@@ -22,6 +22,25 @@ pub struct NamingEvent {
 /// Trait for receiving naming service change events.
 ///
 /// Implement this to be notified when a subscribed service's instance list changes.
+///
+/// # Callback context
+///
+/// `on_event` is invoked synchronously from the client's push-dispatch task,
+/// i.e. on a Tokio runtime thread. The callback must therefore **never block**:
+///
+/// - No `tokio::sync::Mutex::blocking_lock()` — it panics inside a runtime and
+///   stalls every other task on a `current_thread` runtime.
+/// - No long-held `std::sync::Mutex` that is also taken across an `.await` in
+///   the caller — that deadlocks the runtime (the notification cannot be
+///   delivered while the caller waits for it).
+/// - No `block_on` / blocking wait on an async call into the same client: the
+///   callback is synchronous, and the work it waits on needs the runtime too.
+///
+/// The subscription lock is released *before* the callback runs, so
+/// subscribing/unsubscribing from a callback does not deadlock — but
+/// dispatching anything async still has to go through `tokio::spawn`.
+///
+/// Use an atomic, a channel, or spawn a task instead.
 pub trait EventListener: Send + Sync + 'static {
     /// Called when the service's instance list has changed.
     fn on_event(&self, event: NamingEvent);

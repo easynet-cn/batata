@@ -26,12 +26,12 @@ async fn test_add_config_listener() {
     let content = "test.value=1";
 
     let notify = Arc::new(Notify::new());
-    let received = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let received = Arc::new(std::sync::Mutex::new(String::new()));
 
     let n = notify.clone();
     let r = received.clone();
     let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.blocking_lock() = info.content.clone();
+        *r.lock().unwrap() = info.content.clone();
         n.notify_one();
     }));
 
@@ -50,7 +50,7 @@ async fn test_add_config_listener() {
         .await
         .is_ok();
     assert!(got, "Listener should receive notification within 10s");
-    assert_eq!(*received.lock().await, content);
+    assert_eq!(*received.lock().unwrap(), content);
 
     // Cleanup
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
@@ -170,13 +170,13 @@ async fn test_listener_multiple_updates() {
     let data_id = format!("listener-updates-{}", id);
 
     let count = Arc::new(AtomicU32::new(0));
-    let last_value = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let last_value = Arc::new(std::sync::Mutex::new(String::new()));
 
     let c = count.clone();
     let lv = last_value.clone();
     let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
         c.fetch_add(1, Ordering::SeqCst);
-        *lv.blocking_lock() = info.content.clone();
+        *lv.lock().unwrap() = info.content.clone();
     }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
@@ -194,7 +194,7 @@ async fn test_listener_multiple_updates() {
 
     let final_count = count.load(Ordering::SeqCst);
     assert!(final_count >= 1, "Should receive at least 1 notification");
-    assert_eq!(*last_value.lock().await, "update=4");
+    assert_eq!(*last_value.lock().unwrap(), "update=4");
 
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
         .await
@@ -211,13 +211,13 @@ async fn test_listener_rapid_changes() {
     let data_id = format!("listener-rapid-{}", id);
 
     let count = Arc::new(AtomicU32::new(0));
-    let last_value = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let last_value = Arc::new(std::sync::Mutex::new(String::new()));
 
     let c = count.clone();
     let lv = last_value.clone();
     let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
         c.fetch_add(1, Ordering::SeqCst);
-        *lv.blocking_lock() = info.content.clone();
+        *lv.lock().unwrap() = info.content.clone();
     }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
@@ -235,7 +235,7 @@ async fn test_listener_rapid_changes() {
 
     let final_count = count.load(Ordering::SeqCst);
     assert!(final_count >= 1, "At least 1 notification (some may be coalesced)");
-    assert_eq!(*last_value.lock().await, "rapid.change=9");
+    assert_eq!(*last_value.lock().unwrap(), "rapid.change=9");
 
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
         .await
@@ -253,12 +253,12 @@ async fn test_listener_for_non_existent_config() {
     let content = "created.later=true";
 
     let notify = Arc::new(Notify::new());
-    let received = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let received = Arc::new(std::sync::Mutex::new(String::new()));
 
     let n = notify.clone();
     let r = received.clone();
     let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.blocking_lock() = info.content.clone();
+        *r.lock().unwrap() = info.content.clone();
         n.notify_one();
     }));
 
@@ -277,7 +277,7 @@ async fn test_listener_for_non_existent_config() {
         .await
         .is_ok();
     assert!(got, "Listener should fire when config is created");
-    assert_eq!(*received.lock().await, content);
+    assert_eq!(*received.lock().unwrap(), content);
 
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
         .await
@@ -340,12 +340,12 @@ async fn test_listener_in_custom_group() {
     let content = "custom.group=value";
 
     let notify = Arc::new(Notify::new());
-    let received = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let received = Arc::new(std::sync::Mutex::new(String::new()));
 
     let n = notify.clone();
     let r = received.clone();
     let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.blocking_lock() = info.content.clone();
+        *r.lock().unwrap() = info.content.clone();
         n.notify_one();
     }));
 
@@ -362,7 +362,7 @@ async fn test_listener_in_custom_group() {
         .await
         .is_ok();
     assert!(got, "Custom group listener should fire");
-    assert_eq!(*received.lock().await, content);
+    assert_eq!(*received.lock().unwrap(), content);
 
     // Verify NOT in DEFAULT_GROUP
     let default_config = svc.get_config(&data_id, "DEFAULT_GROUP", "").await;

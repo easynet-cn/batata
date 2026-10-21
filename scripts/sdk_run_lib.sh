@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Shared SDK compatibility test runners (Consul Go + Nacos Java + Apollo Java).
+# Shared SDK compatibility test runners (Consul Go + Nacos Java + Apollo Java
+# + the three batata Rust suites).
 #
-# Source this file to get sdk_run_consul / sdk_run_nacos / sdk_run_apollo,
-# used by both test.sh (sdk --quick manual entry and sdk --matrix full matrix).
-# Centralizing the go/mvn invocations keeps the entry points in sync.
+# Source this file to get sdk_run_consul / sdk_run_nacos / sdk_run_apollo /
+# sdk_run_batata_client / sdk_run_batata_consul_client /
+# sdk_run_batata_maintainer, used by both test.sh (sdk --quick manual entry
+# and sdk --matrix full matrix). Centralizing the go/mvn/cargo invocations
+# keeps the entry points in sync.
 #
 # Usage (in a sourcing script):
 #   source "$(dirname "$0")/sdk_run_lib.sh"
 #
-#   sdk_run_consul [test_name_filter]   # optional -run filter for `go test`
-#   sdk_run_nacos  [test_class_filter]  # optional -Dtest=Nacos<filter>* filter
-#   sdk_run_apollo  [test_class_filter] # optional -Dtest=Apollo<filter>* filter
+#   sdk_run_consul  [test_name_filter]  # optional -run filter for `go test`
+#   sdk_run_nacos   [class_filter]      # optional -Dtest=Nacos<filter>* filter
+#   sdk_run_apollo  [class_filter]      # optional -Dtest=Apollo<filter>* filter
+#   sdk_run_batata_client        [filter]  # optional cargo test-name filter
+#   sdk_run_batata_consul_client [filter]  # optional cargo test-name filter
+#   sdk_run_batata_maintainer    [filter]  # optional cargo test-name filter
 #
 # Environment (all optional):
 #   CONSUL_HTTP_TOKEN   forwarded to the Consul Go SDK (e.g. "root")
 #   MVN_QUIET           set to 1 to pass -q to mvn
+#   CARGO_QUIET         set to 1 to pass --quiet to cargo
 #   APOLLO_META         Apollo meta/config-service URL (default http://127.0.0.1:18080)
 #   APOLLO_OPENAPI_URL  Apollo OpenAPI portal URL (default = APOLLO_META)
 #   APOLLO_OPENAPI_TOKEN Apollo OpenAPI token (default "admin"; the plugin does
@@ -96,6 +103,55 @@ sdk_run_nacos() {
             -Dnacos.cluster.node1=127.0.0.1:8848 \
             ${cluster_peers} \
             $test_flag )
+}
+
+# Run one of the Rust SDK suites under sdk-tests/.
+#
+# Each of these is its own Cargo workspace (it depends on batata-client by
+# path), so they must be invoked from their own directory rather than from the
+# repository root.
+#
+# Usage: sdk_run_rust_suite <dir> [test_name_filter]
+sdk_run_rust_suite() {
+    local dir="$1" filter="${2:-}"
+    local -a args=(test)
+    [ -n "${CARGO_QUIET:-}" ] && args+=(--quiet)
+    # `cargo test <filter>` filters by test *name*; passing an empty string
+    # selects nothing, so only append the separator when a filter was given.
+    [ -n "$filter" ] && args+=(-- "$filter")
+
+    # A hung suite must not stall the matrix. Cargo buffers a test binary's
+    # output until it exits, so a hang looks exactly like a slow run and would
+    # otherwise block every remaining combination. `timeout` (GNU coreutils)
+    # is not guaranteed to exist, so fall back to an unbounded run rather
+    # than failing the whole matrix on a missing utility.
+    local secs="${SDK_RUST_TIMEOUT:-900}"
+    if command -v timeout >/dev/null 2>&1; then
+        ( cd "${SDK_PROJECT_ROOT}/sdk-tests/${dir}" && timeout "$secs" cargo "${args[@]}" )
+    else
+        ( cd "${SDK_PROJECT_ROOT}/sdk-tests/${dir}" && cargo "${args[@]}" )
+    fi
+}
+
+# Run the batata-client SDK suite (naming + config over gRPC and HTTP).
+# Requires a server on 8848 and an initialized nacos/nacos user.
+# Usage: sdk_run_batata_client [test_name_filter]
+sdk_run_batata_client() {
+    sdk_run_rust_suite batata-client-tests "${1:-}"
+}
+
+# Run the batata Consul-client SDK suite (Consul HTTP API on 8500).
+# Requires the Consul plugin to be enabled.
+# Usage: sdk_run_batata_consul_client [test_name_filter]
+sdk_run_batata_consul_client() {
+    sdk_run_rust_suite batata-consul-client-tests "${1:-}"
+}
+
+# Run the batata maintainer/admin SDK suite (admin + extended APIs on 8848).
+# Requires a server on 8848 and an initialized nacos/nacos user.
+# Usage: sdk_run_batata_maintainer [test_name_filter]
+sdk_run_batata_maintainer() {
+    sdk_run_rust_suite batata-maintainer-tests "${1:-}"
 }
 
 # Run the Apollo Java SDK test suite.

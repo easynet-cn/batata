@@ -517,6 +517,13 @@ def main() -> int:
             "SERVER": f"127.0.0.1:{args.port}",
         }
     )
+    # Never route local traffic through a proxy: urllib (used by
+    # `business_ok()`) honours HTTP_PROXY, so an exported proxy makes every
+    # variant look "not ready" and the run is skipped. The same applies to
+    # benchmark.sh's curl probes, which pass `--noproxy '*'` themselves.
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        bench_env.pop(key, None)
+    bench_env["no_proxy"] = "*"
 
     print(
         f"bench_ab: mode={args.mode} case={args.case} rounds={args.rounds} "

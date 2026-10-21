@@ -32,14 +32,14 @@ fn make_instance(ip: &str, port: i32) -> Instance {
 struct TestEventListener {
     notify: Arc<Notify>,
     count: Arc<AtomicU32>,
-    last_instances: Arc<tokio::sync::Mutex<Vec<Instance>>>,
+    last_instances: Arc<std::sync::Mutex<Vec<Instance>>>,
 }
 
 impl TestEventListener {
-    fn new() -> (Arc<Self>, Arc<Notify>, Arc<AtomicU32>, Arc<tokio::sync::Mutex<Vec<Instance>>>) {
+    fn new() -> (Arc<Self>, Arc<Notify>, Arc<AtomicU32>, Arc<std::sync::Mutex<Vec<Instance>>>) {
         let notify = Arc::new(Notify::new());
         let count = Arc::new(AtomicU32::new(0));
-        let last = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let last = Arc::new(std::sync::Mutex::new(Vec::new()));
         let listener = Arc::new(Self {
             notify: notify.clone(),
             count: count.clone(),
@@ -51,7 +51,9 @@ impl TestEventListener {
 
 impl EventListener for TestEventListener {
     fn on_event(&self, event: NamingEvent) {
-        *self.last_instances.blocking_lock() = event.instances.clone();
+        // Listener callbacks run on the async runtime thread, so a blocking
+        // `tokio::sync::Mutex` (`blocking_lock`) would panic here.
+        *self.last_instances.lock().unwrap() = event.instances.clone();
         self.count.fetch_add(1, Ordering::SeqCst);
         self.notify.notify_one();
     }
@@ -60,6 +62,7 @@ impl EventListener for TestEventListener {
 /// NSS-001: Basic subscribe — receive notification when instance registered
 #[tokio::test]
 async fn test_basic_subscribe() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-basic-{}", id);
@@ -80,10 +83,14 @@ async fn test_basic_subscribe() {
         .is_ok();
     assert!(received, "Should receive notification within 20s");
 
-    let instances = last_instances.lock().await;
-    assert!(!instances.is_empty(), "Instance list should not be empty");
-    assert_eq!(instances[0].ip, "192.168.1.1");
-    assert_eq!(instances[0].port, 8080);
+    // Scope the guard: listener callbacks run on the same runtime thread, so
+    // holding this lock across the cleanup `await`s deadlocks the runtime.
+    {
+        let instances = last_instances.lock().unwrap();
+        assert!(!instances.is_empty(), "Instance list should not be empty");
+        assert_eq!(instances[0].ip, "192.168.1.1");
+        assert_eq!(instances[0].port, 8080);
+    }
 
     // Cleanup
     svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.1", 8080))
@@ -94,6 +101,7 @@ async fn test_basic_subscribe() {
 /// NSS-002: Unsubscribe stops notifications
 #[tokio::test]
 async fn test_unsubscribe() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-unsub-{}", id);
@@ -132,6 +140,7 @@ async fn test_unsubscribe() {
 /// NSS-003: Subscribe to non-existent service — fires when service created
 #[tokio::test]
 async fn test_subscribe_non_existent_service() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-nonexist-{}", id);
@@ -151,9 +160,11 @@ async fn test_subscribe_non_existent_service() {
         .is_ok();
     assert!(received, "Should receive notification when service is created");
 
-    let instances = last_instances.lock().await;
-    assert!(!instances.is_empty());
-    assert_eq!(instances[0].ip, "192.168.1.3");
+    {
+        let instances = last_instances.lock().unwrap();
+        assert!(!instances.is_empty());
+        assert_eq!(instances[0].ip, "192.168.1.3");
+    }
 
     svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.3", 8080))
         .await.ok();
@@ -163,6 +174,7 @@ async fn test_subscribe_non_existent_service() {
 /// NSS-004: Multiple subscribers all receive notification
 #[tokio::test]
 async fn test_multiple_subscribers() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-multi-{}", id);
@@ -202,11 +214,12 @@ async fn test_multiple_subscribers() {
 /// NSS-005: Subscriber receives add and remove changes
 #[tokio::test]
 async fn test_subscriber_receives_changes() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-changes-{}", id);
 
-    let instance_counts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let instance_counts = Arc::new(std::sync::Mutex::new(Vec::new()));
     let count = Arc::new(AtomicU32::new(0));
     let notify = Arc::new(Notify::new());
 
@@ -215,7 +228,7 @@ async fn test_subscriber_receives_changes() {
     let n = notify.clone();
     let listener = Arc::new(batata_client::naming::listener::FnEventListener::new(
         move |event: NamingEvent| {
-            ic.blocking_lock().push(event.instances.len());
+            ic.lock().unwrap().push(event.instances.len());
             c.fetch_add(1, Ordering::SeqCst);
             n.notify_one();
         },
@@ -243,11 +256,13 @@ async fn test_subscriber_receives_changes() {
     tokio::time::timeout(Duration::from_secs(10), notify.notified()).await.ok();
     sleep(Duration::from_secs(1)).await;
 
-    let counts = instance_counts.lock().await;
-    assert!(counts.len() >= 3, "Should receive at least 3 notifications, got {}", counts.len());
-    assert_eq!(counts[0], 1, "First: 1 instance");
-    assert_eq!(counts[1], 2, "Second: 2 instances");
-    assert_eq!(counts[2], 1, "Third: 1 instance (after removal)");
+    {
+        let counts = instance_counts.lock().unwrap();
+        assert!(counts.len() >= 3, "Should receive at least 3 notifications, got {}", counts.len());
+        assert_eq!(counts[0], 1, "First: 1 instance");
+        assert_eq!(counts[1], 2, "Second: 2 instances");
+        assert_eq!(counts[2], 1, "Third: 1 instance (after removal)");
+    }
 
     svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.11", 8080))
         .await.ok();
@@ -257,6 +272,7 @@ async fn test_subscriber_receives_changes() {
 /// NSS-011: Subscribe with empty cluster list receives all events
 #[tokio::test]
 async fn test_subscribe_empty_cluster_list() {
+    common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
     let id = common::test_id();
     let service_name = format!("sub-empty-cluster-{}", id);
@@ -277,9 +293,11 @@ async fn test_subscribe_empty_cluster_list() {
         .is_ok();
     assert!(received);
 
-    let instances = last_instances.lock().await;
-    assert!(!instances.is_empty());
-    assert_eq!(instances[0].ip, "192.168.3.3");
+    {
+        let instances = last_instances.lock().unwrap();
+        assert!(!instances.is_empty());
+        assert_eq!(instances[0].ip, "192.168.3.3");
+    }
 
     svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.3.3", 8080))
         .await.ok();

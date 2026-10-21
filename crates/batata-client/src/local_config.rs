@@ -349,6 +349,26 @@ impl SnapshotManager {
     }
 }
 
+/// Serializes tests that touch the `BATATA_SNAPSHOT_PATH` environment variable.
+///
+/// `LocalConfigInfoProcessor` (and `LocalEncryptedDataKeyProcessor`) read the
+/// variable **when they are constructed**, and several tests point it at their
+/// own `TempDir`. Cargo runs tests in parallel, so without a lock they
+/// overwrite each other's value and fail intermittently — the classic symptom
+/// being a snapshot that "was just saved" reading back as `None`.
+///
+/// Any test that sets the variable, or constructs one of those processors,
+/// must hold this lock for its whole body.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire [`TEST_ENV_LOCK`], tolerating a poisoned mutex (a panicking test
+/// must not make every later test panic too).
+#[cfg(test)]
+pub(crate) fn lock_snapshot_env() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +384,7 @@ mod tests {
 
     #[test]
     fn test_simplify_env_name() {
+        let _env = lock_snapshot_env();
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
         // Short name
@@ -394,6 +415,7 @@ mod tests {
 
     #[test]
     fn test_get_failover_file() {
+        let _env = lock_snapshot_env();
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
         // Without tenant
@@ -442,6 +464,7 @@ mod tests {
     fn test_failover_save_and_get() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -462,6 +485,7 @@ mod tests {
     fn test_get_failover_not_found() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -476,6 +500,7 @@ mod tests {
     fn test_snapshot_disabled() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -523,6 +548,7 @@ mod tests {
     fn test_clean_all_snapshots() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -549,6 +575,7 @@ mod tests {
     fn test_clean_all_snapshots_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -563,6 +590,7 @@ mod tests {
     fn test_clean_env_snapshot() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -596,6 +624,7 @@ mod tests {
 
     #[test]
     fn test_simplify_env_name_short() {
+        let _env = lock_snapshot_env();
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
         assert_eq!(processor.simplify_env_name("short"), "short");
         assert_eq!(processor.simplify_env_name(""), "");
@@ -607,6 +636,7 @@ mod tests {
 
     #[test]
     fn test_simplify_env_name_exactly_30() {
+        let _env = lock_snapshot_env();
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
         let name = "a".repeat(30);
         let simplified = processor.simplify_env_name(&name);
@@ -615,6 +645,7 @@ mod tests {
 
     #[test]
     fn test_simplify_env_name_over_30() {
+        let _env = lock_snapshot_env();
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
         let name = "a".repeat(31);
         let simplified = processor.simplify_env_name(&name);
@@ -626,6 +657,7 @@ mod tests {
     fn test_snapshot_with_tenant() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -655,6 +687,7 @@ mod tests {
     fn test_snapshot_delete_by_none() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
@@ -687,11 +720,16 @@ mod tests {
     async fn test_snapshot_manager_batch_save() {
         let temp_dir = TempDir::new().unwrap();
 
+        let _env = lock_snapshot_env();
         unsafe {
             std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
         }
 
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+        // The processor captured the base path above, so the env var no longer
+        // matters: release the lock before awaiting (holding a
+        // `std::sync::MutexGuard` across `.await` can stall the runtime).
+        drop(_env);
 
         // Save individual snapshot first to verify the path works
         processor

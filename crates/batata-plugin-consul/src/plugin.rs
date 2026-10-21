@@ -47,13 +47,18 @@ use crate::xds_sync::{ConsulSyncBridge, create_xds_server};
 /// `InstanceCheckRegistry`: a check registered through node A's agent API
 /// is otherwise invisible on node B, so `/v1/health/service` on B would
 /// report the instance as healthy regardless of A's probe result.
-struct NamingStoreApplyHook {
+///
+/// Public so the multi-node cluster tests in `tests/cluster` can install the
+/// exact hook production installs. Re-implementing it there would only test
+/// a look-alike: every divergence between the two would be invisible.
+pub struct NamingStoreApplyHook {
     store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
 }
 
 impl NamingStoreApplyHook {
-    fn new(store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
+    /// Build a hook bound to one node's in-memory store and check registry.
+    pub fn new(store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
         Self { store, registry }
     }
 }
@@ -296,32 +301,9 @@ impl ConsulPlugin {
         let kv = ConsulKVService::with_raft(db.clone(), consul_raft.clone());
         let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
-        // Restore persisted health check configs from RocksDB
-        if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_HEALTH_CHECKS) {
-            let mut restored = 0u64;
-            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-            for item in iter.flatten() {
-                let (_key_bytes, value_bytes) = item;
-                match serde_json::from_slice::<
-                    batata_naming::healthcheck::registry::InstanceCheckConfig,
-                >(&value_bytes)
-                {
-                    Ok(config) => {
-                        // Preserve any status that is already present (e.g. a
-                        // check registered by this node before the DB was
-                        // opened) and never schedule a probe from here.
-                        registry.restore_check(config);
-                        restored += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to restore health check config: {}", e);
-                    }
-                }
-            }
-            if restored > 0 {
-                tracing::info!("Restored {} health check configs from RocksDB", restored);
-            }
-        }
+        // Restoring here rather than at the call site keeps the recovery
+        // identical for startup and for snapshot install.
+        restore_checks_from_db(&db, &registry);
 
         let peering = Arc::new(ConsulPeeringService::with_raft(
             db.clone(),
@@ -1050,34 +1032,11 @@ impl ConsulPlugin {
         // in-memory naming store from committed catalog data in RocksDB.
         // New applies after this point flow through the hook naturally,
         // so we only need to replay what was already committed.
-        {
-            use batata_plugin::PluginNamingStore;
-            let db = core_raft.db();
-            if let Some(cf) = db.cf_handle(CF_CONSUL_CATALOG) {
-                let mut count = 0usize;
-                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                for item in iter {
-                    let Ok((k, v)) = item else { continue };
-                    let Ok(key) = std::str::from_utf8(&k) else {
-                        continue;
-                    };
-                    let data = bytes::Bytes::copy_from_slice(&v);
-                    if consul_naming_store.register(key, data).is_ok() {
-                        count += 1;
-                    }
-                }
-                tracing::info!(
-                    "Consul catalog cold-start replay complete: {} entries restored",
-                    count
-                );
-            }
-        }
+        let db = core_raft.db();
+        replay_catalog_from_db(&db, &consul_naming_store);
 
         // Create a writer adapter that routes Consul requests through PluginWrite
         let consul_writer = Arc::new(ConsulRaftWriter::new(core_raft.clone()));
-
-        // Get shared DB from core Raft state machine
-        let db = core_raft.db();
 
         self.build_inner_cluster(
             consul_naming_store,
@@ -1087,6 +1046,62 @@ impl ConsulPlugin {
             table_index,
         )
     }
+}
+
+/// Rehydrate the in-memory `ConsulNamingStore` from committed catalog data.
+///
+/// The apply-back hook keeps followers up to date while they are running, so
+/// this only has to replay what was already committed before this node's
+/// store existed: cold start, and recovery after a snapshot install.
+///
+/// Public so the multi-node tests exercise the same recovery path production
+/// uses, instead of a copy that can silently drift from it.
+pub fn replay_catalog_from_db(db: &DB, store: &ConsulNamingStore) -> usize {
+    use batata_plugin::PluginNamingStore;
+
+    let Some(cf) = db.cf_handle(CF_CONSUL_CATALOG) else {
+        return 0;
+    };
+    let mut count = 0usize;
+    for item in db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+        let Ok((k, v)) = item else { continue };
+        let Ok(key) = std::str::from_utf8(&k) else {
+            continue;
+        };
+        let data = bytes::Bytes::copy_from_slice(&v);
+        if store.register(key, data).is_ok() {
+            count += 1;
+        }
+    }
+    tracing::info!("Consul catalog replay complete: {} entries restored", count);
+    count
+}
+
+/// Restore persisted health check configs from RocksDB into `registry`.
+///
+/// Uses [`InstanceCheckRegistry::restore_check`], never `register_check`:
+/// a replica must neither reset a status that is already committed nor
+/// schedule its own probe — only the node that owns a check probes it.
+pub fn restore_checks_from_db(db: &DB, registry: &InstanceCheckRegistry) -> usize {
+    let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_HEALTH_CHECKS) else {
+        return 0;
+    };
+    let mut restored = 0usize;
+    for (_key, value) in db.iterator_cf(cf, rocksdb::IteratorMode::Start).flatten() {
+        match serde_json::from_slice::<InstanceCheckConfig>(&value) {
+            Ok(config) => {
+                registry.restore_check(config);
+                restored += 1;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore health check config: {}", e);
+            }
+        }
+    }
+    if restored > 0 {
+        tracing::info!("Restored {} health check configs from RocksDB", restored);
+    }
+    restored
 }
 
 impl PluginStateProvider for ConsulPlugin {

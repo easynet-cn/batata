@@ -18,6 +18,7 @@ pub mod listener;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use batata_api::{
     config::model::{
@@ -33,9 +34,22 @@ use dashmap::DashMap;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
-use crate::error::Result;
+use crate::error::{ClientError, Result};
 use crate::grpc::{GrpcClient, ServerPushHandler};
 use crate::local_config::LocalConfigInfoProcessor;
+
+/// Error code returned by the server when a config does not exist.
+///
+/// Upstream: `ConfigQueryResponse.CONFIG_NOT_FOUND`.
+const CONFIG_NOT_FOUND: i32 = 300;
+
+/// Minimum gap between two listen cycles.
+///
+/// Upstream `ClientWorker` sleeps 50ms whenever a listen cycle fails. Without
+/// any floor, a key that can never converge (for example a config the server
+/// does not have) re-arms the bell as soon as the cycle ends and turns the loop
+/// into a sub-millisecond busy spin that saturates the runtime.
+const MIN_LISTEN_CYCLE_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Helper to create a ConfigRequest with data_id, group, and tenant.
 fn make_config_request(data_id: &str, group: &str, tenant: &str) -> ConfigRequest {
@@ -619,13 +633,14 @@ impl BatataConfigService {
     /// 1. Waits on the bell signal or a 5-second timeout
     /// 2. Collects inconsistent cache entries
     /// 3. Sends batch listen requests and processes responses
-    /// 4. Notifies listeners via `check_listener_md5()`
+    /// 4. Notifies listeners (outside the cache lock) via `take_content_notifications()`
     fn start_listen_loop(self: &Arc<Self>) {
         let service = Arc::downgrade(self);
         let bell = self.listen_bell.clone();
         let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
+            let mut last_cycle = tokio::time::Instant::now();
             loop {
                 if shutdown.load(Ordering::Relaxed) {
                     debug!("Config listen loop: shutdown");
@@ -641,6 +656,15 @@ impl BatataConfigService {
                 if shutdown.load(Ordering::Relaxed) {
                     break;
                 }
+
+                // Floor the cycle rate. The bell is re-armed by the cycle itself
+                // whenever a key changed, so without this a key that can never
+                // converge would spin the loop with no delay at all.
+                let elapsed = last_cycle.elapsed();
+                if elapsed < MIN_LISTEN_CYCLE_INTERVAL {
+                    tokio::time::sleep(MIN_LISTEN_CYCLE_INTERVAL - elapsed).await;
+                }
+                last_cycle = tokio::time::Instant::now();
 
                 let Some(service) = service.upgrade() else {
                     debug!("Config listen loop: service dropped");
@@ -660,54 +684,66 @@ impl BatataConfigService {
     ///
     /// Matches Nacos Java `ClientWorker.executeConfigListen()` and `checkListenCache()`.
     async fn execute_config_listen(&self) -> Result<()> {
-        // Step 1: Collect entries that need checking
+        // Step 1: Collect entries that need checking.
+        //
+        // IMPORTANT: no `await` while the DashMap iterator is alive. `iter()`
+        // holds a read guard on the shard, and `refresh_content_and_check()`
+        // takes a write guard on the same shard — awaiting inside the loop
+        // deadlocks (the write waits for the read that only ends when the loop
+        // ends). Pushed entries are refreshed after the iterator is dropped.
         let mut listen_contexts = Vec::new();
         let mut discard_contexts = Vec::new();
+        let mut notify_refreshes: Vec<(String, String, String, bool)> = Vec::new();
 
-        for entry in self.cache_map.iter() {
-            // Handle discarded entries (no listeners left)
-            if entry.is_discard {
-                discard_contexts.push((
-                    entry.data_id.clone(),
-                    entry.group.clone(),
-                    entry.tenant.clone(),
-                ));
-                continue;
-            }
-
-            // Handle entries with receiveNotifyChanged flag (set by server push)
-            if entry.receive_notify_changed.load(Ordering::Relaxed) {
-                // Reset the flag
-                entry.receive_notify_changed.store(false, Ordering::Relaxed);
-
-                // Re-fetch config from server
-                let data_id = entry.data_id.clone();
-                let group = entry.group.clone();
-                let tenant = entry.tenant.clone();
-                let is_initializing = entry.is_initializing;
-
-                drop(entry); // Release the entry guard before async call
-
-                if let Err(e) = self
-                    .refresh_content_and_check(&data_id, &group, &tenant, !is_initializing)
-                    .await
-                {
-                    warn!(
-                        "Failed to refresh config on notify: data_id={}, error={}",
-                        data_id, e
-                    );
+        {
+            for entry in self.cache_map.iter() {
+                // Handle discarded entries (no listeners left)
+                if entry.is_discard {
+                    discard_contexts.push((
+                        entry.data_id.clone(),
+                        entry.group.clone(),
+                        entry.tenant.clone(),
+                    ));
+                    continue;
                 }
-                continue;
-            }
 
-            // Collect inconsistent entries for batch listen
-            if !entry.is_consistent_with_server.load(Ordering::Relaxed) && entry.has_listeners() {
-                listen_contexts.push(ConfigListenContext {
-                    data_id: entry.data_id.clone(),
-                    group: entry.group.clone(),
-                    tenant: entry.tenant.clone(),
-                    md5: entry.md5.clone(),
-                });
+                // Handle entries with receiveNotifyChanged flag (set by server push)
+                if entry.receive_notify_changed.load(Ordering::Relaxed) {
+                    // Reset the flag
+                    entry.receive_notify_changed.store(false, Ordering::Relaxed);
+
+                    notify_refreshes.push((
+                        entry.data_id.clone(),
+                        entry.group.clone(),
+                        entry.tenant.clone(),
+                        !entry.is_initializing,
+                    ));
+                    continue;
+                }
+
+                // Collect inconsistent entries for batch listen
+                if !entry.is_consistent_with_server.load(Ordering::Relaxed) && entry.has_listeners()
+                {
+                    listen_contexts.push(ConfigListenContext {
+                        data_id: entry.data_id.clone(),
+                        group: entry.group.clone(),
+                        tenant: entry.tenant.clone(),
+                        md5: entry.md5.clone(),
+                    });
+                }
+            }
+        }
+
+        // Step 1b: Re-fetch configs flagged by a server push (iterator released).
+        for (data_id, group, tenant, notify) in notify_refreshes {
+            if let Err(e) = self
+                .refresh_content_and_check(&data_id, &group, &tenant, notify)
+                .await
+            {
+                warn!(
+                    "Failed to refresh config on notify: data_id={}, error={}",
+                    data_id, e
+                );
             }
         }
 
@@ -830,54 +866,94 @@ impl BatataConfigService {
         tenant: &str,
         notify: bool,
     ) -> Result<()> {
-        let content = self.get_config_full(data_id, group, tenant).await?.content;
+        let content = match self.get_config_full(data_id, group, tenant).await {
+            Ok(result) => result.content,
+            Err(ClientError::ServerError { code, .. }) if code == CONFIG_NOT_FOUND => {
+                // The config does not exist on the server. Upstream treats this as
+                // a "no data" state rather than a transport failure: the cache
+                // entry is cleared and marked consistent with the server. Leaving
+                // it inconsistent would make the next batch listen report the key
+                // as changed again, and the loop would never converge.
+                debug!(
+                    "Config reported missing by server: data_id={}, group={}, tenant={}",
+                    data_id, group, tenant
+                );
+                self.mark_config_missing(data_id, group, tenant);
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
 
         let key = build_cache_key(data_id, group, tenant);
-        if let Some(mut entry) = self.cache_map.get_mut(&key) {
+
+        // Scope the cache entry guard: notifications are only *collected*
+        // here, never delivered. The callbacks run on this very listen-loop
+        // task, so invoking them while the shard is still held deadlocks any
+        // callback that touches the same config service.
+        let (content_notifications, change_notifications) = {
+            let Some(mut entry) = self.cache_map.get_mut(&key) else {
+                return Ok(());
+            };
+
             let changed = entry.update_content(&content);
             entry.is_initializing = false;
 
-            if changed && notify {
-                // Notify listeners via MD5 check (only those not yet notified)
-                entry.check_listener_md5();
+            debug!(
+                "Config refreshed: data_id={}, group={}, tenant={}, changed={}, notify={}, md5={}, listeners={}",
+                data_id,
+                group,
+                tenant,
+                changed,
+                notify,
+                entry.md5,
+                entry.listeners.len()
+            );
 
-                // Notify change event listeners with field-level diffs
-                if !entry.change_event_listeners.is_empty() {
-                    // Get old content from the first change event listener's last_content
-                    let old_content = entry
-                        .change_event_listeners
-                        .first()
-                        .map(|w| w.last_content.clone())
-                        .unwrap_or_default();
-
-                    let items = change_parser::parse_change_items(
-                        &entry.config_type,
-                        &old_content,
-                        &content,
-                    );
-                    if !items.is_empty() {
-                        let event = change_parser::ConfigChangeEvent {
-                            data_id: data_id.to_string(),
-                            group: group.to_string(),
-                            tenant: tenant.to_string(),
-                            items,
-                        };
-                        for wrap in &entry.change_event_listeners {
-                            wrap.listener.receive_config_change(event.clone());
-                            // Update last state (same unsafe pattern as check_listener_md5)
-                            unsafe {
-                                let wrap_ptr = wrap as *const cache::ManagerChangeEventListenerWrap
-                                    as *mut cache::ManagerChangeEventListenerWrap;
-                                (*wrap_ptr).last_call_md5 = entry.md5.clone();
-                                (*wrap_ptr).last_content = content.clone();
-                            }
-                        }
-                    }
-                }
+            // Notify whenever this is not the initial sync. Whether a listener
+            // actually fires is decided per listener by its `last_call_md5`,
+            // matching upstream `CacheData.checkListenerMd5()`. `changed`
+            // cannot be used as the gate: `get_config_full()` above already
+            // writes the fetched content into this same cache entry, so
+            // `update_content()` reports no change even on the first delivery.
+            if notify {
+                (
+                    entry.take_content_notifications(),
+                    entry.take_change_event_notifications(),
+                )
+            } else {
+                (Vec::new(), Vec::new())
             }
+        };
+
+        if !content_notifications.is_empty() {
+            debug!(
+                "Notifying {} listeners for data_id={}, group={}, tenant={}",
+                content_notifications.len(),
+                data_id,
+                group,
+                tenant
+            );
+        }
+
+        for notification in content_notifications {
+            notification.deliver();
+        }
+        for notification in change_notifications {
+            notification.deliver();
         }
 
         Ok(())
+    }
+
+    /// Drop a cache entry's content after the server reported it as missing.
+    ///
+    /// See [`CacheData::mark_missing`]: the entry becomes consistent so the
+    /// listen loop stops re-querying a config that is not there.
+    fn mark_config_missing(&self, data_id: &str, group: &str, tenant: &str) {
+        let key = build_cache_key(data_id, group, tenant);
+        if let Some(mut entry) = self.cache_map.get_mut(&key) {
+            entry.mark_missing();
+        }
     }
 
     /// Pre-fetch config into the cache if not already present.

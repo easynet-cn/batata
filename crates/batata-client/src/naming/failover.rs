@@ -359,6 +359,9 @@ mod tests {
 
     #[test]
     fn test_failover_path_default() {
+        // `FailoverReactor::new` reads `BATATA_SNAPSHOT_PATH`, which other
+        // tests rewrite; serialize with them.
+        let _env = crate::local_config::lock_snapshot_env();
         let reactor = FailoverReactor::new("test-env".to_string());
         let path_str = reactor.base_path().to_str().unwrap();
         assert!(path_str.contains("naming"));

@@ -63,7 +63,7 @@ batata-server = { path = "crates/batata-server" }
 batata-server-api = { path = "crates/batata-server-api" }
 
 # Async runtime
-tokio = "1.53"
+tokio = "1.54"
 async-trait = "0.1"
 futures = "0.3"
 

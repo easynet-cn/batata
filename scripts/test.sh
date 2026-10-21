@@ -13,7 +13,10 @@
 #   apollo [--live]                       Apollo plugin live verification
 #                                          (--live: against container :8080;
 #                                           default: embedded plugin :18080)
-#   sdk [--quick|--matrix]                SDK (Consul Go + Nacos Java + Apollo Java) tests
+#   sdk [--quick|--matrix]            SDK compatibility tests: Consul Go,
+#                                     Nacos Java, Apollo Java and the three
+#                                     batata Rust suites (batata-client,
+#                                     batata-consul-client, batata-maintainer)
 #                                          default --quick
 #   console [mode]                        Console datasource E2E (delegates to
 #                                          test_standalone_embedded.sh etc.)
@@ -329,6 +332,21 @@ cmd_sdk_quick() {
         APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo "$FILTER" 2>&1 | tee /tmp/test-${MODE}-apollo.txt | grep "Tests run:" | grep -v " -- in " | tail -1
     }
 
+    run_batata_sdk() {
+        echo -e "\n${BOLD}=== batata-client SDK Tests (Rust) ===${NC}"
+        sdk_run_batata_client "$FILTER" 2>&1 | tee /tmp/test-${MODE}-batata-client.txt | grep -E "^test result:|error\[|panicked" | tail -20
+    }
+
+    run_batata_consul_sdk() {
+        echo -e "\n${BOLD}=== batata-consul-client SDK Tests (Rust) ===${NC}"
+        sdk_run_batata_consul_client "$FILTER" 2>&1 | tee /tmp/test-${MODE}-batata-consul.txt | grep -E "^test result:|error\[|panicked" | tail -20
+    }
+
+    run_batata_maintainer_sdk() {
+        echo -e "\n${BOLD}=== batata-maintainer SDK Tests (Rust) ===${NC}"
+        sdk_run_batata_maintainer "$FILTER" 2>&1 | tee /tmp/test-${MODE}-batata-maintainer.txt | grep -E "^test result:|error\[|panicked" | tail -20
+    }
+
     # Run the suite without errexit: a test failure must not abort before we
     # archive the server logs (and the standalone/cluster start above already
     # backgrounded the server regardless).
@@ -338,8 +356,13 @@ cmd_sdk_quick() {
         consul)  run_consul ;;
         nacos)   run_batata ;;
         apollo)  run_apollo ;;
-        all)     run_consul; run_batata; run_apollo ;;
-        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo} [filter]"; suite_rc=1 ;;
+        batata)       run_batata_sdk ;;
+        consul-rs)    run_batata_consul_sdk ;;
+        maintainer)   run_batata_maintainer_sdk ;;
+        rust)         run_batata_sdk; run_batata_consul_sdk; run_batata_maintainer_sdk ;;
+        all)     run_consul; run_batata; run_apollo \
+                 ; if [ "${SDK_RUN_RUST:-1}" = "1" ]; then run_batata_sdk; run_batata_consul_sdk; run_batata_maintainer_sdk; fi ;;
+        *)       echo "Usage: $0 sdk --quick {all|consul|nacos|apollo|batata|consul-rs|maintainer|rust} [filter]"; suite_rc=1 ;;
     esac
     suite_rc=$?
     set -e
@@ -580,6 +603,28 @@ cmd_sdk_matrix() {
         APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo || apollo_rc=$?
         [ "$apollo_rc" -eq 0 ] && ok "Apollo SDK 通过" || fail "Apollo SDK 退出码 $apollo_rc"
 
+        # The three Rust suites were wired into the matrix later than the Java
+        # ones. `SDK_RUN_RUST=0` skips them for runs that only want the legacy
+        # coverage, but they are on by default: they exercise batata-client
+        # (gRPC naming + config) and the admin APIs, neither of which any other
+        # suite touches.
+        local batata_rc=0 consul_client_rc=0 maintainer_rc=0
+        if [ "${SDK_RUN_RUST:-1}" = "1" ]; then
+            log ">>> 运行 batata-client SDK (Rust, 8848)"
+            CARGO_QUIET=1 sdk_run_batata_client || batata_rc=$?
+            [ "$batata_rc" -eq 0 ] && ok "batata-client SDK 通过" || fail "batata-client SDK 退出码 $batata_rc"
+
+            log ">>> 运行 batata-consul-client SDK (Rust, 8500)"
+            CARGO_QUIET=1 sdk_run_batata_consul_client || consul_client_rc=$?
+            [ "$consul_client_rc" -eq 0 ] && ok "batata-consul-client SDK 通过" || fail "batata-consul-client SDK 退出码 $consul_client_rc"
+
+            log ">>> 运行 batata-maintainer SDK (Rust, 8848)"
+            CARGO_QUIET=1 sdk_run_batata_maintainer || maintainer_rc=$?
+            [ "$maintainer_rc" -eq 0 ] && ok "batata-maintainer SDK 通过" || fail "batata-maintainer SDK 退出码 $maintainer_rc"
+        else
+            warn "${combo}: SDK_RUN_RUST=0，跳过三个 Rust SDK 套件"
+        fi
+
         log ">>> 检查日志目录异常日志"
         local danger_log_scan=0
         while IFS= read -r line; do
@@ -590,8 +635,10 @@ cmd_sdk_matrix() {
 
         stop_servers
 
-        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) Apollo=$([ $apollo_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
-        [ "$nacos_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && [ "$apollo_rc" -eq 0 ] && return 0 || return 1
+        echo -e "${CYAN}──── ${combo}: Nacos=$([ $nacos_rc -eq 0 ] && echo PASS || echo FAIL) Consul=$([ $consul_rc -eq 0 ] && echo PASS || echo FAIL) Apollo=$([ $apollo_rc -eq 0 ] && echo PASS || echo FAIL) batata-client=$([ $batata_rc -eq 0 ] && echo PASS || echo FAIL) consul-client=$([ $consul_client_rc -eq 0 ] && echo PASS || echo FAIL) maintainer=$([ $maintainer_rc -eq 0 ] && echo PASS || echo FAIL) ────${NC}"
+        [ "$nacos_rc" -eq 0 ] && [ "$consul_rc" -eq 0 ] && [ "$apollo_rc" -eq 0 ] \
+            && [ "$batata_rc" -eq 0 ] && [ "$consul_client_rc" -eq 0 ] && [ "$maintainer_rc" -eq 0 ] \
+            && return 0 || return 1
     }
 
     SERVER_PIDS=()

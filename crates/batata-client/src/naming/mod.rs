@@ -26,6 +26,7 @@ use batata_api::{
     remote::model::ResponseTrait,
 };
 use dashmap::DashMap;
+use rand::RngExt;
 use tracing::{debug, error, info};
 
 use self::instances_diff::InstancesDiff;
@@ -455,24 +456,21 @@ impl BatataNamingService {
         if healthy.is_empty() {
             return Ok(None);
         }
-        // Weight-based random selection
+        // Weight-based random selection.
+        //
+        // The draw used to be `subsec_nanos() / u32::MAX`, but nanos never
+        // exceed 1e9 while `u32::MAX` is ~4.29e9, so the "random" value only
+        // spanned [0, 0.233). Scaled by the total weight that capped the draw
+        // at ~23% of the range and skewed selection towards the head of the
+        // list. Use the crate RNG instead (same as `balancer`).
+        let mut rng = rand::rng();
         let total_weight: f64 = healthy.iter().map(|i| i.weight.max(0.0)).sum();
         if total_weight <= 0.0 {
             // All weights zero — uniform random
-            let idx = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .subsec_nanos() as usize)
-                % healthy.len();
+            let idx = rng.random_range(0..healthy.len());
             return Ok(Some(healthy[idx].clone()));
         }
-        // Weighted random
-        let rand_val = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as f64
-            / u32::MAX as f64)
-            * total_weight;
+        let rand_val = rng.random::<f64>() * total_weight;
         let mut accum = 0.0;
         for inst in &healthy {
             accum += inst.weight.max(0.0);
@@ -505,12 +503,9 @@ impl BatataNamingService {
         if filtered.is_empty() {
             return Ok(None);
         }
-        // Simple random for filtered list
-        let idx = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as usize)
-            % filtered.len();
+        // Simple random for filtered list (crate RNG — see the note in
+        // `select_one_healthy_instance` about `subsec_nanos()` draws).
+        let idx = rand::rng().random_range(0..filtered.len());
         Ok(Some(filtered[idx].clone()))
     }
 
@@ -673,8 +668,18 @@ impl BatataNamingService {
         self.service_info_holder
             .update(&key, req.service_info.clone());
 
-        // Notify listeners
-        if let Some(listeners) = self.subscriptions.get(&key) {
+        // Collect the listeners first and release the DashMap guard before
+        // invoking them. The callbacks run on the push-dispatch task, so
+        // delivering them while the shard is held deadlocks any callback that
+        // re-enters this service (subscribe/unsubscribe on the same key), and
+        // a blocking callback would stall every other subscription.
+        let listeners: Vec<Arc<dyn EventListener>> = self
+            .subscriptions
+            .get(&key)
+            .map(|entry| entry.iter().cloned().collect())
+            .unwrap_or_default();
+
+        if !listeners.is_empty() {
             let event = NamingEvent {
                 service_name: req.service_name.clone(),
                 group_name: req.group_name.clone(),
@@ -683,7 +688,7 @@ impl BatataNamingService {
                 diff,
             };
 
-            for listener in listeners.iter() {
+            for listener in listeners {
                 listener.on_event(event.clone());
             }
         }
@@ -1094,6 +1099,72 @@ mod tests {
 
         naming_service.handle_notify_subscriber(&req);
         assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Regression: the event must be delivered with the subscription lock
+    /// released, otherwise a callback that touches this same service deadlocks
+    /// on the shard still held by `handle_notify_subscriber`.
+    ///
+    /// The delivery runs on a helper thread with a timeout so a regression
+    /// fails the test instead of hanging the suite.
+    #[test]
+    fn test_notify_callback_can_reenter_service() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = Arc::new(BatataNamingService::new(client));
+
+        let reentered = Arc::new(AtomicBool::new(false));
+        let reentered_clone = reentered.clone();
+        let service_for_callback = Arc::clone(&naming_service);
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let key_for_callback = key.clone();
+
+        let listener = Arc::new(listener::FnEventListener::new(
+            move |_: listener::NamingEvent| {
+                // Re-enter the same map, same shard, with a *write* guard: the
+                // read guard `handle_notify_subscriber` used to hold makes
+                // this deadlock.
+                let previous = service_for_callback
+                    .subscriptions
+                    .insert(key_for_callback.clone(), Vec::new());
+                assert!(previous.is_some());
+                reentered_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        ));
+        naming_service
+            .subscriptions
+            .entry(key)
+            .or_default()
+            .push(listener);
+
+        let service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            service,
+        );
+
+        let (tx, rx) = mpsc::channel();
+        let service_for_thread = Arc::clone(&naming_service);
+        let worker = std::thread::spawn(move || {
+            service_for_thread.handle_notify_subscriber(&req);
+            let _ = tx.send(());
+        });
+
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("notification deadlocked: callback could not re-enter the service");
+        worker.join().expect("notify worker panicked");
+        assert!(reentered.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

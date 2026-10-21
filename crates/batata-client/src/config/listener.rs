@@ -16,6 +16,25 @@ pub struct ConfigResponse {
 /// Trait for receiving config change notifications.
 ///
 /// Implement this trait to be notified when a config value changes on the server.
+///
+/// # Callback context
+///
+/// `receive_config_info` is invoked synchronously from the client's internal
+/// listen task, i.e. on a Tokio runtime thread. The callback must therefore
+/// **never block**:
+///
+/// - No `tokio::sync::Mutex::blocking_lock()` — it panics inside a runtime and
+///   stalls every other task on a `current_thread` runtime.
+/// - No long-held `std::sync::Mutex` that is also taken across an `.await` in
+///   the caller — that deadlocks the runtime.
+/// - No `block_on` / blocking wait on an async call into the same client: the
+///   callback is synchronous, and the work it waits on needs the runtime too.
+///
+/// The cache entry lock is released *before* the callback runs, so re-entering
+/// the same `BatataConfigService` does not deadlock on it — but dispatching
+/// anything async still has to go through `tokio::spawn`, not `block_on`.
+///
+/// Use an atomic, a channel, or spawn a task instead.
 pub trait ConfigChangeListener: Send + Sync + 'static {
     /// Called when the config content has changed.
     fn receive_config_info(&self, config_info: ConfigResponse);
