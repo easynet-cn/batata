@@ -22,11 +22,7 @@ async fn test_agent_force_leave_prune_unknown_node() {
 async fn test_agent_force_leave_options_flag() {
     let client = common::create_client();
     let _ = client
-        .agent_force_leave_options(
-            &format!("ghost-{}", common::test_id()),
-            true,
-            &common::w(),
-        )
+        .agent_force_leave_options(&format!("ghost-{}", common::test_id()), true, &common::w())
         .await;
 }
 
@@ -57,7 +53,10 @@ async fn test_agent_health_service_by_id_opts_missing() {
         .await
         .unwrap();
     assert!(info.is_none(), "missing service must return None info");
-    assert!(status.is_empty(), "status for missing service must be empty");
+    assert!(
+        status.is_empty(),
+        "status for missing service must be empty"
+    );
 }
 
 #[tokio::test]

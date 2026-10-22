@@ -63,7 +63,10 @@ pub struct ServiceView {
     /// The `healthy_instance_count` field.
     pub healthy_instance_count: i32,
     /// The `trigger_flag` field.
-    pub trigger_flag: bool,
+    ///
+    /// Upstream `ServiceView` types this as `String` (frequently empty), so a
+    /// `bool` here cannot deserialize a real service-list response.
+    pub trigger_flag: String,
 }
 
 /// Subscriber information
@@ -212,7 +215,7 @@ mod tests {
             cluster_count: 1,
             ip_count: 3,
             healthy_instance_count: 2,
-            trigger_flag: false,
+            trigger_flag: String::new(),
         };
 
         let json = serde_json::to_string(&view).unwrap();

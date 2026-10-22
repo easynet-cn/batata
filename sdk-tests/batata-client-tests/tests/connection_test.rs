@@ -62,16 +62,14 @@ fn test_exponential_backoff_progression() {
     let checker = ConnectionHealthChecker::default();
 
     // Verify the progression: min(turn+1, 50) * 100ms
-    let delays: Vec<Duration> = (0..10)
-        .map(|_| checker.next_reconnect_delay())
-        .collect();
+    let delays: Vec<Duration> = (0..10).map(|_| checker.next_reconnect_delay()).collect();
 
-    assert_eq!(delays[0], Duration::from_millis(100));   // min(0+1, 50) * 100
-    assert_eq!(delays[1], Duration::from_millis(200));   // min(1+1, 50) * 100
-    assert_eq!(delays[2], Duration::from_millis(300));   // min(2+1, 50) * 100
-    assert_eq!(delays[3], Duration::from_millis(400));   // min(3+1, 50) * 100
-    assert_eq!(delays[4], Duration::from_millis(500));   // min(4+1, 50) * 100
-    assert_eq!(delays[9], Duration::from_millis(1000));  // min(9+1, 50) * 100
+    assert_eq!(delays[0], Duration::from_millis(100)); // min(0+1, 50) * 100
+    assert_eq!(delays[1], Duration::from_millis(200)); // min(1+1, 50) * 100
+    assert_eq!(delays[2], Duration::from_millis(300)); // min(2+1, 50) * 100
+    assert_eq!(delays[3], Duration::from_millis(400)); // min(3+1, 50) * 100
+    assert_eq!(delays[4], Duration::from_millis(500)); // min(4+1, 50) * 100
+    assert_eq!(delays[9], Duration::from_millis(1000)); // min(9+1, 50) * 100
 }
 
 #[test]

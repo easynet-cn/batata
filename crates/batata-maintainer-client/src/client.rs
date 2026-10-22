@@ -717,19 +717,16 @@ impl MaintainerClient {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
-            custom_namespace_id: &'a str,
+            namespace_id: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        // Upstream `AbstractCoreMaintainerService#checkNamespaceIdExist` reads
+        // `Result<Integer>` (the `tenant_info` row count) and returns `data > 0`.
+        let response: ApiResponse<i64> = self
             .http_client
-            .get_with_query(
-                admin_api_path::NAMESPACE_EXIST,
-                &Query {
-                    custom_namespace_id: namespace_id,
-                },
-            )
+            .get_with_query(admin_api_path::NAMESPACE_EXIST, &Query { namespace_id })
             .await?;
-        Ok(response.data)
+        Ok(response.data > 0)
     }
 
     // ============================================================================

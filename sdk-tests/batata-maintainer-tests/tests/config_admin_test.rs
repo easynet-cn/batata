@@ -17,7 +17,18 @@ async fn test_config_publish_and_get() {
 
     let ok = client
         .config_publish(
-            &data_id, group, ns, "key=value", "", "", "", "", "", "properties", "", "",
+            &data_id,
+            group,
+            ns,
+            "key=value",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "properties",
+            "",
+            "",
         )
         .await
         .unwrap();
@@ -37,7 +48,20 @@ async fn test_config_list_paginated() {
 
     let data_id = format!("adm-list-{}", common::test_id());
     client
-        .config_publish(&data_id, "DEFAULT_GROUP", "public", "v1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "v1",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
@@ -62,12 +86,31 @@ async fn test_config_update_metadata() {
 
     let data_id = format!("adm-meta-{}", common::test_id());
     client
-        .config_publish(&data_id, "DEFAULT_GROUP", "public", "v1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "v1",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
     let ok = client
-        .config_update_metadata(&data_id, "DEFAULT_GROUP", "public", "Updated desc", "tag1,tag2")
+        .config_update_metadata(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "Updated desc",
+            "tag1,tag2",
+        )
         .await
         .unwrap();
     assert!(ok);
@@ -89,7 +132,20 @@ async fn test_config_gray_publish_and_stop() {
 
     // First publish formal config
     client
-        .config_publish(&data_id, "DEFAULT_GROUP", "public", "formal", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "formal",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
@@ -134,11 +190,37 @@ async fn test_config_history_list() {
 
     let data_id = format!("adm-hist-{}", common::test_id());
     client
-        .config_publish(&data_id, "DEFAULT_GROUP", "public", "v1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "v1",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
     client
-        .config_publish(&data_id, "DEFAULT_GROUP", "public", "v2", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            "DEFAULT_GROUP",
+            "public",
+            "v2",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 

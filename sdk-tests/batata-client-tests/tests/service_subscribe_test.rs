@@ -36,7 +36,12 @@ struct TestEventListener {
 }
 
 impl TestEventListener {
-    fn new() -> (Arc<Self>, Arc<Notify>, Arc<AtomicU32>, Arc<std::sync::Mutex<Vec<Instance>>>) {
+    fn new() -> (
+        Arc<Self>,
+        Arc<Notify>,
+        Arc<AtomicU32>,
+        Arc<std::sync::Mutex<Vec<Instance>>>,
+    ) {
         let notify = Arc::new(Notify::new());
         let count = Arc::new(AtomicU32::new(0));
         let last = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -74,9 +79,14 @@ async fn test_basic_subscribe() {
         .unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.1", 8080))
-        .await
-        .unwrap();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.1", 8080),
+    )
+    .await
+    .unwrap();
 
     let received = tokio::time::timeout(Duration::from_secs(20), notify.notified())
         .await
@@ -93,9 +103,17 @@ async fn test_basic_subscribe() {
     }
 
     // Cleanup
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.1", 8080))
-        .await.ok();
-    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "").await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.1", 8080),
+    )
+    .await
+    .ok();
+    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "")
+        .await
+        .ok();
 }
 
 /// NSS-002: Unsubscribe stops notifications
@@ -122,9 +140,14 @@ async fn test_unsubscribe() {
         .unwrap();
 
     let count_before = count.load(Ordering::SeqCst);
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.2", 8080))
-        .await
-        .unwrap();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.2", 8080),
+    )
+    .await
+    .unwrap();
     sleep(Duration::from_secs(5)).await;
 
     assert_eq!(
@@ -133,8 +156,14 @@ async fn test_unsubscribe() {
         "No notifications after unsubscribe"
     );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.2", 8080))
-        .await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.2", 8080),
+    )
+    .await
+    .ok();
 }
 
 /// NSS-003: Subscribe to non-existent service — fires when service created
@@ -151,14 +180,22 @@ async fn test_subscribe_non_existent_service() {
         .await
         .unwrap();
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.3", 8080))
-        .await
-        .unwrap();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.3", 8080),
+    )
+    .await
+    .unwrap();
 
     let received = tokio::time::timeout(Duration::from_secs(20), notify.notified())
         .await
         .is_ok();
-    assert!(received, "Should receive notification when service is created");
+    assert!(
+        received,
+        "Should receive notification when service is created"
+    );
 
     {
         let instances = last_instances.lock().unwrap();
@@ -166,9 +203,17 @@ async fn test_subscribe_non_existent_service() {
         assert_eq!(instances[0].ip, "192.168.1.3");
     }
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.3", 8080))
-        .await.ok();
-    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "").await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.3", 8080),
+    )
+    .await
+    .ok();
+    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "")
+        .await
+        .ok();
 }
 
 /// NSS-004: Multiple subscribers all receive notification
@@ -197,18 +242,31 @@ async fn test_multiple_subscribers() {
             .unwrap();
     }
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.4", 8080))
-        .await
-        .unwrap();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.4", 8080),
+    )
+    .await
+    .unwrap();
 
     let all_received = tokio::time::timeout(Duration::from_secs(20), all_done.notified())
         .await
         .is_ok();
     assert!(all_received, "All 3 subscribers should be notified");
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.4", 8080))
-        .await.ok();
-    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "").await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.4", 8080),
+    )
+    .await
+    .ok();
+    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "")
+        .await
+        .ok();
 }
 
 /// NSS-005: Subscriber receives add and remove changes
@@ -239,34 +297,70 @@ async fn test_subscriber_receives_changes() {
         .unwrap();
 
     // Add first instance
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.10", 8080))
-        .await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), notify.notified()).await.ok();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.10", 8080),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), notify.notified())
+        .await
+        .ok();
     sleep(Duration::from_secs(1)).await;
 
     // Add second instance
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.11", 8080))
-        .await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), notify.notified()).await.ok();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.11", 8080),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), notify.notified())
+        .await
+        .ok();
     sleep(Duration::from_secs(1)).await;
 
     // Remove first instance
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.10", 8080))
-        .await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), notify.notified()).await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.10", 8080),
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), notify.notified())
+        .await
+        .ok();
     sleep(Duration::from_secs(1)).await;
 
     {
         let counts = instance_counts.lock().unwrap();
-        assert!(counts.len() >= 3, "Should receive at least 3 notifications, got {}", counts.len());
+        assert!(
+            counts.len() >= 3,
+            "Should receive at least 3 notifications, got {}",
+            counts.len()
+        );
         assert_eq!(counts[0], 1, "First: 1 instance");
         assert_eq!(counts[1], 2, "Second: 2 instances");
         assert_eq!(counts[2], 1, "Third: 1 instance (after removal)");
     }
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.1.11", 8080))
-        .await.ok();
-    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "").await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.1.11", 8080),
+    )
+    .await
+    .ok();
+    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "")
+        .await
+        .ok();
 }
 
 /// NSS-011: Subscribe with empty cluster list receives all events
@@ -284,9 +378,14 @@ async fn test_subscribe_empty_cluster_list() {
         .await
         .unwrap();
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.3.3", 8080))
-        .await
-        .unwrap();
+    svc.register_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.3.3", 8080),
+    )
+    .await
+    .unwrap();
 
     let received = tokio::time::timeout(Duration::from_secs(20), notify.notified())
         .await
@@ -299,7 +398,15 @@ async fn test_subscribe_empty_cluster_list() {
         assert_eq!(instances[0].ip, "192.168.3.3");
     }
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, make_instance("192.168.3.3", 8080))
-        .await.ok();
-    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "").await.ok();
+    svc.deregister_instance(
+        "",
+        "DEFAULT_GROUP",
+        &service_name,
+        make_instance("192.168.3.3", 8080),
+    )
+    .await
+    .ok();
+    svc.unsubscribe("", "DEFAULT_GROUP", &service_name, "")
+        .await
+        .ok();
 }

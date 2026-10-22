@@ -21,10 +21,7 @@ async fn test_partition_lifecycle_or_not_supported() {
     match client.partition_create(&p, &common::w()).await {
         Ok((created, _)) => {
             assert_eq!(created.name, name);
-            let (got, _) = client
-                .partition_read(&name, &common::q())
-                .await
-                .unwrap();
+            let (got, _) = client.partition_read(&name, &common::q()).await.unwrap();
             assert!(got.is_some());
             let (list, _) = client.partition_list(&common::q()).await.unwrap();
             assert!(list.iter().any(|x| x.name == name));

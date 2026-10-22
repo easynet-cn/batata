@@ -4,10 +4,13 @@
 
 mod common;
 
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 use batata_client::config::{
-    BatataConfigService,
     fuzzy_watch::{ConfigFuzzyWatchEvent, ConfigFuzzyWatchListener, ConfigFuzzyWatchService},
+    BatataConfigService,
+};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
 };
 
 const TENANT: &str = "public";
@@ -36,8 +39,14 @@ async fn test_config_fuzzy_watch_with_keys() {
     let data_id2 = format!("fz-cfg2-{}", id);
 
     // Pre-create configs
-    config_svc.publish_config(&data_id1, GROUP, TENANT, "v1").await.unwrap();
-    config_svc.publish_config(&data_id2, GROUP, TENANT, "v2").await.unwrap();
+    config_svc
+        .publish_config(&data_id1, GROUP, TENANT, "v1")
+        .await
+        .unwrap();
+    config_svc
+        .publish_config(&data_id2, GROUP, TENANT, "v2")
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let count = Arc::new(AtomicU32::new(0));
@@ -57,7 +66,13 @@ async fn test_config_fuzzy_watch_with_keys() {
     assert!(!keys.is_empty(), "Should return initial matched keys");
 
     // Cleanup
-    config_svc.remove_config(&data_id1, GROUP, TENANT).await.unwrap();
-    config_svc.remove_config(&data_id2, GROUP, TENANT).await.unwrap();
+    config_svc
+        .remove_config(&data_id1, GROUP, TENANT)
+        .await
+        .unwrap();
+    config_svc
+        .remove_config(&data_id2, GROUP, TENANT)
+        .await
+        .unwrap();
     config_svc.shutdown().await;
 }

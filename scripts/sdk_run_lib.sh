@@ -114,7 +114,11 @@ sdk_run_nacos() {
 # Usage: sdk_run_rust_suite <dir> [test_name_filter]
 sdk_run_rust_suite() {
     local dir="$1" filter="${2:-}"
-    local -a args=(test)
+    # --no-fail-fast: each suite is a dozen *test binaries*, and cargo stops at
+    # the first failing one by default — one broken binary silently hid every
+    # suite behind it (core_extended_test went unreported for a whole release
+    # because config_extended_test failed first).
+    local -a args=(test --no-fail-fast)
     [ -n "${CARGO_QUIET:-}" ] && args+=(--quiet)
     # `cargo test <filter>` filters by test *name*; passing an empty string
     # selects nothing, so only append the separator when a filter was given.

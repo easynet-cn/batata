@@ -13,7 +13,10 @@ async fn test_cluster_healthy_members() {
     let client = common::create_api_client().await.unwrap();
 
     let members = client.cluster_healthy_members().await.unwrap();
-    assert!(!members.is_empty(), "Should have at least one healthy member");
+    assert!(
+        !members.is_empty(),
+        "Should have at least one healthy member"
+    );
     assert_eq!(members[0].state, "UP", "Healthy member should be UP");
 }
 
@@ -61,7 +64,10 @@ async fn test_cluster_health() {
 
     let health = client.cluster_health().await.unwrap();
     assert!(health.member_count >= 1, "Should have at least 1 member");
-    assert!(health.healthy_count >= 1, "Should have at least 1 healthy member");
+    assert!(
+        health.healthy_count >= 1,
+        "Should have at least 1 healthy member"
+    );
     assert_eq!(health.server_status, "UP", "Server should be UP");
 }
 
@@ -147,7 +153,9 @@ async fn test_client_published_services() {
     let grpc = std::sync::Arc::new(batata_client::grpc::GrpcClient::new(grpc_config).unwrap());
     grpc.connect().await.unwrap();
 
-    let naming = std::sync::Arc::new(batata_client::naming::BatataNamingService::new(grpc.clone()));
+    let naming = std::sync::Arc::new(batata_client::naming::BatataNamingService::new(
+        grpc.clone(),
+    ));
     naming.register_push_handlers();
 
     let service = format!("pub-svc-{}", common::test_id());
@@ -194,7 +202,9 @@ async fn test_client_subscribed_services() {
     let grpc = std::sync::Arc::new(batata_client::grpc::GrpcClient::new(grpc_config).unwrap());
     grpc.connect().await.unwrap();
 
-    let naming = std::sync::Arc::new(batata_client::naming::BatataNamingService::new(grpc.clone()));
+    let naming = std::sync::Arc::new(batata_client::naming::BatataNamingService::new(
+        grpc.clone(),
+    ));
     naming.register_push_handlers();
 
     let service = format!("sub-svc-{}", common::test_id());
@@ -205,7 +215,13 @@ async fn test_client_subscribed_services() {
     }
 
     naming
-        .subscribe("public", "DEFAULT_GROUP", &service, "", std::sync::Arc::new(NoopListener))
+        .subscribe(
+            "public",
+            "DEFAULT_GROUP",
+            &service,
+            "",
+            std::sync::Arc::new(NoopListener),
+        )
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -216,7 +232,10 @@ async fn test_client_subscribed_services() {
     if !clients.client_ids.is_empty() {
         let client_id = &clients.client_ids[0];
         let subscribed = api.client_subscribed_services(client_id).await;
-        assert!(subscribed.is_ok(), "Subscribed services query should succeed");
+        assert!(
+            subscribed.is_ok(),
+            "Subscribed services query should succeed"
+        );
     }
 
     naming.shutdown().await;

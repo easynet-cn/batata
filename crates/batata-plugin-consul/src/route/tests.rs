@@ -3668,12 +3668,11 @@ async fn test_http_keyring_list() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // Verify the response is a KeyringResponses (contains the Responses array).
+    // Consul's GET /v1/operator/keyring returns a bare array of keyring
+    // entries; the {"Responses": [...]} envelope belongs to the write ops.
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.is_object(), "keyring list should return a JSON object");
-    let responses = body["Responses"]
-        .as_array()
-        .expect("should have Responses array");
+    assert!(body.is_array(), "keyring list should return a JSON array");
+    let responses = body.as_array().expect("should be a keyring array");
     assert!(
         !responses.is_empty(),
         "should have at least one keyring response"
@@ -3704,9 +3703,9 @@ async fn test_http_keyring_list_local_only() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let responses = body["Responses"]
+    let responses = body
         .as_array()
-        .expect("should have Responses array");
+        .expect("keyring list should return a JSON array");
     assert_eq!(
         responses.len(),
         1,
@@ -3788,7 +3787,7 @@ async fn test_http_keyring_remove() {
         .to_request();
     let resp = test::call_service(&app, req).await;
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let initial_primary = body["Responses"][0]["PrimaryKeys"]
+    let initial_primary = body[0]["PrimaryKeys"]
         .as_object()
         .unwrap()
         .keys()
@@ -3838,7 +3837,7 @@ async fn test_http_keyring_remove_primary_fails() {
         .to_request();
     let resp = test::call_service(&app, req).await;
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let primary_key = body["Responses"][0]["PrimaryKeys"]
+    let primary_key = body[0]["PrimaryKeys"]
         .as_object()
         .unwrap()
         .keys()

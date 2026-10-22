@@ -4,6 +4,7 @@
 use crate::bincode;
 use md5::Digest;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use rocksdb::DB;
@@ -181,10 +182,26 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Generate a unique history ID based on timestamp + counter
+    /// Generate a unique history ID based on timestamp + counter.
+    ///
+    /// The timestamp alone is NOT unique: two publishes inside the same
+    /// millisecond (routine when tests or clients run concurrently) produce the
+    /// same `nid`, and `config_history_find_by_id` then returns whichever entry
+    /// comes first in key order — i.e. a detail for a *different* data_id.
+    /// The counter makes ids strictly monotonic within the process, and because
+    /// the sequence is seeded from the wall clock it still moves forward across
+    /// restarts instead of reusing old ids.
     fn generate_history_id() -> u64 {
-        // Use timestamp in millis as a simple unique ID
-        chrono::Utc::now().timestamp_millis() as u64
+        static LAST_HISTORY_ID: AtomicU64 = AtomicU64::new(0);
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        // fetch_update hands back the value the CAS saw, not the one it stored,
+        // so the +1 has to be applied here too.
+        let prev = LAST_HISTORY_ID
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
+                Some(prev.max(now) + 1)
+            })
+            .unwrap_or(now);
+        prev.max(now) + 1
     }
 }
 

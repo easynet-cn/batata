@@ -13,7 +13,10 @@ async fn test_user_list() {
     let client = common::create_api_client().await.unwrap();
 
     let users = client.user_list(1, 10).await.unwrap();
-    assert!(users.total_count >= 1, "Should have at least the admin user");
+    assert!(
+        users.total_count >= 1,
+        "Should have at least the admin user"
+    );
     assert!(
         !users.page_items.is_empty(),
         "Page items should contain users"
@@ -181,11 +184,18 @@ async fn test_permission_enforcement() {
     let limited = batata_client::api::BatataApiClient::new(limited_http);
 
     // Admin API enforces admin-level auth; limited user should be rejected
-    let result = limited.config_get("allowed-test", "DEFAULT_GROUP", "public").await;
-    assert!(result.is_err(), "Limited user should be rejected by admin API");
+    let result = limited
+        .config_get("allowed-test", "DEFAULT_GROUP", "public")
+        .await;
+    assert!(
+        result.is_err(),
+        "Limited user should be rejected by admin API"
+    );
 
     // Cleanup
-    let _ = admin.permission_delete(role_name, "public:DEFAULT_GROUP:allowed-*", "r").await;
+    let _ = admin
+        .permission_delete(role_name, "public:DEFAULT_GROUP:allowed-*", "r")
+        .await;
     let _ = admin.role_delete(&username, role_name).await;
     let _ = admin.user_delete(&username).await;
 }

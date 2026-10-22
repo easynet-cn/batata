@@ -4,11 +4,11 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
 use batata_client::config::{
     change_parser::{ConfigChangeEvent, PropertyChangeType},
     listener::ConfigChangeEventListener,
 };
+use std::sync::{Arc, Mutex};
 
 const TENANT: &str = "";
 const GROUP: &str = "DEFAULT_GROUP";
@@ -32,7 +32,9 @@ async fn test_change_event_added_property() {
     let events = Arc::new(Mutex::new(Vec::new()));
 
     // Publish initial
-    svc.publish_config(&data_id, GROUP, TENANT, "key1=val1").await.unwrap();
+    svc.publish_config(&data_id, GROUP, TENANT, "key1=val1")
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Add change event listener
@@ -41,7 +43,9 @@ async fn test_change_event_added_property() {
         GROUP,
         TENANT,
         "properties",
-        Arc::new(CaptureChangeListener { events: events.clone() }),
+        Arc::new(CaptureChangeListener {
+            events: events.clone(),
+        }),
     )
     .await
     .unwrap();
@@ -73,16 +77,27 @@ async fn test_change_event_modified_property() {
     let data_id = format!("cfg-chg-mod-{}", common::test_id());
     let events = Arc::new(Mutex::new(Vec::new()));
 
-    svc.publish_config(&data_id, GROUP, TENANT, "key1=old").await.unwrap();
+    svc.publish_config(&data_id, GROUP, TENANT, "key1=old")
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     svc.add_change_event_listener(
-        &data_id, GROUP, TENANT, "properties",
-        Arc::new(CaptureChangeListener { events: events.clone() }),
-    ).await.unwrap();
+        &data_id,
+        GROUP,
+        TENANT,
+        "properties",
+        Arc::new(CaptureChangeListener {
+            events: events.clone(),
+        }),
+    )
+    .await
+    .unwrap();
 
     // Modify
-    svc.publish_config(&data_id, GROUP, TENANT, "key1=new").await.unwrap();
+    svc.publish_config(&data_id, GROUP, TENANT, "key1=new")
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     let captured = events.lock().unwrap();

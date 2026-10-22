@@ -26,17 +26,41 @@ async fn test_publish_config_with_all_types() {
     let id = common::test_id();
 
     let type_cases: Vec<(&str, String, &str)> = vec![
-        ("yaml", format!("cfg-type-yaml-{id}.yaml"), "server:\n  port: 8080\n  name: test"),
-        ("json", format!("cfg-type-json-{id}.json"), r#"{"server":{"port":8080,"name":"test"}}"#),
-        ("xml", format!("cfg-type-xml-{id}.xml"), "<server><port>8080</port><name>test</name></server>"),
+        (
+            "yaml",
+            format!("cfg-type-yaml-{id}.yaml"),
+            "server:\n  port: 8080\n  name: test",
+        ),
+        (
+            "json",
+            format!("cfg-type-json-{id}.json"),
+            r#"{"server":{"port":8080,"name":"test"}}"#,
+        ),
+        (
+            "xml",
+            format!("cfg-type-xml-{id}.xml"),
+            "<server><port>8080</port><name>test</name></server>",
+        ),
         (
             "properties",
             format!("cfg-type-props-{id}.properties"),
             "server.port=8080\nserver.name=test",
         ),
-        ("text", format!("cfg-type-text-{id}.txt"), "plain text content here"),
-        ("html", format!("cfg-type-html-{id}.html"), "<html><body><h1>Test</h1></body></html>"),
-        ("toml", format!("cfg-type-toml-{id}.toml"), "[server]\nport = 8080\nname = \"test\""),
+        (
+            "text",
+            format!("cfg-type-text-{id}.txt"),
+            "plain text content here",
+        ),
+        (
+            "html",
+            format!("cfg-type-html-{id}.html"),
+            "<html><body><h1>Test</h1></body></html>",
+        ),
+        (
+            "toml",
+            format!("cfg-type-toml-{id}.toml"),
+            "[server]\nport = 8080\nname = \"test\"",
+        ),
     ];
 
     for (config_type, ref data_id, content) in &type_cases {
@@ -44,7 +68,10 @@ async fn test_publish_config_with_all_types() {
             .publish_config_with_type(data_id, GROUP, TENANT, content, config_type)
             .await
             .unwrap();
-        assert!(ok, "publish_config_with_type should succeed for type={config_type}");
+        assert!(
+            ok,
+            "publish_config_with_type should succeed for type={config_type}"
+        );
 
         let result = svc.get_config(data_id, GROUP, TENANT).await.unwrap();
         assert_eq!(
@@ -79,8 +106,15 @@ async fn test_config_large_content() {
     assert!(ok, "publish of 100KB config should succeed");
 
     let result = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
-    assert_eq!(result.len(), large_content.len(), "retrieved content length should match 100KB");
-    assert_eq!(result, large_content, "retrieved content should match exactly");
+    assert_eq!(
+        result.len(),
+        large_content.len(),
+        "retrieved content length should match 100KB"
+    );
+    assert_eq!(
+        result, large_content,
+        "retrieved content should match exactly"
+    );
 
     svc.remove_config(&data_id, GROUP, TENANT).await.unwrap();
     svc.shutdown().await;
@@ -149,7 +183,10 @@ async fn test_config_special_characters() {
     assert!(ok, "publish with special characters should succeed");
 
     let result = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
-    assert_eq!(result, content, "retrieved content should preserve special characters exactly");
+    assert_eq!(
+        result, content,
+        "retrieved content should preserve special characters exactly"
+    );
     assert!(
         result.contains('\u{1F600}'),
         "content should contain emoji (grinning face)"
@@ -186,7 +223,10 @@ async fn test_config_empty_content() {
 
     // Original content should still be present
     let content = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
-    assert_eq!(content, "initial-value", "original content should be unchanged");
+    assert_eq!(
+        content, "initial-value",
+        "original content should be unchanged"
+    );
 
     svc.remove_config(&data_id, GROUP, TENANT).await.unwrap();
     svc.shutdown().await;
@@ -218,14 +258,20 @@ async fn test_config_multi_tenant() {
     assert!(ok, "publish to custom namespace should succeed");
 
     // Read from public namespace
-    let result_public = svc.get_config(&data_id, GROUP, tenant_public).await.unwrap();
+    let result_public = svc
+        .get_config(&data_id, GROUP, tenant_public)
+        .await
+        .unwrap();
     assert_eq!(
         result_public, "public-value",
         "public namespace should have its own value"
     );
 
     // Read from custom namespace
-    let result_custom = svc.get_config(&data_id, GROUP, tenant_custom).await.unwrap();
+    let result_custom = svc
+        .get_config(&data_id, GROUP, tenant_custom)
+        .await
+        .unwrap();
     assert_eq!(
         result_custom, "custom-value",
         "custom namespace should have its own value"
@@ -238,8 +284,12 @@ async fn test_config_multi_tenant() {
     );
 
     // Cleanup both
-    svc.remove_config(&data_id, GROUP, tenant_public).await.unwrap();
-    svc.remove_config(&data_id, GROUP, tenant_custom).await.unwrap();
+    svc.remove_config(&data_id, GROUP, tenant_public)
+        .await
+        .unwrap();
+    svc.remove_config(&data_id, GROUP, tenant_custom)
+        .await
+        .unwrap();
     svc.shutdown().await;
 }
 
@@ -289,7 +339,10 @@ async fn test_config_listener_multiple() {
         )
         .await
         .unwrap();
-    assert_eq!(content, "initial", "get_config_and_sign_listener should return current value");
+    assert_eq!(
+        content, "initial",
+        "get_config_and_sign_listener should return current value"
+    );
 
     // Add second listener (replaces the first one on the same key)
     svc.add_listener(
@@ -356,11 +409,21 @@ async fn test_config_cas_with_type() {
 
     // Verify updated content
     let result = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
-    assert_eq!(result, updated_content, "content should be updated after CAS");
+    assert_eq!(
+        result, updated_content,
+        "content should be updated after CAS"
+    );
 
     // CAS with wrong MD5 should fail
     let result = svc
-        .publish_config_cas_with_type(&data_id, GROUP, TENANT, r#"{"version":3}"#, "wrong_md5", "json")
+        .publish_config_cas_with_type(
+            &data_id,
+            GROUP,
+            TENANT,
+            r#"{"version":3}"#,
+            "wrong_md5",
+            "json",
+        )
         .await;
     assert!(result.is_err(), "CAS with wrong MD5 should fail");
 

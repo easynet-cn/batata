@@ -10,6 +10,7 @@ use actix_web::{
     web,
 };
 use batata_api::config::ConfigCloneInfo;
+use batata_persistence::model::ConfigGrayStorageData;
 use chrono::Utc;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -1006,6 +1007,24 @@ struct BetaQueryParam {
     pub namespace_id: String,
 }
 
+/// Query parameters for the batata-only paginated gray listing endpoint.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BetaListParam {
+    #[serde(default, alias = "pageNo")]
+    pub page_no: u64,
+    #[serde(default, alias = "pageSize")]
+    pub page_size: u64,
+    #[serde(default, alias = "dataId")]
+    pub data_id: String,
+    #[serde(default, alias = "groupName")]
+    pub group_name: String,
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    #[serde(default, alias = "appName")]
+    pub app_name: String,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1031,6 +1050,161 @@ struct BetaPublishForm {
     pub r#type: String,
     #[serde(default, alias = "encryptedDataKey")]
     pub encrypted_data_key: String,
+}
+
+/// Map a stored gray row to the API view.
+///
+/// Upstream `ResponseUtil.transferToConfigGrayInfo` builds `ConfigGrayInfo` from
+/// `ConfigInfoGrayWrapper`; batata keeps the same output shape so maintainer
+/// clients decode it identically.
+fn to_config_gray_info(gray: &ConfigGrayStorageData) -> ConfigGrayInfo {
+    ConfigGrayInfo {
+        config_detail_info: ConfigDetailInfo {
+            config_basic_info: ConfigBasicInfo {
+                id: 0,
+                namespace_id: gray.tenant.clone(),
+                group_name: gray.group.clone(),
+                data_id: gray.data_id.clone(),
+                md5: gray.md5.clone(),
+                r#type: String::new(),
+                app_name: gray.app_name.clone(),
+                create_time: gray.created_time,
+                modify_time: gray.modified_time,
+            },
+            content: gray.content.clone(),
+            desc: String::new(),
+            encrypted_data_key: gray.encrypted_data_key.clone(),
+            create_user: gray.src_user.clone(),
+            create_ip: gray.src_ip.clone(),
+            config_tags: String::new(),
+        },
+        gray_name: gray.gray_name.clone(),
+        gray_rule: gray.gray_rule.clone(),
+    }
+}
+
+/// GET /v3/admin/cs/config/beta/versions
+///
+/// Lists every gray (beta) version stored for one config, identified by
+/// `dataId` + `groupName` + `namespaceId`.
+///
+/// NOTE: this is a batata extension. Upstream `ConfigControllerV3` only exposes
+/// `/beta` (query/publish/stop) and `/gray` (query/publish/stop by `grayName`);
+/// it has no endpoint enumerating the gray versions of a config, and the
+/// upstream maintainer-client has no such method either. The payload reuses the
+/// upstream `ConfigGrayInfo` shape so clients decode it identically.
+#[get("beta/versions")]
+async fn list_beta_versions(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    match data
+        .persistence()
+        .config_find_all_grays(&params.data_id, &params.group_name, &namespace_id)
+        .await
+    {
+        Ok(grays) => {
+            let items: Vec<ConfigGrayInfo> = grays.iter().map(to_config_gray_info).collect();
+            model::common::Result::<Vec<ConfigGrayInfo>>::http_success(items)
+        }
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
+    }
+}
+
+/// GET /v3/admin/cs/config/beta/list
+///
+/// Paginated gray listing; a batata extension like `beta/versions`. The gray
+/// store is keyed by `(namespace, group, dataId, grayName)`, so a non-empty
+/// `dataId` is required to look anything up: with an empty `dataId` an empty
+/// page is returned rather than attempting a namespace-wide scan that the store
+/// cannot answer.
+#[get("beta/list")]
+async fn list_beta_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaListParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let page_size = if params.page_size == 0 {
+        default_page_size_small()
+    } else {
+        params.page_size
+    };
+    let page_no = if params.page_no == 0 {
+        default_page_no()
+    } else {
+        params.page_no
+    };
+
+    let grays = if params.data_id.is_empty() {
+        Vec::new()
+    } else {
+        match data
+            .persistence()
+            .config_find_all_grays(&params.data_id, &params.group_name, &namespace_id)
+            .await
+        {
+            Ok(grays) => grays,
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    e.to_string(),
+                    String::new(),
+                );
+            }
+        }
+    };
+
+    let filtered: Vec<ConfigGrayInfo> = grays
+        .iter()
+        .filter(|g| params.app_name.is_empty() || g.app_name == params.app_name)
+        .map(to_config_gray_info)
+        .collect();
+
+    let total_count = filtered.len() as u64;
+    let offset = (page_no.saturating_sub(1) * page_size) as usize;
+    let page_items: Vec<ConfigGrayInfo> = filtered
+        .into_iter()
+        .skip(offset)
+        .take(page_size as usize)
+        .collect();
+
+    let page = batata_api::Page::<ConfigGrayInfo>::new(total_count, page_no, page_size, page_items);
+    model::common::Result::<batata_api::Page<ConfigGrayInfo>>::http_success(page)
 }
 
 /// GET /v3/admin/cs/config/beta
@@ -1059,29 +1233,7 @@ async fn get_beta_config(
         .config_find_gray_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
-        Ok(config) => config.map(|gray| ConfigGrayInfo {
-            config_detail_info: ConfigDetailInfo {
-                config_basic_info: ConfigBasicInfo {
-                    id: 0,
-                    namespace_id: gray.tenant.clone(),
-                    group_name: gray.group.clone(),
-                    data_id: gray.data_id.clone(),
-                    md5: gray.md5.clone(),
-                    r#type: String::new(),
-                    app_name: gray.app_name.clone(),
-                    create_time: gray.created_time,
-                    modify_time: gray.modified_time,
-                },
-                content: gray.content.clone(),
-                desc: String::new(),
-                encrypted_data_key: gray.encrypted_data_key.clone(),
-                create_user: gray.src_user.clone(),
-                create_ip: gray.src_ip.clone(),
-                config_tags: String::new(),
-            },
-            gray_name: gray.gray_name,
-            gray_rule: gray.gray_rule,
-        }),
+        Ok(config) => config.map(|gray| to_config_gray_info(&gray)),
         Err(e) => {
             return model::common::Result::<String>::http_response(
                 500,
@@ -1124,29 +1276,7 @@ async fn get_gray_config_info(
         .config_find_gray_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
-        Ok(config) => config.map(|gray| ConfigGrayInfo {
-            config_detail_info: ConfigDetailInfo {
-                config_basic_info: ConfigBasicInfo {
-                    id: 0,
-                    namespace_id: gray.tenant.clone(),
-                    group_name: gray.group.clone(),
-                    data_id: gray.data_id.clone(),
-                    md5: gray.md5.clone(),
-                    r#type: String::new(),
-                    app_name: gray.app_name.clone(),
-                    create_time: gray.created_time,
-                    modify_time: gray.modified_time,
-                },
-                content: gray.content.clone(),
-                desc: String::new(),
-                encrypted_data_key: gray.encrypted_data_key.clone(),
-                create_user: gray.src_user.clone(),
-                create_ip: gray.src_ip.clone(),
-                config_tags: String::new(),
-            },
-            gray_name: gray.gray_name,
-            gray_rule: gray.gray_rule,
-        }),
+        Ok(config) => config.map(|gray| to_config_gray_info(&gray)),
         Err(e) => {
             return model::common::Result::<String>::http_response(
                 500,
@@ -1918,4 +2048,6 @@ pub fn routes() -> actix_web::Scope {
         .service(publish_gray_config)
         .service(stop_gray_config)
         .service(get_gray_config_info)
+        .service(list_beta_versions)
+        .service(list_beta_configs)
 }

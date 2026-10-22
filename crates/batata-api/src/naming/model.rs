@@ -354,7 +354,10 @@ pub struct ServiceInfo {
     /// The `healthy_instance_count` field.
     pub healthy_instance_count: i32,
     /// The `trigger_flag` field.
-    pub trigger_flag: bool,
+    ///
+    /// Upstream `ServiceView` types this as `String` (it is frequently empty),
+    /// so a `bool` here fails to deserialize every real service-list response.
+    pub trigger_flag: String,
 }
 
 // Base naming request structure

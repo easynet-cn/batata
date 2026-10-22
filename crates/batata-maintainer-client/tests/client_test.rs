@@ -494,8 +494,9 @@ async fn test_namespace_delete() {
 async fn test_namespace_exists() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/v3/admin/core/namespace/exist"))
-        .respond_with(api_ok(&true))
+        .and(path("/v3/admin/core/namespace/check"))
+        // The admin endpoint answers with the tenant row count, not a boolean.
+        .respond_with(api_ok(&1))
         .mount(&server)
         .await;
 
@@ -1071,7 +1072,7 @@ async fn test_service_list() {
                 "clusterCount": 1,
                 "ipCount": 2,
                 "healthyInstanceCount": 2,
-                "triggerFlag": false
+                "triggerFlag": ""
             })],
             1,
         )))

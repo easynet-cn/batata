@@ -124,7 +124,7 @@ fn test_list_view_clone() {
 fn test_list_view_pagination_semantics() {
     // Simulate page 2 of 3, page_size=2
     let page2 = ListView {
-        count: 5, // total across all pages
+        count: 5,                                             // total across all pages
         data: vec!["svc-3".to_string(), "svc-4".to_string()], // this page only
     };
     assert_eq!(page2.count, 5);

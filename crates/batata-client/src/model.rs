@@ -177,8 +177,10 @@ pub struct ConfigGrayInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
     #[serde(default)]
-    /// History record ID.
-    pub id: u64,
+    /// History record ID. Signed to match the server's `his_config_info.id`
+    /// and the `nid` query parameter of `history_get` — the client used to
+    /// model it as `u64`, which made the two ends of the same API disagree.
+    pub id: i64,
     /// Config data ID.
     pub data_id: String,
     #[serde(alias = "groupName")]
@@ -215,8 +217,9 @@ pub struct ConfigHistoryBasicInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
     #[serde(default)]
-    /// History record ID.
-    pub id: u64,
+    /// History record ID. Signed, for the same reason as
+    /// `ConfigHistoryBasicInfo::id`.
+    pub id: i64,
     /// Config data ID.
     pub data_id: String,
     #[serde(alias = "groupName")]
@@ -431,9 +434,9 @@ pub struct ServiceDetail {
     #[serde(default)]
     /// Number of clusters.
     pub cluster_count: i32,
-    #[serde(default)]
-    /// Trigger flag.
-    pub trigger_flag: bool,
+    // Upstream `ServiceDetailInfo` has no `triggerFlag` — that field belongs to
+    // `ServiceView`, the item type of the service *list*. It is deliberately
+    // absent here so the struct mirrors `ServiceControllerV3#detail`.
 }
 
 /// Service selector
@@ -498,7 +501,10 @@ pub struct ServiceListItem {
     pub healthy_instance_count: u32,
     #[serde(default)]
     /// Trigger flag.
-    pub trigger_flag: bool,
+    ///
+    /// Upstream `ServiceView` models this as a `String` (it is frequently
+    /// empty), so a `bool` here fails to deserialize every real response.
+    pub trigger_flag: String,
     #[serde(default)]
     /// Service metadata.
     pub metadata: Option<std::collections::HashMap<String, String>>,

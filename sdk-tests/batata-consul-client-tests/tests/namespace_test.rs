@@ -28,16 +28,16 @@ async fn test_namespace_lifecycle_or_not_supported() {
         Ok((created, _meta)) => {
             assert_eq!(created.name, name);
             // Read it back
-            let (got, _) = client
-                .namespace_read(&name, &common::q())
-                .await
-                .unwrap();
+            let (got, _) = client.namespace_read(&name, &common::q()).await.unwrap();
             assert!(got.is_some(), "namespace_read must return the created ns");
 
             // Update
             let mut updated = ns.clone();
             updated.description = "updated description".into();
-            let (u, _) = client.namespace_update(&updated, &common::w()).await.unwrap();
+            let (u, _) = client
+                .namespace_update(&updated, &common::w())
+                .await
+                .unwrap();
             assert_eq!(u.description, "updated description");
 
             // List

@@ -121,10 +121,11 @@ async fn test_service_publisher_and_subscriber_clients() {
         .service_publisher_clients("public", "DEFAULT_GROUP", &service)
         .await
         .unwrap();
-    // Publisher list returns { count, clients } - verify it's accessible
+    // Upstream `ClientControllerV3#getServicePublisherList` returns a bare
+    // `Result<List<ClientPublisherInfo>>`, not a `{count, clients}` wrapper.
     assert!(
-        publishers.is_object(),
-        "Should return publisher list object"
+        publishers.is_array(),
+        "Should return a bare publisher list array"
     );
 
     naming.shutdown().await;

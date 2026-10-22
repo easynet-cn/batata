@@ -4,10 +4,10 @@
 
 mod common;
 
-use std::sync::Arc;
 use batata_client::auth::{
     AccessKeyAuthProvider, ClientAuthService, JwtAuthProvider, RequestResource, SecurityProxy,
 };
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_jwt_login_success() {
@@ -84,17 +84,20 @@ async fn test_security_proxy_merge() {
         ctx.headers.contains_key("accessToken"),
         "JWT token should be present"
     );
-    assert!(
-        ctx.headers.contains_key("ak"),
-        "AK should be present"
-    );
+    assert!(ctx.headers.contains_key("ak"), "AK should be present");
 }
 
 #[test]
 fn test_disabled_provider() {
     let provider = JwtAuthProvider::new("", "", "/nacos");
-    assert!(!provider.is_enabled(), "Empty credentials should disable provider");
+    assert!(
+        !provider.is_enabled(),
+        "Empty credentials should disable provider"
+    );
 
     let provider2 = AccessKeyAuthProvider::new("", "");
-    assert!(!provider2.is_enabled(), "Empty AK/SK should disable provider");
+    assert!(
+        !provider2.is_enabled(),
+        "Empty AK/SK should disable provider"
+    );
 }

@@ -44,7 +44,10 @@ async fn test_namespace_lifecycle() {
     let ns_name = format!("Test NS {}", &ns_id[..4]);
 
     // Create
-    let created = client.namespace_create(&ns_id, &ns_name, "test desc").await.unwrap();
+    let created = client
+        .namespace_create(&ns_id, &ns_name, "test desc")
+        .await
+        .unwrap();
     assert!(created, "Namespace should be created");
 
     // Get
@@ -54,7 +57,10 @@ async fn test_namespace_lifecycle() {
 
     // Verify exists via list
     let all = client.namespace_list().await.unwrap();
-    assert!(all.iter().any(|n| n.namespace == ns_id), "Namespace should exist after creation");
+    assert!(
+        all.iter().any(|n| n.namespace == ns_id),
+        "Namespace should exist after creation"
+    );
 
     // Update
     let updated = client
@@ -65,14 +71,20 @@ async fn test_namespace_lifecycle() {
 
     // List
     let list = client.namespace_list().await.unwrap();
-    assert!(list.iter().any(|n| n.namespace == ns_id), "Should find our namespace");
+    assert!(
+        list.iter().any(|n| n.namespace == ns_id),
+        "Should find our namespace"
+    );
 
     // Delete
     let deleted = client.namespace_delete(&ns_id).await.unwrap();
     assert!(deleted);
 
     let all_after = client.namespace_list().await.unwrap();
-    assert!(!all_after.iter().any(|n| n.namespace == ns_id), "Namespace should be deleted");
+    assert!(
+        !all_after.iter().any(|n| n.namespace == ns_id),
+        "Namespace should be deleted"
+    );
 }
 
 // ==================== Cluster ====================
@@ -83,7 +95,10 @@ async fn test_cluster_members() {
     let client = common::create_api_client().await.unwrap();
 
     let members = client.cluster_members().await.unwrap();
-    assert!(!members.is_empty(), "Should have at least one cluster member");
+    assert!(
+        !members.is_empty(),
+        "Should have at least one cluster member"
+    );
 }
 
 #[tokio::test]
@@ -92,7 +107,10 @@ async fn test_cluster_self() {
     let client = common::create_api_client().await.unwrap();
 
     let self_info = client.cluster_self().await.unwrap();
-    assert!(!self_info.address.is_empty(), "Self member should have address");
+    assert!(
+        !self_info.address.is_empty(),
+        "Self member should have address"
+    );
     assert!(!self_info.ip.is_empty(), "Self member should have IP");
     assert_eq!(self_info.state, "UP", "Self member should be UP");
 }

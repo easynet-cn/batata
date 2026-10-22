@@ -1,0 +1,26 @@
+# Performance anchors for `scripts/regression.sh --perf`
+#
+# Format:  <case name>|<median rps>|<min>|<max>
+#
+# <case name> must match the scenario label printed by scripts/benchmark.sh
+# (passed through to bench_ab.py). medians are over recorded rounds.
+#
+# Captured: 2026-10-21
+#   standalone, release default profile
+#   bench_ab.py --rounds 3 --warmup-rounds 1 --duration 20s --warmup 10s
+#               --connections 20 --threads 2 --workers 8 --fresh-store
+#
+# The gate fails a scenario whose median drops below anchor * (1 - 0.116). The
+# tolerance is the observed spread on this machine: Config Write/Read swing
+# ~12% run to run, so a smaller band would fire on noise alone. Register/Query
+# are tight (~1%); do not widen the tolerance globally because of them.
+#
+# Refreshing: re-run the capture command above and replace the numbers in the
+# same commit as the change that made them move. Never lower an anchor to make
+# a red gate green without a stated reason.
+
+Instance Register|44398|44105|44691
+Instance Query|62215|61982|62448
+Service List|68717|65148|72285
+Config Write|19009|17893|20124
+Config Read|51947|48758|55137

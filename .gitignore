@@ -49,3 +49,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Regression gate reports (scripts/regression.sh)
+/reports/

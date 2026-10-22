@@ -159,9 +159,7 @@ async fn test_config_filter_chain() {
 
     let grpc = common::create_config_grpc_client().await.unwrap();
     let chain = ConfigFilterChainManager::new();
-    let svc = Arc::new(batata_client::config::BatataConfigService::with_filter_chain(
-        grpc, chain,
-    ));
+    let svc = Arc::new(batata_client::config::BatataConfigService::with_filter_chain(grpc, chain));
     svc.register_push_handlers();
 
     // Add filter dynamically

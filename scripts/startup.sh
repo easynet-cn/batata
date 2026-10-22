@@ -388,6 +388,15 @@ if [ -n "${EMBEDDED_STORAGE}" ]; then
     fi
 fi
 
+# Embedded store location.
+# The default (~/batata/data) is not always usable: a directory carrying the
+# macOS provenance attribute makes RocksDB fail with EPERM on open. The key is
+# `...embedded.data_dir`, which the BATATA_* env convention cannot express
+# (every `_` maps to a `.`), so it has to be passed as a real CLI override.
+if [ -n "${SDK_DATA_DIR:-}" ]; then
+    RUN_ARGS="${RUN_ARGS} --batata.persistence.embedded.data_dir=${SDK_DATA_DIR}"
+fi
+
 # Config file
 if [ -n "${CONFIG_FILE}" ]; then
     RUN_ARGS="${RUN_ARGS} -c ${CONFIG_FILE}"

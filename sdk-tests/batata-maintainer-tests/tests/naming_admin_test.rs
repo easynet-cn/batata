@@ -39,14 +39,21 @@ async fn test_instance_create_and_delete() {
         .instance_list("public", "DEFAULT_GROUP", &service, "DEFAULT", 1, 10)
         .await
         .unwrap();
-    assert!(
-        !instances.page_items.is_empty(),
-        "Should find registered instance"
-    );
+    // Upstream `InstanceControllerV3#list` returns a bare array
+    // (`Result<List<? extends Instance>>`), not a `Page`, so `instance_list`
+    // hands back a `Vec`.
+    assert!(!instances.is_empty(), "Should find registered instance");
 
     // Delete instance
     client
-        .instance_delete("public", "DEFAULT_GROUP", &service, "10.0.0.1", 8080, "DEFAULT")
+        .instance_delete(
+            "public",
+            "DEFAULT_GROUP",
+            &service,
+            "10.0.0.1",
+            8080,
+            "DEFAULT",
+        )
         .await
         .unwrap();
 
@@ -82,7 +89,14 @@ async fn test_instance_get_detail() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let detail = client
-        .instance_get("public", "DEFAULT_GROUP", &service, "10.0.1.1", 9090, "DEFAULT")
+        .instance_get(
+            "public",
+            "DEFAULT_GROUP",
+            &service,
+            "10.0.1.1",
+            9090,
+            "DEFAULT",
+        )
         .await
         .unwrap();
     assert_eq!(detail.ip, "10.0.1.1");
@@ -90,7 +104,14 @@ async fn test_instance_get_detail() {
 
     // Deregister instance before deleting service
     client
-        .instance_delete("public", "DEFAULT_GROUP", &service, "10.0.1.1", 9090, "DEFAULT")
+        .instance_delete(
+            "public",
+            "DEFAULT_GROUP",
+            &service,
+            "10.0.1.1",
+            9090,
+            "DEFAULT",
+        )
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -185,7 +206,14 @@ async fn test_instance_health_update() {
 
     // Deregister instance before deleting service
     let _ = client
-        .instance_delete("public", "DEFAULT_GROUP", &service, "10.0.2.1", 8080, "DEFAULT")
+        .instance_delete(
+            "public",
+            "DEFAULT_GROUP",
+            &service,
+            "10.0.2.1",
+            8080,
+            "DEFAULT",
+        )
         .await;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let _ = client

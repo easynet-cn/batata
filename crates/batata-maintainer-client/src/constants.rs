@@ -8,7 +8,11 @@ pub mod admin_api_path {
     /// The `NAMESPACE` constant.
     pub const NAMESPACE: &str = "/v3/admin/core/namespace";
     /// The `NAMESPACE_EXIST` constant.
-    pub const NAMESPACE_EXIST: &str = "/v3/admin/core/namespace/exist";
+    ///
+    /// Upstream `CoreMaintainerService#checkNamespaceIdExist` hits
+    /// `CORE_NAMESPACE_ADMIN_PATH + "/check"` (not `/exist` — that path only
+    /// exists on the console API) with the `namespaceId` parameter.
+    pub const NAMESPACE_EXIST: &str = "/v3/admin/core/namespace/check";
 
     // Config
     /// The `CONFIG` constant.

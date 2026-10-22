@@ -28,9 +28,7 @@ async fn test_operator_utilization_smoke() {
     // Batata mirrors Consul OSS: utilization is Enterprise-only, so the
     // endpoint must surface a 501 with a body containing "Enterprise" so
     // that SDK callers can branch on the feature marker.
-    let result = client
-        .operator_utilization(false, true, &common::w())
-        .await;
+    let result = client.operator_utilization(false, true, &common::w()).await;
     let err = result.expect_err("utilization must error on OSS/Batata (Enterprise-only)");
     let msg = format!("{err}");
     assert!(
@@ -42,7 +40,9 @@ async fn test_operator_utilization_smoke() {
 #[tokio::test]
 async fn test_operator_audit_hash_smoke() {
     let client = common::create_client();
-    let _ = client.operator_audit_hash("sensitive-data", &common::q()).await;
+    let _ = client
+        .operator_audit_hash("sensitive-data", &common::q())
+        .await;
 }
 
 #[tokio::test]

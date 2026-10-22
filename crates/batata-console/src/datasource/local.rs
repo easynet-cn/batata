@@ -583,7 +583,10 @@ impl ConsoleDataSource for LocalDataSource {
                     "clusterCount": clusters.len(),
                     "ipCount": instances.len(),
                     "healthyInstanceCount": healthy_count,
-                    "triggerFlag": false,
+                    // Upstream `ServiceView.triggerFlag` is a String (usually
+                    // empty), not a boolean — keep the wire shape identical so
+                    // String-typed clients can decode it.
+                    "triggerFlag": "",
                     "protectThreshold": protect_threshold,
                     "metadata": metadata,
                     "selector": selector,

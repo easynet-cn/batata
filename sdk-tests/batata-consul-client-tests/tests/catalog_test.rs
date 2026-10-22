@@ -117,7 +117,10 @@ async fn test_catalog_node() {
     assert!(!nodes.is_empty(), "Should have at least one catalog node");
     let node_name = &nodes[0].node;
     assert!(!node_name.is_empty(), "Node name should not be empty");
-    assert!(!nodes[0].address.is_empty(), "Node address should not be empty");
+    assert!(
+        !nodes[0].address.is_empty(),
+        "Node address should not be empty"
+    );
 
     // Query catalog for this specific node
     let (catalog_node, _meta) = client.catalog_node(node_name, &common::q()).await.unwrap();

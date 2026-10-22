@@ -202,9 +202,13 @@ pub trait ConfigMaintainerService: Send + Sync {
     ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>>;
 
     /// Get configuration history entry by nid.
+    ///
+    /// `nid` is signed to match `his_config_info.nid` in the persistence layer
+    /// and the `nid` query parameter of the admin history endpoint; the same
+    /// value flows through `history_get` on the concrete client.
     async fn get_config_history_info(
         &self,
-        nid: u64,
+        nid: i64,
         namespace_id: &str,
         group: &str,
         data_id: &str,

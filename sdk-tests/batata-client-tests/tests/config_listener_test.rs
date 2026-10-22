@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use batata_client::config::listener::{ConfigChangeListener, ConfigResponse, FnConfigChangeListener};
+use batata_client::config::listener::{
+    ConfigChangeListener, ConfigResponse, FnConfigChangeListener,
+};
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
@@ -30,10 +32,11 @@ async fn test_add_config_listener() {
 
     let n = notify.clone();
     let r = received.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.lock().unwrap() = info.content.clone();
-        n.notify_one();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            *r.lock().unwrap() = info.content.clone();
+            n.notify_one();
+        }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
         .await
@@ -72,12 +75,13 @@ async fn test_remove_config_listener() {
 
     let cc = call_count.clone();
     let fn_ = first_notify.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |_: ConfigResponse| {
-        let prev = cc.fetch_add(1, Ordering::SeqCst);
-        if prev == 0 {
-            fn_.notify_one();
-        }
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |_: ConfigResponse| {
+            let prev = cc.fetch_add(1, Ordering::SeqCst);
+            if prev == 0 {
+                fn_.notify_one();
+            }
+        }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
         .await
@@ -92,7 +96,10 @@ async fn test_remove_config_listener() {
         .ok();
 
     let count_after_first = call_count.load(Ordering::SeqCst);
-    assert!(count_after_first >= 1, "Should receive at least 1 notification");
+    assert!(
+        count_after_first >= 1,
+        "Should receive at least 1 notification"
+    );
 
     // Remove listener
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
@@ -131,11 +138,12 @@ async fn test_multiple_listeners() {
     for _ in 0..3 {
         let c = count.clone();
         let a = all_done.clone();
-        let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |_: ConfigResponse| {
-            if c.fetch_add(1, Ordering::SeqCst) == 2 {
-                a.notify_one();
-            }
-        }));
+        let listener: Arc<dyn ConfigChangeListener> =
+            Arc::new(FnConfigChangeListener::new(move |_: ConfigResponse| {
+                if c.fetch_add(1, Ordering::SeqCst) == 2 {
+                    a.notify_one();
+                }
+            }));
         svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
             .await
             .unwrap();
@@ -174,10 +182,11 @@ async fn test_listener_multiple_updates() {
 
     let c = count.clone();
     let lv = last_value.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        c.fetch_add(1, Ordering::SeqCst);
-        *lv.lock().unwrap() = info.content.clone();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            c.fetch_add(1, Ordering::SeqCst);
+            *lv.lock().unwrap() = info.content.clone();
+        }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
         .await
@@ -215,10 +224,11 @@ async fn test_listener_rapid_changes() {
 
     let c = count.clone();
     let lv = last_value.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        c.fetch_add(1, Ordering::SeqCst);
-        *lv.lock().unwrap() = info.content.clone();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            c.fetch_add(1, Ordering::SeqCst);
+            *lv.lock().unwrap() = info.content.clone();
+        }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
         .await
@@ -226,15 +236,23 @@ async fn test_listener_rapid_changes() {
     sleep(Duration::from_millis(500)).await;
 
     for i in 0..10 {
-        svc.publish_config(&data_id, "DEFAULT_GROUP", "", &format!("rapid.change={}", i))
-            .await
-            .unwrap();
+        svc.publish_config(
+            &data_id,
+            "DEFAULT_GROUP",
+            "",
+            &format!("rapid.change={}", i),
+        )
+        .await
+        .unwrap();
         sleep(Duration::from_millis(500)).await;
     }
     sleep(Duration::from_secs(5)).await;
 
     let final_count = count.load(Ordering::SeqCst);
-    assert!(final_count >= 1, "At least 1 notification (some may be coalesced)");
+    assert!(
+        final_count >= 1,
+        "At least 1 notification (some may be coalesced)"
+    );
     assert_eq!(*last_value.lock().unwrap(), "rapid.change=9");
 
     svc.remove_specific_listener(&data_id, "DEFAULT_GROUP", "", &listener)
@@ -257,10 +275,11 @@ async fn test_listener_for_non_existent_config() {
 
     let n = notify.clone();
     let r = received.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.lock().unwrap() = info.content.clone();
-        n.notify_one();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            *r.lock().unwrap() = info.content.clone();
+            n.notify_one();
+        }));
 
     // Add listener BEFORE config exists
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
@@ -304,10 +323,11 @@ async fn test_large_config_notification() {
 
     let n = notify.clone();
     let rl = received_len.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        rl.store(info.content.len() as u32, Ordering::SeqCst);
-        n.notify_one();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            rl.store(info.content.len() as u32, Ordering::SeqCst);
+            n.notify_one();
+        }));
 
     svc.add_listener(&data_id, "DEFAULT_GROUP", "", listener.clone())
         .await
@@ -344,10 +364,11 @@ async fn test_listener_in_custom_group() {
 
     let n = notify.clone();
     let r = received.clone();
-    let listener: Arc<dyn ConfigChangeListener> = Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
-        *r.lock().unwrap() = info.content.clone();
-        n.notify_one();
-    }));
+    let listener: Arc<dyn ConfigChangeListener> =
+        Arc::new(FnConfigChangeListener::new(move |info: ConfigResponse| {
+            *r.lock().unwrap() = info.content.clone();
+            n.notify_one();
+        }));
 
     svc.add_listener(&data_id, "CUSTOM_GROUP", "", listener.clone())
         .await

@@ -234,10 +234,10 @@ async fn test_config_gray_list() {
         .config_gray_list(1, 10, "public", "", "DEFAULT_GROUP", "")
         .await
         .unwrap();
-    // May have gray configs from this or other tests
+    // The call must succeed and honour the requested page size.
     assert!(
-        page.total_count >= 0,
-        "Gray list query should succeed"
+        page.page_items.len() <= 10,
+        "Gray list page should not exceed the requested page size"
     );
 
     // Find our specific gray config

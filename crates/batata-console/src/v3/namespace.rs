@@ -23,6 +23,7 @@ use batata_server_common::{
 };
 
 use batata_server_common::ONLY_IDENTITY;
+use batata_server_common::model::constants::DEFAULT_NAMESPACE_ID;
 
 static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[\w-]+").expect("Invalid regex pattern"));
@@ -298,8 +299,18 @@ async fn exist(
             .build()
     );
 
+    // Upstream `ConsoleNamespaceController#checkNamespaceIdExist` short-circuits
+    // a blank id to `false`, then delegates to
+    // `NamespaceOperationService#namespaceExists`, which treats the *default*
+    // namespace as existing even though it has no `tenant_info` row. The admin
+    // counterpart (`/v3/admin/core/namespace/check`) deliberately does not — it
+    // returns the raw row count.
     if params.custom_namespace_id.is_empty() {
         return common::Result::<bool>::http_success(false);
+    }
+
+    if params.custom_namespace_id == DEFAULT_NAMESPACE_ID {
+        return common::Result::<bool>::http_success(true);
     }
 
     let result = data

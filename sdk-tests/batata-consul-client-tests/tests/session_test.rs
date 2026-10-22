@@ -320,7 +320,11 @@ async fn test_session_invalidated_on_check_critical() {
         .session_info(&session_id, &common::q())
         .await
         .unwrap();
-    assert_eq!(entries.len(), 1, "Session should exist before check failure");
+    assert_eq!(
+        entries.len(),
+        1,
+        "Session should exist before check failure"
+    );
 
     // Step 4: Fail the check (mark as Critical)
     client
@@ -384,7 +388,10 @@ async fn test_session_survives_with_healthy_serf_check() {
     // serfHealth should be passing
     let (checks, _) = client.health_state("passing", &common::q()).await.unwrap();
     let serf = checks.iter().find(|c| c.check_id == "serfHealth");
-    assert!(serf.is_some(), "serfHealth check should exist and be passing");
+    assert!(
+        serf.is_some(),
+        "serfHealth check should exist and be passing"
+    );
 
     // Cleanup
     let _ = client.session_destroy(&session_id, &common::w()).await;

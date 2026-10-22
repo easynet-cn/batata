@@ -35,14 +35,23 @@ async fn test_default_weight_value() {
 
     let instance = Instance::new("192.168.200.1".to_string(), 8080);
     svc.register_instance("", "DEFAULT_GROUP", &service_name, instance.clone())
-        .await.unwrap();
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    let instances = svc.get_all_instances("", "DEFAULT_GROUP", &service_name).await.unwrap();
+    let instances = svc
+        .get_all_instances("", "DEFAULT_GROUP", &service_name)
+        .await
+        .unwrap();
     assert!(!instances.is_empty());
-    assert!((instances[0].weight - 1.0).abs() < 0.001, "Default weight should be 1.0");
+    assert!(
+        (instances[0].weight - 1.0).abs() < 0.001,
+        "Default weight should be 1.0"
+    );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance)
+        .await
+        .ok();
 }
 
 /// NWT-002: Custom weight is preserved
@@ -54,14 +63,23 @@ async fn test_set_custom_weight() {
 
     let instance = make_weighted("192.168.200.2", 8080, 5.5);
     svc.register_instance("", "DEFAULT_GROUP", &service_name, instance.clone())
-        .await.unwrap();
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    let instances = svc.get_all_instances("", "DEFAULT_GROUP", &service_name).await.unwrap();
+    let instances = svc
+        .get_all_instances("", "DEFAULT_GROUP", &service_name)
+        .await
+        .unwrap();
     assert!(!instances.is_empty());
-    assert!((instances[0].weight - 5.5).abs() < 0.001, "Custom weight should be 5.5");
+    assert!(
+        (instances[0].weight - 5.5).abs() < 0.001,
+        "Custom weight should be 5.5"
+    );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance)
+        .await
+        .ok();
 }
 
 /// NWT-003: Zero weight instance rarely/never selected
@@ -73,14 +91,21 @@ async fn test_weight_zero_disabled() {
 
     let zero = make_weighted("192.168.200.3", 8080, 0.0);
     let normal = make_weighted("192.168.200.4", 8080, 1.0);
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, zero.clone()).await.unwrap();
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, normal.clone()).await.unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, zero.clone())
+        .await
+        .unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, normal.clone())
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
     let mut zero_count = 0;
     let mut normal_count = 0;
     for _ in 0..100 {
-        if let Ok(Some(selected)) = svc.select_one_healthy_instance("", "DEFAULT_GROUP", &service_name).await {
+        if let Ok(Some(selected)) = svc
+            .select_one_healthy_instance("", "DEFAULT_GROUP", &service_name)
+            .await
+        {
             if selected.ip == "192.168.200.3" {
                 zero_count += 1;
             } else {
@@ -91,11 +116,16 @@ async fn test_weight_zero_disabled() {
     assert!(
         zero_count == 0 || zero_count < (normal_count as f64 * 0.1) as i32,
         "Zero-weight should be rarely/never selected (zero={}, normal={})",
-        zero_count, normal_count
+        zero_count,
+        normal_count
     );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, zero).await.ok();
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, normal).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, zero)
+        .await
+        .ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, normal)
+        .await
+        .ok();
 }
 
 /// NWT-006: Weighted random selection favors higher weight
@@ -107,14 +137,21 @@ async fn test_weighted_random_selection() {
 
     let high = make_weighted("192.168.200.10", 8080, 9.0);
     let low = make_weighted("192.168.200.11", 8080, 1.0);
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, high.clone()).await.unwrap();
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, low.clone()).await.unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, high.clone())
+        .await
+        .unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, low.clone())
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
     let mut high_count = 0;
     let mut low_count = 0;
     for _ in 0..1000 {
-        if let Ok(Some(selected)) = svc.select_one_healthy_instance("", "DEFAULT_GROUP", &service_name).await {
+        if let Ok(Some(selected)) = svc
+            .select_one_healthy_instance("", "DEFAULT_GROUP", &service_name)
+            .await
+        {
             if selected.ip == "192.168.200.10" {
                 high_count += 1;
             } else {
@@ -125,11 +162,16 @@ async fn test_weighted_random_selection() {
     assert!(
         high_count > low_count,
         "High weight should be selected more often (high={}, low={})",
-        high_count, low_count
+        high_count,
+        low_count
     );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, high).await.ok();
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, low).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, high)
+        .await
+        .ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, low)
+        .await
+        .ok();
 }
 
 /// NWT-010: Unhealthy instance not selected even with high weight
@@ -150,26 +192,43 @@ async fn test_weight_with_health_status() {
     };
     let healthy = make_weighted("192.168.200.51", 8080, 1.0);
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, unhealthy.clone()).await.unwrap();
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, healthy.clone()).await.unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, unhealthy.clone())
+        .await
+        .unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, healthy.clone())
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    let healthy_only = svc.select_instances("", "DEFAULT_GROUP", &service_name, true).await.unwrap();
+    let healthy_only = svc
+        .select_instances("", "DEFAULT_GROUP", &service_name, true)
+        .await
+        .unwrap();
     assert_eq!(healthy_only.len(), 1);
     assert_eq!(healthy_only[0].ip, "192.168.200.51");
 
     let mut unhealthy_selected = 0;
     for _ in 0..100 {
-        if let Ok(Some(selected)) = svc.select_one_healthy_instance("", "DEFAULT_GROUP", &service_name).await {
+        if let Ok(Some(selected)) = svc
+            .select_one_healthy_instance("", "DEFAULT_GROUP", &service_name)
+            .await
+        {
             if selected.ip == "192.168.200.50" {
                 unhealthy_selected += 1;
             }
         }
     }
-    assert_eq!(unhealthy_selected, 0, "Unhealthy instance should never be selected");
+    assert_eq!(
+        unhealthy_selected, 0,
+        "Unhealthy instance should never be selected"
+    );
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, unhealthy).await.ok();
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, healthy).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, unhealthy)
+        .await
+        .ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, healthy)
+        .await
+        .ok();
 }
 
 /// NWT-013: Instance metadata preserved alongside weight
@@ -195,10 +254,15 @@ async fn test_weight_metadata() {
         ..Default::default()
     };
 
-    svc.register_instance("", "DEFAULT_GROUP", &service_name, instance.clone()).await.unwrap();
+    svc.register_instance("", "DEFAULT_GROUP", &service_name, instance.clone())
+        .await
+        .unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    let instances = svc.get_all_instances("", "DEFAULT_GROUP", &service_name).await.unwrap();
+    let instances = svc
+        .get_all_instances("", "DEFAULT_GROUP", &service_name)
+        .await
+        .unwrap();
     assert!(!instances.is_empty());
     let found = &instances[0];
     assert!((found.weight - 5.0).abs() < 0.001);
@@ -206,5 +270,7 @@ async fn test_weight_metadata() {
     assert_eq!(found.metadata.get("targetWeight").unwrap(), "5.0");
     assert_eq!(found.metadata.get("autoScale").unwrap(), "true");
 
-    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance).await.ok();
+    svc.deregister_instance("", "DEFAULT_GROUP", &service_name, instance)
+        .await
+        .ok();
 }

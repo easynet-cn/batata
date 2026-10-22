@@ -1,0 +1,31 @@
+# Known-failure whitelist for scripts/regression.sh
+#
+# Format:  <stage>|<pattern>|<reason>
+#
+# <pattern> is matched as a substring of the failing item's name (for `unit`,
+# that is `crate::test::path`; for `integration`/`matrix`, `<suite>: <name>`).
+# Anything that does NOT match an entry here BLOCKS the gate.
+#
+# Rules for editing this file:
+#   - Every entry needs a reason and the date it was observed. An entry without
+#     a reason is a suppressed bug, not a baseline.
+#   - Prefer narrowing the pattern to the specific test, never to a whole crate.
+#   - When you fix one of these, delete the line in the same commit — otherwise
+#     the gate silently starts passing a test that no longer runs.
+#
+# Stages: fmt | check | unit | integration | matrix | perf
+
+# --- unit -------------------------------------------------------------------
+# batata-plugin-apollo: tests/config_service_test.rs is a live-server suite that
+# talks to http://localhost:8080. It fails when no server is running, which is
+# a property of the environment, not of the code under test. Only reachable via
+# --full (the crate is not in the quick/standard set).
+unit|test_commit_openapi|apollo live-server suite needs a server on :8080 (env-only, 2026-10-21)
+unit|test_config_service_gray_release|apollo live-server suite needs a server on :8080 (env-only, 2026-10-21)
+unit|test_namespace_lock|apollo live-server suite needs a server on :8080 (env-only, 2026-10-21)
+
+# --- integration / matrix ---------------------------------------------------
+# Upstream SDK tests that are flaky or assert upstream-specific behaviour we
+# deliberately do not implement.
+matrix|TestOperatorLeaderTransferToNode|consul-go SDK: leader transfer to a non-voter node; upstream-flaky (2026-10-21)
+integration|apollo: testRollbackRelease|apollo java SDK: rollback ordering expectation differs from upstream (2026-10-21)

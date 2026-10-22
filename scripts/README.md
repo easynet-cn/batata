@@ -120,6 +120,10 @@ scripts/
 ├── init-admin.sh                   # One-time admin bootstrap (nacos/nacos)
 ├── init-bench-user.sh              # Non-admin user for permission-path benchmarks
 ├── benchmark.sh                    # wrk/hey throughput benchmark (config / naming / consul)
+├── bench_ab.py                     # A/B driver: alternating rounds, median aggregation
+├── regression.sh                   # Unified regression gate (see "Regression Gate")
+├── regression_whitelist.txt        # Known-failure baseline for the gate
+├── regression_perf_baseline.txt    # Performance anchors for `regression.sh --perf`
 ├── bench_sync_load.py              # Cluster sync load generator (distinct instances)
 └── profile.sh                      # CPU profiler harness (perf / sample)
 ```
@@ -346,6 +350,93 @@ If `batata.sql.init.platform` is set to `mysql` or `postgresql` in `conf/applica
 ```yaml
 batata.sql.init.platform:   # empty = embedded mode
 ```
+
+## Regression Gate
+
+`scripts/regression.sh` is the single entry point that replaces the handful of
+manual commands "run everything" used to mean. It runs the stages, collects
+**every** failure, and then decides — a stage failing does not stop the run.
+
+```bash
+./scripts/regression.sh                # quick (default): pre-commit self-check
+./scripts/regression.sh --standard     # + all core crates + Java/Go SDK suites
+./scripts/regression.sh --full         # + 6-combination SDK matrix
+./scripts/regression.sh --full --perf  # + performance anchors
+./scripts/regression.sh --only unit    # a single stage
+```
+
+| Level | Stages |
+|-------|--------|
+| `quick` | `fmt`, `check`, `unit` (core crates), `integration` (standalone + Rust SDK) |
+| `standard` | + `unit` (all core crates), `integration` (Java + Go SDK) |
+| `full` | + `matrix` (standalone/cluster x rock/mysql/postgres), `unit` incl. apollo |
+
+Exit code is `0` only when nothing outside the whitelist failed.
+
+### Reports
+
+Written to `reports/regression/<timestamp>/report.md` (gitignored), with
+`reports/regression/latest` symlinked to the most recent run. Per-stage logs
+are under `reports/regression/<timestamp>/logs/`. Nothing is written to `/tmp`.
+
+```
+## Stages        | Stage | Status | Detail | Time |
+## Blockers      failures that are NOT whitelisted — these fail the gate
+## Known failures (whitelisted)  failure -> reason, from regression_whitelist.txt
+```
+
+### The whitelist
+
+`scripts/regression_whitelist.txt` holds the known-failure baseline:
+
+```
+<stage>|<pattern>|<reason>
+```
+
+`<pattern>` is matched as a substring of the failing item (`crate::test::path`
+for `unit`, `<suite>: <name>` for `integration`/`matrix`).
+
+Rules:
+
+- Every entry needs a reason **and** the date it was observed. An entry without
+  a reason is a suppressed bug, not a baseline.
+- Narrow the pattern to the specific test; never whitelist a whole crate.
+- **Delete the entry in the same commit that fixes it.** Otherwise the gate
+  silently passes a test that no longer runs.
+
+To check the gate actually bites, remove an entry and re-run: the failure must
+reappear as a blocker.
+
+### Performance gate
+
+`--perf` runs `bench_ab.py` for the `naming` and `config` cases and compares
+each median against `scripts/regression_perf_baseline.txt`. A scenario blocks
+when its median falls below `anchor * (1 - 0.116)`; the 11.6% tolerance is the
+observed run-to-run spread on this machine (Register/Query are ~1%, Config
+Write/Read ~12%), so a tighter band would fire on noise.
+
+It needs `target/release/batata-server`; without it the stage is skipped with a
+warning rather than failing (a release build is ~25 min and should not be a
+surprise side effect of a gate run).
+
+Refresh the anchors with the command recorded in the baseline file's header,
+and replace them in the same commit as the change that moved them.
+
+### Notes
+
+- Unit tests run with `--no-fail-fast`: without it cargo stops at the first
+  failing test target and hides every suite behind it.
+- `SKIP_FMT=1` / `SKIP_CHECK=1` skip a stage; `SDK_MODE=cluster` changes the
+  integration backend; `REGRESSION_KEEP_SERVER=1` leaves the server up.
+- `REGRESSION_CRATES="batata-core batata-naming"` overrides the level's crate
+  set and runs only those crates in the unit stage — use it to re-check one
+  crate without paying for the whole workspace (a cold full-level unit run
+  exceeds an hour).
+- The integration stage delegates to `test.sh sdk --quick`, which owns server
+  startup/teardown — do not start a server by hand for it.
+- SDK failure names are parsed from all three runner dialects (go `--- FAIL:`,
+  cargo's `failures:` block, maven's `[ERROR] Failures:`), so a red suite
+  reports named tests instead of one opaque blocker.
 
 ## Benchmark & Profiling
 

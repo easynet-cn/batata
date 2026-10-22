@@ -314,6 +314,18 @@ cmd_sdk_quick() {
         fi
     fi
 
+    # --- Bootstrap the admin user -----------------------------------------
+    # startup.sh only seeds nacos/nacos in the *cluster* branch. Standalone
+    # leaves the store empty, and then every authenticated SDK case fails on
+    # login — which reads as a product bug rather than a missing fixture.
+    # init-admin.sh is idempotent (creating an existing user is a no-op), and
+    # it also proves the server is actually answering before we run anything.
+    if [ "${NO_RESTART:-}" != "1" ]; then
+        log_info "Initializing admin user nacos/nacos"
+        bash "${SCRIPT_DIR}/init-admin.sh" nacos nacos "http://127.0.0.1:8848" 2>&1 \
+            | sed 's/^/    [init-admin] /' || true
+    fi
+
     run_consul() {
         echo -e "\n${BOLD}=== Consul Go Tests ===${NC}"
         sdk_run_consul "$FILTER" 2>&1 | grep -v "^{" | tee /tmp/test-${MODE}-consul.txt | grep -E "^---|PASS|FAIL"

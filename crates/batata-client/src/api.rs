@@ -128,23 +128,27 @@ impl BatataApiClient {
     }
 
     /// Check if namespace exists
+    ///
+    /// Upstream exposes namespace-existence as the *admin* endpoint
+    /// `GET /v3/admin/core/namespace/check?namespaceId=`, which answers with the
+    /// number of matching `tenant_info` rows (`Result<Integer>`); the Java
+    /// maintainer client turns that into a boolean with `data > 0`. The console
+    /// counterpart (`/v3/console/core/namespace/exist`) is a different API with
+    /// different semantics — it returns a boolean and treats the default
+    /// namespace as existing, because the public namespace has no `tenant_info`
+    /// row at all.
     pub async fn namespace_exists(&self, namespace_id: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
-            custom_namespace_id: &'a str,
+            namespace_id: &'a str,
         }
 
-        let response: ApiResponse<OkOrBool> = self
+        let response: ApiResponse<i64> = self
             .http_client
-            .get_with_query(
-                "/v3/admin/core/namespace/exist",
-                &Query {
-                    custom_namespace_id: namespace_id,
-                },
-            )
+            .get_with_query("/v3/admin/core/namespace/check", &Query { namespace_id })
             .await?;
-        Ok(response.data.0)
+        Ok(response.data > 0)
     }
 
     // ============== Config APIs ==============
@@ -765,7 +769,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_json(
+            .post_form(
                 "/v3/admin/ns/service",
                 &Form {
                     namespace_id,
@@ -833,7 +837,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .put_json(
+            .put_form(
                 "/v3/admin/ns/service",
                 &Form {
                     namespace_id,
@@ -988,7 +992,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .put_json(
+            .put_form(
                 "/v3/admin/ns/service/cluster",
                 &Form {
                     namespace_id,
@@ -1008,6 +1012,11 @@ impl BatataApiClient {
     // ============== Instance APIs ==============
 
     /// List instances of a service
+    ///
+    /// Upstream `InstanceControllerV3#list` answers with
+    /// `Result<List<? extends Instance>>` — a bare array. It is *not* paged:
+    /// `pageNo`/`pageSize` are still accepted by the endpoint for compatibility
+    /// but the response carries no `Page` wrapper.
     pub async fn instance_list(
         &self,
         namespace_id: &str,
@@ -1016,7 +1025,7 @@ impl BatataApiClient {
         cluster_name: &str,
         page_no: u32,
         page_size: u32,
-    ) -> anyhow::Result<Page<InstanceInfo>> {
+    ) -> anyhow::Result<Vec<InstanceInfo>> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -1028,7 +1037,7 @@ impl BatataApiClient {
             page_size: u32,
         }
 
-        let response: ApiResponse<Page<InstanceInfo>> = self
+        let response: ApiResponse<Vec<InstanceInfo>> = self
             .http_client
             .get_with_query(
                 "/v3/admin/ns/instance/list",
@@ -1079,7 +1088,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .put_json(
+            .put_form(
                 "/v3/admin/ns/instance",
                 &Form {
                     namespace_id,
@@ -1171,7 +1180,7 @@ impl BatataApiClient {
         }
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_json(
+            .post_form(
                 "/v3/admin/ns/instance",
                 &Body {
                     namespace_id,

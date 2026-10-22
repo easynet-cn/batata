@@ -74,7 +74,11 @@ async fn test_batch_deregister() {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let result = svc.get_all_instances(NS, GROUP, &service).await.unwrap();
-    assert_eq!(result.len(), 3, "Should have 3 registered instances before deregister");
+    assert_eq!(
+        result.len(),
+        3,
+        "Should have 3 registered instances before deregister"
+    );
 
     // Batch deregister all 3
     svc.batch_deregister_instance(NS, GROUP, &service, instances)
@@ -224,17 +228,15 @@ async fn test_multiple_clusters() {
 
     // All instances across all clusters
     let all = svc.get_all_instances(NS, GROUP, &service).await.unwrap();
-    assert_eq!(all.len(), 3, "Should have 3 total instances across clusters");
+    assert_eq!(
+        all.len(),
+        3,
+        "Should have 3 total instances across clusters"
+    );
 
     // Select only CLUSTER_A instances
     let cluster_a = svc
-        .select_instances_with_clusters(
-            NS,
-            GROUP,
-            &service,
-            &["CLUSTER_A".to_string()],
-            true,
-        )
+        .select_instances_with_clusters(NS, GROUP, &service, &["CLUSTER_A".to_string()], true)
         .await
         .unwrap();
     assert_eq!(
@@ -250,13 +252,7 @@ async fn test_multiple_clusters() {
 
     // Select only CLUSTER_B instances
     let cluster_b = svc
-        .select_instances_with_clusters(
-            NS,
-            GROUP,
-            &service,
-            &["CLUSTER_B".to_string()],
-            true,
-        )
+        .select_instances_with_clusters(NS, GROUP, &service, &["CLUSTER_B".to_string()], true)
         .await
         .unwrap();
     assert_eq!(
@@ -546,9 +542,7 @@ async fn test_service_list_pagination() {
     let tag = common::test_id();
 
     // Create 5 distinct services by registering an instance in each
-    let service_names: Vec<String> = (1..=5)
-        .map(|i| format!("svc-page-{}-{}", tag, i))
-        .collect();
+    let service_names: Vec<String> = (1..=5).map(|i| format!("svc-page-{}-{}", tag, i)).collect();
 
     for name in &service_names {
         svc.register_instance(NS, GROUP, name, test_instance("10.9.0.1", 8080))

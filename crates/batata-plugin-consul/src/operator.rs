@@ -977,7 +977,12 @@ pub async fn keyring_list(
     let local_only = parse_local_only(&query.local_only);
 
     let responses = operator_service.list_keys(local_only);
-    HttpResponse::Ok().json(responses)
+    // Consul's `GET /v1/operator/keyring` returns a bare JSON array of keyring
+    // entries; the `{"Responses": [...]}` envelope belongs to the write
+    // operations. Returning the envelope here made every client that follows
+    // the upstream shape (including our own batata-consul-client) fail to
+    // decode the body.
+    HttpResponse::Ok().json(responses.responses)
 }
 
 /// POST /v1/operator/keyring

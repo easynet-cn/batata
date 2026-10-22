@@ -440,6 +440,11 @@ impl BatataHttpClient {
     }
 
     /// Make a POST request with query parameters (no body)
+    ///
+    /// The Content-Type header is set even though there is no body: actix-web
+    /// resolves the payload extractor from it, and a POST that arrives without
+    /// one is rejected with 415 "Unsupported Media Type" before the handler
+    /// ever sees the query. The Nacos clients always send one for POST.
     pub async fn post_with_query<T: DeserializeOwned, Q: Serialize + ?Sized>(
         &self,
         path: &str,
@@ -450,6 +455,7 @@ impl BatataHttpClient {
                 client
                     .post(&url)
                     .header(&auth_header.0, &auth_header.1)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
                     .query(query)
                     .send()
                     .await

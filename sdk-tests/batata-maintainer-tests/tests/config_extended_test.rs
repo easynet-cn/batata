@@ -18,7 +18,20 @@ async fn test_config_export_import() {
 
     // Publish a config to export
     let ok = client
-        .config_publish(&data_id, group, ns, "export-me=true", "", "", "", "", "", "properties", "", "")
+        .config_publish(
+            &data_id,
+            group,
+            ns,
+            "export-me=true",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "properties",
+            "",
+            "",
+        )
         .await
         .unwrap();
     assert!(ok, "Publish should succeed");
@@ -28,10 +41,7 @@ async fn test_config_export_import() {
         .config_export(ns, Some(group), Some(&data_id), None)
         .await
         .unwrap();
-    assert!(
-        !zip_bytes.is_empty(),
-        "Exported ZIP should not be empty"
-    );
+    assert!(!zip_bytes.is_empty(), "Exported ZIP should not be empty");
     // ZIP files start with PK magic bytes (0x50, 0x4B)
     assert_eq!(
         zip_bytes[0], 0x50,
@@ -68,7 +78,8 @@ async fn test_config_export_import() {
     let restored = client.config_get(&data_id, group, ns).await.unwrap();
     assert!(restored.is_some(), "Config should exist after import");
     assert_eq!(
-        restored.unwrap().content, "export-me=true",
+        restored.unwrap().content,
+        "export-me=true",
         "Imported config content should match original"
     );
 
@@ -91,11 +102,15 @@ async fn test_config_batch_delete() {
 
     // Create two configs
     client
-        .config_publish(&data_id_1, group, ns, "batch1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id_1, group, ns, "batch1", "", "", "", "", "", "", "", "",
+        )
         .await
         .unwrap();
     client
-        .config_publish(&data_id_2, group, ns, "batch2", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id_2, group, ns, "batch2", "", "", "", "", "", "", "", "",
+        )
         .await
         .unwrap();
 
@@ -144,14 +159,31 @@ async fn test_config_clone() {
 
     // Create target namespace
     let ns_created = client
-        .namespace_create(&target_ns_id, &format!("Clone NS {}", &tid[..4]), "for clone test")
+        .namespace_create(
+            &target_ns_id,
+            &format!("Clone NS {}", &tid[..4]),
+            "for clone test",
+        )
         .await
         .unwrap();
     assert!(ns_created, "Target namespace should be created");
 
     // Publish config in source namespace
     client
-        .config_publish(&data_id, group, src_ns, "clone-content", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            group,
+            src_ns,
+            "clone-content",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
@@ -173,10 +205,17 @@ async fn test_config_clone() {
         );
 
         // Verify config exists in target namespace
-        let cloned = client.config_get(&data_id, group, &target_ns_id).await.unwrap();
-        assert!(cloned.is_some(), "Cloned config should exist in target namespace");
+        let cloned = client
+            .config_get(&data_id, group, &target_ns_id)
+            .await
+            .unwrap();
+        assert!(
+            cloned.is_some(),
+            "Cloned config should exist in target namespace"
+        );
         assert_eq!(
-            cloned.unwrap().content, "clone-content",
+            cloned.unwrap().content,
+            "clone-content",
             "Cloned config content should match original"
         );
     } else {
@@ -184,12 +223,18 @@ async fn test_config_clone() {
         // Even with id=0, the endpoint should be reachable
         let result = client.config_clone(&[0], &target_ns_id, "OVERWRITE").await;
         // May fail due to id=0, just verify the API endpoint is reachable
-        assert!(result.is_ok() || result.is_err(), "Clone API should be reachable");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "Clone API should be reachable"
+        );
     }
 
     // Cleanup
     client.config_delete(&data_id, group, src_ns).await.unwrap();
-    client.config_delete(&data_id, group, &target_ns_id).await.unwrap();
+    client
+        .config_delete(&data_id, group, &target_ns_id)
+        .await
+        .unwrap();
     client.namespace_delete(&target_ns_id).await.unwrap();
 }
 
@@ -206,12 +251,28 @@ async fn test_config_history_detail() {
 
     // Publish config to generate history
     client
-        .config_publish(&data_id, group, ns, "history-v1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            group,
+            ns,
+            "history-v1",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
     // List history to get an entry's nid
-    let history = client.history_list(&data_id, group, ns, 1, 10).await.unwrap();
+    let history = client
+        .history_list(&data_id, group, ns, 1, 10)
+        .await
+        .unwrap();
     assert!(
         history.total_count >= 1,
         "Should have at least one history entry"
@@ -224,14 +285,24 @@ async fn test_config_history_detail() {
     let first_entry = &history.page_items[0];
     let nid = first_entry.id;
     assert!(nid > 0, "History entry should have a valid nid");
-    assert_eq!(first_entry.data_id, data_id, "History entry data_id should match");
+    assert_eq!(
+        first_entry.data_id, data_id,
+        "History entry data_id should match"
+    );
 
     // Get history detail by nid
     let detail = client.history_get(nid, &data_id, group, ns).await.unwrap();
-    assert!(detail.is_some(), "History detail should exist for nid={}", nid);
+    assert!(
+        detail.is_some(),
+        "History detail should exist for nid={}",
+        nid
+    );
     let detail = detail.unwrap();
     assert_eq!(detail.data_id, data_id, "Detail data_id should match");
-    assert_eq!(detail.content, "history-v1", "Detail should contain the published content");
+    assert_eq!(
+        detail.content, "history-v1",
+        "Detail should contain the published content"
+    );
 
     // Cleanup
     client.config_delete(&data_id, group, ns).await.unwrap();
@@ -250,16 +321,23 @@ async fn test_config_history_previous() {
 
     // Publish two versions to create history
     client
-        .config_publish(&data_id, group, ns, "prev-v1", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id, group, ns, "prev-v1", "", "", "", "", "", "", "", "",
+        )
         .await
         .unwrap();
     client
-        .config_publish(&data_id, group, ns, "prev-v2", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id, group, ns, "prev-v2", "", "", "", "", "", "", "", "",
+        )
         .await
         .unwrap();
 
     // Get the latest history entry (v2)
-    let history = client.history_list(&data_id, group, ns, 1, 10).await.unwrap();
+    let history = client
+        .history_list(&data_id, group, ns, 1, 10)
+        .await
+        .unwrap();
     assert!(
         history.total_count >= 2,
         "Should have at least 2 history entries, got {}",
@@ -326,7 +404,18 @@ async fn test_config_list_with_filters() {
     // Publish config with specific group and tags
     client
         .config_publish(
-            &data_id, group, ns, "filter-content", "", "filterTag", "", "", "", "yaml", "", "",
+            &data_id,
+            group,
+            ns,
+            "filter-content",
+            "",
+            "filterTag",
+            "",
+            "",
+            "",
+            "yaml",
+            "",
+            "",
         )
         .await
         .unwrap();
@@ -387,7 +476,20 @@ async fn test_config_metadata_update() {
 
     // Create config
     client
-        .config_publish(&data_id, group, ns, "meta-content", "", "", "", "", "", "", "", "")
+        .config_publish(
+            &data_id,
+            group,
+            ns,
+            "meta-content",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )
         .await
         .unwrap();
 
@@ -395,7 +497,10 @@ async fn test_config_metadata_update() {
     let before = client.config_get(&data_id, group, ns).await.unwrap();
     assert!(before.is_some(), "Config should exist");
     let before = before.unwrap();
-    assert_eq!(before.content, "meta-content", "Content should match initial value");
+    assert_eq!(
+        before.content, "meta-content",
+        "Content should match initial value"
+    );
 
     // Update metadata (desc and tags) without changing content
     let ok = client
@@ -406,7 +511,10 @@ async fn test_config_metadata_update() {
 
     // Verify metadata changed but content is preserved
     let after = client.config_get(&data_id, group, ns).await.unwrap();
-    assert!(after.is_some(), "Config should still exist after metadata update");
+    assert!(
+        after.is_some(),
+        "Config should still exist after metadata update"
+    );
     let after = after.unwrap();
     assert_eq!(
         after.content, "meta-content",

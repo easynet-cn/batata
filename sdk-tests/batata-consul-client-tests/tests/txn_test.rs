@@ -7,9 +7,7 @@
 mod common;
 
 use base64::Engine;
-use batata_consul_client::model::{
-    TxnCheck, TxnKVOp, TxnNode, TxnOp, TxnService,
-};
+use batata_consul_client::model::{TxnCheck, TxnKVOp, TxnNode, TxnOp, TxnService};
 
 fn b64(s: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
@@ -19,10 +17,7 @@ fn b64(s: &str) -> String {
 async fn test_txn_kv_set_and_get() {
     let client = common::create_client();
     let key = format!("test/txn/kv/{}", common::test_id());
-    let ops = vec![
-        TxnOp::kv_set(&key, b64("txn-value")),
-        TxnOp::kv_get(&key),
-    ];
+    let ops = vec![TxnOp::kv_set(&key, b64("txn-value")), TxnOp::kv_get(&key)];
     let (ok, resp, _meta) = client.txn(&ops, &common::w()).await.unwrap();
     assert!(ok, "txn should succeed, errors={:?}", resp.errors);
     // First result is from set (may or may not include KV), second is from get.
@@ -30,7 +25,11 @@ async fn test_txn_kv_set_and_get() {
         !resp.results.is_empty(),
         "results should not be empty after kv set+get"
     );
-    let retrieved = resp.results.iter().find_map(|r| r.kv.clone()).expect("kv result");
+    let retrieved = resp
+        .results
+        .iter()
+        .find_map(|r| r.kv.clone())
+        .expect("kv result");
     assert_eq!(retrieved.key, key);
     // Cleanup
     let _ = client.kv_delete(&key, &common::w()).await;

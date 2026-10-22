@@ -6,14 +6,31 @@ mod common;
 
 // ==================== Namespace Exists ====================
 
+/// A namespace that has been explicitly created must be reported as existing.
+///
+/// Upstream note: `namespace_exists` mirrors
+/// `CoreMaintainerService#checkNamespaceIdExist`, which calls the admin
+/// `/v3/admin/core/namespace/check` endpoint and gets back a **tenant row
+/// count** (`Result<Integer>`). The implicit `public` namespace has no row in
+/// `tenant_info`, so upstream answers `false` for it — the "default namespace
+/// always exists" shortcut belongs to the *console* path
+/// (`NamespaceOperationService#namespaceExists`), not to this one. Asserting
+/// `true` for `public` here would encode a behaviour upstream does not have.
 #[tokio::test]
 async fn test_namespace_exists_true() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
 
-    // "public" namespace always exists
-    let exists = client.namespace_exists("public").await.unwrap();
-    assert!(exists, "'public' namespace should always exist");
+    let ns_id = format!("exists-ns-{}", common::test_id());
+    client
+        .namespace_create(&ns_id, "Exists Test", "test")
+        .await
+        .unwrap();
+
+    let exists = client.namespace_exists(&ns_id).await.unwrap();
+    assert!(exists, "A created namespace should be reported as existing");
+
+    let _ = client.namespace_delete(&ns_id).await;
 }
 
 #[tokio::test]

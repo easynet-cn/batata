@@ -271,19 +271,30 @@ impl ServiceClientQuery {
     impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
+/// Upstream `ClientPublisherInfo`: `{clientId, ip, port, clusterName}`.
+///
+/// `ClientControllerV3#getPublishedClientList` answers with
+/// `Result<List<ClientPublisherInfo>>` — a bare array, not a wrapper object.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ServiceClientInfo {
+struct ClientPublisherInfo {
     client_id: String,
-    client_ip: String,
-    client_port: u16,
+    ip: String,
+    port: i32,
+    cluster_name: String,
 }
 
+/// Upstream `ClientSubscriberInfo`: `{clientId, appName, agent, address}`.
+///
+/// `ClientControllerV3#getSubscribeClientList` answers with
+/// `Result<List<ClientSubscriberInfo>>` — a bare array, not a wrapper object.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ServiceClientListResponse {
-    count: i32,
-    clients: Vec<ServiceClientInfo>,
+struct ClientSubscriberInfo {
+    client_id: String,
+    app_name: String,
+    agent: String,
+    address: String,
 }
 
 /// GET /v3/admin/ns/client/service/publisher/list
@@ -298,11 +309,11 @@ async fn get_service_publishers(
     params: web::Query<ServiceClientQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
-        return Result::<Option<ServiceClientListResponse>>::http_response(
+        return Result::<Option<Vec<ClientPublisherInfo>>>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            None::<ServiceClientListResponse>,
+            None::<Vec<ClientPublisherInfo>>,
         );
     }
 
@@ -324,25 +335,23 @@ async fn get_service_publishers(
     let publisher_ids =
         naming_service.get_publishers(namespace_id, group_name, &params.service_name);
 
-    let clients: Vec<ServiceClientInfo> = publisher_ids
+    let clients: Vec<ClientPublisherInfo> = publisher_ids
         .iter()
         .filter_map(|client_id| {
             connection_manager
                 .get_connection_meta(client_id)
-                .map(|meta| ServiceClientInfo {
+                .map(|meta| ClientPublisherInfo {
                     client_id: client_id.clone(),
-                    client_ip: meta.client_ip,
-                    client_port: meta.remote_port,
+                    ip: meta.client_ip.clone(),
+                    port: meta.remote_port as i32,
+                    // The publisher set is keyed by connection, so the cluster an
+                    // instance was registered into is not recoverable here.
+                    cluster_name: String::new(),
                 })
         })
         .collect();
 
-    let response = ServiceClientListResponse {
-        count: clients.len() as i32,
-        clients,
-    };
-
-    Result::<ServiceClientListResponse>::http_success(response)
+    Result::<Vec<ClientPublisherInfo>>::http_success(clients)
 }
 
 /// GET /v3/admin/ns/client/service/subscriber/list
@@ -357,11 +366,11 @@ async fn get_service_subscribers(
     params: web::Query<ServiceClientQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
-        return Result::<Option<ServiceClientListResponse>>::http_response(
+        return Result::<Option<Vec<ClientSubscriberInfo>>>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            None::<ServiceClientListResponse>,
+            None::<Vec<ClientSubscriberInfo>>,
         );
     }
 
@@ -383,25 +392,21 @@ async fn get_service_subscribers(
     let subscriber_ids =
         naming_service.get_subscribers(namespace_id, group_name, &params.service_name);
 
-    let clients: Vec<ServiceClientInfo> = subscriber_ids
+    let clients: Vec<ClientSubscriberInfo> = subscriber_ids
         .iter()
         .filter_map(|client_id| {
             connection_manager
                 .get_connection_meta(client_id)
-                .map(|meta| ServiceClientInfo {
+                .map(|meta| ClientSubscriberInfo {
                     client_id: client_id.clone(),
-                    client_ip: meta.client_ip,
-                    client_port: meta.remote_port,
+                    app_name: String::new(),
+                    agent: meta.version.clone(),
+                    address: format!("{}:{}", meta.client_ip, meta.remote_port),
                 })
         })
         .collect();
 
-    let response = ServiceClientListResponse {
-        count: clients.len() as i32,
-        clients,
-    };
-
-    Result::<ServiceClientListResponse>::http_success(response)
+    Result::<Vec<ClientSubscriberInfo>>::http_success(clients)
 }
 
 #[allow(dead_code)]
