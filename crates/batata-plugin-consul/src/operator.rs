@@ -311,16 +311,72 @@ fn validate_relay_factor(relay_factor: Option<u8>) -> Result<(), String> {
 // ============================================================================
 
 /// Extract the host part of an `ip:port` address, tolerating IPv6 literals.
-///
-/// Leader resolution compares cluster members against
-/// [`ClusterManager::leader_address`], which reports a **Raft listener
-/// address** (`ip:raft_port`) while member addresses carry the HTTP port
-/// (`ip:http_port`). Only the host can be compared, never the full address.
 fn address_host(address: &str) -> &str {
     if let Some(rest) = address.strip_prefix('[') {
         return rest.split_once(']').map_or(address, |(host, _)| host);
     }
     address.rsplit_once(':').map_or(address, |(host, _)| host)
+}
+
+/// Rewrite an `ip:port` address so it carries `port + delta`.
+///
+/// Used to map a Raft listener address (`ip:7848`) onto the member HTTP
+/// address space (`ip:8848`); see [`leader_member_index`].
+fn with_port_offset(address: &str, delta: u16) -> Option<String> {
+    let (host, port) = address.rsplit_once(':')?;
+    let host = host.strip_prefix('[').unwrap_or(host);
+    let host = host.strip_suffix(']').unwrap_or(host);
+    let port: u16 = port.parse().ok()?;
+    if host.contains(':') {
+        Some(format!("[{}]:{}", host, port.saturating_add(delta)))
+    } else {
+        Some(format!("{}:{}", host, port.saturating_add(delta)))
+    }
+}
+
+/// Resolve which cluster member the Raft leader corresponds to.
+///
+/// [`ClusterManager::leader_address`] reports the leader by its **Raft
+/// listener** address (`ip:7848`) while member addresses carry the HTTP port
+/// (`ip:8848`), so the two never compare equal directly. Resolution order:
+///
+/// 1. exact address match (deployment publishes member-space addresses);
+/// 2. match after shifting the leader's port by
+///    [`Member::DEFAULT_RAFT_OFFSET_PORT`] back into HTTP space — this is how
+///    the bundled cluster config derives Raft ports, and it keeps a
+///    single-host topology (`127.0.0.1:8848/8858/8868`) unambiguous;
+/// 3. host-only match, but **only when it is unique**. Every member of a
+///    single-host cluster shares the same host, and an unconditional host
+///    match would mark *all* of them as leader — which makes Consul clients
+///    conclude there is no eligible transfer target. Reporting "no leader" is
+///    the lesser evil there, and never worse than "every node is the leader".
+fn leader_member_index(
+    members: &[batata_common::ExtendedMemberInfo],
+    leader: Option<&str>,
+) -> Option<usize> {
+    let leader = leader?;
+    if let Some(idx) = members.iter().position(|m| m.address == leader) {
+        return Some(idx);
+    }
+    if let Some(http_addr) =
+        with_port_offset(leader, batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT)
+        && let Some(idx) = members.iter().position(|m| m.address == http_addr)
+    {
+        return Some(idx);
+    }
+    let leader_host = address_host(leader);
+    let mut matched = None;
+    for (idx, member) in members.iter().enumerate() {
+        if address_host(&member.address) == leader_host {
+            if matched.is_some() {
+                // Ambiguous: several members share the leader's host and none
+                // matched exactly, so leadership cannot be attributed.
+                return None;
+            }
+            matched = Some(idx);
+        }
+    }
+    matched
 }
 
 /// Cluster operator service backed by a `ClusterManager`.
@@ -390,13 +446,12 @@ impl ConsulOperatorService {
     /// The `get_raft_configuration` method.
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
         let members = self.member_manager.all_members_extended();
-        let leader_host = self
-            .member_manager
-            .leader_address()
-            .map(|addr| address_host(&addr).to_string());
+        let leader = self.member_manager.leader_address();
+        let leader_idx = leader_member_index(&members, leader.as_deref());
         let servers: Vec<RaftServer> = members
             .iter()
-            .map(|m| RaftServer {
+            .enumerate()
+            .map(|(idx, m)| RaftServer {
                 id: m.address.clone(),
                 node: m.address.clone(),
                 address: m.address.clone(),
@@ -404,7 +459,7 @@ impl ConsulOperatorService {
                 // imply leadership. When no leader has been observed yet every
                 // server is reported as a follower, which is what Consul does
                 // (`Leader: false` across the board) until an election settles.
-                leader: leader_host.as_deref() == Some(address_host(&m.address)),
+                leader: leader_idx == Some(idx),
                 voter: true,
                 protocol_version: "3".to_string(),
                 last_index: self.index.load(Ordering::SeqCst),
@@ -421,14 +476,13 @@ impl ConsulOperatorService {
         let members = self.member_manager.all_members_extended();
         let current_index = self.index.load(Ordering::SeqCst);
         let mut healthy_voters = 0i32;
-        let leader_host = self
-            .member_manager
-            .leader_address()
-            .map(|addr| address_host(&addr).to_string());
+        let leader = self.member_manager.leader_address();
+        let leader_idx = leader_member_index(&members, leader.as_deref());
 
         let servers: Vec<AutopilotServerHealth> = members
             .iter()
-            .map(|m| {
+            .enumerate()
+            .map(|(idx, m)| {
                 let is_healthy = m.state == MemberState::Up;
                 let serf_status = match m.state {
                     MemberState::Up => "alive",
@@ -445,7 +499,7 @@ impl ConsulOperatorService {
                     address: m.address.clone(),
                     serf_status: serf_status.to_string(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
-                    leader: leader_host.as_deref() == Some(address_host(&m.address)),
+                    leader: leader_idx == Some(idx),
                     last_contact,
                     last_term: 1,
                     last_index: current_index,
@@ -784,7 +838,7 @@ pub async fn transfer_leader(
         target_raft_addr
     );
 
-    match raft_node.trigger_remote_election(&target_raft_addr).await {
+    let response = match raft_node.trigger_remote_election(&target_raft_addr).await {
         Ok(_) => {
             // Wait for leader to change (5 second timeout)
             match raft_node
@@ -816,6 +870,64 @@ pub async fn transfer_leader(
                 "Failed to transfer leadership: {}",
                 e
             )))
+        }
+    };
+
+    // Consul never leaves a datacenter without a leader: if the transfer did
+    // not settle, force an election so the group recovers instead of staying
+    // leaderless (which makes every later KV/session/status call fail).
+    ensure_leader_elected(&raft_node, &members).await;
+
+    response
+}
+
+/// Restore a leader when a transfer attempt left the Raft group leaderless.
+///
+/// Batata approximates leader transfer with a remote `elect()` (openraft 0.9
+/// has no native `transfer_leader()`), which can leave the group with **no**
+/// leader at all — `/v1/status/leader` then stays empty for the rest of the
+/// run. Nudge the nodes in turn until someone wins.
+async fn ensure_leader_elected(
+    raft_node: &std::sync::Arc<batata_consistency::RaftNode>,
+    members: &[batata_common::ExtendedMemberInfo],
+) {
+    if raft_node.leader_id().is_some() {
+        return;
+    }
+
+    let mut candidates: Vec<String> = vec![raft_node.addr().to_string()];
+    for m in members {
+        let addr = match m.address.split_once(':') {
+            Some((host, port_str)) => {
+                let port: u16 = port_str.parse().unwrap_or(0);
+                format!("{}:{}", host, port.saturating_sub(1000))
+            }
+            None => m.address.clone(),
+        };
+        if !candidates.contains(&addr) {
+            candidates.push(addr);
+        }
+    }
+
+    for candidate in candidates {
+        tracing::warn!(
+            candidate = %candidate,
+            "Leader transfer left the group without a leader; triggering election"
+        );
+        let _ = raft_node.trigger_remote_election(&candidate).await;
+        if raft_node
+            .wait_for_leader_change(0, std::time::Duration::from_secs(2))
+            .await
+            .is_ok()
+        {
+            tracing::info!(leader = ?raft_node.leader_id(), "Leader restored after transfer");
+            // `/v1/status/leader` is answered from the member manager's
+            // cached Raft view, which is refreshed on a short interval.
+            // Give it one interval so a client polling the endpoint right
+            // after the transfer observes the restored leader instead of
+            // an empty string.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            return;
         }
     }
 }
@@ -1696,6 +1808,41 @@ mod tests {
             state: MemberState::Up,
             extend_info: std::collections::BTreeMap::new(),
         }
+    }
+
+    fn member_at_port(ip: &str, port: u16) -> ExtendedMemberInfo {
+        ExtendedMemberInfo {
+            ip: ip.to_string(),
+            port,
+            address: format!("{}:{}", ip, port),
+            state: MemberState::Up,
+            extend_info: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_leader_member_index_prefers_exact_match_on_shared_host() {
+        // Single-host topology: every member shares `127.0.0.1`, so a host-only
+        // match would mark all three of them as leader.
+        let members = vec![
+            member_at_port("127.0.0.1", 8848),
+            member_at_port("127.0.0.1", 8858),
+            member_at_port("127.0.0.1", 8868),
+        ];
+        assert_eq!(
+            leader_member_index(&members, Some("127.0.0.1:8858")),
+            Some(1)
+        );
+        assert_eq!(leader_member_index(&members, None), None);
+        // Raft listener address (`7858` = `8858 - 1000`) maps back onto the
+        // second member instead of matching every member by host.
+        assert_eq!(
+            leader_member_index(&members, Some("127.0.0.1:7858")),
+            Some(1)
+        );
+        // Neither an exact nor a shifted match, and the host is ambiguous, so
+        // no member is marked rather than every member being marked.
+        assert_eq!(leader_member_index(&members, Some("127.0.0.1:7999")), None);
     }
 
     impl ClusterManager for MultiNodeClusterManager {

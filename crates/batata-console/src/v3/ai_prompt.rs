@@ -40,7 +40,7 @@ pub struct PromptListQuery {
     #[serde(default, alias = "promptKey")]
     pub prompt_key: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// `accurate` or `blur` matching.
     #[serde(default)]
@@ -64,7 +64,7 @@ pub struct PromptKeyQuery {
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -82,7 +82,7 @@ pub struct PromptVersionQuery {
     #[serde(default)]
     pub label: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -94,7 +94,7 @@ pub struct PromptVersionsQuery {
     #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Page number (1-based).
     #[serde(default = "default_page_no", alias = "pageNo")]
@@ -130,7 +130,7 @@ pub struct PromptDraftCreateForm {
     #[serde(default, alias = "targetVersion")]
     pub target_version: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -151,7 +151,7 @@ pub struct PromptDraftUpdateForm {
     #[serde(default, alias = "commitMsg")]
     pub commit_msg: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -167,7 +167,7 @@ pub struct PromptSubmitForm {
     #[serde(default)]
     pub version: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -182,7 +182,7 @@ pub struct PromptVersionActionForm {
     #[serde(default)]
     pub version: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -197,7 +197,7 @@ pub struct PromptLabelsForm {
     #[serde(default)]
     pub labels: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -212,7 +212,7 @@ pub struct PromptDescriptionForm {
     #[serde(default)]
     pub description: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -227,7 +227,7 @@ pub struct PromptBizTagsForm {
     #[serde(default, alias = "bizTags")]
     pub biz_tags: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 

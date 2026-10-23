@@ -1205,16 +1205,19 @@ impl ConsulKVService {
 
     /// Delete a key
     pub async fn delete(&self, key: &str) -> bool {
-        // Check if key exists and get session info for cleanup
+        // Presence is resolved on the Raft leader during **apply**, not from
+        // this node's local store: a follower may not have applied the entry
+        // yet, and bailing out here would silently drop a legitimate delete
+        // (`DELETE /v1/kv/<key>` on any node must remove the cluster-wide key).
+        // The local lookup is still used to carry the session index cleanup
+        // hint, which apply tolerates being absent.
         let stored = self.get_stored(key);
-        let Some(stored) = stored else {
+        if stored.is_none() && self.raft_node.is_none() {
             return false;
-        };
-
+        }
         let session_index_cleanup = stored
-            .pair
-            .session
             .as_ref()
+            .and_then(|s| s.pair.session.as_ref())
             .map(|sid| format!("kidx:{}:{}", sid, key));
 
         if let Some(ref raft) = self.raft_node {

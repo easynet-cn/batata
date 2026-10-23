@@ -1567,10 +1567,11 @@ async fn create_gray_release(
 
     let now = Utc::now().timestamp_millis();
     let release_id = now;
-    let release_key = format!(
-        "{}+{}+{}+{}+gray+{}",
-        app_id, cluster_name, namespace_name, release_id, branch_name
-    );
+    let release_key = crate::service::release_key::generate_release_key(&[
+        &app_id,
+        &cluster_name,
+        &namespace_name,
+    ]);
 
     let stored = StoredRelease {
         id: 0,

@@ -2061,3 +2061,15 @@ pub struct PreparedQueryExecuteResponse {
     /// The number of failovers performed to serve the query.
     pub failovers: i32,
 }
+
+// Aggregated health states. Mirrors the `Health*` constants in
+// consul/api/health.go:17-20; the agent health endpoints signal the outcome
+// through both this string and the HTTP status code.
+/// Service and all of its checks are passing.
+pub const HEALTH_PASSING: &str = "passing";
+/// At least one check is in the warning state.
+pub const HEALTH_WARNING: &str = "warning";
+/// At least one check is critical, or the service is unknown.
+pub const HEALTH_CRITICAL: &str = "critical";
+/// The node or service is in maintenance mode.
+pub const HEALTH_MAINTENANCE: &str = "maintenance";

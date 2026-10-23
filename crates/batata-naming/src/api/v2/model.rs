@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct InstanceRegisterParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -66,7 +66,7 @@ impl InstanceRegisterParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceDeregisterParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -104,7 +104,7 @@ impl InstanceDeregisterParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceUpdateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -154,7 +154,7 @@ impl InstanceUpdateParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceDetailParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -189,7 +189,7 @@ impl InstanceDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -230,7 +230,7 @@ impl InstanceListParam {
 #[serde(rename_all = "camelCase")]
 pub struct BatchMetadataParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -317,7 +317,7 @@ pub struct InstanceListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceCreateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -355,7 +355,7 @@ impl ServiceCreateParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDeleteParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -381,7 +381,7 @@ impl ServiceDeleteParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceUpdateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -416,7 +416,7 @@ impl ServiceUpdateParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDetailParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -442,7 +442,7 @@ impl ServiceDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -551,7 +551,7 @@ pub struct ClientServiceListParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceClientListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]
@@ -761,7 +761,7 @@ pub struct NamingMetricsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceHealthParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
     #[serde(default, alias = "groupName")]

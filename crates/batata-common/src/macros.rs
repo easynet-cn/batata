@@ -1,5 +1,5 @@
 /// Macro to generate `_or_default()` methods that return a field's value
-/// or a default when the field is `None` or empty.
+/// or a default when the field is `None`, empty, or blank.
 ///
 /// Eliminates boilerplate for the common pattern:
 /// ```ignore
@@ -7,6 +7,10 @@
 ///     self.field.as_deref().filter(|s| !s.is_empty()).unwrap_or(DEFAULT)
 /// }
 /// ```
+///
+/// Values are trimmed before the emptiness check, matching upstream
+/// `NamespaceUtil.processNamespaceParameter`, which calls `trim()` on the
+/// namespace before deciding whether it is blank.
 ///
 /// # Usage
 /// ```ignore
@@ -21,15 +25,17 @@ macro_rules! impl_or_default {
         fn $method_name(&self) -> &str {
             self.$field
                 .as_deref()
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .unwrap_or($default)
         }
     };
     (pub, $method_name:ident, $field:ident, $default:expr) => {
-        /// Returns the value of the associated field, falling back to its default when empty.
+        /// Returns the value of the associated field, falling back to its default when blank.
         pub fn $method_name(&self) -> &str {
             self.$field
                 .as_deref()
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .unwrap_or($default)
         }

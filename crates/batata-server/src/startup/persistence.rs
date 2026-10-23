@@ -288,11 +288,19 @@ async fn init_external_db_cluster(
 /// order, not leadership). Batata's cluster-status and Consul `/v1/agent/self`
 /// stats read leadership off the member manager, so the Raft view is mirrored
 /// into it periodically. Each tick is one metrics read.
+///
+/// The interval is deliberately short: `/v1/status/leader` is answered from
+/// this cache, and Consul clients read it right after a leadership change
+/// (`/v1/operator/raft/transfer-leader` → `/v1/status/leader`). A 2s period
+/// left a visible window in which Raft already had a leader but the endpoint
+/// still reported an empty one.
+const RAFT_LEADER_PUBLISH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
 fn spawn_raft_leader_publisher(raft_node: &Arc<RaftNode>, smm: &Arc<ServerMemberManager>) {
     let raft_node = raft_node.clone();
     let smm = smm.clone();
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+        let mut ticker = tokio::time::interval(RAFT_LEADER_PUBLISH_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;

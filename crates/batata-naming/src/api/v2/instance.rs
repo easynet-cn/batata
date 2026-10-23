@@ -1194,7 +1194,7 @@ struct BeatInfo {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceBeatParam {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` value.
     pub namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]

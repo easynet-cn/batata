@@ -23,7 +23,6 @@ pub struct ConfigForm {
     #[serde(alias = "groupName")]
     /// The `group_name` value.
     pub group_name: String,
-    #[serde(alias = "namespaceId")]
     /// The `namespace_id` value.
     pub namespace_id: String,
     /// The `content` value.

@@ -13,7 +13,7 @@ use crate::{error, model::common::AppState, model::response::Result};
 /// `ListLocksQuery` struct.
 #[derive(Default)]
 pub struct ListLocksQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
 }

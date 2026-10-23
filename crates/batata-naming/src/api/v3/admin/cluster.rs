@@ -18,7 +18,7 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,

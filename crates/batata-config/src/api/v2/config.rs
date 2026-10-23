@@ -63,22 +63,19 @@ pub async fn get_config(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -104,7 +101,7 @@ pub async fn get_config(
     );
 
     if let Ok(grays) = persistence
-        .config_find_all_grays(&params.data_id, &params.group, namespace_id)
+        .config_find_all_grays(&params.data_id, &group, &namespace_id)
         .await
     {
         // Parse and sort by priority (higher priority first)
@@ -134,7 +131,7 @@ pub async fn get_config(
 
     // Fall through to formal config query
     match persistence
-        .config_find_one(&params.data_id, &params.group, namespace_id)
+        .config_find_one(&params.data_id, &group, &namespace_id)
         .await
     {
         Ok(Some(config)) => {
@@ -153,7 +150,7 @@ pub async fn get_config(
             error::RESOURCE_NOT_FOUND.code,
             format!(
                 "config data not exist, dataId={}, group={}, tenant={}",
-                params.data_id, params.group, namespace_id
+                params.data_id, group, namespace_id
             ),
             None::<String>,
         ),
@@ -191,14 +188,14 @@ pub async fn publish_config(
         );
     }
 
-    if form.group.is_empty() {
+    let Some(group) = form.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
     if form.content.is_empty() {
         return Result::<String>::http_response(
@@ -218,19 +215,19 @@ pub async fn publish_config(
         );
     }
 
-    if batata_server_api::validation::validate_group(&form.group).is_err() {
+    if batata_server_api::validation::validate_group(&group).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
-            format!("invalid group : {}", form.group),
+            format!("invalid group : {}", group),
             String::new(),
         );
     }
 
-    let namespace_id = form.namespace_id_or_default();
+    let namespace_id = form.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!("{}:{}:config/{}", namespace_id, form.group, form.data_id);
+    let resource = format!("{}:{}:config/{}", namespace_id, group, form.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Write)
@@ -278,7 +275,7 @@ pub async fn publish_config(
     {
         // Check max gray version count
         if let Ok(grays) = persistence
-            .config_find_all_grays(&form.data_id, &form.group, namespace_id)
+            .config_find_all_grays(&form.data_id, &group, &namespace_id)
             .await
             && !grays.iter().any(|g| g.gray_name == "beta")
             && grays.len() >= max_gray_count
@@ -310,8 +307,8 @@ pub async fn publish_config(
         match persistence
             .config_create_or_update_gray(
                 &form.data_id,
-                &form.group,
-                namespace_id,
+                &group,
+                &namespace_id,
                 &encrypted_content,
                 "beta",
                 &gray_rule,
@@ -326,7 +323,7 @@ pub async fn publish_config(
             Ok(_) => {
                 info!(
                     data_id = %form.data_id,
-                    group = %form.group,
+                    group = %group,
                     namespace_id = %namespace_id,
                     "Beta config published successfully"
                 );
@@ -351,7 +348,7 @@ pub async fn publish_config(
         let gray_name = format!("tag_{}", tag);
         // Check max gray version count
         if let Ok(grays) = persistence
-            .config_find_all_grays(&form.data_id, &form.group, namespace_id)
+            .config_find_all_grays(&form.data_id, &group, &namespace_id)
             .await
             && !grays.iter().any(|g| g.gray_name == gray_name)
             && grays.len() >= max_gray_count
@@ -383,8 +380,8 @@ pub async fn publish_config(
         match persistence
             .config_create_or_update_gray(
                 &form.data_id,
-                &form.group,
-                namespace_id,
+                &group,
+                &namespace_id,
                 &encrypted_content,
                 &gray_name,
                 &gray_rule,
@@ -399,7 +396,7 @@ pub async fn publish_config(
             Ok(_) => {
                 info!(
                     data_id = %form.data_id,
-                    group = %form.group,
+                    group = %group,
                     namespace_id = %namespace_id,
                     tag = %tag,
                     "Tag gray config published successfully"
@@ -422,8 +419,8 @@ pub async fn publish_config(
     match persistence
         .config_create_or_update(
             &form.data_id,
-            &form.group,
-            namespace_id,
+            &group,
+            &namespace_id,
             &encrypted_content,
             form.app_name.as_deref().unwrap_or(""),
             &src_user,
@@ -441,13 +438,13 @@ pub async fn publish_config(
     {
         Ok(_) => {
             // Notify long-polling HTTP listeners about config change
-            notifier.notify_change(namespace_id, &form.group, &form.data_id);
+            notifier.notify_change(&namespace_id, &group, &form.data_id);
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigPublish {
                     event_time: chrono::Utc::now().timestamp_millis(),
                     namespace: namespace_id.to_string(),
-                    group: form.group.clone(),
+                    group: group.clone(),
                     data_id: form.data_id.clone(),
                     client_ip: src_ip.clone(),
                 },
@@ -455,7 +452,7 @@ pub async fn publish_config(
 
             info!(
                 data_id = %form.data_id,
-                group = %form.group,
+                group = %group,
                 namespace_id = %namespace_id,
                 "Config published successfully"
             );
@@ -495,14 +492,14 @@ pub async fn delete_config(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
     if batata_server_api::validation::validate_data_id(&params.data_id).is_err() {
         return Result::<String>::http_response(
@@ -513,22 +510,19 @@ pub async fn delete_config(
         );
     }
 
-    if batata_server_api::validation::validate_group(&params.group).is_err() {
+    if batata_server_api::validation::validate_group(&group).is_err() {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
-            format!("invalid group : {}", params.group),
+            format!("invalid group : {}", group),
             String::new(),
         );
     }
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Write)
@@ -547,25 +541,18 @@ pub async fn delete_config(
     // Delete config using persistence service
     let persistence = data.persistence();
     match persistence
-        .config_delete(
-            &params.data_id,
-            &params.group,
-            namespace_id,
-            "",
-            &src_ip,
-            "",
-        )
+        .config_delete(&params.data_id, &group, &namespace_id, "", &src_ip, "")
         .await
     {
         Ok(_) => {
             // Notify long-polling HTTP listeners about config deletion
-            notifier.notify_change(namespace_id, &params.group, &params.data_id);
+            notifier.notify_change(&namespace_id, &group, &params.data_id);
 
             batata_plugin::global_trace_registry().fire_detached(
                 batata_plugin::TraceEvent::ConfigRemove {
                     event_time: chrono::Utc::now().timestamp_millis(),
                     namespace: namespace_id.to_string(),
-                    group: params.group.clone(),
+                    group: group.clone(),
                     data_id: params.data_id.clone(),
                     client_ip: src_ip.clone(),
                 },
@@ -573,7 +560,7 @@ pub async fn delete_config(
 
             info!(
                 data_id = %params.data_id,
-                group = %params.group,
+                group = %group,
                 namespace_id = %namespace_id,
                 "Config deleted successfully"
             );
@@ -602,7 +589,9 @@ pub async fn search_config_detail(
     data: web::Data<AppState>,
     params: web::Query<ConfigSearchDetailParam>,
 ) -> impl Responder {
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
+    // Group is an optional filter here; an absent value means "any group".
+    let group = params.resolved_group().unwrap_or_default();
 
     // Check authorization
     let resource = format!("{}:*:config/*", namespace_id);
@@ -637,9 +626,9 @@ pub async fn search_config_detail(
         .config_search_page(
             params.page_no,
             params.page_size,
-            namespace_id,
+            &namespace_id,
             params.data_id.as_deref().unwrap_or(""),
-            params.group.as_deref().unwrap_or(""),
+            &group,
             params.app_name.as_deref().unwrap_or(""),
             tags,
             types,

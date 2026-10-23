@@ -433,7 +433,6 @@ fn default_mcp_status() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct McpDetailQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server ID
     #[serde(alias = "mcpId")]
@@ -526,7 +525,6 @@ pub struct McpScopeQuery {
 #[serde(rename_all = "camelCase")]
 pub struct McpListQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server name
     #[serde(alias = "mcpName")]
@@ -546,7 +544,6 @@ pub struct McpListQuery {
 #[serde(rename_all = "camelCase")]
 pub struct McpDeleteQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server ID
     #[serde(alias = "mcpId")]
@@ -579,7 +576,6 @@ pub struct McpImportValidateRequest {
     /// Content to validate (JSON string)
     pub content: String,
     /// Namespace the servers would be imported into (defaults to `public`)
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 

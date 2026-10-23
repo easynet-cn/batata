@@ -27,5 +27,6 @@ unit|test_namespace_lock|apollo live-server suite needs a server on :8080 (env-o
 # --- integration / matrix ---------------------------------------------------
 # Upstream SDK tests that are flaky or assert upstream-specific behaviour we
 # deliberately do not implement.
-matrix|TestOperatorLeaderTransferToNode|consul-go SDK: leader transfer to a non-voter node; upstream-flaky (2026-10-21)
+matrix|NacosGrpcErrorTest.testListenerExceptionHandling|nacos java SDK: waits for a second config-change notification in a 5.5s window; flaky under load, 3/3 green when run alone (2026-10-23)
 integration|apollo: testRollbackRelease|apollo java SDK: rollback ordering expectation differs from upstream (2026-10-21)
+matrix|testRollbackRelease|same as the integration entry above; the matrix stage needs its own line (2026-10-23)

@@ -429,7 +429,6 @@ pub struct RegistrationError {
 #[serde(rename_all = "camelCase")]
 pub struct AgentDetailQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
     #[serde(alias = "agentName")]
@@ -443,7 +442,6 @@ pub struct AgentDetailQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentListQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
     #[serde(alias = "agentName")]
@@ -463,7 +461,6 @@ pub struct AgentListQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentDeleteQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
     #[serde(alias = "agentName")]
@@ -477,7 +474,6 @@ pub struct AgentDeleteQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentVersionListQuery {
     /// Namespace ID
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
     #[serde(alias = "agentName")]

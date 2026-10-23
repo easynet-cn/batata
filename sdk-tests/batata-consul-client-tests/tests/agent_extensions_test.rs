@@ -53,9 +53,11 @@ async fn test_agent_health_service_by_id_opts_missing() {
         .await
         .unwrap();
     assert!(info.is_none(), "missing service must return None info");
-    assert!(
-        status.is_empty(),
-        "status for missing service must be empty"
+    // Upstream consul/api/agent.go:844: a missing service is reported as
+    // `(HealthCritical, nil, nil)`, not as an empty status.
+    assert_eq!(
+        status, "critical",
+        "status for missing service must be critical"
     );
 }
 

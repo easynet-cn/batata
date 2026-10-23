@@ -953,6 +953,7 @@ impl RocksStateMachine {
                     &tenant,
                     &content,
                     &md5,
+                    log_index as i64,
                     config_type,
                     app_name,
                     tag,
@@ -973,7 +974,13 @@ impl RocksStateMachine {
                 group,
                 tenant,
                 history,
-            } => self.apply_config_remove_batched(&data_id, &group, &tenant, history),
+            } => self.apply_config_remove_batched(
+                &data_id,
+                &group,
+                &tenant,
+                history,
+                log_index as i64,
+            ),
 
             RaftRequest::ConfigGrayPublish(payload) => {
                 let crate::raft::request::ConfigGrayPublishPayload {

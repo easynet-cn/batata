@@ -1050,12 +1050,15 @@ impl MaintainerClient {
         group_name: &str,
         namespace_id: &str,
     ) -> anyhow::Result<bool> {
+        // Upstream `NacosConfigMaintainerServiceImpl#deleteConfig` sends
+        // `dataId`, `groupName` and `namespaceId` — not `tenant`. Sending
+        // `tenant` made the admin handler fall back to the public namespace.
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             data_id: &'a str,
             group_name: &'a str,
-            tenant: &'a str,
+            namespace_id: &'a str,
         }
 
         let response: ApiResponse<bool> = self
@@ -1065,7 +1068,7 @@ impl MaintainerClient {
                 &Query {
                     data_id,
                     group_name,
-                    tenant: namespace_id,
+                    namespace_id,
                 },
             )
             .await?;
@@ -1113,28 +1116,30 @@ impl MaintainerClient {
         src_user: &str,
         policy: SameConfigPolicy,
     ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
+        // Upstream `POST /v3/admin/cs/config/clone` reads the descriptors from
+        // an `@RequestBody List<ConfigCloneInfo>` while `namespaceId`, `policy`
+        // and `srcUser` stay query parameters.
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct Form<'a> {
+        struct Query<'a> {
             namespace_id: &'a str,
-            clone_infos: &'a str,
-            src_user: &'a str,
             policy: &'a str,
+            #[serde(skip_serializing_if = "str::is_empty")]
+            src_user: &'a str,
         }
 
-        let clone_infos_json = serde_json::to_string(clone_infos)?;
         let policy_str = format!("{}", policy);
 
         let response: ApiResponse<HashMap<String, serde_json::Value>> = self
             .http_client
-            .post_form(
+            .post_json_with_query(
                 admin_api_path::CONFIG_CLONE,
-                &Form {
+                &Query {
                     namespace_id,
-                    clone_infos: &clone_infos_json,
-                    src_user,
                     policy: &policy_str,
+                    src_user,
                 },
+                clone_infos,
             )
             .await?;
         Ok(response.data)

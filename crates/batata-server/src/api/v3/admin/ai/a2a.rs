@@ -32,7 +32,7 @@ struct AgentForm {
     #[serde(default, alias = "agentName")]
     /// `agent_name` field.
     pub agent_name: Option<String>,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(default, alias = "registrationType")]
@@ -333,7 +333,6 @@ async fn list_versions(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEndpointQuery {
-    #[serde(alias = "namespaceId")]
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(alias = "agentName")]

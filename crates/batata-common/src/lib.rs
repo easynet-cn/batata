@@ -47,6 +47,94 @@ pub fn default_page_size_small() -> u64 {
 }
 
 // ============================================================================
+// Upstream-compatible parameter aliasing
+// ============================================================================
+
+/// Returns the first candidate that is not blank, with surrounding
+/// whitespace removed.
+///
+/// Upstream Nacos uses `StringUtils.isBlank` rather than a null check when it
+/// walks its alias chains, so `namespaceId=&tenant=ns` resolves to `ns`, and
+/// `NamespaceUtil.processNamespaceParameter` trims the winner before use.
+#[inline]
+fn first_non_blank<'a>(candidates: &[Option<&'a str>]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .copied()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+}
+
+/// Resolves the namespace ID from the v1/v2/v3-compatible request parameter names.
+///
+/// Upstream Nacos does **not** treat `namespaceId`, `tenant` and `namespace` as
+/// interchangeable aliases. `ConfigDefaultHttpParamExtractor` applies a
+/// precedence chain with blank-value fallback — `namespaceId` -> `tenant` ->
+/// `namespace` — and `NamespaceUtil.processNamespaceParameter` then trims the
+/// winner, mapping a blank result to the default namespace.
+///
+/// A serde `alias` cannot express this: every alias shares a single field
+/// variant, so a request carrying more than one of the names is rejected with
+/// `duplicate field` (`serde_derive` emits `Err::duplicate_field` once the
+/// field is already `Some`), and an explicitly empty value does not fall
+/// through to the next candidate.
+///
+/// # Examples
+/// ```
+/// use batata_common::resolve_namespace_id;
+///
+/// assert_eq!(resolve_namespace_id(Some("ns-1"), None, None), "ns-1");
+/// // Blank values fall through, and the winner is trimmed.
+/// assert_eq!(resolve_namespace_id(Some("  "), Some(" ns-2 "), None), "ns-2");
+/// assert_eq!(resolve_namespace_id(None, Some("ns-3"), Some("ns-4")), "ns-3");
+/// assert_eq!(resolve_namespace_id(None, None, None), "public");
+/// ```
+pub fn resolve_namespace_id(
+    namespace_id: Option<&str>,
+    tenant: Option<&str>,
+    namespace: Option<&str>,
+) -> String {
+    first_non_blank(&[namespace_id, tenant, namespace])
+        .map(str::to_owned)
+        .unwrap_or_else(|| DEFAULT_NAMESPACE_ID.to_owned())
+}
+
+/// Resolves the group name from the v1/v2/v3-compatible request parameter names,
+/// returning `None` when every candidate is blank.
+///
+/// `ConfigDefaultHttpParamExtractor` prefers `groupName` and falls back to
+/// `group` on a blank value; `ConfigFormV3` (the v3 form object) only carries
+/// `groupName`. Callers that treat the group as required should use this
+/// function so a missing value stays distinguishable from an explicit one.
+///
+/// # Examples
+/// ```
+/// use batata_common::resolve_group_opt;
+///
+/// assert_eq!(resolve_group_opt(Some("G1"), Some("G2")), Some("G1".to_string()));
+/// assert_eq!(resolve_group_opt(None, Some(" G2 ")), Some("G2".to_string()));
+/// assert_eq!(resolve_group_opt(Some(" "), None), None);
+/// ```
+pub fn resolve_group_opt(group_name: Option<&str>, group: Option<&str>) -> Option<String> {
+    first_non_blank(&[group_name, group]).map(str::to_owned)
+}
+
+/// Resolves the group name, falling back to [`DEFAULT_GROUP`] when every
+/// candidate is blank.
+///
+/// # Examples
+/// ```
+/// use batata_common::resolve_group;
+///
+/// assert_eq!(resolve_group(Some("G1"), None), "G1");
+/// assert_eq!(resolve_group(None, None), "DEFAULT_GROUP");
+/// ```
+pub fn resolve_group(group_name: Option<&str>, group: Option<&str>) -> String {
+    resolve_group_opt(group_name, group).unwrap_or_else(|| DEFAULT_GROUP.to_owned())
+}
+
+// ============================================================================
 // Key Builders — centralized to prevent format inconsistencies
 // ============================================================================
 

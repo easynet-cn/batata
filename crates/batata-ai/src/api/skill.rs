@@ -1068,7 +1068,7 @@ async fn client_search_skills(
 #[serde(rename_all = "camelCase")]
 pub struct SkillUploadQuery {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Whether to overwrite an existing working version.
     #[serde(default)]

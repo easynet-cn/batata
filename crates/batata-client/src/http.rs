@@ -419,6 +419,35 @@ impl BatataHttpClient {
         .await
     }
 
+    /// Make a POST request with query parameters and a JSON body
+    ///
+    /// Upstream endpoints such as `POST /v3/admin/cs/config/clone` combine
+    /// `@RequestParam`s with an `@RequestBody`, so both have to be sent.
+    pub async fn post_json_with_query<
+        T: DeserializeOwned,
+        Q: Serialize + ?Sized,
+        B: Serialize + ?Sized,
+    >(
+        &self,
+        path: &str,
+        query: &Q,
+        body: &B,
+    ) -> anyhow::Result<T> {
+        self.request_with_retry(
+            |client, url, auth_header| async move {
+                client
+                    .post(&url)
+                    .header(&auth_header.0, &auth_header.1)
+                    .query(query)
+                    .json(body)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
+    }
+
     /// Make a DELETE request with query parameters
     pub async fn delete_with_query<T: DeserializeOwned, Q: Serialize + ?Sized>(
         &self,

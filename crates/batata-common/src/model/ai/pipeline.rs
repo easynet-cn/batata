@@ -98,7 +98,6 @@ pub struct PipelineListForm {
     #[serde(alias = "resourceName")]
     /// The `resource_name` field.
     pub resource_name: Option<String>,
-    #[serde(alias = "namespaceId")]
     /// The `namespace_id` field.
     pub namespace_id: Option<String>,
     /// The `version` field.

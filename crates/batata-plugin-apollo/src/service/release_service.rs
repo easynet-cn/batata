@@ -81,10 +81,14 @@ impl ReleaseService {
 
         let now = Utc::now().timestamp_millis();
         let release_id = now;
-        let release_key = format!(
-            "{}+{}+{}+{}",
-            app_id, cluster_name, namespace_name, release_id
-        );
+        // Upstream `ReleaseKeyGenerator.generateReleaseKey`: a fixed-width
+        // `{yyyyMMddHHmmss}-{16 hex}` key. A composite of app/cluster/namespace
+        // would overflow `InstanceConfig.ReleaseKey` (varchar(64)).
+        let release_key = crate::service::release_key::generate_release_key(&[
+            app_id,
+            cluster_name,
+            namespace_name,
+        ]);
 
         let stored = StoredRelease {
             id: 0,
@@ -295,10 +299,11 @@ impl ReleaseService {
         let now = Utc::now().timestamp_millis();
         let stored = StoredRelease {
             id: 0,
-            release_key: format!(
-                "{}+{}+{}+{}+gray",
-                app_id, branch_cluster_name, namespace_name, now
-            ),
+            release_key: crate::service::release_key::generate_release_key(&[
+                app_id,
+                branch_cluster_name,
+                namespace_name,
+            ]),
             name: release_name,
             comment: None,
             app_id: app_id.to_string(),
@@ -628,10 +633,11 @@ impl ReleaseService {
 
         let now = Utc::now().timestamp_millis();
         let release_id = now;
-        let release_key = format!(
-            "{}+{}+{}+{}+merge",
-            app_id, cluster_name, namespace_name, release_id
-        );
+        let release_key = crate::service::release_key::generate_release_key(&[
+            app_id,
+            cluster_name,
+            namespace_name,
+        ]);
 
         let stored = StoredRelease {
             id: 0,

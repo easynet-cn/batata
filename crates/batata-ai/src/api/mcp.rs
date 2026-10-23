@@ -51,7 +51,7 @@ fn missing(field: &str) -> HttpResponse {
 #[allow(dead_code)] // Deserialized from an HTTP form; not every field is read.
 struct McpAdminForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     /// Server name, used when `serverSpecification` carries none.
     #[serde(default, alias = "mcpName")]

@@ -7,8 +7,40 @@ use crate::client::ConsulClient;
 use crate::error::{ConsulError, Result};
 use crate::model::{
     AgentCheck, AgentCheckRegistration, AgentCheckUpdate, AgentMember, AgentService,
-    AgentServiceRegistration, QueryMeta, QueryOptions, WriteMeta, WriteOptions,
+    AgentServiceRegistration, HEALTH_CRITICAL, HEALTH_PASSING, HEALTH_WARNING, QueryMeta,
+    QueryOptions, WriteMeta, WriteOptions,
 };
+
+/// Decode the payload of a non-2xx agent-health response.
+///
+/// Upstream decodes the body *before* switching on the status code, so a
+/// critical service still yields its `AgentServiceChecksInfo` instead of an
+/// opaque error.
+fn agent_health_body<T>(err: &ConsulError) -> Option<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    err.body().and_then(|b| serde_json::from_str::<T>(b).ok())
+}
+
+/// Aggregate status across instances: critical > warning > passing.
+fn aggregate_agent_health(infos: &[serde_json::Value]) -> String {
+    let mut status = "";
+    for info in infos {
+        if let Some(s) = info.get("AggregatedStatus").and_then(|s| s.as_str()) {
+            if s == HEALTH_CRITICAL {
+                status = HEALTH_CRITICAL;
+                break;
+            }
+            if s == HEALTH_WARNING && status != HEALTH_CRITICAL {
+                status = HEALTH_WARNING;
+            } else if s == HEALTH_PASSING && status.is_empty() {
+                status = HEALTH_PASSING;
+            }
+        }
+    }
+    status.to_string()
+}
 
 /// Agent API operations
 impl ConsulClient {
@@ -673,9 +705,11 @@ impl ConsulClient {
     /// Check health of a service by service ID on the local agent, returning
     /// the AgentServiceChecksInfo struct (Go SDK `AgentHealthServiceByID`).
     ///
-    /// Returns a tuple `(status, info)` where `status` is "passing", "warning",
-    /// "critical", or "" (unknown). `info` is None when the service doesn't
-    /// exist on this agent.
+    /// Returns `(status, info)`. Upstream (`consul/api/agent.go:830`) deliberately
+    /// does not wrap the request in `requireHttpCodes`: this endpoint reports
+    /// health through the status code and still returns the payload, which the
+    /// `require*` helpers swallow. The mapping is 200 -> passing,
+    /// 429 -> warning, 503 -> critical, and 404 -> critical with no info.
     pub async fn agent_health_service_by_id_opts(
         &self,
         service_id: &str,
@@ -687,12 +721,16 @@ impl ConsulClient {
                 let status = v
                     .get("AggregatedStatus")
                     .and_then(|s| s.as_str())
-                    .unwrap_or("")
+                    .unwrap_or(HEALTH_PASSING)
                     .to_string();
                 Ok((status, Some(v)))
             }
-            Err(e) if e.is_not_found() => Ok((String::new(), None)),
-            Err(e) => Err(e),
+            Err(e) => match e.status() {
+                Some(404) => Ok((HEALTH_CRITICAL.to_string(), None)),
+                Some(429) => Ok((HEALTH_WARNING.to_string(), agent_health_body(&e))),
+                Some(503) => Ok((HEALTH_CRITICAL.to_string(), agent_health_body(&e))),
+                _ => Err(e),
+            },
         }
     }
 
@@ -703,28 +741,23 @@ impl ConsulClient {
         service_name: &str,
         opts: &QueryOptions,
     ) -> Result<(String, Vec<serde_json::Value>)> {
+        // Status-code mapping mirrors `consul/api/agent.go:871`; see
+        // `agent_health_service_by_id_opts`.
         let path = format!("/v1/agent/health/service/name/{}", service_name);
         match self.get::<Vec<serde_json::Value>>(&path, opts).await {
-            Ok((infos, _meta)) => {
-                // Aggregate status across instances: critical > warning > passing
-                let mut status = "";
-                for info in &infos {
-                    if let Some(s) = info.get("AggregatedStatus").and_then(|s| s.as_str()) {
-                        if s == "critical" {
-                            status = "critical";
-                            break;
-                        }
-                        if s == "warning" && status != "critical" {
-                            status = "warning";
-                        } else if s == "passing" && status.is_empty() {
-                            status = "passing";
-                        }
-                    }
+            Ok((infos, _meta)) => Ok((aggregate_agent_health(&infos), infos)),
+            Err(e) => match e.status() {
+                Some(404) => Ok((HEALTH_CRITICAL.to_string(), Vec::new())),
+                Some(429) => {
+                    let infos = agent_health_body::<Vec<serde_json::Value>>(&e).unwrap_or_default();
+                    Ok((HEALTH_WARNING.to_string(), infos))
                 }
-                Ok((status.to_string(), infos))
-            }
-            Err(e) if e.is_not_found() => Ok((String::new(), Vec::new())),
-            Err(e) => Err(e),
+                Some(503) => {
+                    let infos = agent_health_body::<Vec<serde_json::Value>>(&e).unwrap_or_default();
+                    Ok((HEALTH_CRITICAL.to_string(), infos))
+                }
+                _ => Err(e),
+            },
         }
     }
 

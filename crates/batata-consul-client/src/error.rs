@@ -44,6 +44,18 @@ impl ConsulError {
             _ => None,
         }
     }
+
+    /// Response body carried by a non-2xx reply.
+    ///
+    /// A handful of endpoints report their result through the status code while
+    /// still returning a full payload (see `agent_health_service_by_*`), so the
+    /// body has to stay reachable instead of being flattened into an error.
+    pub fn body(&self) -> Option<&str> {
+        match self {
+            Self::Api { message, .. } => Some(message.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// Convenience alias for `std::result::Result<T, ConsulError>`.

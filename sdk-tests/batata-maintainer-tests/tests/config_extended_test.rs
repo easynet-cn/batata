@@ -124,13 +124,10 @@ async fn test_config_batch_delete() {
     let id2 = cfg2.unwrap().id;
 
     if id1 > 0 && id2 > 0 {
-        // Batch delete by IDs (requires DB mode with auto-increment IDs)
-        let deleted_count = client.config_batch_delete(&[id1, id2]).await.unwrap();
-        assert_eq!(
-            deleted_count, 2,
-            "Should delete exactly 2 configs, got {}",
-            deleted_count
-        );
+        // Batch delete by IDs (requires DB mode with auto-increment IDs).
+        // Upstream returns `Result<Boolean>` — success flag, not a row count.
+        let deleted = client.config_batch_delete(&[id1, id2]).await.unwrap();
+        assert!(deleted, "Batch delete should report success");
     } else {
         // Embedded mode: IDs are 0, fall back to individual delete
         client.config_delete(&data_id_1, group, ns).await.unwrap();
@@ -199,9 +196,9 @@ async fn test_config_clone() {
             .await
             .unwrap();
         assert!(
-            clone_result.succeeded >= 1,
-            "Clone should succeed for at least 1 config, got succeeded={}",
-            clone_result.succeeded
+            clone_result.success_count >= 1,
+            "Clone should succeed for at least 1 config, got success_count={}",
+            clone_result.success_count
         );
 
         // Verify config exists in target namespace

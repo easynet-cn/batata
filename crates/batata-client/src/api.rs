@@ -6,10 +6,9 @@ use serde::Serialize;
 
 use crate::http::BatataHttpClient;
 use crate::model::{
-    ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo,
-    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ImportResult, InstanceInfo,
-    Member, Namespace, OkOrBool, Page, SelfMemberResponse, ServiceDetail, ServiceListItem,
-    SubscriberInfo,
+    ApiResponse, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo, ConfigGrayInfo,
+    ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ImportResult, InstanceInfo, Member, Namespace,
+    OkOrBool, Page, SelfMemberResponse, ServiceDetail, ServiceListItem, SubscriberInfo,
 };
 
 /// API client wrapper providing typed access to Batata/Nacos APIs
@@ -401,7 +400,11 @@ impl BatataApiClient {
     }
 
     /// Batch delete configurations by IDs
-    pub async fn config_batch_delete(&self, ids: &[i64]) -> anyhow::Result<usize> {
+    ///
+    /// Upstream `DELETE /v3/admin/cs/config/batch` returns `Result<Boolean>`
+    /// (`true` once the request has been processed — it is not a row count),
+    /// so the payload is decoded as a boolean.
+    pub async fn config_batch_delete(&self, ids: &[i64]) -> anyhow::Result<bool> {
         let ids_str = ids
             .iter()
             .map(|id| id.to_string())
@@ -413,7 +416,7 @@ impl BatataApiClient {
             ids: &'a str,
         }
 
-        let response: ApiResponse<usize> = self
+        let response: ApiResponse<bool> = self
             .http_client
             .delete_with_query("/v3/admin/cs/config/batch", &Query { ids: &ids_str })
             .await?;
@@ -559,18 +562,16 @@ impl BatataApiClient {
     }
 
     /// Clone configurations to another namespace
+    ///
+    /// Upstream `POST /v3/admin/cs/config/clone` takes the clone descriptors as
+    /// an `@RequestBody List<ConfigCloneInfo>` alongside query parameters, so
+    /// the IDs must be sent as a JSON array — not as a query string.
     pub async fn config_clone(
         &self,
         ids: &[i64],
         target_namespace_id: &str,
         policy: &str,
-    ) -> anyhow::Result<CloneResult> {
-        let _ids_str = ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-
+    ) -> anyhow::Result<ImportResult> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -578,14 +579,34 @@ impl BatataApiClient {
             policy: &'a str,
         }
 
-        let response: ApiResponse<CloneResult> = self
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CloneInfo {
+            config_id: i64,
+            target_group_name: String,
+            target_data_id: String,
+        }
+
+        let clone_infos: Vec<CloneInfo> = ids
+            .iter()
+            .map(|id| CloneInfo {
+                config_id: *id,
+                target_group_name: String::new(),
+                target_data_id: String::new(),
+            })
+            .collect();
+
+        // Upstream answers with a `Map<String, Object>` produced by
+        // `batchInsertOrUpdate`; Batata types the same payload as `ImportResult`.
+        let response: ApiResponse<ImportResult> = self
             .http_client
-            .post_with_query(
+            .post_json_with_query(
                 "/v3/admin/cs/config/clone",
                 &Query {
                     namespace_id: target_namespace_id,
                     policy,
                 },
+                &clone_infos,
             )
             .await?;
         Ok(response.data)

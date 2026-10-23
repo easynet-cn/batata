@@ -22,7 +22,7 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogInstancesQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,

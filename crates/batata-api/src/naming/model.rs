@@ -1188,7 +1188,6 @@ pub struct HeartbeatForm {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateClusterForm {
-    #[serde(alias = "namespaceId")]
     /// The `namespace_id` field.
     pub namespace_id: Option<String>,
     #[serde(alias = "groupName")]

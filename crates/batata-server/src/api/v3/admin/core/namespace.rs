@@ -21,7 +21,6 @@ const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetParam {
-    #[serde(alias = "namespaceId")]
     namespace_id: String,
 }
 
@@ -34,7 +33,6 @@ struct GetParam {
 struct CreateFormData {
     #[serde(alias = "customNamespaceId")]
     custom_namespace_id: Option<String>,
-    #[serde(alias = "namespaceId")]
     namespace_id: Option<String>,
     #[serde(alias = "namespaceName")]
     namespace_name: String,
@@ -45,7 +43,6 @@ struct CreateFormData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
-    #[serde(alias = "namespaceId")]
     namespace_id: String,
     #[serde(alias = "namespaceName")]
     namespace_name: String,

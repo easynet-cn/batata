@@ -22,7 +22,7 @@ struct ListenerQuery {
     data_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
 }
 
@@ -32,7 +32,7 @@ struct ListenerByIpQuery {
     pub ip: String,
     #[serde(default)]
     pub all: bool,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
 }
 

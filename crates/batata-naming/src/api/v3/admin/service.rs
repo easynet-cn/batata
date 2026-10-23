@@ -24,7 +24,7 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceListQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName", alias = "groupNameParam")]
     group_name: Option<String>,
@@ -51,7 +51,7 @@ impl ServiceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceDetailQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -68,7 +68,7 @@ impl ServiceDetailQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -671,7 +671,7 @@ async fn delete_service(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubscriberQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -773,7 +773,7 @@ async fn get_selector_types(req: HttpRequest, data: web::Data<AppState>) -> impl
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,

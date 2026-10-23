@@ -260,7 +260,7 @@ pub struct AgentSpecStorageFile {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecForm` struct.
 pub struct AgentSpecForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -274,7 +274,7 @@ pub struct AgentSpecForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecListForm` struct.
 pub struct AgentSpecListForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -297,7 +297,7 @@ pub struct AgentSpecListForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecDraftCreateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -322,7 +322,7 @@ pub struct AgentSpecDraftCreateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default, alias = "agentSpecName")]
@@ -342,7 +342,7 @@ pub struct AgentSpecUpdateForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecSubmitForm` struct.
 pub struct AgentSpecSubmitForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -356,7 +356,7 @@ pub struct AgentSpecSubmitForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecPublishForm` struct.
 pub struct AgentSpecPublishForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -370,7 +370,7 @@ pub struct AgentSpecPublishForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecLabelsUpdateForm` struct.
 pub struct AgentSpecLabelsUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -384,7 +384,7 @@ pub struct AgentSpecLabelsUpdateForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecBizTagsUpdateForm` struct.
 pub struct AgentSpecBizTagsUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -399,7 +399,7 @@ pub struct AgentSpecBizTagsUpdateForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecOnlineForm` struct.
 pub struct AgentSpecOnlineForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -415,7 +415,7 @@ pub struct AgentSpecOnlineForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecScopeForm` struct.
 pub struct AgentSpecScopeForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
@@ -429,7 +429,7 @@ pub struct AgentSpecScopeForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecQueryForm` struct.
 pub struct AgentSpecQueryForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// The `name` field.
@@ -444,7 +444,7 @@ pub struct AgentSpecQueryForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecSearchForm` struct.
 pub struct AgentSpecSearchForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// The `keyword` field.
@@ -461,7 +461,7 @@ pub struct AgentSpecSearchForm {
 #[serde(rename_all = "camelCase")]
 /// The `AgentSpecUploadQuery` struct.
 pub struct AgentSpecUploadQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default)]

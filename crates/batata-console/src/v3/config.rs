@@ -53,7 +53,7 @@ struct DeleteParam {
     pub data_id: String,
     #[serde(alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -378,7 +378,7 @@ struct BetaPublishForm {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     pub content: String,
     #[serde(default, alias = "betaIps")]
@@ -399,7 +399,7 @@ struct BetaQueryParam {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     #[serde(default)]
     pub tenant: String,
@@ -897,7 +897,7 @@ struct ListenerByIpParam {
     pub ip: String,
     #[serde(default)]
     pub all: bool,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
 }
 

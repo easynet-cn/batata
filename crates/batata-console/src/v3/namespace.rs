@@ -31,7 +31,6 @@ static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetParam {
-    #[serde(alias = "namespaceId")]
     namespace_id: String,
 }
 
@@ -41,7 +40,6 @@ struct CreateFormData {
     #[serde(alias = "customNamespaceId")]
     custom_namespace_id: Option<String>,
     #[allow(dead_code)]
-    #[serde(alias = "namespaceId")]
     namespace_id: Option<String>,
     #[serde(alias = "namespaceName")]
     namespace_name: String,
@@ -52,7 +50,6 @@ struct CreateFormData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
-    #[serde(alias = "namespaceId")]
     namespace_id: String,
     #[serde(alias = "namespaceName")]
     namespace_name: String,

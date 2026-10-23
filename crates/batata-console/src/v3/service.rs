@@ -16,7 +16,7 @@ use batata_server_common::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceListQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName", alias = "groupNameParam")]
     group_name: Option<String>,
@@ -38,6 +38,7 @@ impl ServiceListQuery {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -45,6 +46,7 @@ impl ServiceListQuery {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }
@@ -53,7 +55,7 @@ impl ServiceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceDetailQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -65,6 +67,7 @@ impl ServiceDetailQuery {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -72,6 +75,7 @@ impl ServiceDetailQuery {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }
@@ -80,7 +84,7 @@ impl ServiceDetailQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -98,6 +102,7 @@ impl ServiceForm {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -105,6 +110,7 @@ impl ServiceForm {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }
@@ -113,7 +119,7 @@ impl ServiceForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubscriberQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -129,6 +135,7 @@ impl SubscriberQuery {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -136,6 +143,7 @@ impl SubscriberQuery {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }
@@ -145,7 +153,7 @@ impl SubscriberQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -167,6 +175,7 @@ impl UpdateClusterForm {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -174,6 +183,7 @@ impl UpdateClusterForm {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }

@@ -2,8 +2,42 @@
 //!
 //! These models follow the Nacos V2 API specification with camelCase JSON serialization.
 
-use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size, impl_or_default};
+use batata_common::{default_page_no, default_page_size, resolve_group_opt, resolve_namespace_id};
 use serde::{Deserialize, Serialize};
+
+/// Implements the upstream Nacos parameter resolution chains.
+///
+/// `namespaceId`, `tenant` and `namespace` are **not** interchangeable
+/// aliases: `ConfigDefaultHttpParamExtractor` walks them as a precedence chain
+/// with blank-value fallback, and `NamespaceUtil.processNamespaceParameter`
+/// trims the winner. Likewise `groupName` is preferred over `group`, and
+/// `ConfigFormV3` only carries `groupName`.
+///
+/// Serde aliases cannot model this — they share one field variant, so a request
+/// carrying two of the names fails with `duplicate field`, and an empty value
+/// never falls through. The candidates are therefore kept as separate fields
+/// and resolved here.
+macro_rules! impl_param_resolvers {
+    () => {
+        /// Group name resolved from `groupName`, falling back to `group`.
+        ///
+        /// `None` when every candidate is blank, so callers can still report a
+        /// missing required parameter.
+        pub fn resolved_group(&self) -> Option<String> {
+            resolve_group_opt(self.group_name.as_deref(), self.group.as_deref())
+        }
+
+        /// Namespace ID resolved from `namespaceId` -> `tenant` -> `namespace`,
+        /// falling back to the default namespace.
+        pub fn resolved_namespace_id(&self) -> String {
+            resolve_namespace_id(
+                self.namespace_id.as_deref(),
+                self.tenant.as_deref(),
+                self.namespace.as_deref(),
+            )
+        }
+    };
+}
 
 // =============================================================================
 // Config API Models
@@ -14,26 +48,29 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGetParam {
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Tag for config filtering (optional)
     #[serde(default)]
     pub tag: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl ConfigGetParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Request parameters for publishing a config
@@ -41,13 +78,22 @@ impl ConfigGetParam {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigPublishParam {
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Config content (required)
     pub content: String,
     /// Tag for config (optional)
@@ -78,18 +124,12 @@ pub struct ConfigPublishParam {
     #[serde(default)]
     pub schema: Option<String>,
     /// Encrypted data key (optional)
-    #[serde(default, alias = "encryptedDataKey")]
+    #[serde(default)]
     pub encrypted_data_key: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl ConfigPublishParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Request parameters for deleting a config
@@ -97,26 +137,29 @@ impl ConfigPublishParam {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDeleteParam {
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Tag for config (optional)
     #[serde(default)]
     pub tag: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl ConfigDeleteParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Response data for config retrieval
@@ -151,22 +194,31 @@ pub struct ConfigResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigSearchDetailParam {
     /// Data ID filter (optional, supports wildcard *)
-    #[serde(default, alias = "dataId")]
+    #[serde(default)]
     pub data_id: Option<String>,
-    /// Group filter (optional)
+    /// Group filter (optional). `groupName` wins; `group` is the legacy name.
     #[serde(default)]
     pub group: Option<String>,
+    /// Group filter as sent by v3 clients
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "tenant", alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Application name filter (optional)
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: Option<String>,
     /// Config tags filter (comma-separated, optional)
-    #[serde(default, alias = "configTags")]
+    #[serde(default)]
     pub config_tags: Option<String>,
     /// Config type filter (comma-separated, optional)
-    #[serde(default, alias = "configType")]
+    #[serde(default)]
     pub config_type: Option<String>,
     /// Content search filter (optional)
     #[serde(default)]
@@ -175,24 +227,18 @@ pub struct ConfigSearchDetailParam {
     #[serde(default = "default_search")]
     pub search: String,
     /// Config detail/content search filter (optional)
-    #[serde(default, alias = "configDetail")]
+    #[serde(default)]
     pub config_detail: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size (defaults to 100)
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
-#[allow(missing_docs)]
 impl ConfigSearchDetailParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 // =============================================================================
@@ -204,18 +250,27 @@ impl ConfigSearchDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryListParam {
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size (defaults to 100)
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -223,14 +278,8 @@ fn default_search() -> String {
     "blur".to_string()
 }
 
-#[allow(missing_docs)]
 impl HistoryListParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Request parameters for getting a specific history entry
@@ -240,23 +289,26 @@ pub struct HistoryDetailParam {
     /// History entry ID (nid)
     pub nid: i64,
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl HistoryDetailParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Request parameters for getting the previous history entry
@@ -266,23 +318,26 @@ pub struct HistoryPreviousParam {
     /// Current history entry ID
     pub id: i64,
     /// Data ID of the config (required)
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    /// Group name (required)
-    pub group: String,
+    /// Group name (required). `groupName` wins; `group` is the v2 legacy name.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Group name as sent by v3 clients and by `ConfigFormV3`
+    #[serde(default)]
+    pub group_name: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl HistoryPreviousParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    impl_param_resolvers!();
 }
 
 /// Request parameters for getting configs in a namespace
@@ -290,18 +345,25 @@ impl HistoryPreviousParam {
 #[serde(rename_all = "camelCase")]
 pub struct NamespaceConfigsParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: Option<String>,
+    /// `tenant` — the namespace name used by the v1/v2 client protocol
+    #[serde(default)]
+    pub tenant: Option<String>,
+    /// `namespace` — the third fallback accepted upstream
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
-#[allow(missing_docs)]
 impl NamespaceConfigsParam {
-    impl_or_default!(
-        pub,
-        namespace_id_or_default,
-        namespace_id,
-        DEFAULT_NAMESPACE_ID
-    );
+    /// Namespace ID resolved from `namespaceId` -> `tenant` -> `namespace`.
+    pub fn resolved_namespace_id(&self) -> String {
+        resolve_namespace_id(
+            self.namespace_id.as_deref(),
+            self.tenant.as_deref(),
+            self.namespace.as_deref(),
+        )
+    }
 }
 
 /// Response data for history entry
@@ -456,4 +518,89 @@ pub struct ConfigInfoResponse {
     /// Last modified time
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_modified: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batata_common::DEFAULT_NAMESPACE_ID;
+
+    fn get(json: &str) -> ConfigGetParam {
+        serde_json::from_str(json).expect("ConfigGetParam should deserialize")
+    }
+
+    #[test]
+    fn namespace_id_wins_over_tenant_and_namespace() {
+        let p = get(
+            r#"{"dataId":"d","group":"G","namespaceId":"ns-a","tenant":"ns-b","namespace":"ns-c"}"#,
+        );
+
+        assert_eq!(p.resolved_namespace_id(), "ns-a");
+    }
+
+    #[test]
+    fn blank_namespace_id_falls_through_to_tenant() {
+        // Upstream uses StringUtils.isBlank, so an empty value is not a value.
+        let p = get(r#"{"dataId":"d","group":"G","namespaceId":"  ","tenant":"ns-b"}"#);
+
+        assert_eq!(p.resolved_namespace_id(), "ns-b");
+    }
+
+    #[test]
+    fn namespace_is_the_last_fallback_before_default() {
+        let p = get(r#"{"dataId":"d","group":"G","namespace":"ns-c"}"#);
+
+        assert_eq!(p.resolved_namespace_id(), "ns-c");
+    }
+
+    #[test]
+    fn namespace_defaults_to_public_when_all_candidates_are_blank() {
+        let p = get(r#"{"dataId":"d","group":"G","namespaceId":"","tenant":""}"#);
+
+        assert_eq!(p.resolved_namespace_id(), DEFAULT_NAMESPACE_ID);
+    }
+
+    #[test]
+    fn namespace_is_trimmed() {
+        let p = get(r#"{"dataId":"d","group":"G","tenant":"  ns-x  "}"#);
+
+        assert_eq!(p.resolved_namespace_id(), "ns-x");
+    }
+
+    #[test]
+    fn carrying_two_namespace_names_is_accepted_not_rejected() {
+        // A serde alias would fail here with `duplicate field`; the candidates
+        // are separate fields precisely so upstream clients may send both.
+        let p = get(r#"{"dataId":"d","group":"G","namespaceId":"ns-a","tenant":"ns-a"}"#);
+
+        assert_eq!(p.resolved_namespace_id(), "ns-a");
+    }
+
+    #[test]
+    fn group_name_wins_over_group() {
+        let p = get(r#"{"dataId":"d","groupName":"G1","group":"G2"}"#);
+
+        assert_eq!(p.resolved_group().as_deref(), Some("G1"));
+    }
+
+    #[test]
+    fn group_alone_is_still_accepted() {
+        let p = get(r#"{"dataId":"d","group":"G2"}"#);
+
+        assert_eq!(p.resolved_group().as_deref(), Some("G2"));
+    }
+
+    #[test]
+    fn missing_group_stays_missing_so_callers_can_report_it() {
+        let p = get(r#"{"dataId":"d","group":"  "}"#);
+
+        assert_eq!(p.resolved_group(), None);
+    }
+
+    #[test]
+    fn group_is_trimmed() {
+        let p = get(r#"{"dataId":"d","groupName":"  G1  "}"#);
+
+        assert_eq!(p.resolved_group().as_deref(), Some("G1"));
+    }
 }

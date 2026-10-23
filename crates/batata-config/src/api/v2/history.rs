@@ -148,22 +148,19 @@ pub async fn get_history_list(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -180,8 +177,8 @@ pub async fn get_history_list(
     match persistence
         .config_history_search_page(
             &params.data_id,
-            &params.group,
-            namespace_id,
+            &group,
+            &namespace_id,
             params.page_no,
             page_size,
         )
@@ -235,22 +232,19 @@ pub async fn get_history(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -264,9 +258,7 @@ pub async fn get_history(
     match persistence.config_history_find_by_id(params.nid).await {
         Ok(Some(item)) => {
             // Verify the history entry matches the requested config
-            if item.data_id != params.data_id
-                || item.group != params.group
-                || item.tenant != namespace_id
+            if item.data_id != params.data_id || item.group != group || item.tenant != namespace_id
             {
                 return Result::<Option<HistoryItemResponse>>::http_response(
                     404,
@@ -322,22 +314,19 @@ pub async fn get_history_detail(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -372,7 +361,7 @@ pub async fn get_history_detail(
 
     // Verify the history entry matches the requested config
     if history_item.data_id != params.data_id
-        || history_item.group != params.group
+        || history_item.group != group
         || history_item.tenant != namespace_id
     {
         return Result::<Option<ConfigHistoryInfoDetail>>::http_response(
@@ -469,7 +458,7 @@ pub async fn get_history_detail(
 
             // Fall back to current config as the "updated" version
             match persistence
-                .config_find_one(&params.data_id, &params.group, namespace_id)
+                .config_find_one(&params.data_id, &group, &namespace_id)
                 .await
             {
                 Ok(Some(current)) => {
@@ -532,22 +521,19 @@ pub async fn get_previous_history(
         );
     }
 
-    if params.group.is_empty() {
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -559,7 +545,7 @@ pub async fn get_previous_history(
     // Get the previous history entry from persistence service
     let persistence = data.persistence();
     match persistence
-        .config_history_get_previous(&params.data_id, &params.group, namespace_id, params.id)
+        .config_history_get_previous(&params.data_id, &group, &namespace_id, params.id)
         .await
     {
         Ok(Some(item)) => {
@@ -595,7 +581,7 @@ pub async fn get_namespace_configs(
     data: web::Data<AppState>,
     params: web::Query<NamespaceConfigsParam>,
 ) -> impl Responder {
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
     // Check authorization for namespace-level access
     let resource = format!("{}:*:config/*", namespace_id);
@@ -609,7 +595,7 @@ pub async fn get_namespace_configs(
 
     // Get configs from persistence service
     let persistence = data.persistence();
-    match persistence.config_find_by_namespace(namespace_id).await {
+    match persistence.config_find_by_namespace(&namespace_id).await {
         Ok(configs) => {
             let response: Vec<ConfigInfoResponse> = configs
                 .into_iter()

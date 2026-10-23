@@ -19,6 +19,13 @@ impl RocksStateMachine {
     /// with a single RocksDB WriteBatch, reducing from 2 fsyncs to 1 and ensuring atomicity.
     /// The op_type (Insert/Update) is determined here from the existing value, removing the
     /// need for a pre-write read in the distributed persistence layer.
+    /// `history_id` is supplied by the caller (the Raft log index) rather than
+    /// derived from the local clock: the wall-clock millisecond is NOT unique
+    /// (two publishes in the same millisecond are routine when clients or tests
+    /// run concurrently), and a duplicated id makes
+    /// `config_history_find_by_id` return whichever entry comes first in key
+    /// order — i.e. the detail of a *different* data_id. The log index is
+    /// strictly monotonic and identical on every node.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_config_publish_batched(
         &self,
@@ -27,6 +34,7 @@ impl RocksStateMachine {
         tenant: &str,
         content: &str,
         md5: &str,
+        history_id: i64,
         config_type: Option<String>,
         app_name: Option<String>,
         tag: Option<String>,
@@ -122,9 +130,9 @@ impl RocksStateMachine {
             } else {
                 hi.op_type
             };
-            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
+            let history_key = Self::config_history_key(data_id, group, tenant, history_id as u64);
             let history = StoredConfigHistory {
-                id: now,
+                id: history_id,
                 data_id: data_id.to_string(),
                 group: group.to_string(),
                 tenant: tenant.to_string(),
@@ -171,6 +179,7 @@ impl RocksStateMachine {
         group: &str,
         tenant: &str,
         history: Option<Box<ConfigDeleteHistoryInfo>>,
+        history_id: i64,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
         let now = chrono::Utc::now().timestamp_millis();
@@ -179,9 +188,9 @@ impl RocksStateMachine {
         batch.delete_cf(self.cf_config(), key.as_bytes());
 
         if let Some(hi) = history.map(|b| *b) {
-            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
+            let history_key = Self::config_history_key(data_id, group, tenant, history_id as u64);
             let history = StoredConfigHistory {
-                id: now,
+                id: history_id,
                 data_id: data_id.to_string(),
                 group: group.to_string(),
                 tenant: tenant.to_string(),

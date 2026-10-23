@@ -25,7 +25,7 @@ use crate::service::prompt::PromptOperationService;
 /// Request body for publishing a new prompt version.
 pub struct PromptPublishForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -52,7 +52,7 @@ pub struct PromptPublishForm {
 /// Query parameters for fetching prompt metadata or version detail.
 pub struct PromptQueryForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -70,7 +70,7 @@ pub struct PromptQueryForm {
 /// Query parameters for listing prompts with pagination and filtering.
 pub struct PromptListForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Optional prompt key filter.
     #[serde(alias = "promptKey")]
@@ -93,7 +93,7 @@ pub struct PromptListForm {
 /// Query parameters for listing prompt versions (history).
 pub struct PromptHistoryForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -111,7 +111,7 @@ pub struct PromptHistoryForm {
 /// Request body for binding a label to a prompt version.
 pub struct PromptLabelBindForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -127,7 +127,7 @@ pub struct PromptLabelBindForm {
 /// Query parameters for unbinding a prompt label.
 pub struct PromptLabelForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -141,7 +141,7 @@ pub struct PromptLabelForm {
 /// Request body for updating prompt metadata.
 pub struct PromptMetadataForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -691,7 +691,7 @@ async fn client_search_prompts(
 /// Request body for a lifecycle action on one prompt version.
 pub struct PromptVersionActionForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -705,7 +705,7 @@ pub struct PromptVersionActionForm {
 /// Request body for creating a prompt draft.
 pub struct PromptDraftCreateForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -730,7 +730,7 @@ pub struct PromptDraftCreateForm {
 /// Request body for updating the prompt draft.
 pub struct PromptDraftUpdateForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -750,7 +750,7 @@ pub struct PromptDraftUpdateForm {
 /// Query parameters for discarding a prompt draft.
 pub struct PromptDraftForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -762,7 +762,7 @@ pub struct PromptDraftForm {
 /// Request body for replacing the label routing.
 pub struct PromptLabelsForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -776,7 +776,7 @@ pub struct PromptLabelsForm {
 /// Request body for updating the prompt description.
 pub struct PromptDescriptionForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]
@@ -790,7 +790,7 @@ pub struct PromptDescriptionForm {
 /// Request body for updating the prompt biz tags.
 pub struct PromptBizTagsForm {
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
     #[serde(alias = "promptKey")]

@@ -44,7 +44,7 @@ struct AiResourceImportSourceInfo {
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AiResourceImportSearchRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "resourceType")]
     resource_type: Option<String>,
@@ -102,7 +102,7 @@ struct AiResourceImportItem {
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AiResourceImportValidateRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "resourceType")]
     resource_type: Option<String>,
@@ -145,7 +145,7 @@ struct AiResourceImportValidationItem {
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AiResourceImportExecuteRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "resourceType")]
     resource_type: Option<String>,

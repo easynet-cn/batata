@@ -20,7 +20,7 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct InstanceListQuery {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -40,6 +40,7 @@ impl InstanceListQuery {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -47,6 +48,7 @@ impl InstanceListQuery {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }
@@ -55,7 +57,7 @@ impl InstanceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
     #[serde(default, alias = "groupName")]
     group_name: Option<String>,
@@ -89,6 +91,7 @@ impl InstanceUpdateForm {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID)
     }
@@ -96,6 +99,7 @@ impl InstanceUpdateForm {
     fn group_name_or_default(&self) -> &str {
         self.group_name
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_GROUP)
     }

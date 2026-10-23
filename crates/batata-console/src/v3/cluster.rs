@@ -29,7 +29,6 @@ struct GetNodesParam {
     pub page_no: Option<u64>,
     #[serde(alias = "pageSize")]
     pub page_size: Option<u64>,
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 

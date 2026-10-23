@@ -287,7 +287,7 @@ pub struct SkillStorageFile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -301,7 +301,7 @@ pub struct SkillForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillListForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -328,7 +328,7 @@ pub struct SkillListForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDraftCreateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// Skill name — optional when creating new skill (can be in skillCard JSON)
@@ -353,7 +353,7 @@ pub struct SkillDraftCreateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(default, alias = "skillName")]
@@ -373,7 +373,7 @@ pub struct SkillUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSubmitForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -387,7 +387,7 @@ pub struct SkillSubmitForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillPublishForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -401,7 +401,7 @@ pub struct SkillPublishForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillLabelsUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -415,7 +415,7 @@ pub struct SkillLabelsUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillBizTagsUpdateForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -430,7 +430,7 @@ pub struct SkillBizTagsUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillOnlineForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -446,7 +446,7 @@ pub struct SkillOnlineForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillScopeForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     #[serde(alias = "skillName")]
@@ -460,7 +460,7 @@ pub struct SkillScopeForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// The `keyword` field.
@@ -477,7 +477,7 @@ pub struct SkillSearchForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillQueryForm {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// The `name` field.

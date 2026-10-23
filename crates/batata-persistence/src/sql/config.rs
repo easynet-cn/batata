@@ -400,7 +400,10 @@ impl ConfigPersistence for ExternalDbPersistService {
                             .iter()
                             .map(|tag| config_tags_relation::ActiveModel {
                                 tag_name: Set((*tag).to_owned()),
-                                tag_type: Set(None),
+                                // Upstream `addConfigTagRelationAtomic` writes
+                                // `StringUtils.EMPTY`; NULL would defeat the
+                                // (id, tag_name, tag_type) unique key.
+                                tag_type: Set(Some(String::new())),
                                 data_id: Set(data_id.to_string()),
                                 group_id: Set(group_id.to_string()),
                                 tenant_id: Set(Some(tenant_id.to_string())),
@@ -467,7 +470,10 @@ impl ConfigPersistence for ExternalDbPersistService {
                         .iter()
                         .map(|tag| config_tags_relation::ActiveModel {
                             tag_name: Set((*tag).to_owned()),
-                            tag_type: Set(None),
+                            // Upstream `addConfigTagRelationAtomic` writes
+                            // `StringUtils.EMPTY`; NULL would defeat the
+                            // (id, tag_name, tag_type) unique key.
+                            tag_type: Set(Some(String::new())),
                             data_id: Set(data_id.to_string()),
                             group_id: Set(group_id.to_string()),
                             tenant_id: Set(Some(tenant_id.to_string())),
@@ -1121,39 +1127,59 @@ impl ConfigPersistence for ExternalDbPersistService {
         config_tags: &str,
         desc: &str,
     ) -> anyhow::Result<bool> {
-        // Update the config_info record
-        let result = config_info::Entity::update_many()
+        // Upstream `ExternalConfigInfoPersistServiceImpl.updateConfigInfoMetadata`
+        // resolves the config first: a missing config is a NOT_FOUND, and every
+        // tag row carries the owning config's `id` (the column is NOT NULL with
+        // no default, so it can never be left unset).
+        let config = config_info::Entity::find()
             .filter(config_info::Column::DataId.eq(data_id))
             .filter(config_info::Column::GroupId.eq(group))
             .filter(config_info::Column::TenantId.eq(namespace_id))
+            .one(&self.db)
+            .await?;
+        let Some(config) = config else {
+            return Err(anyhow::anyhow!(
+                "config is not found for dataId={}, group={}",
+                data_id,
+                group
+            ));
+        };
+        let config_id = config.id;
+
+        // Update the config_info record
+        let result = config_info::Entity::update_many()
+            .filter(config_info::Column::Id.eq(config_id))
             .col_expr(config_info::Column::CDesc, Expr::value(desc))
             .exec(&self.db)
             .await?;
 
-        // Update tags: first delete existing tags
+        // Update tags: delete existing tags by config id (upstream
+        // `removeTagByIdAtomic`), then re-insert.
         config_tags_relation::Entity::delete_many()
-            .filter(config_tags_relation::Column::DataId.eq(data_id))
-            .filter(config_tags_relation::Column::GroupId.eq(group))
-            .filter(config_tags_relation::Column::TenantId.eq(namespace_id))
+            .filter(config_tags_relation::Column::Id.eq(config_id))
             .exec(&self.db)
             .await?;
 
         // Then insert new tags
         if !config_tags.is_empty() {
-            let tags: Vec<&str> = config_tags
-                .split(',')
-                .filter(|t| !t.trim().is_empty())
-                .collect();
-            for tag in tags {
-                let tag_model = config_tags_relation::ActiveModel {
-                    tag_name: Set(tag.trim().to_string()),
-                    tag_type: Set(None),
+            let tags = normalize_tags(config_tags);
+            let tag_entities: Vec<config_tags_relation::ActiveModel> = tags
+                .iter()
+                .map(|tag| config_tags_relation::ActiveModel {
+                    id: Set(config_id),
+                    tag_name: Set((*tag).to_string()),
+                    // Upstream passes `StringUtils.EMPTY`, not NULL: the unique
+                    // key is (id, tag_name, tag_type) and NULLs are always
+                    // distinct, which would silently duplicate tag rows.
+                    tag_type: Set(Some(String::new())),
                     data_id: Set(data_id.to_string()),
                     group_id: Set(group.to_string()),
                     tenant_id: Set(Some(namespace_id.to_string())),
                     ..Default::default()
-                };
-                config_tags_relation::Entity::insert(tag_model)
+                })
+                .collect();
+            if !tag_entities.is_empty() {
+                config_tags_relation::Entity::insert_many(tag_entities)
                     .exec(&self.db)
                     .await?;
             }

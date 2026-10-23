@@ -293,8 +293,22 @@ cmd_sdk_quick() {
     if [ "${NO_RESTART:-}" != "1" ]; then
         # Kill any leftover batata-server so we don't collide on shared ports
         # (e.g. a previous cluster run still holding 8848/8081/8500).
+        #
+        # SIGTERM starts a *graceful* shutdown: the HTTP listeners stop first
+        # (Phase 12) and the process then drains for up to 30s. The port sweep
+        # below therefore finds nothing to kill while the old process is still
+        # alive and still holding the embedded RocksDB LOCK file. The next
+        # server then dies with "While lock file: .../LOCK: Resource
+        # temporarily unavailable" and every SDK case fails as
+        # "No available server" -- which reads as a product regression.
+        # Wait for the process to actually exit, then SIGKILL whatever is left.
         pkill -f batata-server 2>/dev/null || true
-        sleep 2
+        for _ in $(seq 1 40); do
+            pgrep -f batata-server >/dev/null 2>&1 || break
+            sleep 1
+        done
+        pkill -9 -f batata-server 2>/dev/null || true
+        sleep 1
         for port in 8848 8858 8868 8081 8500 8510 8520 8080 18080 18090 18100 \
                     9848 9858 9868 9849 9859 9869 7848 7858 7868; do
             lsof -ti:"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
@@ -311,6 +325,28 @@ cmd_sdk_quick() {
             echo -e "${BOLD}Starting cluster ($(basename $BINARY))...${NC}"
             BINARY="$BINARY" CONSUL_ENABLED=true APOLLO_ENABLED=true "${SCRIPT_DIR}/startup.sh" cluster 2>&1 | grep "ready\|ERROR" || true
             LOG_SOURCES=("${ROOT}/logs/node1" "${ROOT}/logs/node2" "${ROOT}/logs/node3")
+        fi
+
+        # --- Preflight: is the backend actually answering? ----------------
+        # A server that died during startup (RocksDB LOCK contention is the
+        # usual cause) leaves every SDK case failing with "No available
+        # server" after ~20 minutes of retries, which reads as a product
+        # regression instead of a broken fixture. Fail fast, and say why.
+        local code=000 ready=0
+        for _ in $(seq 1 60); do
+            code=$(curl -s --noproxy '*' --max-time 3 -o /dev/null -w '%{http_code}' \
+                -X POST "http://127.0.0.1:8848/nacos/v3/auth/user/login" \
+                -d "username=preflight&password=preflight" 2>/dev/null || echo 000)
+            if [ "$code" != "000" ] && [ "$code" != "404" ]; then
+                ready=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$ready" != "1" ]; then
+            echo -e "${RED}Backend never answered on 127.0.0.1:8848 (last HTTP code: ${code}).${NC}"
+            echo -e "${RED}Check ${LOG_SOURCES[*]} before treating this as a product failure.${NC}"
+            return 1
         fi
     fi
 
@@ -455,6 +491,73 @@ cmd_sdk_matrix() {
     ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
     fail() { echo -e "${RED}[FAIL]${NC} $*"; }
     warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+    # --- External DB access -------------------------------------------------
+    # Prefer a local client over `podman exec`: exec talks to the Podman VM over
+    # SSH and fails with "open ~/.ssh/known_hosts: operation not permitted"
+    # wherever that path is not readable, while the forwarded port is always
+    # reachable. Fall back to exec when no client is installed.
+    db_exec() { # platform sql...
+        local platform="$1"; shift
+        case "$platform" in
+            mysql)
+                if command -v mysql >/dev/null 2>&1; then
+                    mysql -h 127.0.0.1 -P 3306 -uroot -pdevterry --protocol=TCP "$@" 2>/dev/null
+                else
+                    podman exec mysql mysql -uroot -pdevterry "$@"
+                fi ;;
+            postgres)
+                if command -v psql >/dev/null 2>&1; then
+                    PGPASSWORD=devterry psql -h 127.0.0.1 -p 5432 -U postgres "$@" 2>/dev/null
+                else
+                    podman exec postgres psql -U postgres "$@"
+                fi ;;
+        esac
+    }
+
+    db_reachable() { # platform
+        local platform="$1"
+        case "$platform" in
+            mysql)    db_exec mysql    -e "SELECT 1;" >/dev/null 2>&1 ;;
+            postgres) db_exec postgres -c "SELECT 1;" >/dev/null 2>&1 ;;
+        esac
+    }
+
+    # Fail fast when the external stores are down. Without this each affected
+    # combo burns a full startup timeout before reporting "connection refused",
+    # and the matrix looks like a product regression rather than a missing
+    # dependency.
+    preflight_dbs() {
+        local needed=() p combo
+        for combo in "${COMBOS[@]}"; do
+            case "$combo" in
+                *-mysql)    p=mysql ;;
+                *-postgres) p=postgres ;;
+                *)          continue ;;
+            esac
+            case " ${needed[*]:-} " in *" $p "*) ;; *) needed+=("$p") ;; esac
+        done
+        [ "${#needed[@]}" -eq 0 ] && return 0
+
+        log "环境检测：确认外部数据库可连接"
+        local missing=()
+        for p in "${needed[@]}"; do
+            if db_reachable "$p"; then
+                ok "$p 可连接"
+            else
+                fail "$p 不可连接"
+                missing+=("$p")
+            fi
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+            warn "缺失数据库：${missing[*]}"
+            warn "启动容器：  bash scripts/podman.sh up mysql postgres"
+            warn "连接串在 recreate_db()/run_combo() 中，需与你的环境一致"
+            return 1
+        fi
+        return 0
+    }
+
+    preflight_dbs || return 1
 
     sdk_wait_for_server() { # url timeout_secs
         local url="$1" timeout="${2:-120}" waited=0
@@ -488,17 +591,18 @@ cmd_sdk_matrix() {
         mkdir -p "${ROOT}/logs/sdk-node1" "${ROOT}/logs/sdk-node2" "${ROOT}/logs/sdk-node3"
     }
 
+
     recreate_db() { # platform
         local platform="$1"
         case "$platform" in
             mysql)
-                podman exec mysql mysql -uroot -pdevterry \
+                db_exec mysql \
                     -e "DROP DATABASE IF EXISTS batata_sdk_test; CREATE DATABASE batata_sdk_test CHARACTER SET utf8mb4;" \
                     || { fail "MySQL 重建库失败"; return 1; }
                 ok "MySQL 库 batata_sdk_test 已重建" ;;
             postgres)
-                podman exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS batata_sdk_test;" >/dev/null 2>&1
-                podman exec postgres psql -U postgres -c "CREATE DATABASE batata_sdk_test OWNER postgres;" >/dev/null 2>&1 \
+                db_exec postgres -c "DROP DATABASE IF EXISTS batata_sdk_test;" >/dev/null 2>&1
+                db_exec postgres -c "CREATE DATABASE batata_sdk_test OWNER postgres;" >/dev/null 2>&1 \
                     || { fail "Postgres 重建库失败"; return 1; }
                 ok "Postgres 库 batata_sdk_test 已重建" ;;
         esac
@@ -536,19 +640,19 @@ cmd_sdk_matrix() {
 
     start_cluster() {
         local args=("$@")
-        local is_embedded=false
-        case " ${args[*]} " in *"embedded"*) is_embedded=true ;; esac
-        local n_dirs=()
-        if [ "$is_embedded" = true ]; then
-            n_dirs=("${ROOT}/data/rock-n1" "${ROOT}/data/rock-n2" "${ROOT}/data/rock-n3")
-        fi
+        # Every node gets its own embedded store, including the external-DB
+        # combos: the Raft log is local RocksDB regardless of where the business
+        # tables live. Left unset it defaults to `${HOME}/batata`, which macOS
+        # marks with `com.apple.provenance`, so RocksDB's `rename(IDENTITY)`
+        # fails with EPERM and the node never comes up — that alone sank
+        # cluster-mysql and cluster-postgres.
+        local n_dirs=("${ROOT}/data/rock-n1" "${ROOT}/data/rock-n2" "${ROOT}/data/rock-n3")
         cluster_write_conf "$ROOT"
         local common=(-m cluster --batata.member.list="${CLUSTER_MEMBER_LIST}" --batata.plugin.consul.enabled=true --batata.plugin.apollo.enabled=true "${args[@]}")
         for i in 0 1 2; do
             local deploy=server
             [ "$i" -eq 0 ] && deploy=merged
-            local data_arg=()
-            [ "$is_embedded" = true ] && data_arg=(--batata.persistence.embedded.data_dir="${n_dirs[$i]}")
+            local data_arg=(--batata.persistence.embedded.data_dir="${n_dirs[$i]}")
             "${BINARY}" "${common[@]}" -d "$deploy" \
                 --batata.server.main.port="${CLUSTER_NODE_PORTS[$i]}" \
                 --batata.console.port="${CLUSTER_CONSOLE_PORTS[$i]}" \
@@ -660,7 +764,9 @@ cmd_sdk_matrix() {
         log "构建 release 二进制..."
         ( cd "${ROOT}" && cargo build --release -p batata-server ) || { fail "构建失败"; return 1; }
     fi
-    [ -x "$BINARY" ] || { fail "找不到二进制 $BINARY，请先 --no-build 前的构建或去掉 --no-build"; return 1; }
+    # `${BINARY}`: bash folds a following CJK comma into the name, so `$BINARY，`
+    # reads as `BINARY<0xE3>` and dies with "unbound variable" under `set -u`.
+    [ -x "${BINARY}" ] || { fail "找不到二进制 ${BINARY}，请先构建或去掉 --no-build"; return 1; }
 
     log "将执行 ${#COMBOS[@]} 个组合: ${COMBOS[*]}"
     RESULTS=()
@@ -684,11 +790,25 @@ cmd_sdk_matrix() {
 
     echo
     log "=========== 测试矩阵结果摘要 ==========="
+    local failed=0
     for r in "${RESULTS[@]}"; do
         name="${r%%:*}"; res="${r##*:}"
         [ "$res" = "PASS" ] && c="$GREEN" || c="$RED"
         echo -e "${c}${res}${NC}  ${name}"
+        if [ "$res" != "PASS" ]; then
+            # Machine-readable, ANSI-free: regression.sh turns these into
+            # per-combo blockers, which the coloured line above cannot carry.
+            echo "[MATRIX] FAIL ${name}"
+            failed=$((failed + 1))
+        fi
     done
+
+    # The summary used to be followed by an unconditional `return 0`, so a run
+    # where every combo failed still let the gate report PASS.
+    if [ "$failed" -gt 0 ]; then
+        fail "${failed}/${#RESULTS[@]} 个组合失败"
+        return 1
+    fi
     return 0
 }
 
@@ -705,10 +825,14 @@ cmd_sdk() {
             *)        rest+=("$a") ;;
         esac
     done
+    # `${rest[@]+"${rest[@]}"}`: on bash 3.2/4.x an empty array expanded as
+    # "${rest[@]}" aborts under `set -u` with "rest[@]: unbound variable", which
+    # killed the matrix stage before the first combo whenever no extra args
+    # were passed (which is how regression.sh invokes it).
     if [ "$mode" = "matrix" ]; then
-        cmd_sdk_matrix "${rest[@]}"
+        cmd_sdk_matrix ${rest[@]+"${rest[@]}"}
     else
-        cmd_sdk_quick "${rest[@]}"
+        cmd_sdk_quick ${rest[@]+"${rest[@]}"}
     fi
 }
 

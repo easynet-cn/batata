@@ -182,17 +182,38 @@ impl EmbeddedPersistService {
         }
     }
 
-    /// Generate a unique history ID based on timestamp + counter.
+    /// Generate a cluster-unique history ID: timestamp-seeded sequence + a
+    /// per-process salt in the low bits.
     ///
-    /// The timestamp alone is NOT unique: two publishes inside the same
-    /// millisecond (routine when tests or clients run concurrently) produce the
-    /// same `nid`, and `config_history_find_by_id` then returns whichever entry
-    /// comes first in key order — i.e. a detail for a *different* data_id.
-    /// The counter makes ids strictly monotonic within the process, and because
-    /// the sequence is seeded from the wall clock it still moves forward across
-    /// restarts instead of reusing old ids.
+    /// Two failure modes have to be avoided:
+    /// * the timestamp alone is NOT unique — two publishes inside the same
+    ///   millisecond (routine when tests or clients run concurrently) produce
+    ///   the same `nid`, and `config_history_find_by_id` then returns whichever
+    ///   entry comes first in key order, i.e. a detail for a *different*
+    ///   data_id;
+    /// * the sequence is process-local, so in an embedded **cluster** a node
+    ///   that becomes Raft leader later starts its own counter from the wall
+    ///   clock and can hand out ids the previous leader already used.
+    ///
+    /// The counter keeps ids monotonic within a process; the salt keeps two
+    /// processes from ever emitting the same id. Seeding the sequence from the
+    /// wall clock keeps ids moving forward across restarts.
     fn generate_history_id() -> u64 {
         static LAST_HISTORY_ID: AtomicU64 = AtomicU64::new(0);
+        static SALT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let salt = *SALT.get_or_init(|| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hasher::write_u32(&mut hasher, std::process::id());
+            std::hash::Hasher::write_u64(
+                &mut hasher,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0),
+            );
+            (std::hash::Hasher::finish(&hasher) & 0xFFFF) | 1
+        });
+
         let now = chrono::Utc::now().timestamp_millis() as u64;
         // fetch_update hands back the value the CAS saw, not the one it stored,
         // so the +1 has to be applied here too.
@@ -201,7 +222,7 @@ impl EmbeddedPersistService {
                 Some(prev.max(now) + 1)
             })
             .unwrap_or(now);
-        prev.max(now) + 1
+        ((prev.max(now) + 1) << 16) | salt
     }
 }
 

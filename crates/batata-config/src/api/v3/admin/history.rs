@@ -6,7 +6,7 @@ use tracing::warn;
 
 use batata_api::Page;
 
-use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small};
+use batata_common::{default_page_no, default_page_size_small, resolve_namespace_id};
 use batata_plugin::spi::{ConfigChangeRequest, ConfigPointcut, ExecuteType};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model, model::AppState, secured,
@@ -29,6 +29,27 @@ struct HistoryListParam {
     page_size: u64,
 }
 
+impl HistoryListParam {
+    /// Resolved with the upstream precedence chain `namespaceId` -> `tenant`,
+    /// then trimmed and defaulted by `NamespaceUtil.processNamespaceParameter`.
+    fn resolved_namespace_id(&self) -> String {
+        resolve_namespace_id(self.namespace_id.as_deref(), self.tenant.as_deref(), None)
+    }
+}
+
+/// Namespace resolution shared by the history forms.
+///
+/// Upstream `HistoryControllerV3` reads `ConfigFormV3.getNamespaceId()` and
+/// passes it through `NamespaceUtil.processNamespaceParameter`; `tenant` is
+/// accepted here only as a legacy fallback, and always at lower precedence.
+macro_rules! impl_namespace_resolver {
+    () => {
+        fn resolved_namespace_id(&self) -> String {
+            resolve_namespace_id(self.namespace_id.as_deref(), None, None)
+        }
+    };
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +59,10 @@ struct HistoryDetailParam {
     #[serde(default)]
     namespace_id: Option<String>,
     nid: i64,
+}
+
+impl HistoryDetailParam {
+    impl_namespace_resolver!();
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,10 +75,21 @@ struct HistoryPreviousParam {
     id: i64,
 }
 
+impl HistoryPreviousParam {
+    impl_namespace_resolver!();
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NamespaceConfigsParam {
-    namespace_id: String,
+    #[serde(default)]
+    namespace_id: Option<String>,
+}
+
+impl NamespaceConfigsParam {
+    fn resolved_namespace_id(&self) -> String {
+        resolve_namespace_id(self.namespace_id.as_deref(), None, None)
+    }
 }
 
 /// GET /v3/admin/cs/history/list
@@ -71,13 +107,7 @@ async fn list_history(
             .build()
     );
 
-    let mut namespace_id = params.tenant.clone().unwrap_or_default();
-    if namespace_id.is_empty() {
-        namespace_id = params.namespace_id.clone().unwrap_or_default();
-    }
-    if namespace_id.is_empty() {
-        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
-    }
+    let namespace_id = params.resolved_namespace_id();
 
     // Execute ConfigChangePluginV2 Before hook for History
     let src_user = req
@@ -184,6 +214,8 @@ async fn get_detail(
             .build()
     );
 
+    let namespace_id = params.resolved_namespace_id();
+
     match data
         .persistence()
         .config_history_find_by_id(params.nid)
@@ -191,6 +223,31 @@ async fn get_detail(
     {
         Ok(result) => {
             let config_info = result.map(ConfigHistoryDetailInfo::from);
+
+            // Upstream `HistoryService.getConfigHistoryInfo` fetches by `nid`
+            // and then calls `checkHistoryInfoPermission`, which rejects the
+            // request when the stored entry belongs to a different
+            // dataId/group/namespaceId. Without this the endpoint happily
+            // returns another config's history when `nid` is ambiguous.
+            let mismatched = config_info.as_ref().is_some_and(|info| {
+                let basic = &info.config_history_basic_info.config_basic_info;
+                basic.data_id != params.data_id
+                    || basic.group_name != params.group_name
+                    || resolve_namespace_id(Some(&basic.namespace_id), None, None) != namespace_id
+            });
+            if mismatched {
+                warn!(
+                    nid = params.nid,
+                    "History detail does not match the requested dataId/group/namespaceId"
+                );
+                return model::common::Result::<String>::http_response(
+                    403,
+                    403,
+                    "Please check dataId, group or namespaceId.".to_string(),
+                    String::new(),
+                );
+            }
+
             model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
         }
         Err(e) => {
@@ -220,12 +277,7 @@ async fn get_previous(
             .build()
     );
 
-    let namespace_id = params
-        .namespace_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_NAMESPACE_ID)
-        .to_string();
+    let namespace_id = params.resolved_namespace_id();
 
     match data
         .persistence()
@@ -274,11 +326,7 @@ async fn get_configs_by_namespace(
             .build()
     );
 
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
-    } else {
-        params.namespace_id.clone()
-    };
+    let namespace_id = params.resolved_namespace_id();
 
     match data
         .persistence()

@@ -35,21 +35,21 @@ async fn get_config(
         );
     }
 
-    if params.group.is_empty() {
+    // Upstream `ConfigFormV3` binds the group as `groupName` ("use groupName
+    // replace group"), so that is the canonical name for v3 clients; `group` is
+    // still accepted for v2-era callers.
+    let Some(group) = params.resolved_group() else {
         return Result::<String>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
-            "Required parameter 'group' is missing".to_string(),
+            "Required parameter 'groupName' is missing".to_string(),
             String::new(),
         );
-    }
+    };
 
-    let namespace_id = params.namespace_id_or_default();
+    let namespace_id = params.resolved_namespace_id();
 
-    let resource = format!(
-        "{}:{}:config/{}",
-        namespace_id, params.group, params.data_id
-    );
+    let resource = format!("{}:{}:config/{}", namespace_id, group, params.data_id);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)
@@ -74,14 +74,8 @@ async fn get_config(
 
     // Check for matching gray/beta config first
     if let Some((content, md5, encrypted_data_key, _last_modified, gray_name)) =
-        find_matching_gray_config(
-            persistence,
-            &params.data_id,
-            &params.group,
-            namespace_id,
-            &labels,
-        )
-        .await
+        find_matching_gray_config(persistence, &params.data_id, &group, &namespace_id, &labels)
+            .await
     {
         // Decrypt if needed
         let enc_svc = crate::service::encryption::get_encryption_provider(&data);
@@ -92,7 +86,7 @@ async fn get_config(
         let response = ConfigResponse {
             id: String::new(),
             data_id: params.data_id.clone(),
-            group: params.group.clone(),
+            group: group.clone(),
             content: decrypted,
             md5,
             encrypted_data_key: if encrypted_data_key.is_empty() {
@@ -113,7 +107,7 @@ async fn get_config(
 
     // Fall through to formal config query
     match persistence
-        .config_find_one(&params.data_id, &params.group, namespace_id)
+        .config_find_one(&params.data_id, &group, &namespace_id)
         .await
     {
         Ok(Some(config)) => {
@@ -153,7 +147,7 @@ async fn get_config(
             error::RESOURCE_NOT_FOUND.code,
             format!(
                 "config data not exist, dataId={}, group={}, tenant={}",
-                params.data_id, params.group, namespace_id
+                params.data_id, group, namespace_id
             ),
             None::<ConfigResponse>,
         ),

@@ -127,7 +127,6 @@ impl FromStr for SameConfigPolicy {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ExportRequest {
-    #[serde(alias = "namespaceId")]
     /// The namespace to export from.
     pub namespace_id: String,
     /// The group to export (optional).
@@ -146,7 +145,6 @@ pub struct ExportRequest {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportRequest {
-    #[serde(alias = "namespaceId")]
     /// The namespace to import into.
     pub namespace_id: String,
     /// The conflict resolution policy: `ABORT`, `SKIP` or `OVERWRITE`.

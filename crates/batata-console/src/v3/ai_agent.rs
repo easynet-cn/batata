@@ -44,7 +44,7 @@ pub struct AgentListQuery {
     #[serde(default, alias = "agentName")]
     pub agent_name: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// `accurate` or `blur` matching.
     #[serde(default)]
@@ -65,7 +65,7 @@ pub struct AgentKeyQuery {
     #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -80,7 +80,7 @@ pub struct AgentVersionQuery {
     #[serde(default)]
     pub version: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -95,7 +95,7 @@ pub struct AgentVersionActionForm {
     #[serde(default)]
     pub version: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -110,7 +110,7 @@ pub struct AgentRuntimeEndpointForm {
     #[serde(default)]
     pub version: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Protocol the console wants the snapshot for, e.g. `JSONRPC`.
     #[serde(default)]
@@ -150,7 +150,7 @@ pub struct AgentDraftCreateForm {
     #[serde(default, alias = "callInterfaces")]
     pub call_interfaces: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -165,7 +165,7 @@ pub struct AgentLabelsForm {
     #[serde(default)]
     pub labels: Option<String>,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -180,7 +180,7 @@ pub struct AgentScopeForm {
     #[serde(default)]
     pub scope: String,
     /// Namespace identifier.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 

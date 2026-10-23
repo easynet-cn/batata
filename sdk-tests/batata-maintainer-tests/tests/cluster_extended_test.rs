@@ -53,8 +53,19 @@ async fn test_cluster_is_standalone() {
     let client = common::create_api_client().await.unwrap();
 
     let standalone = client.cluster_is_standalone().await.unwrap();
-    // Embedded mode is standalone
-    assert!(standalone, "Embedded mode should be standalone");
+
+    // `standalone` reports the deployment topology, which the SDK suite runs
+    // against in both shapes (embedded single node and 3-node cluster). Derive
+    // the expectation from the member list instead of hard-coding one shape:
+    // a deployment is standalone exactly when it has a single member.
+    let member_count = client.cluster_member_count().await.unwrap();
+    assert_eq!(
+        standalone,
+        member_count <= 1,
+        "standalone={} must agree with member_count={}",
+        standalone,
+        member_count
+    );
 }
 
 #[tokio::test]

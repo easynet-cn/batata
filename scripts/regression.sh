@@ -314,6 +314,8 @@ stage_unit() {
 # instead of a single opaque "suite failed" blocker.
 parse_sdk_failures() {
     awk '
+        # The matrix summary emits one of these per failing combination.
+        /^\[MATRIX\] FAIL /          { print $3; next }
         /^--- FAIL: /                  { n=$3; sub(/\(.*/,"",n); print n; next }
         # The suite runners pipe cargo through `grep -E "^test result:|panicked"`,
         # so the `failures:` block is often NOT in the log — the panic line is

@@ -1,6 +1,6 @@
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::{MigratorTrait, prelude::*};
-use sea_query::{Alias, DynIden, SeaRc};
+use sea_query::{Alias, DynIden, Expr, Query, SeaRc, SelectStatement};
 
 /// Column name helper utilities for migration statements.
 pub mod column_helper;
@@ -93,48 +93,140 @@ impl MigratorTrait for ApolloMigrator {
 const APOLLO_MIGRATION_LOCK_NAME: &str = "apollo_migration";
 const APOLLO_MIGRATION_LOCK_KEY: i64 = 0x6170_6f6c_6c6f_4d49u64 as i64;
 
+/// Upper bound on how long a node waits for a peer to finish migrating.
+///
+/// Must stay well below the cluster startup readiness window so a stuck lock
+/// surfaces as an error instead of an unresponsive node.
+const APOLLO_MIGRATION_LOCK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+/// Backoff between two lock attempts.
+const APOLLO_MIGRATION_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Performs the `run_apollo_migrations_with_lock` operation.
+///
+/// All cluster nodes share one database, so several of them race to apply the
+/// same migrations at startup. Two properties matter here:
+///
+/// * **Never block on the lock.** The lock lives on a pooled connection, and
+///   `RELEASE_LOCK` / `pg_advisory_unlock` are no-ops when they come from a
+///   different connection than the one that acquired it. A node that waits on
+///   a lock nobody can release hangs forever (observed: 3-node cluster stuck
+///   past the startup readiness window). Acquisition is therefore a *try* with
+///   a bounded overall deadline.
+/// * **A completed peer is the common case.** Before and during the wait the
+///   pending set is re-read; as soon as another node has applied the
+///   migrations this node returns without ever running DDL.
 pub async fn run_apollo_migrations_with_lock(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<(), sea_orm::DbErr> {
     let backend = db.get_database_backend();
+
+    // Fast path: nothing to apply, so no lock contention at all. This is the
+    // steady state on every restart.
+    if pending_count(db).await? == 0 {
+        return Ok(());
+    }
+
     tracing::info!("Running Apollo database migrations (acquiring advisory lock)...");
 
-    acquire_migration_lock(db, backend).await?;
-    let result = ApolloMigrator::up(db, None).await;
+    let deadline = std::time::Instant::now() + APOLLO_MIGRATION_LOCK_DEADLINE;
+    loop {
+        // A peer may have finished while we were waiting.
+        if pending_count(db).await? == 0 {
+            tracing::info!("Apollo database migrations already applied by a peer node");
+            return Ok(());
+        }
 
-    if let Err(e) = release_migration_lock(db, backend).await {
-        tracing::warn!("Failed to release Apollo migration advisory lock: {}", e);
+        match try_acquire_migration_lock(db, backend).await {
+            Ok(true) => {
+                let result = if pending_count(db).await? == 0 {
+                    Ok(())
+                } else {
+                    ApolloMigrator::up(db, None).await
+                };
+                if let Err(e) = release_migration_lock(db, backend).await {
+                    tracing::warn!("Failed to release Apollo migration advisory lock: {}", e);
+                }
+                result?;
+                tracing::info!("Apollo database migrations completed successfully");
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("Failed to acquire Apollo migration advisory lock: {}", e);
+            }
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(sea_orm::DbErr::Custom(format!(
+                "Timed out after {}s waiting for the Apollo migration lock",
+                APOLLO_MIGRATION_LOCK_DEADLINE.as_secs()
+            )));
+        }
+        tokio::time::sleep(APOLLO_MIGRATION_LOCK_RETRY).await;
     }
-
-    result?;
-    tracing::info!("Apollo database migrations completed successfully");
-    Ok(())
 }
 
-async fn acquire_migration_lock(
+/// Number of migrations that have not been applied yet.
+async fn pending_count(db: &sea_orm::DatabaseConnection) -> Result<usize, sea_orm::DbErr> {
+    Ok(ApolloMigrator::get_pending_migrations_read_only(db)
+        .await?
+        .len())
+}
+
+/// Try to take the migration lock without waiting for it.
+async fn try_acquire_migration_lock(
     db: &sea_orm::DatabaseConnection,
     backend: sea_orm::DatabaseBackend,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<bool, sea_orm::DbErr> {
     match backend {
         DatabaseBackend::MySql => {
-            db.execute_raw(Statement::from_string(
-                backend,
-                format!("SELECT GET_LOCK('{}', 300)", APOLLO_MIGRATION_LOCK_NAME),
-            ))
-            .await?;
+            // Timeout 0 makes GET_LOCK a non-blocking try-lock.
+            let stmt = lock_select(&format!("GET_LOCK('{}', 0)", APOLLO_MIGRATION_LOCK_NAME));
+            read_bool(db, &stmt, backend).await
         }
         DatabaseBackend::Postgres => {
-            db.execute_raw(Statement::from_string(
-                backend,
-                format!("SELECT pg_advisory_lock({})", APOLLO_MIGRATION_LOCK_KEY),
-            ))
-            .await?;
+            let stmt = lock_select(&format!(
+                "pg_try_advisory_lock({})",
+                APOLLO_MIGRATION_LOCK_KEY
+            ));
+            read_bool(db, &stmt, backend).await
         }
-        DatabaseBackend::Sqlite => {}
-        _ => {}
+        // Embedded storage has a single writer; no coordination needed.
+        DatabaseBackend::Sqlite => Ok(true),
+        _ => Ok(true),
     }
-    Ok(())
+}
+
+/// `SELECT <expr> AS locked` — sea-orm's `query_one` takes a
+/// `StatementBuilder`, so the raw lock call is wrapped in a `SelectStatement`.
+fn lock_select(expr: &str) -> SelectStatement {
+    Query::select()
+        .expr_as(Expr::cust(expr.to_string()), Alias::new("locked"))
+        .take()
+}
+
+/// Read the first column of a one-row statement as a boolean-ish value.
+async fn read_bool(
+    db: &sea_orm::DatabaseConnection,
+    stmt: &SelectStatement,
+    backend: sea_orm::DatabaseBackend,
+) -> Result<bool, sea_orm::DbErr> {
+    let row = match db.query_one(stmt).await? {
+        Some(row) => row,
+        None => return Ok(false),
+    };
+    match backend {
+        // MySQL returns 1 / 0 / NULL.
+        DatabaseBackend::MySql => {
+            let value: Option<i32> = row.try_get("", "locked")?;
+            Ok(value == Some(1))
+        }
+        // Postgres returns a bool.
+        _ => {
+            let value: Option<bool> = row.try_get("", "locked")?;
+            Ok(value.unwrap_or(false))
+        }
+    }
 }
 
 async fn release_migration_lock(

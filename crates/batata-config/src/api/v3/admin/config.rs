@@ -1003,7 +1003,7 @@ struct BetaQueryParam {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -1019,7 +1019,7 @@ struct BetaListParam {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     #[serde(default, alias = "appName")]
     pub app_name: String,
@@ -1033,7 +1033,7 @@ struct BetaPublishForm {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     pub content: String,
     #[serde(default, alias = "betaIps")]
@@ -1465,7 +1465,7 @@ struct GrayPublishForm {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     pub content: String,
     #[serde(default, alias = "betaIps")]
@@ -1736,7 +1736,7 @@ struct GrayDeleteParam {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     #[serde(default, alias = "grayName")]
     pub gray_name: String,
@@ -1814,7 +1814,7 @@ struct MetadataForm {
     pub data_id: String,
     #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     #[serde(default, alias = "configTags")]
     pub config_tags: String,
@@ -1879,7 +1879,6 @@ async fn update_metadata(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CloneParam {
-    #[serde(alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(default = "default_clone_policy")]
     pub policy: String,

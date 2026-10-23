@@ -259,7 +259,7 @@ async fn list_skills(
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleSkillUploadQuery {
     /// Namespace the skill belongs to.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Whether to overwrite an existing skill with the same name.
     #[serde(default)]

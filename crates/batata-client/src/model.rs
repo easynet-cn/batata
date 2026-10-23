@@ -96,7 +96,7 @@ pub struct ConfigAllInfo {
     #[serde(default)]
     /// MD5 hash of the config content.
     pub md5: String,
-    #[serde(alias = "namespaceId", default)]
+    #[serde(default)]
     /// Namespace/tenant ID.
     pub tenant: String,
     #[serde(default)]
@@ -155,7 +155,7 @@ pub struct ConfigGrayInfo {
     #[serde(default)]
     /// MD5 hash of the config content.
     pub md5: String,
-    #[serde(alias = "namespaceId", default)]
+    #[serde(default)]
     /// Namespace/tenant ID.
     pub tenant: String,
     #[serde(default)]
@@ -186,7 +186,7 @@ pub struct ConfigHistoryBasicInfo {
     #[serde(alias = "groupName")]
     /// Group name.
     pub group: String,
-    #[serde(alias = "namespaceId", default)]
+    #[serde(default)]
     /// Namespace/tenant ID.
     pub tenant: String,
     #[serde(default)]
@@ -225,7 +225,7 @@ pub struct ConfigHistoryDetailInfo {
     #[serde(alias = "groupName")]
     /// Group name.
     pub group: String,
-    #[serde(alias = "namespaceId", default)]
+    #[serde(default)]
     /// Namespace/tenant ID.
     pub tenant: String,
     #[serde(default)]
@@ -580,7 +580,7 @@ pub struct ConfigListenerInfo {
     #[serde(alias = "groupName")]
     /// Group name.
     pub group: String,
-    #[serde(alias = "namespaceId", default)]
+    #[serde(default)]
     /// Namespace/tenant ID.
     pub tenant: String,
     /// MD5 hash of the listened config content.

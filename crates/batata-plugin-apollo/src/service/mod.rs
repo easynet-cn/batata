@@ -40,6 +40,8 @@ pub mod namespace_service;
 pub mod notification_hub;
 /// Permission service.
 pub mod permission_service;
+/// Release key generation.
+pub mod release_key;
 /// Release message service.
 pub mod release_message_service;
 /// Release service.
