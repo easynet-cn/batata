@@ -215,10 +215,10 @@ impl EmbeddedPersistService {
         });
 
         let now = chrono::Utc::now().timestamp_millis() as u64;
-        // fetch_update hands back the value the CAS saw, not the one it stored,
+        // try_update hands back the value the CAS saw, not the one it stored,
         // so the +1 has to be applied here too.
         let prev = LAST_HISTORY_ID
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
                 Some(prev.max(now) + 1)
             })
             .unwrap_or(now);
