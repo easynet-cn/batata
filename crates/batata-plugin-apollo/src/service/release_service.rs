@@ -388,7 +388,11 @@ impl ReleaseService {
                 release_id
             ));
         }
-        let now_effective = self.abandon_release(&actives[0], operator).await?;
+        // Upstream records `twoLatestActiveReleases.get(1)` — the release that
+        // becomes effective once `actives[0]` is abandoned — as the history's
+        // release id, with the abandoned one as the previous id.
+        let now_effective = actives[1].clone();
+        self.abandon_release(&actives[0], operator).await?;
 
         Self::notify_publish(self, app_id, cluster_name, namespace_name).await;
         self.record_history(
@@ -493,16 +497,17 @@ impl ReleaseService {
     }
 
     /// Upstream abandon step: set IsAbandoned=true on the row itself.
-    async fn abandon_release(
-        &self,
-        release: &StoredRelease,
-        operator: &str,
-    ) -> Result<StoredRelease, anyhow::Error> {
+    ///
+    /// Returns nothing on purpose: the row as stored is not the same thing as
+    /// "the release that is now effective", and upstream's callers use the
+    /// pre-abandon snapshot for the latter.
+    async fn abandon_release(&self, release: &StoredRelease, operator: &str) -> anyhow::Result<()> {
         let mut abandoned = release.clone();
         abandoned.is_abandoned = true;
         abandoned.data_change_last_modified_by = Some(operator.to_string());
         abandoned.data_change_last_time = Some(Utc::now().timestamp_millis());
-        ReleasePersistence::update(&self.persistence, abandoned).await
+        ReleasePersistence::update(&self.persistence, abandoned).await?;
+        Ok(())
     }
 
     /// Port of upstream `rollbackChildNamespace`: when the master namespace

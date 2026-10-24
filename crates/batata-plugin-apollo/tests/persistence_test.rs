@@ -491,6 +491,86 @@ async fn suite(p: Arc<dyn ApolloPersistenceService>) {
     );
 }
 
+/// Regression contract: `get_latest` must follow upstream
+/// `findLatestActiveRelease` — "newest row with `IsAbandoned = false` and
+/// `IsDeleted = false`" — rather than a "last row written wins" pointer.
+///
+/// The embedded store keeps a `release_latest:` pointer as a cache; overwriting
+/// it unconditionally meant that abandoning the newest release (exactly what a
+/// rollback does) left the pointer on the abandoned row, so `get_latest`
+/// reported "no release at all" and `PUT /openapi/v1/envs/{env}/releases/{id}/rollback`
+/// answered 400 `release not found after raft apply`.
+async fn release_latest_suite(p: Arc<dyn ApolloPersistenceService>) {
+    let stamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let app_id = format!("app-latest-{stamp}");
+
+    let mk = |suffix: &str, configurations: &str| StoredRelease {
+        id: 0,
+        release_key: format!("rk-{suffix}-{stamp}"),
+        name: "r".into(),
+        comment: None,
+        app_id: app_id.clone(),
+        cluster_name: "default".into(),
+        namespace_name: "ns".into(),
+        configurations: configurations.into(),
+        release_id: Some(1),
+        is_abandoned: false,
+        is_deleted: false,
+        deleted_at: 0,
+        data_change_created_by: "tester".into(),
+        data_change_created_time: 0,
+        data_change_last_modified_by: None,
+        data_change_last_time: None,
+    };
+
+    let first = ReleasePersistence::create(&p, mk("a", r#"{"k":"v1"}"#))
+        .await
+        .unwrap();
+    let latest = ReleasePersistence::get_latest(&p, &app_id, "default", "ns")
+        .await
+        .unwrap();
+    assert_eq!(latest.map(|r| r.id), Some(first.id));
+
+    let second = ReleasePersistence::create(&p, mk("b", r#"{"k":"v2"}"#))
+        .await
+        .unwrap();
+    assert!(second.id > first.id, "second release must be newer");
+    let latest = ReleasePersistence::get_latest(&p, &app_id, "default", "ns")
+        .await
+        .unwrap();
+    assert_eq!(latest.map(|r| r.id), Some(second.id));
+
+    // Abandoning the newest release must fall back to the previous active one.
+    let mut abandoned = second.clone();
+    abandoned.is_abandoned = true;
+    ReleasePersistence::update(&p, abandoned).await.unwrap();
+
+    let latest = ReleasePersistence::get_latest(&p, &app_id, "default", "ns")
+        .await
+        .unwrap();
+    assert_eq!(
+        latest.map(|r| r.id),
+        Some(first.id),
+        "after a rollback the latest active release is the previous one"
+    );
+
+    let actives = ReleasePersistence::list_active(&p, &app_id, "default", "ns")
+        .await
+        .unwrap();
+    assert_eq!(actives.len(), 1);
+    assert_eq!(actives[0].id, first.id);
+
+    // Removing the last active release leaves no active release at all.
+    ReleasePersistence::delete(&p, first.id).await.unwrap();
+    let latest = ReleasePersistence::get_latest(&p, &app_id, "default", "ns")
+        .await
+        .unwrap();
+    assert!(
+        latest.is_none(),
+        "no active release should remain once the only one is deleted"
+    );
+}
+
 #[tokio::test]
 async fn embedded_portal_persistence() {
     let p = common::make_embedded_persistence().await;
@@ -498,8 +578,21 @@ async fn embedded_portal_persistence() {
 }
 
 #[tokio::test]
+async fn embedded_release_latest_after_abandon() {
+    let p = common::make_embedded_persistence().await;
+    release_latest_suite(p).await;
+}
+
+#[tokio::test]
 async fn sql_portal_persistence() {
     if let Some(p) = common::make_sql_persistence().await {
         suite(p).await;
+    }
+}
+
+#[tokio::test]
+async fn sql_release_latest_after_abandon() {
+    if let Some(p) = common::make_sql_persistence().await {
+        release_latest_suite(p).await;
     }
 }

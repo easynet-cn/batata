@@ -497,6 +497,14 @@ impl crate::persistence::traits::ReleasePersistence for EmbeddedApolloPersistenc
                 .write(ApolloRaftRequest::ReleaseUpdate(release.clone()))
                 .await
                 .map_err(|e| anyhow::anyhow!(e))?;
+            if release.id != 0 {
+                // Upstream `releaseRepository.save(release)` keeps the id, so
+                // the row as submitted *is* the row as stored. Re-reading the
+                // latest pointer here would hand back a different (still
+                // active) row once this one has been abandoned by a rollback.
+                return Ok(release);
+            }
+            // No id yet: the apply phase assigns one (Raft log index).
             return self
                 .release
                 .get_latest(

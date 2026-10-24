@@ -383,7 +383,8 @@ public class NacosGrpcErrorTest {
     void testListenerExceptionHandling() throws NacosException, InterruptedException {
         String dataId = "listener-error-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger callCount = new AtomicInteger(0);
-        CountDownLatch secondCallLatch = new CountDownLatch(1);
+        CountDownLatch firstCallLatch = new CountDownLatch(1);
+        CountDownLatch secondContentLatch = new CountDownLatch(1);
         AtomicReference<String> lastContent = new AtomicReference<>();
 
         // Add listener that throws exception on first call
@@ -397,22 +398,35 @@ public class NacosGrpcErrorTest {
             public void receiveConfigInfo(String configInfo) {
                 int count = callCount.incrementAndGet();
                 if (count == 1) {
+                    firstCallLatch.countDown();
                     throw new RuntimeException("Simulated listener error");
                 }
                 lastContent.set(configInfo);
-                secondCallLatch.countDown();
+                if ("second=value".equals(configInfo)) {
+                    secondContentLatch.countDown();
+                }
             }
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        // Publish config twice
+        // Publish the first change and wait until the listener has actually been
+        // invoked for it. A fixed sleep here was the flake: under load the first
+        // notification can arrive after the second publish, the client then
+        // delivers a single notification, that single call is the one that
+        // throws, and the "recovered" call never happens.
         configService.publishConfig(dataId, DEFAULT_GROUP, "first=value");
-        Thread.sleep(5000);
+        assertTrue(firstCallLatch.await(15, TimeUnit.SECONDS),
+                "Listener should have been invoked for the first config change");
+
         configService.publishConfig(dataId, DEFAULT_GROUP, "second=value");
 
-        boolean receivedSecond = secondCallLatch.await(15, TimeUnit.SECONDS);
+        // Wait for the *content* rather than for "call number two": a listener
+        // that threw may be re-invoked with the still-current content before the
+        // second change lands, which used to leave `lastContent` on the first
+        // value.
+        boolean receivedSecond = secondContentLatch.await(20, TimeUnit.SECONDS);
         assertTrue(receivedSecond,
                 "Listener should recover and receive second config change after throwing on first");
         assertTrue(callCount.get() >= 2,

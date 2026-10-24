@@ -54,6 +54,103 @@ impl ReleaseEmbedded {
         )
     }
 
+    /// Newest row in the namespace index that is neither deleted nor abandoned.
+    ///
+    /// This is the embedded-side equivalent of upstream
+    /// `ReleaseService.findLatestActiveRelease`
+    /// (`ORDER BY id DESC LIMIT 1` over `IsAbandoned = false AND IsDeleted = false`).
+    /// Callers must have already written the row's index entry (or removed it)
+    /// so the scan sees the post-write state.
+    fn newest_active(
+        db: &DB,
+        cf: &rocksdb::ColumnFamily,
+        app_id: &str,
+        cluster: &str,
+        namespace: &str,
+    ) -> anyhow::Result<Option<StoredRelease>> {
+        let prefix = Self::prefix_by_namespace(app_id, cluster, namespace);
+        let mut newest: Option<StoredRelease> = None;
+        let iter = db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let release: StoredRelease = bincode::deserialize(&value)?;
+            if release.is_deleted || release.is_abandoned {
+                continue;
+            }
+            if newest.as_ref().map(|n| release.id > n.id).unwrap_or(true) {
+                newest = Some(release);
+            }
+        }
+        Ok(newest)
+    }
+
+    /// Keeps the `release_latest:` pointer aligned with
+    /// `findLatestActiveRelease` after a row write/delete.
+    ///
+    /// The pointer is a cache, so it must never end up pointing at a row that
+    /// `get_latest` would filter out: an unconditional overwrite (what a plain
+    /// `put` does) leaves the pointer on an abandoned row after a rollback and
+    /// `get_latest` then reports "no release at all". Active rows move the
+    /// pointer forward only; inactive rows trigger a recompute when they were
+    /// the pointer.
+    fn refresh_latest(
+        db: &DB,
+        cf: &rocksdb::ColumnFamily,
+        release: &StoredRelease,
+    ) -> anyhow::Result<()> {
+        let latest_key = Self::key_latest(
+            &release.app_id,
+            &release.cluster_name,
+            &release.namespace_name,
+        );
+        let current = match db.get_cf(cf, latest_key.as_bytes())? {
+            Some(data) => bincode::deserialize::<StoredRelease>(&data).ok(),
+            None => None,
+        };
+
+        if !release.is_deleted && !release.is_abandoned {
+            // Active row: advance, never rewind (an out-of-order replay of an
+            // older release must not displace a newer one).
+            if current.as_ref().map(|c| release.id >= c.id).unwrap_or(true) {
+                let bytes = bincode::serialize(release)?;
+                db.put_cf(cf, latest_key.as_bytes(), &bytes)
+                    .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+            }
+            return Ok(());
+        }
+
+        // Inactive row: only relevant when it still owns the pointer.
+        if current
+            .as_ref()
+            .map(|c| c.id == release.id)
+            .unwrap_or(false)
+        {
+            match Self::newest_active(
+                db,
+                cf,
+                &release.app_id,
+                &release.cluster_name,
+                &release.namespace_name,
+            )? {
+                Some(newest) => {
+                    let b = bincode::serialize(&newest)?;
+                    db.put_cf(cf, latest_key.as_bytes(), &b)
+                        .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+                }
+                None => {
+                    db.delete_cf(cf, latest_key.as_bytes())
+                        .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Writes a fully-formed `StoredRelease` (including its `id`) to RocksDB.
     ///
     /// Deterministic write path shared by the local `create` (`id` from
@@ -81,14 +178,8 @@ impl ReleaseEmbedded {
         db.put_cf(cf, index_key.as_bytes(), &bytes)
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
-        // Update latest release pointer
-        let key_latest = Self::key_latest(
-            &release.app_id,
-            &release.cluster_name,
-            &release.namespace_name,
-        );
-        db.put_cf(cf, key_latest.as_bytes(), &bytes)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+        // Maintain the latest-release pointer (upstream `findLatestActiveRelease`).
+        Self::refresh_latest(db, cf, release)?;
 
         Ok(release.clone())
     }
@@ -114,7 +205,10 @@ impl ReleaseEmbedded {
                 .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
             db.delete_cf(cf, index_key.as_bytes())
                 .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            // Note: we don't delete the latest pointer as there might be an older release
+            // A removed row can no longer be the latest active one.
+            let mut removed = release.clone();
+            removed.is_deleted = true;
+            Self::refresh_latest(db, cf, &removed)?;
         }
         Ok(())
     }
@@ -221,45 +315,9 @@ impl ReleasePersistence for ReleaseEmbedded {
             )
             .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
 
-        // Refresh the latest pointer when the previously-latest row changed.
-        let latest_key = Self::key_latest(
-            &release.app_id,
-            &release.cluster_name,
-            &release.namespace_name,
-        );
-        let is_current_latest = match self.db.get_cf(cf, latest_key.as_bytes())? {
-            Some(data) => bincode::deserialize::<StoredRelease>(&data)?.id == release.id,
-            None => false,
-        };
-        if is_current_latest {
-            if !release.is_deleted && !release.is_abandoned {
-                self.db
-                    .put_cf(cf, latest_key.as_bytes(), &bytes)
-                    .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-            } else {
-                // Fall back to the newest remaining active release.
-                let actives = ReleasePersistence::list_active(
-                    self,
-                    &release.app_id,
-                    &release.cluster_name,
-                    &release.namespace_name,
-                )
-                .await?;
-                match actives.into_iter().max_by_key(|r| r.id) {
-                    Some(newest) => {
-                        let b = bincode::serialize(&newest)?;
-                        self.db
-                            .put_cf(cf, latest_key.as_bytes(), &b)
-                            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
-                    }
-                    None => {
-                        self.db
-                            .delete_cf(cf, latest_key.as_bytes())
-                            .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-                    }
-                }
-            }
-        }
+        // Keep the latest pointer consistent with `findLatestActiveRelease`.
+        Self::refresh_latest(&self.db, cf, &release)?;
+
         Ok(release)
     }
 
