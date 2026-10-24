@@ -665,8 +665,44 @@ cmd_sdk_matrix() {
         done
     }
 
+    # --- per-suite report plumbing -------------------------------------
+    #
+    # Every suite writes its own raw log so gen_sdk_report.sh can parse it in
+    # isolation. A single combined log cannot work: it holds Maven's
+    # "Tests run:" grand total for both Java suites, and since the parser takes
+    # the last one it credited nacos-java with apollo-java's 40 tests instead
+    # of its own 539.
+    SUITE_RC=0
+    SUITE_SECS=0
+    run_suite_logged() { # <suite> <logfile> <cmd...>
+        local _suite="$1" log="$2"; shift 2
+        local t0 t1 rc=0
+        t0=$(date +%s)
+        # `|| rc=$?` (not a bare call): under `set -e` a failing suite would
+        # otherwise abort the whole matrix before the remaining combinations
+        # ran, which is exactly how one red combination hid five green ones.
+        "$@" > "$log" 2>&1 || rc=$?
+        t1=$(date +%s)
+        SUITE_RC=$rc
+        SUITE_SECS=$(( t1 - t0 ))
+    }
+
+    emit_suite_report() { # <suite> <logfile> <combo> <secs>
+        mkdir -p "${SDK_REPORT_DIR}/$3"
+        bash "${SCRIPT_DIR}/gen_sdk_report.sh" "$1" "$2" \
+            "${SDK_REPORT_DIR}/$3/$1.md" "$3" "${4:-}" \
+            >> "${SDK_REPORT_DIR}/results.tsv" 2>/dev/null || true
+    }
+
+    print_suite_tail() { # <grep-regex> <logfile>
+        # Shows why a suite went red without dumping thousands of lines.
+        grep -aE "$1" "$2" | tail -12 || true
+    }
+
     run_combo() {
         local combo="$1" platform="$2" mode="$3"
+        local suite_dir="${SDK_REPORT_DIR}/${combo}"
+        mkdir -p "${suite_dir}"
         log "=============== [${combo}] 开始 (mode=${mode}, platform=${platform}) ==============="
 
         if [ "$platform" != "embedded" ]; then
@@ -705,19 +741,25 @@ cmd_sdk_matrix() {
         sleep 1
 
         log ">>> 运行 Nacos Java SDK (server=127.0.0.1:8848)"
-        local nacos_rc=0
-        MVN_QUIET=1 sdk_run_nacos || nacos_rc=$?
-        [ "$nacos_rc" -eq 0 ] && ok "Nacos SDK 通过" || fail "Nacos SDK 退出码 $nacos_rc"
+        run_suite_logged nacos-java "${suite_dir}/nacos-java.log" sdk_run_nacos
+        local nacos_rc=$SUITE_RC
+        [ "$nacos_rc" -eq 0 ] && ok "Nacos SDK 通过 (${SUITE_SECS}s)" || fail "Nacos SDK 退出码 $nacos_rc"
+        print_suite_tail "Tests run:|^\[ERROR\]" "${suite_dir}/nacos-java.log"
+        emit_suite_report nacos-java "${suite_dir}/nacos-java.log" "$combo" "$SUITE_SECS"
 
         log ">>> 运行 Consul Go SDK (addr=127.0.0.1:8500)"
-        local consul_rc=0
-        CONSUL_HTTP_TOKEN=root sdk_run_consul || consul_rc=$?
-        [ "$consul_rc" -eq 0 ] && ok "Consul SDK 通过" || fail "Consul SDK 退出码 $consul_rc"
+        run_suite_logged consul-go "${suite_dir}/consul-go.log" sdk_run_consul
+        local consul_rc=$SUITE_RC
+        [ "$consul_rc" -eq 0 ] && ok "Consul SDK 通过 (${SUITE_SECS}s)" || fail "Consul SDK 退出码 $consul_rc"
+        print_suite_tail "^--- FAIL|^FAIL|^ok " "${suite_dir}/consul-go.log"
+        emit_suite_report consul-go "${suite_dir}/consul-go.log" "$combo" "$SUITE_SECS"
 
         log ">>> 运行 Apollo Java SDK (meta=127.0.0.1:18080)"
-        local apollo_rc=0
-        APOLLO_META="http://127.0.0.1:18080" sdk_run_apollo || apollo_rc=$?
-        [ "$apollo_rc" -eq 0 ] && ok "Apollo SDK 通过" || fail "Apollo SDK 退出码 $apollo_rc"
+        run_suite_logged apollo-java "${suite_dir}/apollo-java.log" sdk_run_apollo
+        local apollo_rc=$SUITE_RC
+        [ "$apollo_rc" -eq 0 ] && ok "Apollo SDK 通过 (${SUITE_SECS}s)" || fail "Apollo SDK 退出码 $apollo_rc"
+        print_suite_tail "Tests run:|^\[ERROR\]" "${suite_dir}/apollo-java.log"
+        emit_suite_report apollo-java "${suite_dir}/apollo-java.log" "$combo" "$SUITE_SECS"
 
         # The three Rust suites were wired into the matrix later than the Java
         # ones. `SDK_RUN_RUST=0` skips them for runs that only want the legacy
@@ -727,16 +769,25 @@ cmd_sdk_matrix() {
         local batata_rc=0 consul_client_rc=0 maintainer_rc=0
         if [ "${SDK_RUN_RUST:-1}" = "1" ]; then
             log ">>> 运行 batata-client SDK (Rust, 8848)"
-            CARGO_QUIET=1 sdk_run_batata_client || batata_rc=$?
-            [ "$batata_rc" -eq 0 ] && ok "batata-client SDK 通过" || fail "batata-client SDK 退出码 $batata_rc"
+            run_suite_logged batata-client "${suite_dir}/batata-client.log" sdk_run_batata_client
+            batata_rc=$SUITE_RC
+            [ "$batata_rc" -eq 0 ] && ok "batata-client SDK 通过 (${SUITE_SECS}s)" || fail "batata-client SDK 退出码 $batata_rc"
+            print_suite_tail "^test result:|^failures:" "${suite_dir}/batata-client.log"
+            emit_suite_report batata-client "${suite_dir}/batata-client.log" "$combo" "$SUITE_SECS"
 
             log ">>> 运行 batata-consul-client SDK (Rust, 8500)"
-            CARGO_QUIET=1 sdk_run_batata_consul_client || consul_client_rc=$?
-            [ "$consul_client_rc" -eq 0 ] && ok "batata-consul-client SDK 通过" || fail "batata-consul-client SDK 退出码 $consul_client_rc"
+            run_suite_logged batata-consul-client "${suite_dir}/batata-consul-client.log" sdk_run_batata_consul_client
+            consul_client_rc=$SUITE_RC
+            [ "$consul_client_rc" -eq 0 ] && ok "batata-consul-client SDK 通过 (${SUITE_SECS}s)" || fail "batata-consul-client SDK 退出码 $consul_client_rc"
+            print_suite_tail "^test result:|^failures:" "${suite_dir}/batata-consul-client.log"
+            emit_suite_report batata-consul-client "${suite_dir}/batata-consul-client.log" "$combo" "$SUITE_SECS"
 
             log ">>> 运行 batata-maintainer SDK (Rust, 8848)"
-            CARGO_QUIET=1 sdk_run_batata_maintainer || maintainer_rc=$?
-            [ "$maintainer_rc" -eq 0 ] && ok "batata-maintainer SDK 通过" || fail "batata-maintainer SDK 退出码 $maintainer_rc"
+            run_suite_logged batata-maintainer "${suite_dir}/batata-maintainer.log" sdk_run_batata_maintainer
+            maintainer_rc=$SUITE_RC
+            [ "$maintainer_rc" -eq 0 ] && ok "batata-maintainer SDK 通过 (${SUITE_SECS}s)" || fail "batata-maintainer SDK 退出码 $maintainer_rc"
+            print_suite_tail "^test result:|^failures:" "${suite_dir}/batata-maintainer.log"
+            emit_suite_report batata-maintainer "${suite_dir}/batata-maintainer.log" "$combo" "$SUITE_SECS"
         else
             warn "${combo}: SDK_RUN_RUST=0，跳过三个 Rust SDK 套件"
         fi
@@ -764,9 +815,29 @@ cmd_sdk_matrix() {
         log "构建 release 二进制..."
         ( cd "${ROOT}" && cargo build --release -p batata-server ) || { fail "构建失败"; return 1; }
     fi
-    # `${BINARY}`: bash folds a following CJK comma into the name, so `$BINARY，`
+    # [ "${BINARY}`: bash folds a following CJK comma into the name, so `$BINARY，`
     # reads as `BINARY<0xE3>` and dies with "unbound variable" under `set -u`.
     [ -x "${BINARY}" ] || { fail "找不到二进制 ${BINARY}，请先构建或去掉 --no-build"; return 1; }
+
+    # The suite runners read these from the environment. They used to be
+    # per-invocation prefixes, which `run_suite_logged` cannot pass through (a
+    # shell function is not an executable `env` can call), so export them once.
+    # Deliberately NOT quiet. `mvn -q` suppresses Surefire's "Tests run:"
+    # summary, which is the only place gen_sdk_report.sh can learn the case
+    # count — with -q every Maven suite reports 0/0 and the coverage baseline
+    # silently anchors on zero. The log grows by a few MB per suite; that is
+    # the price of being able to count.
+    : "${MVN_QUIET:=0}";   export MVN_QUIET
+    : "${CARGO_QUIET:=1}"; export CARGO_QUIET
+    export CONSUL_HTTP_TOKEN=root
+    export APOLLO_META="http://127.0.0.1:18080"
+
+    # Reports go under the repo, not /tmp: /tmp is wiped between runs (and
+    # across reboots), which is how the previous matrix runs left no artefact
+    # to diff against.
+    SDK_REPORT_DIR="${ROOT}/reports/sdk/$(date '+%Y%m%d-%H%M%S')"
+    mkdir -p "${SDK_REPORT_DIR}"
+    : > "${SDK_REPORT_DIR}/results.tsv"
 
     log "将执行 ${#COMBOS[@]} 个组合: ${COMBOS[*]}"
     RESULTS=()
@@ -802,6 +873,20 @@ cmd_sdk_matrix() {
             failed=$((failed + 1))
         fi
     done
+
+    # Turn the accumulated per-suite counts into the comparable artefacts:
+    # a suites x combinations table, plus a TEST_REPORT.md per SDK suite under
+    # sdk-tests/ (only nacos-java ever had one, hand-written and stale).
+    if [ ${#RESULTS[@]} -gt 0 ] && [ -s "${SDK_REPORT_DIR}/results.tsv" ]; then
+        local order=()
+        local r
+        for r in "${RESULTS[@]}"; do order+=( "${r%%:*}" ); done
+        bash "${SCRIPT_DIR}/gen_sdk_summary.sh" "${SDK_REPORT_DIR}/results.tsv" \
+            "${SDK_REPORT_DIR}" "${order[@]}" && \
+            log "SDK 报告: ${SDK_REPORT_DIR}/summary.md" || \
+            warn "SDK 报告汇总失败（不影响矩阵结论）"
+        ln -sfn "${SDK_REPORT_DIR}" "${ROOT}/reports/sdk/latest"
+    fi
 
     # The summary used to be followed by an unconditional `return 0`, so a run
     # where every combo failed still let the gate report PASS.

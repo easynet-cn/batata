@@ -115,6 +115,8 @@ scripts/
 ├── test_cluster_externaldb.sh      # 3-node Cluster + ExternalDb tests
 ├── test_cluster_embedded.sh        # 3-node Cluster + Raft+RocksDB tests
 ├── sdk_run_lib.sh                  # SDK runner helpers (nacos / consul / apollo)
+├── gen_sdk_report.sh               # Normalise one SDK suite log -> TEST_REPORT.md
+├── gen_sdk_summary.sh              # Aggregate per-suite counts -> suites x combos table
 ├── cluster_lib.sh                  # Cluster startup/teardown helpers for SDK matrix
 ├── startup.sh                      # Local multi-node startup helper (used by SDK matrix)
 ├── init-admin.sh                   # One-time admin bootstrap (nacos/nacos)
@@ -124,6 +126,7 @@ scripts/
 ├── regression.sh                   # Unified regression gate (see "Regression Gate")
 ├── regression_whitelist.txt        # Known-failure baseline for the gate
 ├── regression_perf_baseline.txt    # Performance anchors for `regression.sh --perf`
+├── regression_matrix_baseline.txt  # Per-(combo, suite) case counts for `--full`
 ├── bench_sync_load.py              # Cluster sync load generator (distinct instances)
 └── profile.sh                      # CPU profiler harness (perf / sample)
 ```
@@ -406,6 +409,27 @@ Rules:
 
 To check the gate actually bites, remove an entry and re-run: the failure must
 reappear as a blocker.
+
+### Matrix coverage gate
+
+`--full` runs the 6-combination SDK matrix (standalone/cluster ×
+rock/mysql/postgres). A green exit code only means nothing crashed; it cannot
+tell that Maven skipped a module and a suite quietly ran 40 cases instead of
+531. So the matrix stage also anchors the **case count per
+(combination, suite)** in `scripts/regression_matrix_baseline.txt`:
+
+```
+<combo>|<suite>|<total cases>
+```
+
+An anchored pair that is missing from the run, or that ran fewer cases than
+anchored, blocks the gate. This is what makes "the MySQL and PostgreSQL
+backends are covered" a claim the gate can verify rather than a note in a
+report.
+
+Refresh the anchors after a green run from
+`reports/sdk/latest/results.tsv`, in the same commit as the change that moved
+them.
 
 ### Performance gate
 

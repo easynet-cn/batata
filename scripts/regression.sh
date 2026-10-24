@@ -47,6 +47,7 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 WHITELIST="${SCRIPT_DIR}/regression_whitelist.txt"
 PERF_BASELINE="${SCRIPT_DIR}/regression_perf_baseline.txt"
+MATRIX_BASELINE="${SCRIPT_DIR}/regression_matrix_baseline.txt"
 
 # Fraction of the anchor a scenario may regress before it blocks. Anchors come
 # from bench_ab.py medians whose observed spread on this machine is ~11.6%, so
@@ -417,6 +418,44 @@ stage_matrix() {
         done <<< "$items"
     fi
     pkill -f batata-server 2>/dev/null
+
+    # Coverage check against scripts/regression_matrix_baseline.txt. rc only
+    # tells us nothing crashed; it cannot tell that a suite silently ran 40
+    # cases instead of 539 because Maven skipped a module. Anchoring the case
+    # count per (combination, suite) is what makes "the DB backends are covered"
+    # a claim the gate can actually verify.
+    local tsv="${ROOT}/reports/sdk/latest/results.tsv"
+    if [ ! -f "$MATRIX_BASELINE" ]; then
+        echo "    missing $MATRIX_BASELINE — record anchors after a green run"
+        stage_end matrix $rc "6 combinations (no coverage baseline)"
+        return 0
+    fi
+    if [ ! -s "$tsv" ]; then
+        record_failure matrix "no results.tsv at reports/sdk/latest — coverage unknown"
+        stage_end matrix 1 "6 combinations (no results)"
+        return 0
+    fi
+    local combo suite total passed have missing=0 shrunk=0
+    while IFS='|' read -r combo suite total; do
+        [ -n "${combo:-}" ] || continue
+        case "$combo" in \#*) continue ;; esac
+        have=$(awk -F'|' -v c="$combo" -v s="$suite" '$1==c && $2==s {print $3; exit}' "$tsv")
+        if [ -z "$have" ]; then
+            record_failure matrix "${combo}/${suite}: missing from the run (baseline ${total} cases)"
+            missing=$((missing + 1))
+            continue
+        fi
+        if [ "$have" -lt "$total" ]; then
+            record_failure matrix "${combo}/${suite}: ${have} cases < baseline ${total}"
+            shrunk=$((shrunk + 1))
+        fi
+    done < <(awk -F'|' '/^#/ {next} NF>=3 {print $1"|"$2"|"$3}' "$MATRIX_BASELINE")
+    if [ "$missing" -gt 0 ] || [ "$shrunk" -gt 0 ]; then
+        echo "    coverage: ${missing} missing, ${shrunk} shrunk"
+        rc=1
+    else
+        echo "    coverage: every anchored (combination, suite) ran its full case count"
+    fi
     stage_end matrix $rc "6 combinations"
 }
 

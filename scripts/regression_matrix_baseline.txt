@@ -1,0 +1,61 @@
+# SDK matrix coverage anchors for `scripts/regression.sh --full`
+#
+# Format:  <combination>|<suite>|<total cases>
+#
+# The matrix stage fails the gate when an anchored (combination, suite) is
+# absent from the run, or when it reports fewer cases than anchored here.
+# The exit code alone cannot catch that: Maven can skip a module and the run
+# still exits 0 with a fraction of the cases.
+#
+# Captured: 2026-10-24
+#   release binary, `bash scripts/test.sh sdk --matrix --no-build`
+#   standalone/cluster x rock/mysql(postgres), all six PASS
+#   0 failures and 0 errors in every cell; the passed/total gap is skipped
+#   cases (cluster-only tests skip in standalone, and vice versa).
+#
+# Why the counts differ between topologies:
+#   nacos-java    531 standalone / 539 cluster — the cluster-only tests skip
+#                  when node2/node3 are not advertised by sdk_run_nacos.
+#   consul-go     552 everywhere, but 28 skip in standalone vs 20 in cluster:
+#                  cluster_test.go skips itself unless all three nodes are up.
+#
+# Refreshing: after a green run, take `reports/sdk/latest/results.tsv` and
+# replace this file in the same commit as the change that moved the numbers.
+# An anchor may only go up (more coverage), never down without a stated reason.
+
+standalone-rock|apollo-java|40
+standalone-rock|batata-client|125
+standalone-rock|batata-consul-client|129
+standalone-rock|batata-maintainer|77
+standalone-rock|consul-go|552
+standalone-rock|nacos-java|531
+standalone-mysql|apollo-java|40
+standalone-mysql|batata-client|125
+standalone-mysql|batata-consul-client|129
+standalone-mysql|batata-maintainer|77
+standalone-mysql|consul-go|552
+standalone-mysql|nacos-java|531
+standalone-postgres|apollo-java|40
+standalone-postgres|batata-client|125
+standalone-postgres|batata-consul-client|129
+standalone-postgres|batata-maintainer|77
+standalone-postgres|consul-go|552
+standalone-postgres|nacos-java|531
+cluster-rock|apollo-java|40
+cluster-rock|batata-client|125
+cluster-rock|batata-consul-client|129
+cluster-rock|batata-maintainer|77
+cluster-rock|consul-go|552
+cluster-rock|nacos-java|539
+cluster-mysql|apollo-java|40
+cluster-mysql|batata-client|125
+cluster-mysql|batata-consul-client|129
+cluster-mysql|batata-maintainer|77
+cluster-mysql|consul-go|552
+cluster-mysql|nacos-java|539
+cluster-postgres|apollo-java|40
+cluster-postgres|batata-client|125
+cluster-postgres|batata-consul-client|129
+cluster-postgres|batata-maintainer|77
+cluster-postgres|consul-go|552
+cluster-postgres|nacos-java|539

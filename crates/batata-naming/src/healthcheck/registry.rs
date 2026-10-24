@@ -8,6 +8,7 @@
 //! - Immediately syncs health status changes via HealthCheckResultHandler
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -352,6 +353,48 @@ pub struct InstanceCheckRegistry {
     /// path then calls `apply_status_local` / `apply_ttl_local` on every
     /// node so all registries converge.
     replicator: OnceLock<Arc<dyn HealthStatusReplicator>>,
+
+    // --- amortization counters ------------------------------------------
+    //
+    // "Responsibility sharding + edge-triggered de-duplication saves work" was
+    // asserted in unit tests but never measured, so it was impossible to tell
+    // a 2x saving from a 20x one, or to notice a regression that silently
+    // turned the de-dup off. These three counters make the claim falsifiable:
+    // they answer "how many probes ran on this node" versus "how many of them
+    // turned into a Raft entry".
+    //
+    // They are plain relaxed atomics on purpose: they are diagnostics, not
+    // state, so no ordering is required and nothing may block a probe on them.
+    probes_recorded: AtomicU64,
+    raft_writes: AtomicU64,
+    deduped_writes: AtomicU64,
+}
+
+impl InstanceCheckRegistry {
+    /// Number of probe results this node has recorded since the last reset.
+    pub fn probes_recorded(&self) -> u64 {
+        self.probes_recorded.load(Ordering::Relaxed)
+    }
+
+    /// Number of probe results that actually produced a Raft write.
+    pub fn raft_writes(&self) -> u64 {
+        self.raft_writes.load(Ordering::Relaxed)
+    }
+
+    /// Number of probe results suppressed by the unchanged-status guard.
+    pub fn deduped_writes(&self) -> u64 {
+        self.deduped_writes.load(Ordering::Relaxed)
+    }
+
+    /// Zeroes the amortization counters.
+    ///
+    /// Tests call this between phases so each measurement starts clean instead
+    /// of accumulating across the whole run.
+    pub fn reset_amortization_counters(&self) {
+        self.probes_recorded.store(0, Ordering::Relaxed);
+        self.raft_writes.store(0, Ordering::Relaxed);
+        self.deduped_writes.store(0, Ordering::Relaxed);
+    }
 }
 
 impl InstanceCheckRegistry {
@@ -364,6 +407,9 @@ impl InstanceCheckRegistry {
             service_instances: DashMap::new(),
             result_handler,
             replicator: OnceLock::new(),
+            probes_recorded: AtomicU64::new(0),
+            raft_writes: AtomicU64::new(0),
+            deduped_writes: AtomicU64::new(0),
         }
     }
 
@@ -558,6 +604,7 @@ impl InstanceCheckRegistry {
         output: String,
         response_time_ms: u64,
     ) {
+        self.probes_recorded.fetch_add(1, Ordering::Relaxed);
         let desired = if success {
             CheckStatus::Passing
         } else {
@@ -575,10 +622,12 @@ impl InstanceCheckRegistry {
             .is_some_and(|s| s.status == desired);
 
         if unchanged {
+            self.deduped_writes.fetch_add(1, Ordering::Relaxed);
             self.refresh_probe_metadata(check_key, output, response_time_ms);
             return;
         }
 
+        self.raft_writes.fetch_add(1, Ordering::Relaxed);
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_status(check_key, success, &output, response_time_ms)
@@ -620,16 +669,19 @@ impl InstanceCheckRegistry {
         // Same edge-trigger guard as [`Self::update_check_result`]: a Script /
         // Docker check is executed every interval, and re-replicating an
         // identical status only adds Raft traffic.
+        self.probes_recorded.fetch_add(1, Ordering::Relaxed);
         let unchanged = self
             .statuses
             .get(check_key)
             .is_some_and(|s| s.status == status);
 
         if unchanged {
+            self.deduped_writes.fetch_add(1, Ordering::Relaxed);
             self.refresh_probe_metadata(check_key, output, response_time_ms);
             return;
         }
 
+        self.raft_writes.fetch_add(1, Ordering::Relaxed);
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_ttl(check_key, status.as_str(), Some(output.as_str()))
@@ -756,7 +808,14 @@ impl InstanceCheckRegistry {
     /// In cluster mode (replicator installed) this routes the update
     /// through Raft, same as [`Self::update_check_result`]. Async for the
     /// same reason — the cluster path awaits a forwarded Raft write.
+    ///
+    /// Note the deliberate absence of the unchanged-status guard that
+    /// [`Self::update_check_result`] has: a TTL renewal carrying the same
+    /// status still has to refresh `last_updated`, because `TtlMonitor`
+    /// decides expiry from that timestamp alone. De-duplicating here would
+    /// make every other node see the check as expired.
     pub async fn ttl_update(&self, check_key: &str, status: CheckStatus, output: Option<String>) {
+        self.raft_writes.fetch_add(1, Ordering::Relaxed);
         if let Some(replicator) = self.replicator.get()
             && replicator
                 .replicate_ttl(check_key, status.as_str(), output.as_deref())

@@ -21,7 +21,9 @@
 #
 # Environment (all optional):
 #   CONSUL_HTTP_TOKEN   forwarded to the Consul Go SDK (e.g. "root")
-#   MVN_QUIET           set to 1 to pass -q to mvn
+#   MVN_QUIET           set to "1" to pass -q to mvn. Default off: -q hides
+#                       Surefire's "Tests run:" summary, the only source the
+#                       report parser has for a suite's case count.
 #   CARGO_QUIET         set to 1 to pass --quiet to cargo
 #   APOLLO_META         Apollo meta/config-service URL (default http://127.0.0.1:18080)
 #   APOLLO_OPENAPI_URL  Apollo OpenAPI portal URL (default = APOLLO_META)
@@ -96,8 +98,13 @@ sdk_run_nacos() {
         cluster_peers="-Dnacos.cluster.node2=127.0.0.1:8858 -Dnacos.cluster.node3=127.0.0.1:8868"
     fi
 
+    # `-q` hides Surefire's "Tests run:" summary, which is the only source
+    # gen_sdk_report.sh has for the case count — with it on, every Maven suite
+    # reports 0/0. So quiet has to be opt-in per value, not per non-emptiness.
+    local mvn_q=""
+    [ "${MVN_QUIET:-0}" = "1" ] && mvn_q="-q"
     ( cd "${SDK_PROJECT_ROOT}/sdk-tests/nacos-java-tests" && \
-        mvn ${MVN_QUIET:+-q} test \
+        mvn ${mvn_q} test \
             -Dnacos.server=127.0.0.1:8848 \
             -Dnacos.username=nacos -Dnacos.password=nacos \
             -Dnacos.cluster.node1=127.0.0.1:8848 \
@@ -173,8 +180,10 @@ sdk_run_apollo() {
     local meta="${APOLLO_META:-http://127.0.0.1:18080}"
     local openapi_url="${APOLLO_OPENAPI_URL:-$meta}"
     local token="${APOLLO_OPENAPI_TOKEN:-admin}"
+    local mvn_q=""
+    [ "${MVN_QUIET:-0}" = "1" ] && mvn_q="-q"
     ( cd "${SDK_PROJECT_ROOT}/sdk-tests/apollo-java-tests" && \
-        mvn ${MVN_QUIET:+-q} test \
+        mvn ${mvn_q} test \
             -Dapollo.meta="$meta" \
             -Dapollo.openapi.url="$openapi_url" \
             -Dapollo.openapi.token="$token" \
