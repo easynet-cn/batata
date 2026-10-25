@@ -18,7 +18,9 @@
 #   ./scripts/regression.sh                 # quick (default): pre-commit check
 #   ./scripts/regression.sh --standard      # + all core crates + java/go SDK
 #   ./scripts/regression.sh --full          # + 6-combo SDK matrix
-#   ./scripts/regression.sh --perf          # + performance anchors (release)
+#   ./scripts/regression.sh --perf          # + performance anchors (advisory)
+#   ./scripts/regression.sh --perf-gate     # ... and let a perf drop block
+#   ./scripts/regression.sh --perf-capture  # record this machine's anchors
 #   ./scripts/regression.sh --only unit     # single stage
 #   ./scripts/regression.sh --list          # show stages per level
 #
@@ -37,6 +39,17 @@
 #                             crate without paying for the whole workspace)
 #   SDK_MODE=standalone       backend mode for the integration stage
 #   REGRESSION_KEEP_SERVER=1  leave the server running after integration
+#   PERF_MACHINE_ID=...       override the anchor key (default: hw.model+ncores)
+#   PERF_STORAGE=rocks        anchor label: rocks = embedded (RocksDB)
+#   PERF_STORAGE=mysql        anchor label + real MySQL backend (ExternalDb)
+#   PERF_STORAGE=postgres     anchor label + real PostgreSQL backend (ExternalDb)
+#                              (mysql/postgres start the server with --db-url and
+#                               reset a dedicated perf DB each run)
+#   PERF_MODE=standalone      standalone | cluster
+#   PERF_ROUNDS=3 PERF_DURATION=20s PERF_WARMUP=10s
+#   PERF_CONNECTIONS=20 PERF_THREADS=2 PERF_WORKERS=8
+#   PERF_TOLERANCE=0.08       minimum tolerance when cv_pct is small
+#   PERF_BASELINE=<file>      baseline to read/write (for experiments)
 # =============================================================================
 
 set -uo pipefail
@@ -46,13 +59,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 WHITELIST="${SCRIPT_DIR}/regression_whitelist.txt"
-PERF_BASELINE="${SCRIPT_DIR}/regression_perf_baseline.txt"
+PERF_BASELINE="${PERF_BASELINE:-${SCRIPT_DIR}/regression_perf_baseline.txt}"
 MATRIX_BASELINE="${SCRIPT_DIR}/regression_matrix_baseline.txt"
 
-# Fraction of the anchor a scenario may regress before it blocks. Anchors come
-# from bench_ab.py medians whose observed spread on this machine is ~11.6%, so
-# anything inside that band is noise, not a regression.
-PERF_TOLERANCE="${PERF_TOLERANCE:-0.116}"
+# Minimum fraction of the anchor a scenario may regress before it is reported.
+# The real tolerance is max(anchor cv_pct, PERF_TOLERANCE): cv_pct is the
+# spread that machine showed when the anchor was captured, and on a busy
+# developer box that is far larger than 8%. A machine that cannot resolve
+# better than 40% must not fail a run for a 20% drop.
+PERF_TOLERANCE="${PERF_TOLERANCE:-0.08}"
+PERF_STORAGE="${PERF_STORAGE:-rocks}"
+PERF_MODE="${PERF_MODE:-standalone}"
+PERF_ROUNDS="${PERF_ROUNDS:-3}"
+PERF_WARMUP_ROUNDS="${PERF_WARMUP_ROUNDS:-1}"
+PERF_DURATION="${PERF_DURATION:-20s}"
+PERF_WARMUP="${PERF_WARMUP:-10s}"
+PERF_CONNECTIONS="${PERF_CONNECTIONS:-20}"
+PERF_THREADS="${PERF_THREADS:-2}"
+PERF_WORKERS="${PERF_WORKERS:-8}"
+PERF_MACHINE_ID="${PERF_MACHINE_ID:-}"
+PERF_CASES=(naming config)
 
 # Crates run at every level. These are the ones whose failure means something
 # changed in a hot path; the rest are covered at --standard.
@@ -62,6 +88,8 @@ FULL_CRATES=(batata-plugin-apollo)
 
 LEVEL=quick
 RUN_PERF=0
+PERF_GATE=0
+PERF_CAPTURE=0
 ONLY=""
 LIST_ONLY=0
 while [ $# -gt 0 ]; do
@@ -70,6 +98,8 @@ while [ $# -gt 0 ]; do
         --standard) LEVEL=standard ;;
         --full)     LEVEL=full ;;
         --perf)     RUN_PERF=1 ;;
+        --perf-gate) RUN_PERF=1; PERF_GATE=1 ;;
+        --perf-capture) RUN_PERF=1; PERF_CAPTURE=1 ;;
         --only)     ONLY="${2:-}"; shift ;;
         --list)     LIST_ONLY=1 ;;
         -h|--help)  LIST_ONLY=1 ;;
@@ -84,7 +114,8 @@ stages per level
   quick     fmt check unit integration
   standard  fmt check unit integration
   full      fmt check unit integration matrix
-  --perf    perf (additive, any level)
+  --perf    perf (additive, any level; advisory unless --perf-gate)
+  --perf-capture  record this machine's anchors instead of comparing
   --only <stage> runs a single stage
 EOF
     exit 0
@@ -101,6 +132,7 @@ REPORT="${REPORT_DIR}/report.md"
 
 BLOCKERS=()
 WHITELISTED=()
+PERF_ADVISORY=()
 STAGE_ROWS=()
 TOTAL_PASSED=0
 TOTAL_FAILED=0
@@ -460,10 +492,63 @@ stage_matrix() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage: perf (release, compares against scripts/regression_perf_baseline.txt)
+# Stage: perf (release; anchors in scripts/regression_perf_baseline.txt)
+#
+# Anchors are keyed by <machine_id>|<storage>|<mode>|<case>. An absolute RPS
+# number only means something on the box that produced it, so a new machine
+# has no anchors at all: the stage reports that and stops, instead of failing
+# against another machine's numbers.
+#
+# The stage is advisory by default - it is the only stage whose result depends
+# on how busy the host is. --perf-gate promotes a drop to a blocker.
 # ---------------------------------------------------------------------------
 median_of() {
     printf '%s\n' "$1" | tr ',' '\n' | sort -n | awk '{v[NR]=$1} END{ if (NR%2) print v[(NR+1)/2]; else print (v[NR/2]+v[NR/2+1])/2 }'
+}
+
+# Stable id for the machine that produced an anchor: lowercased hw.model with
+# punctuation stripped plus the core count, e.g. `macbookpro161-16t`.
+perf_machine_id() {
+    if [ -n "$PERF_MACHINE_ID" ]; then printf '%s' "$PERF_MACHINE_ID"; return 0; fi
+    local model ncpu
+    model=$(sysctl -n hw.model 2>/dev/null || echo "unknown")
+    ncpu=$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0)
+    model=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+    printf '%s-%st' "${model:-unknown}" "$ncpu"
+}
+
+# perf_anchor <machine> <case> -> "median|cv_pct", empty when absent.
+perf_anchor() {
+    [ -f "$PERF_BASELINE" ] || return 0
+    awk -F'|' -v m="$1" -v c="$2" -v s="$PERF_STORAGE" -v mo="$PERF_MODE" \
+        '$1==m && $2==s && $3==mo && $4==c {print $5"|"$6; exit}' "$PERF_BASELINE"
+}
+
+# perf_capture_write <machine> <case> <median> <cv_pct>
+perf_capture_write() {
+    local machine="$1" case_name="$2" med="$3" cv="$4"
+    [ -f "$PERF_BASELINE" ] || \
+        printf '%s\n' "# machine_id|storage|mode|case|median_rps|cv_pct|captured|bench_params" > "$PERF_BASELINE"
+    local tmp="${PERF_BASELINE}.tmp" params
+    params="c${PERF_CONNECTIONS}-t${PERF_THREADS}-w${PERF_WORKERS}-d${PERF_DURATION}-r${PERF_ROUNDS}"
+    awk -F'|' -v OFS='|' -v m="$machine" -v s="$PERF_STORAGE" -v mo="$PERF_MODE" -v c="$case_name" \
+        '!($1==m && $2==s && $3==mo && $4==c)' "$PERF_BASELINE" > "$tmp"
+    printf '%s|%s|%s|%s|%.0f|%.1f|%s|%s\n' \
+        "$machine" "$PERF_STORAGE" "$PERF_MODE" "$case_name" "$med" "$cv" \
+        "$(date +%Y-%m-%d)" "$params" >> "$tmp"
+    mv "$tmp" "$PERF_BASELINE"
+}
+
+# A perf finding only blocks under --perf-gate; otherwise it is advisory.
+perf_fail() {
+    if [ "$PERF_GATE" = 1 ]; then
+        record_failure perf "$1"
+        echo "    [BLOCKER] $1"
+        return 1
+    fi
+    PERF_ADVISORY+=("$1")
+    echo "    [advisory] $1"
+    return 0
 }
 
 stage_perf() {
@@ -477,45 +562,95 @@ stage_perf() {
         stage_end perf 0 "SKIPPED (no release binary)"
         return 0
     fi
-    [ -f "$PERF_BASELINE" ] || { echo "    missing $PERF_BASELINE"; stage_end perf 1 "baseline file missing"; return 0; }
+
+    local MACHINE
+    MACHINE=$(perf_machine_id)
+
+    # Cluster mode always uses embedded RocksDB for the raft/protocol layer, so
+    # its anchor label and backend are "rocks"/embedded regardless of PERF_STORAGE.
+    if [ "$PERF_MODE" = "cluster" ]; then
+        PERF_STORAGE="rocks"
+    fi
+
+    # Map the anchor-storage label to the backend bench_ab.py actually starts.
+    # "rocks" (the label) means embedded RocksDB; mysql/postgres make the driver
+    # start the server against a real external database.
+    local storage_arg="embedded"
+    case "$PERF_STORAGE" in
+        rocks|embedded) storage_arg="embedded" ;;
+        mysql)          storage_arg="mysql" ;;
+        postgres)       storage_arg="postgres" ;;
+        *)              storage_arg="embedded" ;;
+    esac
+    echo "    machine=${MACHINE} storage=${PERF_STORAGE} mode=${PERF_MODE} backend=${storage_arg}"
+
+    # Nothing anchored for this machine: say so instead of spending 20 minutes
+    # benchmarking against a number that was never valid here.
+    if [ "$PERF_CAPTURE" != 1 ]; then
+        local anchored
+        anchored=$(awk -F'|' -v m="$MACHINE" -v s="$PERF_STORAGE" -v mo="$PERF_MODE" \
+            '$1==m && $2==s && $3==mo' "$PERF_BASELINE" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${anchored:-0}" = "0" ]; then
+            echo "    no anchors for machine '${MACHINE}' (${PERF_STORAGE}/${PERF_MODE})"
+            echo "    record them with: ./scripts/regression.sh --perf-capture"
+            PERF_ADVISORY+=("no anchors for machine '${MACHINE}' (${PERF_STORAGE}/${PERF_MODE}); nothing compared")
+            stage_end perf 0 "no anchors for this machine"
+            return 0
+        fi
+    fi
 
     local rc=0 case_name
-    for case_name in naming config; do
+    for case_name in "${PERF_CASES[@]}"; do
         local csv="$LOG_DIR/perf-${case_name}.csv"
         python3 "${SCRIPT_DIR}/bench_ab.py" \
             --case "$case_name" \
             --variant "cur=BATATA_NOOP=1" \
-            --rounds 3 --warmup-rounds 1 \
-            --duration 20s --warmup 10s \
-            --connections 20 --threads 2 --workers 8 \
-            --mode standalone --fresh-store \
+            --storage "$storage_arg" \
+            --rounds "$PERF_ROUNDS" --warmup-rounds "$PERF_WARMUP_ROUNDS" \
+            --duration "$PERF_DURATION" --warmup "$PERF_WARMUP" \
+            --connections "$PERF_CONNECTIONS" --threads "$PERF_THREADS" --workers "$PERF_WORKERS" \
+            --mode "$PERF_MODE" --fresh-store \
             --out "$csv" > "$LOG_DIR/perf-${case_name}.log" 2>&1
-        [ -f "$csv" ] || { record_failure perf "${case_name}: no results"; rc=1; continue; }
+        [ -f "$csv" ] || { perf_fail "${case_name}: no results" || rc=1; continue; }
 
         # `# raw <variant> <case>: [v1, v2, v3]`
         while IFS='|' read -r name vals; do
             [ -n "$name" ] || continue
-            local med mn mx
+            local med mn mx cv
             med=$(median_of "$vals")
             mn=$(printf '%s\n' "$vals" | tr ',' '\n' | sort -n | head -1)
             mx=$(printf '%s\n' "$vals" | tr ',' '\n' | sort -n | tail -1)
-            local anchor
-            anchor=$(awk -F'|' -v n="$name" '$1==n {print $2}' "$PERF_BASELINE")
-            if [ -z "$anchor" ]; then
-                echo "    ${name}: no anchor (median ${med}) — add it to $(basename "$PERF_BASELINE")"
+            cv=$(awk -v a="$mn" -v b="$mx" -v m="$med" 'BEGIN{ if (m<=0) print "0"; else printf "%.1f", 100*(b-a)/m }')
+
+            if [ "$PERF_CAPTURE" = 1 ]; then
+                perf_capture_write "$MACHINE" "$name" "$med" "$cv"
+                echo "    ${name}: captured median ${med} (cv ${cv}%)"
                 continue
             fi
-            local floor
-            floor=$(awk -v a="$anchor" -v t="$PERF_TOLERANCE" 'BEGIN{printf "%.0f", a*(1-t)}')
+
+            local anchor_line anchor acv tol floor
+            anchor_line=$(perf_anchor "$MACHINE" "$name")
+            if [ -z "$anchor_line" ]; then
+                echo "    ${name}: no anchor for this machine (measured ${med})"
+                PERF_ADVISORY+=("${name}: no anchor for machine '${MACHINE}' (measured ${med})")
+                continue
+            fi
+            anchor=${anchor_line%%|*}
+            acv=${anchor_line##*|}
+            tol=$(awk -v c="$acv" -v t="$PERF_TOLERANCE" 'BEGIN{ v=c/100; if (v<t) v=t; printf "%.3f", v }')
+            floor=$(awk -v a="$anchor" -v t="$tol" 'BEGIN{printf "%.0f", a*(1-t)}')
             if awk -v m="$med" -v f="$floor" 'BEGIN{exit !(m<f)}'; then
-                record_failure perf "${name}: ${med} RPS < floor ${floor} (anchor ${anchor})"
-                rc=1
+                perf_fail "${name}: ${med} RPS < floor ${floor} (anchor ${anchor}, tol ${tol}, cv ${cv}%)" || rc=1
             else
-                echo "    ${name}: median ${med} (min ${mn} max ${mx}) vs anchor ${anchor} — ok"
+                echo "    ${name}: median ${med} (cv ${cv}%) vs anchor ${anchor} (tol ${tol}) — ok"
             fi
         done < <(awk -F':' '/^# raw /{ nm=$1; sub(/^# raw [^ ]+ /,"",nm); v=$2; gsub(/[][ ]/,"",v); print nm"|"v }' "$csv")
     done
-    stage_end perf $rc "tolerance ${PERF_TOLERANCE}"
+
+    local detail="advisory"
+    [ "$PERF_GATE" = 1 ] && detail="gating"
+    [ "$PERF_CAPTURE" = 1 ] && detail="captured for ${MACHINE}"
+    stage_end perf $rc "$detail"
 }
 
 # ---------------------------------------------------------------------------
@@ -569,6 +704,16 @@ write_report() {
             done
         fi
         echo
+        if [ "${#PERF_ADVISORY[@]}" -gt 0 ]; then
+            echo "## Perf (advisory)"
+            echo
+            echo "Not blockers. The perf stage is the only one whose result depends on how"
+            echo "busy the host is; it blocks only under \`--perf-gate\`."
+            echo
+            local p
+            for p in "${PERF_ADVISORY[@]}"; do echo "- ${p}"; done
+            echo
+        fi
         echo "## Artifacts"
         echo
         echo "- Logs: \`reports/regression/${RUN_ID}/logs/\`"
@@ -599,8 +744,12 @@ finalize() {
 
 # ---------------------------------------------------------------------------
 main() {
+    local perf_label=""
+    [ "$RUN_PERF" = 1 ] && perf_label=" + perf"
+    [ "$PERF_CAPTURE" = 1 ] && perf_label=" + perf-capture"
+    [ "$PERF_GATE" = 1 ] && perf_label=" + perf-gate"
     report_header
-    echo "Batata regression gate — level=${LEVEL}$([ "$RUN_PERF" = 1 ] && echo ' +perf')"
+    echo "Batata regression gate — level=${LEVEL}${perf_label}"
     echo "Report dir: ${REPORT_DIR}"
     echo
     stage_fmt

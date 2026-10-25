@@ -7,7 +7,7 @@
 services:
   # MySQL database for Batata
   mysql:
-    image: docker.io/library/mysql:latest
+    image: docker.io/library/mysql:8.4
     container_name: batata-test-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root

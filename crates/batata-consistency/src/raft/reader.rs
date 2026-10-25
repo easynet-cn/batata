@@ -378,8 +378,12 @@ impl RocksDbReader {
             entries.push(stored);
         }
 
-        // Sort by created_time descending (most recent first)
-        entries.sort_by(|a, b| b.created_time.cmp(&a.created_time));
+        // Sort by id descending (most recent first). `id` is the canonical,
+        // strictly-monotonic history sequence, so this is stable even when two
+        // entries share the same millisecond `created_time` (which made the old
+        // created_time-only sort unstable and could surface a non-latest entry
+        // as the first page item).
+        entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
         let offset = (page_no.saturating_sub(1)) * page_size;

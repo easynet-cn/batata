@@ -16,7 +16,7 @@
 services:
   # MySQL test database
   mysql-test:
-    image: docker.io/library/mysql:8.0
+    image: docker.io/library/mysql:8.4
     container_name: batata-mysql-test
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -42,7 +42,7 @@ services:
 
   # PostgreSQL test database
   postgres-test:
-    image: docker.io/library/postgres:16
+    image: docker.io/library/postgres:18
     container_name: batata-postgres-test
     environment:
       POSTGRES_DB: batata_test

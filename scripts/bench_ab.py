@@ -47,6 +47,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import statistics
@@ -80,6 +81,83 @@ DATA_DIR_KEY = "batata.persistence.embedded.data_dir"
 # enabled by default), which swamps the differences this driver is meant to
 # resolve and makes the two modes incomparable.
 COMMON_ARGS = ["--batata.server.http.access_log.enabled=false"]
+
+# External DB (MySQL/PostgreSQL) backing for `--storage mysql|postgres`.
+# The driver benchmarks a *clean* external DB exactly like it benchmarks a
+# fresh embedded store: each run DROPs and CREATEs this dedicated database so the
+# SQL-backed write path is measured against an empty schema rather than one that
+# has grown across the session. A dedicated `batata_perf` DB is used so a perf
+# capture never clobbers the SDK test database (`batata_sdk_test`).
+#
+# ExternalDb + Standalone opens no RocksDB at all (see startup/persistence.rs:
+# `rocks_db: None, raft_node: None`), so no embedded data_dir is passed for it.
+EXTERNAL_DB = {
+    "mysql": {
+        "platform": "mysql",
+        "url": "mysql://root:devterry@127.0.0.1:3306/batata_perf",
+        "db": "batata_perf",
+        "client": "mysql",
+    },
+    "postgres": {
+        "platform": "postgresql",
+        "url": "postgres://postgres:devterry@127.0.0.1:5432/batata_perf",
+        "db": "batata_perf",
+        "client": "psql",
+    },
+}
+
+
+def find_client(name: str) -> str:
+    """Locate a DB client binary across Homebrew prefixes and PATH."""
+    candidates: dict[str, list[str]] = {
+        "mysql": [
+            "/opt/homebrew/opt/mysql-client@8.4/bin/mysql",
+            "/usr/local/mysql/bin/mysql",
+            "/opt/homebrew/bin/mysql",
+            "mysql",
+        ],
+        "psql": [
+            "/opt/homebrew/opt/libpq/bin/psql",
+            "/opt/homebrew/bin/psql",
+            "/usr/local/bin/psql",
+            "psql",
+        ],
+    }
+    for path in candidates.get(name, []):
+        if os.path.exists(path):
+            return path
+    found = shutil.which(name)
+    if found:
+        return found
+    raise SystemExit(f"DB client '{name}' not found; install mysql-client/libpq or put it on PATH")
+
+
+def reset_external_db(storage: str) -> None:
+    """DROP + CREATE the dedicated perf database for a clean store."""
+    cfg = EXTERNAL_DB[storage]
+    client = find_client(cfg["client"])
+    db = cfg["db"]
+    if cfg["client"] == "mysql":
+        cmd = [
+            client, "-h", "127.0.0.1", "-P", "3306", "-u", "root", "-pdevterry",
+            "-e", f"DROP DATABASE IF EXISTS {db}; CREATE DATABASE {db};",
+        ]
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    else:
+        env = dict(os.environ)
+        env["PGPASSWORD"] = "devterry"
+        for statement in (
+            f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname='{db}' AND pid<>pg_backend_pid();",
+            f"DROP DATABASE IF EXISTS {db};",
+            f"CREATE DATABASE {db};",
+        ):
+            subprocess.run(
+                [client, "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgres",
+                 "-c", statement],
+                check=False, env=env, capture_output=True, text=True,
+            )
+    print(f"  reset external db: {storage}/{db}")
 
 
 class Sample:
@@ -252,9 +330,15 @@ class Server:
 
         if self.args.mode == "standalone":
             cmd = [*base, "-m", "standalone", *COMMON_ARGS, *self.variant_cli]
-            if self.store_dir is not None:
-                cmd.append(f"--{DATA_DIR_KEY}={self.store_dir}")
-                print(f"  fresh store: {self.store_dir}")
+            if self.args.storage == "embedded":
+                if self.store_dir is not None:
+                    cmd.append(f"--{DATA_DIR_KEY}={self.store_dir}")
+                    print(f"  fresh store: {self.store_dir}")
+            else:
+                cfg = EXTERNAL_DB[self.args.storage]
+                cmd.append(f"--batata.sql.init.platform={cfg['platform']}")
+                cmd.append(f"--db-url={cfg['url']}")
+                print(f"  external store: {self.args.storage} ({cfg['url']})")
             return [(cmd, self.args.port, self.log_path)]
 
         ports = [self.args.base_port + 10 * i for i in range(self.args.nodes)]
@@ -290,6 +374,10 @@ class Server:
         return nodes
 
     def start(self) -> bool:
+        # A clean external DB each run, exactly like a fresh embedded store.
+        if self.args.storage != "embedded" and self.store_dir is not None:
+            reset_external_db(self.args.storage)
+
         for cmd, _port, log_path in self.nodes:
             log = open(log_path, "w", encoding="utf-8", errors="replace")
             self.procs.append(
@@ -457,6 +545,15 @@ def main() -> int:
         default="./target/release/batata-server -d server -m standalone",
         help="server start command (default: -d server, i.e. no console server)",
     )
+    parser.add_argument(
+        "--storage",
+        choices=("embedded", "mysql", "postgres"),
+        default="embedded",
+        help="storage backend the server runs against (default: embedded/RocksDB). "
+        "mysql|postgres start the server with --db-url + --batata.sql.init.platform "
+        "and reset a dedicated perf database each run. Cluster mode always uses "
+        "embedded RocksDB for the raft/protocol layer, so --storage is ignored there.",
+    )
     parser.add_argument("--init", action="store_true", help="run init-admin.sh / init-bench-user.sh per variant")
     parser.add_argument(
         "--fresh-store",
@@ -484,6 +581,13 @@ def main() -> int:
         args.port = args.base_port
         args.nodes = max(args.nodes, 1)
         ports = [args.base_port + 10 * i for i in range(args.nodes)]
+        if args.storage != "embedded":
+            print(
+                f"--storage {args.storage} ignored for --mode cluster "
+                "(cluster always uses embedded RocksDB for the raft/protocol layer); "
+                "benchmarking embedded cluster"
+            )
+            args.storage = "embedded"
     else:
         ports = [args.port]
 

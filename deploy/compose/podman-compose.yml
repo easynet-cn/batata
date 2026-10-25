@@ -82,7 +82,7 @@ services:
       - *batata-conf
 
   mysql:
-    image: docker.io/library/mysql:latest
+    image: docker.io/library/mysql:8.4
     container_name: batata-mysql-db
     profiles: [mysql]
     ports:
@@ -126,7 +126,7 @@ services:
       - *batata-conf
 
   postgres:
-    image: docker.io/library/postgres:latest
+    image: docker.io/library/postgres:18
     container_name: batata-postgres-db
     profiles: [postgres]
     ports:

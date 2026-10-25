@@ -1,0 +1,74 @@
+# FROZEN 2026-10-24 — HISTORICAL REFERENCE ONLY, NO LONGER USED BY THE GATE.
+#
+# The gate now reads scripts/regression_perf_baseline.txt, whose anchors are
+# keyed by machine id. These numbers are kept for reference and describe:
+#   MacBookPro15,1 / i9-9880H / 16 threads / macOS / embedded RocksDB /
+#   standalone / bench_ab.py --rounds 3 --warmup-rounds 1 --duration 20s
+#                            --warmup 10s --connections 20 --threads 2
+#                            --workers 8 --fresh-store
+#
+# Why they were frozen (A/A self-comparison, 2026-10-24 18:00, same binary,
+# two identical variants, alternating AB/BA, 4 recorded rounds each):
+#
+#   Instance Register  33324 / 37029   spread 70.6% / 38.0%
+#   Instance Query     47345 / 48682   spread 62.0% / 41.8%
+#   Service List       46164 / 50483   spread 40.2% / 36.3%
+#   Config Write       18120 / 18324   spread 35.5% / 31.2%
+#   Config Read        47350 / 43455   spread 26.1% / 15.9%
+#
+# One binary measured against itself on one box spread 16-71% between
+# adjacent rounds, while the "regression" these anchors were being asked to
+# resolve was ~22%. The host was the bottleneck (load average ran 3.3 -> 19.8
+# during the run), so these numbers cannot resolve anything of that size on
+# that box, and they say nothing at all about different hardware.
+#
+# Do not use them as a gate on another machine. Capture fresh anchors with
+# `./scripts/regression.sh --perf-capture`.
+#
+# --- original header follows -------------------------------------------------
+# Performance anchors for `scripts/regression.sh --perf`
+#
+# Format:  <case name>|<median rps>|<min>|<max>
+#
+# <case name> must match the scenario label printed by scripts/benchmark.sh
+# (passed through to bench_ab.py). medians are over recorded rounds.
+#
+# Captured: 2026-10-21
+#   standalone, release default profile
+#   bench_ab.py --rounds 3 --warmup-rounds 1 --duration 20s --warmup 10s
+#               --connections 20 --threads 2 --workers 8 --fresh-store
+#
+# Verification attempt: 2026-10-24 — ANCHORS LEFT UNCHANGED.
+#   Two consecutive `--perf` runs on this machine came in ~22% below every
+#   anchor, but the two runs did not agree with each other either:
+#
+#       Instance Register  34548  then  28178   (18% apart)
+#       Instance Query     41890  then  33867
+#       Service List       37485  then  42161
+#       Config Write       13865  then  16184
+#       Config Read        34690  then  35262
+#
+#   Register/Query are ~1% stable when the machine is idle, so an 18% spread
+#   means the run is measuring something other than the code. Load average sat
+#   at 3.4–7.7 throughout (no batata process running), i.e. the box, not the
+#   binary, was the bottleneck. Recording 28k as the new anchor would silently
+#   credit every later run with a 60% "improvement".
+#
+#   Re-capture when the machine is idle: `uptime` load averages should be under
+#   ~2, then `bash scripts/regression.sh --perf`. Until then treat a red perf
+#   stage as "host too busy to measure", not as a regression.
+#
+# The gate fails a scenario whose median drops below anchor * (1 - 0.116). The
+# tolerance is the observed spread on this machine: Config Write/Read swing
+# ~12% run to run, so a smaller band would fire on noise alone. Register/Query
+# are tight (~1%); do not widen the tolerance globally because of them.
+#
+# Refreshing: re-run the capture command above and replace the numbers in the
+# same commit as the change that made them move. Never lower an anchor to make
+# a red gate green without a stated reason.
+
+Instance Register|44398|44105|44691
+Instance Query|62215|61982|62448
+Service List|68717|65148|72285
+Config Write|19009|17893|20124
+Config Read|51947|48758|55137
