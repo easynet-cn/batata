@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use crate::model::GLOBAL_ADMIN_ROLE;
 use crate::service::auth_data::AuthDataService;
 use crate::service::rbac_cache::RbacSource;
+use crate::service::visibility_grant::VISIBILITY_PATH;
 
 /// Envelope returned by the Batata HTTP APIs.
 #[derive(Debug, Deserialize)]
@@ -487,6 +488,52 @@ impl AuthDataService for RemoteAuthDataService {
             &[
                 ("role", role.to_string()),
                 ("resource", resource.to_string()),
+                ("action", action.to_string()),
+            ],
+        )
+        .await
+    }
+
+    async fn visibility_grant(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        // The dedicated role and the permission row are built by the core, so
+        // the console forwards the grant itself instead of replaying it as a
+        // role + permission pair — the same split Nacos makes in
+        // `RemoteVisibilityGrantService`.
+        self.post_form(
+            VISIBILITY_PATH,
+            &[
+                ("namespaceId", namespace_id),
+                ("resourceType", resource_type),
+                ("resourceName", resource_name),
+                ("username", username),
+                ("action", action),
+            ],
+        )
+        .await
+    }
+
+    async fn visibility_revoke(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        self.delete_query(
+            VISIBILITY_PATH,
+            &[
+                ("namespaceId", namespace_id.to_string()),
+                ("resourceType", resource_type.to_string()),
+                ("resourceName", resource_name.to_string()),
+                ("username", username.to_string()),
                 ("action", action.to_string()),
             ],
         )

@@ -95,16 +95,18 @@ pub async fn find_by_username(
 
 /// Invalidate cache for a specific user
 pub fn invalidate_roles_cache(username: &str) {
-    roles_cache().invalidate(username);
+    crate::service::rbac_cache::invalidate_and_drain(roles_cache(), username);
 }
 
 /// Invalidate cache entries for users who have a specific role
 /// Uses secondary index for O(1) lookup instead of O(n) full scan
 pub fn invalidate_roles_cache_for_role(role: &str) {
     if let Some((_, usernames)) = ROLE_USER_INDEX.remove(role) {
-        for username in usernames {
-            roles_cache().invalidate(&username);
+        for username in &usernames {
+            roles_cache().invalidate(username);
         }
+
+        crate::service::rbac_cache::drain_pending_invalidations(roles_cache());
     }
 }
 
@@ -117,7 +119,7 @@ pub fn prune_role_user_index() {
 /// Invalidate all role cache entries
 /// Use sparingly - prefer targeted invalidation when possible
 pub fn invalidate_all_roles_cache() {
-    roles_cache().invalidate_all();
+    crate::service::rbac_cache::invalidate_all_and_drain(roles_cache());
     ROLE_USER_INDEX.clear();
 }
 

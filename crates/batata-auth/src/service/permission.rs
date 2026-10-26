@@ -177,9 +177,11 @@ pub async fn find_by_roles(
 /// Uses secondary index for O(1) lookup instead of O(n) full scan
 pub fn invalidate_permissions_cache_for_role(role: &str) {
     if let Some((_, keys)) = ROLE_CACHE_INDEX.remove(role) {
-        for key in keys {
-            permissions_cache().invalidate(&key);
+        for key in &keys {
+            permissions_cache().invalidate(key);
         }
+
+        crate::service::rbac_cache::drain_pending_invalidations(permissions_cache());
     }
 }
 
@@ -192,7 +194,7 @@ pub fn prune_permission_cache_index() {
 /// Invalidate all permission cache entries
 /// Use sparingly - prefer `invalidate_permissions_cache_for_role` when possible
 pub fn invalidate_all_permissions_cache() {
-    permissions_cache().invalidate_all();
+    crate::service::rbac_cache::invalidate_all_and_drain(permissions_cache());
     ROLE_CACHE_INDEX.clear();
 }
 

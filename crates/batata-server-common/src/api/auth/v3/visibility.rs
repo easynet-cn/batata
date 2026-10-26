@@ -15,11 +15,10 @@
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, post, web};
 use serde::Deserialize;
 
-use batata_auth::service::visibility_grant::{
-    DefaultVisibilityGrantService, VISIBILITY_RESOURCE, VisibilityGrantService,
-};
+use batata_auth::service::visibility_grant::VISIBILITY_RESOURCE;
 use batata_core::service::GrpcAuthService;
 
+use crate::api::auth::auth_data;
 use crate::model::app_state::AppState;
 use crate::model::response::Result;
 use crate::secured::Secured;
@@ -45,28 +44,11 @@ struct VisibilityGrantParam {
     action: String,
 }
 
-/// Build a [`DefaultVisibilityGrantService`] from the AppState persistence.
-///
-/// Returns an error response if the persistence layer is not available
-/// (e.g. console-only remote mode where the server has no local database).
-fn build_service(
-    data: &web::Data<AppState>,
-) -> std::result::Result<DefaultVisibilityGrantService, HttpResponse> {
-    match data.persistence.as_ref() {
-        Some(p) => Ok(DefaultVisibilityGrantService::new(p.clone())),
-        None => Err(HttpResponse::InternalServerError().json(Result::<String> {
-            code: 500,
-            message: "persistence service not available".to_string(),
-            data: String::new(),
-        })),
-    }
-}
-
 /// Check whether a service error is a client-side error (HTTP 400).
 ///
-/// The [`DefaultVisibilityGrantService`] returns `anyhow::Error` with
-/// human-readable messages for validation failures. We inspect the
-/// message text to decide the HTTP status code.
+/// The auth data service returns `anyhow::Error` with human-readable messages
+/// for validation failures. We inspect the message text to decide the HTTP
+/// status code.
 fn is_client_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
     msg.contains("not found")
@@ -115,13 +97,15 @@ async fn grant(
             .build()
     );
 
-    let service = match build_service(&data) {
+    // Deployment-aware: the direct backend builds the dedicated role and
+    // permission rows locally, the remote one forwards the grant to the core.
+    let service = match auth_data(&data) {
         Ok(s) => s,
         Err(resp) => return resp,
     };
 
     let result = service
-        .grant(
+        .visibility_grant(
             params.namespace_id.as_deref().unwrap_or(""),
             &params.resource_type,
             &params.resource_name,
@@ -160,13 +144,13 @@ async fn revoke(
             .build()
     );
 
-    let service = match build_service(&data) {
+    let service = match auth_data(&data) {
         Ok(s) => s,
         Err(resp) => return resp,
     };
 
     let result = service
-        .revoke(
+        .visibility_revoke(
             params.namespace_id.as_deref().unwrap_or(""),
             &params.resource_type,
             &params.resource_name,

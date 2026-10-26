@@ -404,6 +404,58 @@ async fn console_remote_deployment_proxies_to_core() {
         "permission list served by the console does not contain the grant: {permissions}"
     );
 
+    // --- Guard 5: visibility grants work on the separated console ---
+    //
+    // `/v3/auth/visibility` is plugin-owned: the dedicated role and permission
+    // row are built by whoever owns the data. In console mode that is the core,
+    // so the console forwards the grant instead of replaying it as a role +
+    // permission pair — the split Nacos makes in `RemoteVisibilityGrantService`.
+    let visibility_granted = auth_form(
+        &format!("{console_base}/v3/auth/visibility"),
+        &token,
+        &[
+            ("namespaceId", ns_id),
+            ("resourceType", "config"),
+            ("resourceName", "it-app.yml"),
+            ("username", managed_user),
+            ("action", "r"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        visibility_granted,
+        StatusCode::OK,
+        "console could not grant visibility through the remote auth data backend"
+    );
+
+    // The console has no database of its own, so the dedicated visibility role
+    // can only exist on the core if the grant really crossed the process line.
+    let visibility_on_core = auth_get(
+        &format!(
+            "{core_base}/nacos/v3/auth/role/list?username={managed_user}&pageNo=1&pageSize=10"
+        ),
+        &core_token,
+    )
+    .await;
+    assert!(
+        visibility_on_core.contains("__nacos_vis__.u."),
+        "visibility grant did not reach the core: {visibility_on_core}"
+    );
+
+    let visibility_revoked = auth_delete(
+        &format!(
+            "{console_base}/v3/auth/visibility?namespaceId={ns_id}&resourceType=config\
+             &resourceName=it-app.yml&username={managed_user}&action=r"
+        ),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        visibility_revoked,
+        StatusCode::OK,
+        "console could not revoke visibility"
+    );
+
     // Tear the management objects back down, reusing the same remote paths.
     let revoked = auth_delete(
         &format!(

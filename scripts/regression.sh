@@ -83,7 +83,7 @@ PERF_CASES=(naming config)
 # Crates run at every level. These are the ones whose failure means something
 # changed in a hot path; the rest are covered at --standard.
 CORE_CRATES=(batata-core batata-client batata-config batata-naming batata-plugin-consul)
-STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common)
+STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common batata-console)
 FULL_CRATES=(batata-plugin-apollo)
 
 LEVEL=quick
@@ -322,6 +322,12 @@ run_unit_crate() {
 stage_unit() {
     should_run unit || return 0
     STAGE_START=$(date +%s)
+
+    # batata-console's deployment test spawns real core + console processes, so
+    # the binary has to exist before the crate is exercised. `cargo build` is
+    # incremental, so this is a no-op when the binary is already current.
+    ensure_server_binary || record_failure unit "batata-server failed to build"
+
     local crates rc=0
     crates=$(unit_crates | tr ' ' '\n' | grep -v '^$' | sort -u)
     while IFS= read -r crate; do

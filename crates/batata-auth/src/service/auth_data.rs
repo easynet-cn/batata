@@ -34,6 +34,7 @@ use batata_persistence::{
 };
 
 use crate::service::rbac_cache::RbacSource;
+use crate::service::visibility_grant::{grant_with, revoke_with};
 
 /// Everything the auth plugin and the `/v3/auth/**` handlers read and write.
 ///
@@ -136,6 +137,31 @@ pub trait AuthDataService: RbacSource + Send + Sync {
         &self,
         role: &str,
         resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()>;
+
+    // ==================== Visibility Operations ====================
+
+    /// Grant one visibility action on a resource to a user.
+    ///
+    /// `r` grants read visibility; `w` and `rw` grant read/write visibility.
+    /// A blank `namespace_id` means the default namespace.
+    async fn visibility_grant(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Revoke one visibility action on a resource from a user.
+    async fn visibility_revoke(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
         action: &str,
     ) -> anyhow::Result<()>;
 }
@@ -249,6 +275,44 @@ impl<T: AuthPersistence + ?Sized> AuthDataService for T {
         action: &str,
     ) -> anyhow::Result<()> {
         AuthPersistence::permission_revoke(self, role, resource, action).await
+    }
+
+    async fn visibility_grant(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        grant_with(
+            self,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
+    }
+
+    async fn visibility_revoke(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        revoke_with(
+            self,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
     }
 }
 
@@ -396,6 +460,44 @@ impl AuthDataService for PersistenceAuthDataService {
     ) -> anyhow::Result<()> {
         AuthDataService::permission_revoke(&*self.inner, role, resource, action).await
     }
+
+    async fn visibility_grant(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthDataService::visibility_grant(
+            &*self.inner,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
+    }
+
+    async fn visibility_revoke(
+        &self,
+        namespace_id: &str,
+        resource_type: &str,
+        resource_name: &str,
+        username: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthDataService::visibility_revoke(
+            &*self.inner,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -528,6 +630,28 @@ mod tests {
             &self,
             _role: &str,
             _resource: &str,
+            _action: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn visibility_grant(
+            &self,
+            _namespace_id: &str,
+            _resource_type: &str,
+            _resource_name: &str,
+            _username: &str,
+            _action: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn visibility_revoke(
+            &self,
+            _namespace_id: &str,
+            _resource_type: &str,
+            _resource_name: &str,
+            _username: &str,
             _action: &str,
         ) -> anyhow::Result<()> {
             Ok(())

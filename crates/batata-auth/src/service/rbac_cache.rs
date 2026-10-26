@@ -270,8 +270,8 @@ pub fn invalidate_user(username: &str) {
 ///
 /// Used by the cluster handler that *receives* an eviction from a peer.
 pub fn invalidate_user_local(username: &str) {
-    user_roles_cache().invalidate(username);
-    global_admin_cache().invalidate(username);
+    invalidate_and_drain(user_roles_cache(), username);
+    invalidate_and_drain(global_admin_cache(), username);
 }
 
 /// Drop the cached permission bindings of `role`.
@@ -286,7 +286,7 @@ pub fn invalidate_role(role: &str) {
 ///
 /// Used by the cluster handler that *receives* an eviction from a peer.
 pub fn invalidate_role_local(role: &str) {
-    role_permissions_cache().invalidate(role);
+    invalidate_and_drain(role_permissions_cache(), role);
 }
 
 /// Drop every cached user role binding.
@@ -302,8 +302,48 @@ pub fn invalidate_all_users() {
 ///
 /// Used by the cluster handler that *receives* an eviction from a peer.
 pub fn invalidate_all_users_local() {
-    user_roles_cache().invalidate_all();
-    global_admin_cache().invalidate_all();
+    invalidate_all_and_drain(user_roles_cache());
+    invalidate_all_and_drain(global_admin_cache());
+}
+
+/// Remove `key` and wait until the removal is visible to the next lookup.
+///
+/// `moka` hands removals to a background housekeeper, so an entry queued for
+/// eviction can still be served to a reader — and, worse, can be applied
+/// *after* that reader refilled the cache from storage, resurrecting the stale
+/// value the invalidation was meant to drop. Draining the queue here keeps
+/// invalidation synchronous: after `invalidate_user`, the next lookup reads
+/// storage exactly once, which is what the callers (and the tests) rely on.
+pub(crate) fn invalidate_and_drain<K, V, Q>(cache: &Cache<K, V>, key: &Q)
+where
+    K: std::hash::Hash + Eq + Send + Sync + std::borrow::Borrow<Q> + 'static,
+    Q: std::hash::Hash + Eq + ?Sized,
+    V: Clone + Send + Sync + 'static,
+{
+    cache.invalidate(key);
+    cache.run_pending_tasks();
+}
+
+/// Wait until every queued removal on `cache` is visible to the next lookup.
+///
+/// Use after invalidating several keys one by one, where a full
+/// [`invalidate_all_and_drain`] would drop entries nobody asked to drop.
+pub(crate) fn drain_pending_invalidations<K, V>(cache: &Cache<K, V>)
+where
+    K: std::hash::Hash + Eq + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    cache.run_pending_tasks();
+}
+
+/// [`invalidate_and_drain`] for a whole cache.
+pub(crate) fn invalidate_all_and_drain<K, V>(cache: &Cache<K, V>)
+where
+    K: std::hash::Hash + Eq + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    cache.invalidate_all();
+    cache.run_pending_tasks();
 }
 
 #[cfg(test)]
@@ -367,8 +407,23 @@ mod tests {
         }
     }
 
+    /// The RBAC caches are process-global, and `invalidate_all_users` drops
+    /// *every* entry, so a test that counts storage reads cannot run next to
+    /// it: the wipe would land between two lookups and look like a cache miss.
+    static CACHE_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+
+    async fn lock_caches() -> tokio::sync::MutexGuard<'static, ()> {
+        CACHE_TEST_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await
+    }
+
     #[tokio::test]
     async fn global_admin_lookup_reads_storage_once() {
+        let _guard = lock_caches().await;
+
         invalidate_user("admin");
         let backend = StubPersistence::new();
 
@@ -381,6 +436,8 @@ mod tests {
 
     #[tokio::test]
     async fn global_admin_lookup_is_false_for_plain_user() {
+        let _guard = lock_caches().await;
+
         invalidate_user("plain-user");
         let backend = StubPersistence::new();
 
@@ -392,6 +449,8 @@ mod tests {
 
     #[tokio::test]
     async fn permissions_are_cached_per_role() {
+        let _guard = lock_caches().await;
+
         invalidate_role("ROLE_A");
         invalidate_role("ROLE_B");
         let backend = StubPersistence::new();
@@ -426,6 +485,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalidate_user_forces_refetch() {
+        let _guard = lock_caches().await;
+
         invalidate_user("cycle-user");
         let backend = StubPersistence::new();
 
@@ -438,8 +499,10 @@ mod tests {
         assert_eq!(backend.role_reads(), 2);
     }
 
-    #[test]
-    fn invalidate_all_users_clears_role_caches() {
+    #[tokio::test]
+    async fn invalidate_all_users_clears_role_caches() {
+        let _guard = lock_caches().await;
+
         user_roles_cache().insert("bulk-user".to_owned(), vec![]);
         global_admin_cache().insert("bulk-user".to_owned(), false);
 

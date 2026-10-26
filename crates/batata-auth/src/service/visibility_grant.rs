@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use batata_persistence::PersistenceService;
+use batata_persistence::traits::AuthPersistence;
 
 // ============================================================================
 // Constants — aligned with Nacos AuthConstants / VisibilityGrantRoleHelper
@@ -105,6 +106,105 @@ pub trait VisibilityGrantService: Send + Sync {
 // Default implementation
 // ============================================================================
 
+/// Grant visibility through any auth persistence backend.
+///
+/// Shared by [`DefaultVisibilityGrantService`] and the direct
+/// [`AuthDataService`](crate::service::AuthDataService) backend so both reach
+/// persistence over exactly the same path.
+pub(crate) async fn grant_with<P>(
+    persistence: &P,
+    namespace_id: &str,
+    resource_type: &str,
+    resource_name: &str,
+    username: &str,
+    action: &str,
+) -> anyhow::Result<()>
+where
+    P: AuthPersistence + ?Sized,
+{
+    // a. Validate resourceType and resourceName non-empty
+    validate_resource_type_and_name(resource_type, resource_name)?;
+
+    // b. Validate username non-empty and user exists
+    validate_username(username)?;
+    let user = persistence.user_find_by_username(username).await?;
+    if user.is_none() {
+        return Err(anyhow::anyhow!("user '{}' not found", username));
+    }
+
+    // c. Normalize action
+    let stored_action = normalize_stored_action(action)?;
+
+    // d. Build role name and resource identifier
+    let role_name = build_user_role_name(username);
+    let resource_id = build_resource_identifier(namespace_id, resource_type, resource_name);
+
+    // e. If user already has the dedicated role, only add the permission
+    //    (skip when the permission row already exists — dedup check).
+    let roles = persistence.role_find_by_username(username).await?;
+    if roles.iter().any(|r| r.role == role_name) {
+        let existing = persistence
+            .permission_find_by_id(&role_name, &resource_id, &stored_action)
+            .await?;
+        if existing.is_none() {
+            persistence
+                .permission_grant(&role_name, &resource_id, &stored_action)
+                .await?;
+            invalidate_caches(&role_name, username);
+        }
+        return Ok(());
+    }
+
+    // f. Otherwise create the role first, then attach the permission.
+    //    If permission creation fails, roll back the role to keep the
+    //    grant operation atomic.
+    persistence.role_create(&role_name, username).await?;
+    match persistence
+        .permission_grant(&role_name, &resource_id, &stored_action)
+        .await
+    {
+        Ok(()) => {
+            invalidate_caches(&role_name, username);
+            Ok(())
+        }
+        Err(e) => {
+            // Rollback the role binding we just created.
+            let _ = persistence.role_delete(&role_name, username).await;
+            invalidate_caches(&role_name, username);
+            Err(e)
+        }
+    }
+}
+
+/// Revoke visibility through any auth persistence backend.
+pub(crate) async fn revoke_with<P>(
+    persistence: &P,
+    namespace_id: &str,
+    resource_type: &str,
+    resource_name: &str,
+    username: &str,
+    action: &str,
+) -> anyhow::Result<()>
+where
+    P: AuthPersistence + ?Sized,
+{
+    // a. Validate resourceType and resourceName non-empty
+    validate_resource_type_and_name(resource_type, resource_name)?;
+
+    // b. Normalize action
+    let stored_action = normalize_stored_action(action)?;
+
+    // c. Delete permission (keep the empty role binding so future
+    //    grants remain idempotent).
+    let role_name = build_user_role_name(username);
+    let resource_id = build_resource_identifier(namespace_id, resource_type, resource_name);
+    persistence
+        .permission_revoke(&role_name, &resource_id, &stored_action)
+        .await?;
+    invalidate_caches(&role_name, username);
+    Ok(())
+}
+
 /// Default implementation of [`VisibilityGrantService`].
 ///
 /// Wraps a [`PersistenceService`] to create / delete dedicated visibility
@@ -132,60 +232,15 @@ impl VisibilityGrantService for DefaultVisibilityGrantService {
         username: &str,
         action: &str,
     ) -> anyhow::Result<()> {
-        // a. Validate resourceType and resourceName non-empty
-        validate_resource_type_and_name(resource_type, resource_name)?;
-
-        // b. Validate username non-empty and user exists
-        validate_username(username)?;
-        let user = self.persistence.user_find_by_username(username).await?;
-        if user.is_none() {
-            return Err(anyhow::anyhow!("user '{}' not found", username));
-        }
-
-        // c. Normalize action
-        let stored_action = normalize_stored_action(action)?;
-
-        // d. Build role name and resource identifier
-        let role_name = build_user_role_name(username);
-        let resource_id = build_resource_identifier(namespace_id, resource_type, resource_name);
-
-        // e. If user already has the dedicated role, only add the permission
-        //    (skip when the permission row already exists — dedup check).
-        let roles = self.persistence.role_find_by_username(username).await?;
-        if roles.iter().any(|r| r.role == role_name) {
-            let existing = self
-                .persistence
-                .permission_find_by_id(&role_name, &resource_id, &stored_action)
-                .await?;
-            if existing.is_none() {
-                self.persistence
-                    .permission_grant(&role_name, &resource_id, &stored_action)
-                    .await?;
-                invalidate_caches(&role_name, username);
-            }
-            return Ok(());
-        }
-
-        // f. Otherwise create the role first, then attach the permission.
-        //    If permission creation fails, roll back the role to keep the
-        //    grant operation atomic.
-        self.persistence.role_create(&role_name, username).await?;
-        match self
-            .persistence
-            .permission_grant(&role_name, &resource_id, &stored_action)
-            .await
-        {
-            Ok(()) => {
-                invalidate_caches(&role_name, username);
-                Ok(())
-            }
-            Err(e) => {
-                // Rollback the role binding we just created.
-                let _ = self.persistence.role_delete(&role_name, username).await;
-                invalidate_caches(&role_name, username);
-                Err(e)
-            }
-        }
+        grant_with(
+            &*self.persistence,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
     }
 
     async fn revoke(
@@ -196,21 +251,15 @@ impl VisibilityGrantService for DefaultVisibilityGrantService {
         username: &str,
         action: &str,
     ) -> anyhow::Result<()> {
-        // a. Validate resourceType and resourceName non-empty
-        validate_resource_type_and_name(resource_type, resource_name)?;
-
-        // b. Normalize action
-        let stored_action = normalize_stored_action(action)?;
-
-        // c. Delete permission (keep the empty role binding so future
-        //    grants remain idempotent).
-        let role_name = build_user_role_name(username);
-        let resource_id = build_resource_identifier(namespace_id, resource_type, resource_name);
-        self.persistence
-            .permission_revoke(&role_name, &resource_id, &stored_action)
-            .await?;
-        invalidate_caches(&role_name, username);
-        Ok(())
+        revoke_with(
+            &*self.persistence,
+            namespace_id,
+            resource_type,
+            resource_name,
+            username,
+            action,
+        )
+        .await
     }
 
     async fn find_authorized_resource_names(
@@ -401,6 +450,128 @@ fn validate_username(username: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
+    use batata_consistency::RocksStateMachine;
+    use batata_persistence::EmbeddedPersistService;
+    use tempfile::TempDir;
+
+    async fn persistence() -> (Arc<EmbeddedPersistService>, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let sm = RocksStateMachine::new(tmp.path()).await.unwrap();
+        (
+            Arc::new(EmbeddedPersistService::from_state_machine(&sm)),
+            tmp,
+        )
+    }
+
+    #[tokio::test]
+    async fn grant_creates_the_dedicated_role_and_permission() {
+        let (svc, _tmp) = persistence().await;
+        AuthPersistence::user_create(&*svc, "alice", "hash", true)
+            .await
+            .unwrap();
+
+        grant_with(&*svc, "", "config", "app.yml", "alice", "r")
+            .await
+            .unwrap();
+
+        let role_name = build_user_role_name("alice");
+        let roles = AuthPersistence::role_find_by_username(&*svc, "alice")
+            .await
+            .unwrap();
+        assert!(
+            roles.iter().any(|r| r.role == role_name),
+            "grant must bind the dedicated visibility role, got {roles:?}"
+        );
+
+        let permissions = AuthPersistence::permission_find_by_role(&*svc, &role_name)
+            .await
+            .unwrap();
+        assert_eq!(permissions.len(), 1, "got {permissions:?}");
+        assert_eq!(
+            permissions[0].resource,
+            build_resource_identifier("", "config", "app.yml")
+        );
+        assert_eq!(permissions[0].action, "r");
+    }
+
+    #[tokio::test]
+    async fn grant_is_idempotent() {
+        let (svc, _tmp) = persistence().await;
+        AuthPersistence::user_create(&*svc, "alice", "hash", true)
+            .await
+            .unwrap();
+
+        grant_with(&*svc, "dev", "config", "app.yml", "alice", "rw")
+            .await
+            .unwrap();
+        grant_with(&*svc, "dev", "config", "app.yml", "alice", "rw")
+            .await
+            .unwrap();
+
+        let permissions =
+            AuthPersistence::permission_find_by_role(&*svc, &build_user_role_name("alice"))
+                .await
+                .unwrap();
+        assert_eq!(
+            permissions.len(),
+            1,
+            "a repeated grant must not duplicate the permission row: {permissions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_drops_the_permission_and_keeps_the_role_binding() {
+        let (svc, _tmp) = persistence().await;
+        AuthPersistence::user_create(&*svc, "alice", "hash", true)
+            .await
+            .unwrap();
+
+        grant_with(&*svc, "", "naming", "group@@svc", "alice", "r")
+            .await
+            .unwrap();
+        revoke_with(&*svc, "", "naming", "group@@svc", "alice", "r")
+            .await
+            .unwrap();
+
+        let role_name = build_user_role_name("alice");
+        let permissions = AuthPersistence::permission_find_by_role(&*svc, &role_name)
+            .await
+            .unwrap();
+        assert!(
+            permissions.is_empty(),
+            "revoke must remove the permission: {permissions:?}"
+        );
+
+        let roles = AuthPersistence::role_find_by_username(&*svc, "alice")
+            .await
+            .unwrap();
+        assert!(
+            roles.iter().any(|r| r.role == role_name),
+            "revoke keeps the (now empty) role binding so a later grant stays idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn grant_rejects_unknown_users_and_unsupported_actions() {
+        let (svc, _tmp) = persistence().await;
+
+        let err = grant_with(&*svc, "", "config", "app.yml", "ghost", "r")
+            .await
+            .expect_err("grant to an unknown user must fail");
+        assert!(err.to_string().contains("not found"), "{err}");
+
+        AuthPersistence::user_create(&*svc, "alice", "hash", true)
+            .await
+            .unwrap();
+
+        let err = grant_with(&*svc, "", "config", "app.yml", "alice", "x")
+            .await
+            .expect_err("unsupported action must fail");
+        assert!(err.to_string().contains("unsupported"), "{err}");
+    }
 
     #[test]
     fn test_normalize_namespace_id() {
