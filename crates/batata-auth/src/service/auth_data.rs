@@ -15,26 +15,45 @@
 //! console must be able to run the real [`DefaultAuthPlugin`] locally so that
 //! token validation and RBAC decisions happen in the console, which is the only
 //! side holding the end user's identity.
+//!
+//! The trait covers two consumers:
+//!
+//! - the auth plugin (login + RBAC), and
+//! - the `/v3/auth/**` management handlers (user, role and permission CRUD).
+//!
+//! Both are mounted in the console process, so both need a remote backend in a
+//! separated deployment — otherwise they would reach for a database the console
+//! is not allowed to have.
 
 use std::sync::Arc;
 
 use batata_persistence::{
     PersistenceService,
-    model::{PermissionInfo, RoleInfo, UserInfo},
+    model::{Page, PermissionInfo, RoleInfo, UserInfo},
     traits::AuthPersistence,
 };
 
 use crate::service::rbac_cache::RbacSource;
 
-/// Everything an auth plugin reads in order to authenticate and authorize.
+/// Everything the auth plugin and the `/v3/auth/**` handlers read and write.
 ///
-/// Deliberately narrow: role and permission lookups (consumed through the
-/// read-through RBAC cache) plus the single-user reads/writes the login and
-/// LDAP provisioning paths need.
+/// The method set mirrors [`AuthPersistence`] so the direct backend is a pure
+/// delegation and the remote backend can serve the same handlers over HTTP.
 #[async_trait::async_trait]
 pub trait AuthDataService: RbacSource + Send + Sync {
+    // ==================== User Operations ====================
+
     /// Load a single user record, including its password hash and source.
     async fn user_find_by_username(&self, username: &str) -> anyhow::Result<Option<UserInfo>>;
+
+    /// Search users with pagination.
+    async fn user_find_page(
+        &self,
+        username: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<UserInfo>>;
 
     /// Create a user with an explicit identity source.
     ///
@@ -47,12 +66,94 @@ pub trait AuthDataService: RbacSource + Send + Sync {
         enabled: bool,
         source: &str,
     ) -> anyhow::Result<()>;
+
+    /// Update a user's password hash.
+    async fn user_update_password(&self, username: &str, password_hash: &str)
+    -> anyhow::Result<()>;
+
+    /// Delete a user.
+    async fn user_delete(&self, username: &str) -> anyhow::Result<()>;
+
+    /// Search usernames matching a pattern.
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>>;
+
+    // ==================== Role Operations ====================
+
+    /// Load the roles assigned to a user.
+    async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>>;
+
+    /// Search role assignments with pagination.
+    async fn role_find_page(
+        &self,
+        username: &str,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<RoleInfo>>;
+
+    /// Assign a role to a user.
+    async fn role_create(&self, role: &str, username: &str) -> anyhow::Result<()>;
+
+    /// Remove a role assignment. An empty `username` removes it from every holder.
+    async fn role_delete(&self, role: &str, username: &str) -> anyhow::Result<()>;
+
+    /// Search role names matching a pattern.
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>>;
+
+    /// Check whether a user holds the global admin role.
+    async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool>;
+
+    // ==================== Permission Operations ====================
+
+    /// Search permissions with pagination.
+    async fn permission_find_page(
+        &self,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<PermissionInfo>>;
+
+    /// Look up one permission by role, resource and action.
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>>;
+
+    /// Grant a permission to a role.
+    async fn permission_grant(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Revoke a permission from a role.
+    async fn permission_revoke(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()>;
 }
 
 #[async_trait::async_trait]
 impl<T: AuthPersistence + ?Sized> AuthDataService for T {
     async fn user_find_by_username(&self, username: &str) -> anyhow::Result<Option<UserInfo>> {
         AuthPersistence::user_find_by_username(self, username).await
+    }
+
+    async fn user_find_page(
+        &self,
+        username: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<UserInfo>> {
+        AuthPersistence::user_find_page(self, username, page_no, page_size, accurate).await
     }
 
     async fn user_create_with_source(
@@ -64,6 +165,90 @@ impl<T: AuthPersistence + ?Sized> AuthDataService for T {
     ) -> anyhow::Result<()> {
         AuthPersistence::user_create_with_source(self, username, password_hash, enabled, source)
             .await
+    }
+
+    async fn user_update_password(
+        &self,
+        username: &str,
+        password_hash: &str,
+    ) -> anyhow::Result<()> {
+        AuthPersistence::user_update_password(self, username, password_hash).await
+    }
+
+    async fn user_delete(&self, username: &str) -> anyhow::Result<()> {
+        AuthPersistence::user_delete(self, username).await
+    }
+
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        AuthPersistence::user_search(self, username).await
+    }
+
+    async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
+        AuthPersistence::role_find_by_username(self, username).await
+    }
+
+    async fn role_find_page(
+        &self,
+        username: &str,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<RoleInfo>> {
+        AuthPersistence::role_find_page(self, username, role, page_no, page_size, accurate).await
+    }
+
+    async fn role_create(&self, role: &str, username: &str) -> anyhow::Result<()> {
+        AuthPersistence::role_create(self, role, username).await
+    }
+
+    async fn role_delete(&self, role: &str, username: &str) -> anyhow::Result<()> {
+        AuthPersistence::role_delete(self, role, username).await
+    }
+
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
+        AuthPersistence::role_search(self, role).await
+    }
+
+    async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool> {
+        AuthPersistence::role_has_global_admin_by_username(self, username).await
+    }
+
+    async fn permission_find_page(
+        &self,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<PermissionInfo>> {
+        AuthPersistence::permission_find_page(self, role, page_no, page_size, accurate).await
+    }
+
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>> {
+        AuthPersistence::permission_find_by_id(self, role, resource, action).await
+    }
+
+    async fn permission_grant(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthPersistence::permission_grant(self, role, resource, action).await
+    }
+
+    async fn permission_revoke(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthPersistence::permission_revoke(self, role, resource, action).await
     }
 }
 
@@ -99,6 +284,16 @@ impl AuthDataService for PersistenceAuthDataService {
         AuthDataService::user_find_by_username(&*self.inner, username).await
     }
 
+    async fn user_find_page(
+        &self,
+        username: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<UserInfo>> {
+        AuthDataService::user_find_page(&*self.inner, username, page_no, page_size, accurate).await
+    }
+
     async fn user_create_with_source(
         &self,
         username: &str,
@@ -114,6 +309,92 @@ impl AuthDataService for PersistenceAuthDataService {
             source,
         )
         .await
+    }
+
+    async fn user_update_password(
+        &self,
+        username: &str,
+        password_hash: &str,
+    ) -> anyhow::Result<()> {
+        AuthDataService::user_update_password(&*self.inner, username, password_hash).await
+    }
+
+    async fn user_delete(&self, username: &str) -> anyhow::Result<()> {
+        AuthDataService::user_delete(&*self.inner, username).await
+    }
+
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        AuthDataService::user_search(&*self.inner, username).await
+    }
+
+    async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
+        AuthDataService::role_find_by_username(&*self.inner, username).await
+    }
+
+    async fn role_find_page(
+        &self,
+        username: &str,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<RoleInfo>> {
+        AuthDataService::role_find_page(&*self.inner, username, role, page_no, page_size, accurate)
+            .await
+    }
+
+    async fn role_create(&self, role: &str, username: &str) -> anyhow::Result<()> {
+        AuthDataService::role_create(&*self.inner, role, username).await
+    }
+
+    async fn role_delete(&self, role: &str, username: &str) -> anyhow::Result<()> {
+        AuthDataService::role_delete(&*self.inner, role, username).await
+    }
+
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
+        AuthDataService::role_search(&*self.inner, role).await
+    }
+
+    async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool> {
+        AuthDataService::role_has_global_admin_by_username(&*self.inner, username).await
+    }
+
+    async fn permission_find_page(
+        &self,
+        role: &str,
+        page_no: u64,
+        page_size: u64,
+        accurate: bool,
+    ) -> anyhow::Result<Page<PermissionInfo>> {
+        AuthDataService::permission_find_page(&*self.inner, role, page_no, page_size, accurate)
+            .await
+    }
+
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>> {
+        AuthDataService::permission_find_by_id(&*self.inner, role, resource, action).await
+    }
+
+    async fn permission_grant(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthDataService::permission_grant(&*self.inner, role, resource, action).await
+    }
+
+    async fn permission_revoke(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        AuthDataService::permission_revoke(&*self.inner, role, resource, action).await
     }
 }
 
@@ -148,12 +429,106 @@ mod tests {
             Ok(None)
         }
 
+        async fn user_find_page(
+            &self,
+            _username: &str,
+            _page_no: u64,
+            _page_size: u64,
+            _accurate: bool,
+        ) -> anyhow::Result<Page<UserInfo>> {
+            Ok(Page::default())
+        }
+
         async fn user_create_with_source(
             &self,
             _username: &str,
             _password_hash: &str,
             _enabled: bool,
             _source: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn user_update_password(
+            &self,
+            _username: &str,
+            _password_hash: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn user_delete(&self, _username: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn user_search(&self, _username: &str) -> anyhow::Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn role_find_by_username(&self, _username: &str) -> anyhow::Result<Vec<RoleInfo>> {
+            Ok(vec![])
+        }
+
+        async fn role_find_page(
+            &self,
+            _username: &str,
+            _role: &str,
+            _page_no: u64,
+            _page_size: u64,
+            _accurate: bool,
+        ) -> anyhow::Result<Page<RoleInfo>> {
+            Ok(Page::default())
+        }
+
+        async fn role_create(&self, _role: &str, _username: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn role_delete(&self, _role: &str, _username: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn role_search(&self, _role: &str) -> anyhow::Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn role_has_global_admin_by_username(&self, _username: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn permission_find_page(
+            &self,
+            _role: &str,
+            _page_no: u64,
+            _page_size: u64,
+            _accurate: bool,
+        ) -> anyhow::Result<Page<PermissionInfo>> {
+            Ok(Page::default())
+        }
+
+        async fn permission_find_by_id(
+            &self,
+            _role: &str,
+            _resource: &str,
+            _action: &str,
+        ) -> anyhow::Result<Option<PermissionInfo>> {
+            Ok(None)
+        }
+
+        async fn permission_grant(
+            &self,
+            _role: &str,
+            _resource: &str,
+            _action: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn permission_revoke(
+            &self,
+            _role: &str,
+            _resource: &str,
+            _action: &str,
         ) -> anyhow::Result<()> {
             Ok(())
         }
@@ -173,5 +548,19 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn management_calls_reach_the_backend() {
+        let backend: Arc<dyn AuthDataService> = Arc::new(Stub {
+            role_reads: AtomicUsize::new(0),
+        });
+
+        backend.role_create("ROLE_X", "alice").await.unwrap();
+        backend
+            .permission_grant("ROLE_X", "res", "rw")
+            .await
+            .unwrap();
+        assert!(backend.role_search("ROLE_X").await.unwrap().is_empty());
     }
 }

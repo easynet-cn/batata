@@ -305,7 +305,199 @@ async fn console_remote_deployment_proxies_to_core() {
         "expected the remote console guarded read without a token to 403 (auth enforced); body={unauth_body}"
     );
 
+    // --- Guard 4: user/role/permission management works on the console ---
+    //
+    // `/v3/auth/**` is mounted in the console process too, so a separated
+    // console serves its own management UI from the core's data. Before the
+    // remote auth data backend existed these handlers went straight to
+    // `AppState::persistence()`, which is `None` in console mode — the request
+    // panicked instead of being answered.
+    let managed_user = "it-console-user";
+    let managed_role = "IT_CONSOLE_ROLE";
+
+    let created = auth_form(
+        &format!("{console_base}/v3/auth/user"),
+        &token,
+        &[("username", managed_user), ("password", "it-password")],
+    )
+    .await;
+    assert_eq!(
+        created,
+        StatusCode::OK,
+        "console could not create a user through the remote auth data backend"
+    );
+
+    let listed = auth_get(
+        &format!(
+            "{console_base}/v3/auth/user/list?username={managed_user}&pageNo=1&pageSize=10&search=accurate"
+        ),
+        &token,
+    )
+    .await;
+    assert!(
+        listed.contains(managed_user),
+        "user list served by the console does not contain the created user: {listed}"
+    );
+
+    // The console holds no database of its own, so the user can only be visible
+    // if the write crossed to the core. Reading it back straight from the core
+    // proves the console's management handlers really used the remote backend.
+    let core_token = login(&format!("{core_base}/nacos/v3/auth/user/login")).await;
+    let on_core = auth_get(
+        &format!(
+            "{core_base}/nacos/v3/auth/user/list?username={managed_user}&pageNo=1&pageSize=10&search=accurate"
+        ),
+        &core_token,
+    )
+    .await;
+    assert!(
+        on_core.contains(managed_user),
+        "user created through the console is not present on the core; the console did not \
+         proxy the write: {on_core}"
+    );
+
+    let role_added = auth_form(
+        &format!("{console_base}/v3/auth/role"),
+        &token,
+        &[("role", managed_role), ("username", managed_user)],
+    )
+    .await;
+    assert_eq!(
+        role_added,
+        StatusCode::OK,
+        "console could not assign a role"
+    );
+
+    let roles = auth_get(
+        &format!("{console_base}/v3/auth/role/list?username={managed_user}&pageNo=1&pageSize=10"),
+        &token,
+    )
+    .await;
+    assert!(
+        roles.contains(managed_role),
+        "role list served by the console does not contain the assigned role: {roles}"
+    );
+
+    let permission_added = auth_form(
+        &format!("{console_base}/v3/auth/permission"),
+        &token,
+        &[
+            ("role", managed_role),
+            ("resource", "it-resource"),
+            ("action", "rw"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        permission_added,
+        StatusCode::OK,
+        "console could not grant a permission"
+    );
+
+    let permissions = auth_get(
+        &format!("{console_base}/v3/auth/permission/list?role={managed_role}&pageNo=1&pageSize=10"),
+        &token,
+    )
+    .await;
+    assert!(
+        permissions.contains("it-resource"),
+        "permission list served by the console does not contain the grant: {permissions}"
+    );
+
+    // Tear the management objects back down, reusing the same remote paths.
+    let revoked = auth_delete(
+        &format!(
+            "{console_base}/v3/auth/permission?role={managed_role}&resource=it-resource&action=rw"
+        ),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        revoked,
+        StatusCode::OK,
+        "console could not revoke permission"
+    );
+
+    let role_removed = auth_delete(
+        &format!("{console_base}/v3/auth/role?role={managed_role}&username={managed_user}"),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        role_removed,
+        StatusCode::OK,
+        "console could not remove role"
+    );
+
+    let removed = auth_delete(
+        &format!("{console_base}/v3/auth/user?username={managed_user}"),
+        &token,
+    )
+    .await;
+    assert_eq!(removed, StatusCode::OK, "console could not delete user");
+
     let _ = std::fs::remove_dir_all(&core_store);
     let _ = std::fs::remove_dir_all(&console_store);
     // Guards drop here and kill the child processes.
+}
+
+/// POST a form-encoded management call with the end user's token.
+async fn auth_form(url: &str, token: &str, form: &[(&str, &str)]) -> StatusCode {
+    let resp = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token)
+        .form(form)
+        .send()
+        .await
+        .expect("auth management request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if status != StatusCode::OK {
+        eprintln!("auth management POST {url} -> {status}: {body}");
+    }
+
+    status
+}
+
+/// GET a management resource with the end user's token.
+async fn auth_get(url: &str, token: &str) -> String {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("auth management request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "auth management GET {url} -> {body}"
+    );
+    assert!(
+        body.contains("\"code\":0"),
+        "auth management GET {url} returned a non-zero code: {body}"
+    );
+
+    body
+}
+
+/// DELETE a management resource with the end user's token.
+async fn auth_delete(url: &str, token: &str) -> StatusCode {
+    let resp = reqwest::Client::new()
+        .delete(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("auth management request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if status != StatusCode::OK {
+        eprintln!("auth management DELETE {url} -> {status}: {body}");
+    }
+
+    status
 }

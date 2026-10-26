@@ -4,6 +4,7 @@ use serde::Deserialize;
 use batata_api::model::Page;
 use batata_core::service::GrpcAuthService;
 
+use crate::api::auth::auth_data;
 use crate::api::auth::model::PermissionInfo;
 use crate::model::app_state::AppState;
 use crate::model::response::Result;
@@ -32,11 +33,16 @@ async fn exist(
             .action(ActionTypes::Read)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            .allow_server_identity(true)
             .build()
     );
 
-    match data
-        .persistence()
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    match auth
         .permission_find_by_id(&params.role, &params.resource, &params.action)
         .await
     {
@@ -69,6 +75,11 @@ async fn search_page(
             .build()
     );
 
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut role = params.role.clone().unwrap_or_default();
 
@@ -79,8 +90,7 @@ async fn search_page(
         role = stripped.to_string();
     }
 
-    match data
-        .persistence()
+    match auth
         .permission_find_page(&role, params.page_no, params.page_size, accurate)
         .await
     {
@@ -124,11 +134,16 @@ async fn create(
             .action(ActionTypes::Write)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            .allow_server_identity(true)
             .build()
     );
 
-    let result = data
-        .persistence()
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    let result = auth
         .permission_grant(&params.role, &params.resource, &params.action)
         .await;
 
@@ -158,11 +173,16 @@ async fn delete(
             .action(ActionTypes::Write)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            .allow_server_identity(true)
             .build()
     );
 
-    let result = data
-        .persistence()
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    let result = auth
         .permission_revoke(&params.role, &params.resource, &params.action)
         .await;
 

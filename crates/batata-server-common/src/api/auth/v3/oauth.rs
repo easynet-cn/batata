@@ -6,6 +6,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, web};
 use serde::{Deserialize, Serialize};
 
 use crate::api::auth::{
+    auth_data,
     model::{AUTHORIZATION_HEADER, NON_LOCAL_PASSWORD_SENTINEL, TOKEN_PREFIX, USER_SOURCE_OAUTH},
     service::auth::encode_jwt_token,
 };
@@ -187,8 +188,11 @@ pub async fn oauth_callback(
     let username = format!("oauth_{}_{}", provider_name, user_info.provider_user_id);
 
     // Check if user exists locally
-    let persistence = data.persistence();
-    let local_user = match persistence.user_find_by_username(&username).await {
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+    let local_user = match auth.user_find_by_username(&username).await {
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to query user '{}': {}", username, e);
@@ -201,7 +205,7 @@ pub async fn oauth_callback(
     // the row with source = "oauth" so password login is rejected at the
     // auth-plugin layer.
     if local_user.is_none() {
-        if let Err(e) = persistence
+        if let Err(e) = auth
             .user_create_with_source(
                 &username,
                 NON_LOCAL_PASSWORD_SENTINEL,
@@ -233,7 +237,7 @@ pub async fn oauth_callback(
         }
     };
 
-    let global_admin = persistence
+    let global_admin = auth
         .role_has_global_admin_by_username(&username)
         .await
         .ok()

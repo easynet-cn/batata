@@ -7,6 +7,7 @@ use batata_common::error::BatataError;
 use crate::api::auth::model::{
     GLOBAL_ADMIN_ROLE, ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT, User,
 };
+use crate::api::auth::{auth_data, trusted_console_request};
 use crate::model::app_state::AppState;
 use crate::model::response::{ConsoleException, Result};
 use crate::secured::{IdentityContext, Secured};
@@ -54,6 +55,11 @@ async fn search_page(
             .build()
     );
 
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 
@@ -64,8 +70,7 @@ async fn search_page(
         username = stripped.to_string();
     }
 
-    let result = match data
-        .persistence()
+    let result = match auth
         .user_find_page(&username, params.page_no, params.page_size, accurate)
         .await
     {
@@ -111,10 +116,16 @@ async fn search(
             .action(ActionTypes::Read)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            .allow_server_identity(true)
             .build()
     );
 
-    let result = match data.persistence().user_search(&params.username).await {
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    let result = match auth.user_search(&params.username).await {
         Ok(users) => users,
         Err(e) => {
             tracing::error!("Failed to search users: {}", e);
@@ -152,11 +163,12 @@ async fn create(
         );
     }
 
-    let user = match data
-        .persistence()
-        .user_find_by_username(&params.username)
-        .await
-    {
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    let user = match auth.user_find_by_username(&params.username).await {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(
@@ -179,21 +191,26 @@ async fn create(
         ));
     }
 
-    let password = match bcrypt::hash(params.password.clone(), 10u32) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to hash password",
-                "data": null
-            }));
+    // A separated console already hashed the password locally and forwards it
+    // over the trusted channel; hashing twice would make the account unusable.
+    let password = if trusted_console_request(&req, &data) {
+        params.password.clone()
+    } else {
+        match bcrypt::hash(params.password.clone(), 10u32) {
+            Ok(hash) => hash,
+            Err(e) => {
+                tracing::error!("Failed to hash password: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "code": 500,
+                    "message": "Failed to hash password",
+                    "data": null
+                }));
+            }
         }
     };
 
-    let result = data
-        .persistence()
-        .user_create(&params.username, &password, true)
+    let result = auth
+        .user_create_with_source(&params.username, &password, true, "local")
         .await;
 
     match result {
@@ -219,12 +236,22 @@ async fn update(
                 ONLY_IDENTITY.to_string(),
                 UPDATE_PASSWORD_ENTRY_POINT.to_string()
             ])
+            .allow_server_identity(true)
             .build()
     );
 
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
     // Permission check consistent with Nacos: only global admin or the user themselves
-    // can change the password (hasPermission logic from UserControllerV3.java)
-    if data.configuration.auth_enabled() {
+    // can change the password (hasPermission logic from UserControllerV3.java).
+    //
+    // A separated console already authorized the real user locally and forwards
+    // the call with the server identity, so the check is skipped there — the
+    // core cannot see the end user's token.
+    if data.configuration.auth_enabled() && !trusted_console_request(&req, &data) {
         let identity_context = req
             .extensions()
             .get::<IdentityContext>()
@@ -235,8 +262,7 @@ async fn update(
 
         // If the user is not changing their own password, check if they are admin
         if current_username != &params.username {
-            let is_global_admin = data
-                .persistence()
+            let is_global_admin = auth
                 .role_find_by_username(current_username)
                 .await
                 .unwrap_or_default()
@@ -253,20 +279,25 @@ async fn update(
         }
     }
 
-    let hashed_password = match bcrypt::hash(&params.new_password, 10u32) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "code": 500,
-                "message": "Failed to hash password",
-                "data": null
-            }));
+    // As in `create`: the console hashes locally and the core must not hash the
+    // forwarded value a second time.
+    let hashed_password = if trusted_console_request(&req, &data) {
+        params.new_password.clone()
+    } else {
+        match bcrypt::hash(&params.new_password, 10u32) {
+            Ok(hash) => hash,
+            Err(e) => {
+                tracing::error!("Failed to hash password: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "code": 500,
+                    "message": "Failed to hash password",
+                    "data": null
+                }));
+            }
         }
     };
 
-    let result = data
-        .persistence()
+    let result = auth
         .user_update_password(&params.username, &hashed_password)
         .await;
 
@@ -298,11 +329,16 @@ async fn delete(
             .action(ActionTypes::Write)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            .allow_server_identity(true)
             .build()
     );
 
-    let global_admin = data
-        .persistence()
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
+    let global_admin = auth
         .role_find_by_username(&params.username)
         .await
         .unwrap_or_default()
@@ -317,7 +353,7 @@ async fn delete(
         });
     }
 
-    let result = data.persistence().user_delete(&params.username).await;
+    let result = auth.user_delete(&params.username).await;
 
     match result {
         Ok(()) => Result::<String>::http_success("delete user ok!"),

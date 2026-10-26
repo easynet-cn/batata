@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::api::auth::{
+    auth_data,
     model::{NON_LOCAL_PASSWORD_SENTINEL, USER_SOURCE_OAUTH},
     service::auth::encode_jwt_token,
 };
@@ -279,8 +280,11 @@ pub async fn oidc_callback(
     // ---- Create or update local user ----------------------------------
     let username = format!("oauth_{}_{}", provider_name, user_info.provider_user_id);
 
-    let persistence = data.persistence();
-    let local_user = match persistence.user_find_by_username(&username).await {
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+    let local_user = match auth.user_find_by_username(&username).await {
         Ok(user) => user,
         Err(e) => {
             error!("Failed to query user '{}': {}", username, e);
@@ -289,7 +293,7 @@ pub async fn oidc_callback(
     };
 
     if local_user.is_none() {
-        match persistence
+        match auth
             .user_create_with_source(
                 &username,
                 NON_LOCAL_PASSWORD_SENTINEL,

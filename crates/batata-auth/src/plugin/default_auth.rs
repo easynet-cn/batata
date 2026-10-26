@@ -503,7 +503,9 @@ mod tests {
         .await
         .unwrap();
 
-        let page = svc.user_find_page("", 1, 10, false).await.unwrap();
+        let page = AuthPersistence::user_find_page(&*svc, "", 1, 10, false)
+            .await
+            .unwrap();
 
         assert_eq!(page.total_count, 2);
 

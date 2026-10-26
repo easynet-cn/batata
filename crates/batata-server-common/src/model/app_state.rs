@@ -4,6 +4,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use batata_auth::service::AuthDataService;
 use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuthProvider};
 use batata_consistency::RaftNode;
 use batata_core::service::remote::ConnectionManager;
@@ -51,6 +52,13 @@ pub struct AppState {
     pub auth_plugin: Option<Arc<dyn AuthPlugin>>,
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
     pub persistence: Option<Arc<dyn PersistenceService>>,
+    /// Backend for the auth plugin and the `/v3/auth/**` management handlers.
+    ///
+    /// Present in every deployment: it is the local persistence in merged /
+    /// server mode and an HTTP client to the core in console mode. The
+    /// management handlers must read through it rather than through
+    /// [`Self::persistence`], which is `None` in a separated console.
+    pub auth_data: Option<Arc<dyn AuthDataService>>,
     /// Heartbeat service for tracking instance heartbeats and expiration
     pub health_check_manager: Option<Arc<dyn batata_common::HeartbeatService>>,
     /// Raft consensus node (only in DistributedEmbedded mode)
@@ -89,6 +97,7 @@ impl std::fmt::Debug for AppState {
             .field("oauth_service", &self.oauth_service.is_some())
             .field("auth_plugin", &self.auth_plugin.is_some())
             .field("persistence", &self.persistence.is_some())
+            .field("auth_data", &self.auth_data.is_some())
             .field("health_check_manager", &self.health_check_manager.is_some())
             .field("raft_node", &self.raft_node.is_some())
             .field("server_status", &self.server_status)
@@ -114,6 +123,7 @@ impl Clone for AppState {
             oauth_service: self.oauth_service.clone(),
             auth_plugin: self.auth_plugin.clone(),
             persistence: self.persistence.clone(),
+            auth_data: self.auth_data.clone(),
             health_check_manager: self.health_check_manager.clone(),
             raft_node: self.raft_node.clone(),
             server_status: self.server_status.clone(),
@@ -231,6 +241,26 @@ impl AppState {
     /// Try to get the persistence service
     pub fn try_persistence(&self) -> Option<&dyn PersistenceService> {
         self.persistence.as_deref()
+    }
+
+    // ========================================================================
+    // Auth Data Service Access
+    // ========================================================================
+
+    /// Try to get the auth data service backing the auth plugin and the
+    /// `/v3/auth/**` handlers.
+    pub fn try_auth_data(&self) -> Option<&dyn AuthDataService> {
+        self.auth_data.as_ref().map(|service| service.as_ref())
+    }
+
+    /// Get the auth data service, or an error when it is not configured.
+    ///
+    /// Callers must use this instead of [`Self::persistence`] for user, role and
+    /// permission access: a separated console has no database, and panicking
+    /// there would abort the worker instead of answering the request.
+    pub fn auth_data(&self) -> anyhow::Result<&dyn AuthDataService> {
+        self.try_auth_data()
+            .ok_or_else(|| anyhow::anyhow!("auth data service not available"))
     }
 
     // ========================================================================

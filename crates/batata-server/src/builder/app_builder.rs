@@ -443,7 +443,13 @@ impl AppBuilder {
         // Encryption service
         let encryption_service = init_encryption_service(config);
 
-        // Auth plugin
+        // Auth data service
+        //
+        // Backs both the local auth plugin and the `/v3/auth/**` management
+        // handlers (user, role, permission CRUD) that the console serves to its
+        // own UI — in a separated deployment those handlers run in the console
+        // process, so they need the remote backend just as much as the plugin
+        // does.
         //
         // The plugin always runs in this process, so token validation and the
         // RBAC decision stay local and are made with the real end-user identity.
@@ -463,7 +469,9 @@ impl AppBuilder {
             None
         };
 
-        let auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>> = if self.is_console_remote {
+        let auth_data: Option<Arc<dyn batata_auth::service::AuthDataService>> = if self
+            .is_console_remote
+        {
             let base = batata_auth::service::RemoteAuthDataService::base_from_addrs(
                 &config.resolve_remote_server_addrs(),
                 &config.server_context_path(),
@@ -480,24 +488,18 @@ impl AppBuilder {
                     if config.server_identity_key().is_empty() {
                         tracing::warn!(
                             "Console-remote auth data reads need a configured server identity \
-                             (batata.core.auth.server.identity.key/value); the core will reject \
-                             them and guarded console APIs will fail closed."
+                                 (batata.core.auth.server.identity.key/value); the core will reject \
+                                 them and guarded console APIs will fail closed."
                         );
                     }
 
-                    Some(batata_auth::plugin::create_auth_plugin(
-                        &config.auth_system_type(),
-                        config.token_secret_key(),
-                        config.auth_token_expire_seconds(),
-                        Arc::new(remote),
-                        ldap_config,
-                    ))
+                    Some(Arc::new(remote))
                 }
                 Err(e) => {
                     error!(
-                        "Console-remote mode requires a working remote auth data service, but it \
-                         failed to initialize: {}. Guarded console APIs will return 403 until \
-                         resolved (check batata.console.remote.server_addr).",
+                        "Console-remote mode requires a working remote auth data service, but \
+                             it failed to initialize: {}. Guarded console APIs will return 403 \
+                             until resolved (check batata.console.remote.server_addr).",
                         e
                     );
                     None
@@ -505,17 +507,22 @@ impl AppBuilder {
             }
         } else {
             persistence_ctx.persistence.as_ref().map(|p| {
+                Arc::new(batata_auth::service::PersistenceAuthDataService::new(
+                    p.clone(),
+                )) as Arc<dyn batata_auth::service::AuthDataService>
+            })
+        };
+
+        let auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>> =
+            auth_data.as_ref().map(|data| {
                 batata_auth::plugin::create_auth_plugin(
                     &config.auth_system_type(),
                     config.token_secret_key(),
                     config.auth_token_expire_seconds(),
-                    Arc::new(batata_auth::service::PersistenceAuthDataService::new(
-                        p.clone(),
-                    )),
+                    data.clone(),
                     ldap_config.clone(),
                 )
-            })
-        };
+            });
 
         // Clone Arc fields before moving into AppState
         let console_datasource_for_self = console_datasource.clone();
@@ -546,6 +553,7 @@ impl AppBuilder {
             oauth_service,
             auth_plugin,
             persistence: persistence_ctx.persistence.clone(),
+            auth_data,
             health_check_manager: health_check_manager
                 .clone()
                 .map(|m| m as Arc<dyn batata_common::HeartbeatService>),

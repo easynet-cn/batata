@@ -135,6 +135,7 @@ async fn build_app(
         oauth_service: None,
         auth_plugin: None,
         persistence: Some(store),
+        auth_data: None,
         health_check_manager: None,
         raft_node: None,
         server_status: Arc::new(batata_server_common::ServerStatusManager::new()),
