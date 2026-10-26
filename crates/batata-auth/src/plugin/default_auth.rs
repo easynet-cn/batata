@@ -9,7 +9,6 @@ use batata_common::{
     AuthCheckResult, AuthError, AuthPermission, AuthPlugin, DEFAULT_NAMESPACE_ID, IdentityContext,
     LoginError, LoginResult, TokenError,
 };
-use batata_persistence::PersistenceService;
 use tracing::debug;
 
 use crate::model::{
@@ -17,6 +16,7 @@ use crate::model::{
     source_allows_password_login,
 };
 use crate::service::auth::{decode_jwt_token_cached, encode_jwt_token, unblacklist_user};
+use crate::service::auth_data::AuthDataService;
 use crate::service::ldap::LdapAuthService;
 use crate::service::rbac_cache;
 
@@ -27,21 +27,26 @@ use crate::service::rbac_cache;
 pub struct DefaultAuthPlugin {
     secret_key: String,
     pub(crate) token_expire_seconds: i64,
-    pub(crate) persistence: Arc<dyn PersistenceService>,
+    /// Backend that supplies users, roles and permissions.
+    ///
+    /// Swapped by deployment mode: direct storage in merged/server mode, HTTP to
+    /// the core in console mode. Token validation and the RBAC decision itself
+    /// always happen here, in-process.
+    pub(crate) auth_data: Arc<dyn AuthDataService>,
 }
 
 impl DefaultAuthPlugin {
-    /// Create a new default auth plugin backed by the given JWT secret and
-    /// persistence layer.
+    /// Create a new default auth plugin backed by the given JWT secret and auth
+    /// data backend.
     pub fn new(
         secret_key: String,
         token_expire_seconds: i64,
-        persistence: Arc<dyn PersistenceService>,
+        auth_data: Arc<dyn AuthDataService>,
     ) -> Self {
         Self {
             secret_key,
             token_expire_seconds,
-            persistence,
+            auth_data,
         }
     }
 
@@ -84,7 +89,7 @@ impl DefaultAuthPlugin {
     /// Reads through the shared RBAC cache, so a warmed entry costs no
     /// storage round-trip.
     pub(crate) async fn is_global_admin(&self, username: &str) -> bool {
-        rbac_cache::is_global_admin(&*self.persistence, username).await
+        rbac_cache::is_global_admin(&*self.auth_data, username).await
     }
 
     /// Verify password against stored hash.
@@ -95,7 +100,7 @@ impl DefaultAuthPlugin {
     /// - ExternalUser: user is managed by external provider (OAuth, LDAP)
     async fn verify_credentials(&self, username: &str, password: &str) -> Result<(), LoginError> {
         let user = self
-            .persistence
+            .auth_data
             .user_find_by_username(username)
             .await
             .map_err(|e| LoginError::Internal(format!("failed to find user: {}", e)))?;
@@ -161,14 +166,14 @@ impl AuthPlugin for DefaultAuthPlugin {
         }
 
         // Load roles through the shared RBAC cache
-        let roles = rbac_cache::roles(&*self.persistence, &identity.username).await;
+        let roles = rbac_cache::roles(&*self.auth_data, &identity.username).await;
 
         if roles.is_empty() {
             return AuthCheckResult::fail(AuthError::NoRolesFound);
         }
 
         // Load permissions for all roles, also through the cache
-        let permissions = rbac_cache::permissions(&*self.persistence, &roles).await;
+        let permissions = rbac_cache::permissions(&*self.auth_data, &roles).await;
 
         // Check if any permission matches the requested resource+action
         // Uses the same regex escaping logic as the original secured! macro
@@ -294,7 +299,7 @@ impl AuthPlugin for LdapAuthPlugin {
             // Ensure user exists in local DB for RBAC
             let user_exists = self
                 .default_plugin
-                .persistence
+                .auth_data
                 .user_find_by_username(username)
                 .await
                 .ok()
@@ -306,7 +311,7 @@ impl AuthPlugin for LdapAuthPlugin {
                 // and an explicit source marker so password login is rejected.
                 let _ = self
                     .default_plugin
-                    .persistence
+                    .auth_data
                     .user_create_with_source(
                         username,
                         NON_LOCAL_PASSWORD_SENTINEL,
@@ -350,8 +355,10 @@ mod tests {
     use super::*;
 
     use batata_consistency::RocksStateMachine;
-    use batata_persistence::{AuthPersistence, EmbeddedPersistService};
+    use batata_persistence::{AuthPersistence, EmbeddedPersistService, PersistenceService};
     use tempfile::TempDir;
+
+    use crate::service::auth_data::PersistenceAuthDataService;
 
     /// Bcrypt cost used for fast test hashing. The library minimum is 4;
     /// we use that everywhere in tests to keep the suite snappy.
@@ -366,7 +373,9 @@ mod tests {
         let plugin = DefaultAuthPlugin::new(
             TEST_JWT_SECRET.to_string(),
             TEST_TOKEN_TTL_SECS,
-            svc.clone() as Arc<dyn PersistenceService>,
+            Arc::new(PersistenceAuthDataService::new(
+                svc.clone() as Arc<dyn PersistenceService>
+            )),
         );
         (plugin, svc, tmp)
     }
@@ -378,7 +387,7 @@ mod tests {
         let password = "correct horse battery staple";
         let hash = bcrypt::hash(password, TEST_BCRYPT_COST).unwrap();
 
-        svc.user_create_with_source("alice", &hash, true, "local")
+        AuthPersistence::user_create_with_source(&*svc, "alice", &hash, true, "local")
             .await
             .unwrap();
 
@@ -411,7 +420,7 @@ mod tests {
 
         let hash = bcrypt::hash("right", TEST_BCRYPT_COST).unwrap();
 
-        svc.user_create_with_source("alice", &hash, true, "local")
+        AuthPersistence::user_create_with_source(&*svc, "alice", &hash, true, "local")
             .await
             .unwrap();
 
@@ -430,7 +439,8 @@ mod tests {
 
         // Simulate what the OAuth handler does: store the sentinel, not a
         // bcrypt of a random UUID, and tag source = "oauth".
-        svc.user_create_with_source(
+        AuthPersistence::user_create_with_source(
+            &*svc,
             "oauth_github_123",
             crate::model::NON_LOCAL_PASSWORD_SENTINEL,
             true,
@@ -455,7 +465,8 @@ mod tests {
     async fn ldap_user_cannot_log_in_with_password() {
         let (plugin, svc, _tmp) = build_plugin().await;
 
-        svc.user_create_with_source(
+        AuthPersistence::user_create_with_source(
+            &*svc,
             "ldap_user",
             crate::model::NON_LOCAL_PASSWORD_SENTINEL,
             true,
@@ -479,10 +490,11 @@ mod tests {
 
         let hash = bcrypt::hash("pw", TEST_BCRYPT_COST).unwrap();
 
-        svc.user_create_with_source("alice", &hash, true, "local")
+        AuthPersistence::user_create_with_source(&*svc, "alice", &hash, true, "local")
             .await
             .unwrap();
-        svc.user_create_with_source(
+        AuthPersistence::user_create_with_source(
+            &*svc,
             "oauth_user",
             crate::model::NON_LOCAL_PASSWORD_SENTINEL,
             true,

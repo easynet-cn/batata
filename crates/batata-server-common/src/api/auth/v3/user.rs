@@ -48,6 +48,9 @@ async fn search_page(
             .action(ActionTypes::Read)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            // The independently deployed console reads user records over the
+            // trusted console-to-server channel (server identity).
+            .allow_server_identity(true)
             .build()
     );
 
@@ -137,6 +140,9 @@ async fn create(
             .action(ActionTypes::Write)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            // Reachable over the trusted console-to-server channel so an
+            // independently deployed console can provision users (e.g. LDAP).
+            .allow_server_identity(true)
             .build()
     );
 

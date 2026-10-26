@@ -36,6 +36,15 @@ pub struct Secured<'a> {
     pub tags: Vec<String>,
     /// API access type.
     pub api_type: crate::ApiType,
+    /// Whether a matching server identity header may bypass user auth.
+    ///
+    /// `InnerApi`/`AdminApi` always accept the server identity; console-scoped
+    /// endpoints only do so when explicitly opted in here. The independently
+    /// deployed console reads user/role/permission data through the same
+    /// `/v3/auth/**` endpoints a browser session uses, so those handlers opt in
+    /// and are reached with the server identity (the console has no end-user
+    /// token yet while resolving credentials during login).
+    pub allow_server_identity: bool,
 }
 
 impl<'a> From<&Secured<'a>> for Resource {
@@ -88,6 +97,7 @@ pub struct SecuredBuilder<'a> {
     sign_type: crate::SignType,
     tags: Vec<String>,
     api_type: crate::ApiType,
+    allow_server_identity: bool,
 }
 
 impl<'a> SecuredBuilder<'a> {
@@ -101,6 +111,7 @@ impl<'a> SecuredBuilder<'a> {
             sign_type: crate::SignType::default(),
             tags: Vec::new(),
             api_type: crate::ApiType::default(),
+            allow_server_identity: false,
         }
     }
 
@@ -134,6 +145,16 @@ impl<'a> SecuredBuilder<'a> {
         self
     }
 
+    /// Allow a matching server identity header to bypass user authentication.
+    ///
+    /// Used by console-scoped `/v3/auth/**` endpoints so an independently
+    /// deployed console can read user/role/permission data over the trusted
+    /// console-to-server channel.
+    pub fn allow_server_identity(mut self, allow: bool) -> Self {
+        self.allow_server_identity = allow;
+        self
+    }
+
     /// Performs the `build` operation.
     pub fn build(self) -> Secured<'a> {
         Secured::<'a> {
@@ -144,6 +165,7 @@ impl<'a> SecuredBuilder<'a> {
             sign_type: self.sign_type,
             tags: self.tags,
             api_type: self.api_type,
+            allow_server_identity: self.allow_server_identity,
         }
     }
 }
@@ -153,7 +175,8 @@ impl<'a> SecuredBuilder<'a> {
 ///
 /// Flow:
 /// 1. Check if auth is enabled for the API type
-/// 2. Check server identity header (for InnerApi/AdminApi)
+/// 2. Check server identity header (InnerApi/AdminApi, or any handler that
+///    opts in via `allow_server_identity`)
 /// 3. Extract `RequestToken` from request extensions (populated by middleware)
 /// 4. Call `auth_plugin.validate_identity()` — handles JWT decode, expiry, etc.
 /// 5. For non-admin users, call `auth_plugin.validate_authority()` — checks RBAC
@@ -180,6 +203,7 @@ macro_rules! secured {
             // Server identity check for InnerApi/AdminApi
             let __skip_auth = if __secured.api_type == $crate::ApiType::InnerApi
                 || __secured.api_type == $crate::ApiType::AdminApi
+                || __secured.allow_server_identity
             {
                 let __identity_key = __secured.data.configuration.server_identity_key();
                 let __identity_value = __secured.data.configuration.server_identity_value();

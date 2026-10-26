@@ -444,21 +444,78 @@ impl AppBuilder {
         let encryption_service = init_encryption_service(config);
 
         // Auth plugin
-        let auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>> =
-            persistence_ctx.persistence.as_ref().map(|p| {
-                let ldap_config = if config.auth_system_type() == "ldap" {
-                    Some(config.ldap_config())
-                } else {
+        //
+        // The plugin always runs in this process, so token validation and the
+        // RBAC decision stay local and are made with the real end-user identity.
+        // Only the user/role/permission *data* it reads switches backend with
+        // the deployment mode, mirroring the split Nacos makes between
+        // `NacosUserServiceDirectImpl` and `NacosUserServiceRemoteImpl`:
+        //
+        //   - merged / server -> the local persistence service
+        //   - console         -> HTTP to the core this console fronts
+        //
+        // The console must never depend on the database, raft or rocksdb, and it
+        // must not delegate the authorization decision itself: proxied requests
+        // carry the server identity, so the core cannot re-check the real user.
+        let ldap_config = if config.auth_system_type() == "ldap" {
+            Some(config.ldap_config())
+        } else {
+            None
+        };
+
+        let auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>> = if self.is_console_remote {
+            let base = batata_auth::service::RemoteAuthDataService::base_from_addrs(
+                &config.resolve_remote_server_addrs(),
+                &config.server_context_path(),
+            );
+
+            match batata_auth::service::RemoteAuthDataService::new(
+                &base,
+                config.server_identity_key(),
+                config.server_identity_value(),
+                config.console_remote_connect_timeout_ms(),
+                config.console_remote_read_timeout_ms(),
+            ) {
+                Ok(remote) => {
+                    if config.server_identity_key().is_empty() {
+                        tracing::warn!(
+                            "Console-remote auth data reads need a configured server identity \
+                             (batata.core.auth.server.identity.key/value); the core will reject \
+                             them and guarded console APIs will fail closed."
+                        );
+                    }
+
+                    Some(batata_auth::plugin::create_auth_plugin(
+                        &config.auth_system_type(),
+                        config.token_secret_key(),
+                        config.auth_token_expire_seconds(),
+                        Arc::new(remote),
+                        ldap_config,
+                    ))
+                }
+                Err(e) => {
+                    error!(
+                        "Console-remote mode requires a working remote auth data service, but it \
+                         failed to initialize: {}. Guarded console APIs will return 403 until \
+                         resolved (check batata.console.remote.server_addr).",
+                        e
+                    );
                     None
-                };
+                }
+            }
+        } else {
+            persistence_ctx.persistence.as_ref().map(|p| {
                 batata_auth::plugin::create_auth_plugin(
                     &config.auth_system_type(),
                     config.token_secret_key(),
                     config.auth_token_expire_seconds(),
-                    p.clone(),
-                    ldap_config,
+                    Arc::new(batata_auth::service::PersistenceAuthDataService::new(
+                        p.clone(),
+                    )),
+                    ldap_config.clone(),
                 )
-            });
+            })
+        };
 
         // Clone Arc fields before moving into AppState
         let console_datasource_for_self = console_datasource.clone();

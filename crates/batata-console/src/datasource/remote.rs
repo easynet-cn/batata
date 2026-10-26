@@ -1114,3 +1114,337 @@ impl ConsoleDataSource for RemoteDataSource {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batata_maintainer_client::model as mc;
+    use batata_server_common::console::api_model as am;
+    use std::collections::HashMap;
+
+    // These tests mirror Nacos' ConfigRemoteHandlerTest / *RemoteHandlerTest:
+    // they verify that maintainer (core) responses are mapped 1:1 onto the
+    // console data models used by the independent (remote) console deployment.
+    // Previously this mapping had zero coverage.
+
+    #[test]
+    fn convert_namespace_is_identity() {
+        let src = mc::Namespace {
+            namespace: "dev".into(),
+            namespace_show_name: "Dev NS".into(),
+            namespace_desc: "for dev".into(),
+            quota: 100,
+            config_count: 7,
+            type_: 1,
+        };
+        let dst = convert_namespace(src.clone());
+        assert_eq!(dst.namespace, src.namespace);
+        assert_eq!(dst.namespace_show_name, src.namespace_show_name);
+        assert_eq!(dst.namespace_desc, src.namespace_desc);
+        assert_eq!(dst.quota, src.quota);
+        assert_eq!(dst.config_count, src.config_count);
+        assert_eq!(dst.type_, src.type_);
+    }
+
+    #[test]
+    fn convert_config_basic_info_is_identity() {
+        let src = mc::ConfigBasicInfo {
+            id: 42,
+            namespace_id: "public".into(),
+            group_name: "G".into(),
+            data_id: "app.yml".into(),
+            md5: "deadbeef".into(),
+            r#type: "yaml".into(),
+            app_name: "app".into(),
+            create_time: 1,
+            modify_time: 2,
+        };
+        let dst = convert_config_basic_info(src.clone());
+        assert_eq!(dst.id, src.id);
+        assert_eq!(dst.namespace_id, src.namespace_id);
+        assert_eq!(dst.group_name, src.group_name);
+        assert_eq!(dst.data_id, src.data_id);
+        assert_eq!(dst.md5, src.md5);
+        assert_eq!(dst.r#type, src.r#type);
+        assert_eq!(dst.app_name, src.app_name);
+        assert_eq!(dst.create_time, src.create_time);
+        assert_eq!(dst.modify_time, src.modify_time);
+    }
+
+    #[test]
+    fn convert_config_detail_info_is_identity() {
+        let src = mc::ConfigDetailInfo {
+            config_basic_info: mc::ConfigBasicInfo {
+                id: 9,
+                data_id: "d".into(),
+                ..Default::default()
+            },
+            content: "k: v".into(),
+            desc: "desc".into(),
+            encrypted_data_key: "edk".into(),
+            create_user: "u".into(),
+            create_ip: "1.2.3.4".into(),
+            config_tags: "tag1,tag2".into(),
+        };
+        let dst = convert_config_detail_info(src.clone());
+        assert_eq!(dst.config_basic_info.id, src.config_basic_info.id);
+        assert_eq!(dst.config_basic_info.data_id, src.config_basic_info.data_id);
+        assert_eq!(dst.content, src.content);
+        assert_eq!(dst.desc, src.desc);
+        assert_eq!(dst.encrypted_data_key, src.encrypted_data_key);
+        assert_eq!(dst.create_user, src.create_user);
+        assert_eq!(dst.create_ip, src.create_ip);
+        assert_eq!(dst.config_tags, src.config_tags);
+    }
+
+    #[test]
+    fn convert_config_gray_info_preserves_nested_detail() {
+        let src = mc::ConfigGrayInfo {
+            config_detail_info: mc::ConfigDetailInfo {
+                content: "gray-content".into(),
+                ..Default::default()
+            },
+            gray_name: "beta".into(),
+            gray_rule: "expr".into(),
+        };
+        let dst = convert_config_gray_info(src.clone());
+        assert_eq!(dst.config_detail_info.content, "gray-content");
+        assert_eq!(dst.gray_name, "beta");
+        assert_eq!(dst.gray_rule, "expr");
+    }
+
+    #[test]
+    fn convert_config_history_basic_info_is_identity() {
+        let src = mc::ConfigHistoryBasicInfo {
+            config_basic_info: mc::ConfigBasicInfo {
+                data_id: "h.yml".into(),
+                ..Default::default()
+            },
+            src_ip: "10.0.0.1".into(),
+            src_user: "admin".into(),
+            op_type: "I".into(),
+            publish_type: "NORMAL".into(),
+        };
+        let dst = convert_config_history_basic_info(src.clone());
+        assert_eq!(dst.config_basic_info.data_id, "h.yml");
+        assert_eq!(dst.src_ip, "10.0.0.1");
+        assert_eq!(dst.src_user, "admin");
+        assert_eq!(dst.op_type, "I");
+        assert_eq!(dst.publish_type, "NORMAL");
+    }
+
+    #[test]
+    fn convert_config_history_detail_info_is_identity() {
+        let src = mc::ConfigHistoryDetailInfo {
+            config_history_basic_info: mc::ConfigHistoryBasicInfo {
+                src_user: "root".into(),
+                ..Default::default()
+            },
+            content: "hist-content".into(),
+            encrypted_data_key: "k".into(),
+            gray_name: "g".into(),
+            ext_info: "{}".into(),
+        };
+        let dst = convert_config_history_detail_info(src.clone());
+        assert_eq!(dst.config_history_basic_info.src_user, "root");
+        assert_eq!(dst.content, "hist-content");
+        assert_eq!(dst.encrypted_data_key, "k");
+        assert_eq!(dst.gray_name, "g");
+        assert_eq!(dst.ext_info, "{}");
+    }
+
+    #[test]
+    fn convert_member_resets_volatile_fields() {
+        // The conversion deliberately does NOT copy `extend_info`/`abilities`
+        // from the core member (console only needs the stable identity) and
+        // hard-codes `grpc_report_enabled = true`.
+        let src = mc::Member {
+            ip: "192.168.1.5".into(),
+            port: 8848,
+            state: "UP".into(),
+            extend_info: {
+                let mut m = HashMap::new();
+                m.insert("version".into(), serde_json::Value::String("3.1.0".into()));
+                m
+            },
+            address: "192.168.1.5:8848".into(),
+            abilities: mc::NodeAbilities::default(),
+            grpc_report_enabled: false,
+            fail_access_cnt: 3,
+        };
+        let dst = convert_member(src.clone());
+        assert_eq!(dst.ip, src.ip);
+        assert_eq!(dst.port, src.port);
+        assert_eq!(dst.state, src.state);
+        assert_eq!(dst.address, src.address);
+        assert_eq!(dst.fail_access_cnt, src.fail_access_cnt);
+        // Volatile / server-trust fields are normalized by the console mapping.
+        assert!(dst.extend_info.is_empty());
+        assert_eq!(dst.grpc_report_enabled, true);
+    }
+
+    #[test]
+    fn convert_cluster_health_is_identity() {
+        let src = mc::ClusterHealthResponse {
+            is_healthy: true,
+            summary: mc::ClusterHealthSummary {
+                total: 5,
+                up: 4,
+                down: 1,
+                suspicious: 0,
+                starting: 0,
+                isolation: 0,
+            },
+            standalone: false,
+        };
+        let dst = convert_cluster_health(src.clone());
+        assert_eq!(dst.is_healthy, src.is_healthy);
+        assert_eq!(dst.standalone, src.standalone);
+        assert_eq!(dst.summary.total, src.summary.total);
+        assert_eq!(dst.summary.up, src.summary.up);
+        assert_eq!(dst.summary.down, src.summary.down);
+        assert_eq!(dst.summary.suspicious, src.summary.suspicious);
+        assert_eq!(dst.summary.starting, src.summary.starting);
+        assert_eq!(dst.summary.isolation, src.summary.isolation);
+    }
+
+    #[test]
+    fn convert_self_member_is_identity() {
+        let src = mc::SelfMemberResponse {
+            ip: "127.0.0.1".into(),
+            port: 8848,
+            address: "127.0.0.1:8848".into(),
+            state: "UP".into(),
+            is_standalone: true,
+            version: "1.0.0".into(),
+        };
+        let dst = convert_self_member(src.clone());
+        assert_eq!(dst.ip, src.ip);
+        assert_eq!(dst.port, src.port);
+        assert_eq!(dst.address, src.address);
+        assert_eq!(dst.state, src.state);
+        assert_eq!(dst.is_standalone, src.is_standalone);
+        assert_eq!(dst.version, src.version);
+    }
+
+    #[test]
+    fn convert_instance_is_identity() {
+        let src = mc::Instance {
+            instance_id: "i-1".into(),
+            ip: "10.0.0.2".into(),
+            port: 8080,
+            weight: 1.5,
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            cluster_name: "c1".into(),
+            service_name: "svc".into(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("k".into(), "v".into());
+                m
+            },
+        };
+        let dst = convert_instance(src.clone());
+        assert_eq!(dst.instance_id, src.instance_id);
+        assert_eq!(dst.ip, src.ip);
+        assert_eq!(dst.port, src.port);
+        assert_eq!(dst.weight, src.weight);
+        assert_eq!(dst.healthy, src.healthy);
+        assert_eq!(dst.enabled, src.enabled);
+        assert_eq!(dst.ephemeral, src.ephemeral);
+        assert_eq!(dst.cluster_name, src.cluster_name);
+        assert_eq!(dst.service_name, src.service_name);
+        assert_eq!(dst.metadata, src.metadata);
+    }
+
+    #[test]
+    fn convert_config_listener_info_is_identity() {
+        let mut listeners = HashMap::new();
+        listeners.insert("192.168.1.1".into(), "abc".into());
+        let src = mc::ConfigListenerInfo {
+            query_type: "config".into(),
+            listeners_status: listeners.clone(),
+        };
+        let dst = convert_config_listener_info(src.clone());
+        assert_eq!(dst.query_type, src.query_type);
+        assert_eq!(dst.listeners_status, listeners);
+    }
+
+    #[test]
+    fn convert_import_result_maps_fail_items() {
+        let src = mc::ImportResult {
+            success_count: 5,
+            skip_count: 1,
+            fail_count: 2,
+            fail_data: vec![mc::ImportFailItem {
+                data_id: "a.yml".into(),
+                group: "G".into(),
+                reason: "dup".into(),
+            }],
+        };
+        let dst = convert_import_result(src.clone());
+        assert_eq!(dst.success_count, 5);
+        assert_eq!(dst.skip_count, 1);
+        assert_eq!(dst.fail_count, 2);
+        assert_eq!(dst.fail_data.len(), 1);
+        assert_eq!(dst.fail_data[0].data_id, "a.yml");
+        assert_eq!(dst.fail_data[0].group, "G");
+        assert_eq!(dst.fail_data[0].reason, "dup");
+    }
+
+    #[test]
+    fn convert_page_maps_items_and_metadata() {
+        let src = mc::Page::<mc::ConfigBasicInfo> {
+            total_count: 2,
+            page_number: 1,
+            pages_available: 1,
+            page_items: vec![
+                mc::ConfigBasicInfo {
+                    id: 1,
+                    data_id: "a".into(),
+                    ..Default::default()
+                },
+                mc::ConfigBasicInfo {
+                    id: 2,
+                    data_id: "b".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let dst: batata_api::model::Page<am::ConfigBasicInfo> =
+            convert_page(src.clone(), convert_config_basic_info);
+        assert_eq!(dst.total_count, 2);
+        assert_eq!(dst.page_number, 1);
+        assert_eq!(dst.pages_available, 1);
+        assert_eq!(dst.page_items.len(), 2);
+        assert_eq!(dst.page_items[0].id, 1);
+        assert_eq!(dst.page_items[0].data_id, "a");
+        assert_eq!(dst.page_items[1].id, 2);
+        assert_eq!(dst.page_items[1].data_id, "b");
+    }
+
+    #[test]
+    fn convert_same_config_policy_round_trips() {
+        assert_eq!(
+            convert_same_config_policy(am::SameConfigPolicy::Abort),
+            mc::SameConfigPolicy::Abort
+        );
+        assert_eq!(
+            convert_same_config_policy(am::SameConfigPolicy::Skip),
+            mc::SameConfigPolicy::Skip
+        );
+        assert_eq!(
+            convert_same_config_policy(am::SameConfigPolicy::Overwrite),
+            mc::SameConfigPolicy::Overwrite
+        );
+    }
+
+    #[test]
+    fn auto_refresh_config_defaults() {
+        let cfg = AutoRefreshConfig::default();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.interval, Duration::from_secs(30));
+        assert_eq!(cfg.initial_delay, Duration::from_secs(5));
+    }
+}

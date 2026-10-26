@@ -54,6 +54,9 @@ async fn search_page(
             .action(ActionTypes::Read)
             .sign_type(SignType::Specified)
             .api_type(ApiType::ConsoleApi)
+            // The independently deployed console resolves a user's roles over
+            // the trusted console-to-server channel (server identity).
+            .allow_server_identity(true)
             .build()
     );
 
