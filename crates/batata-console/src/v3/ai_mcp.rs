@@ -174,7 +174,7 @@ async fn list_versions(
     let page_size = q.page_size.unwrap_or(20);
 
     match svc
-        .list_mcp_server_versions(namespace, name, page_no, page_size)
+        .list_mcp_server_versions(namespace, name, q.status.as_deref(), page_no, page_size)
         .await
     {
         Ok(page) => common_response::Result::<Page<McpServerVersionSummary>>::http_success(page),

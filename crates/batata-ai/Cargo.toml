@@ -28,6 +28,7 @@ tonic = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
 
 # Async
 chrono = { workspace = true }
@@ -67,3 +68,8 @@ sha2 = { workspace = true }
 batata-consistency = { workspace = true }
 rocksdb = { workspace = true }
 tempfile = { workspace = true }
+# Only to build an `AppState` in the route tests: `AppState` needs a
+# `ConsoleDataSource`, and the console crate owns the local implementation.
+batata-console = { workspace = true }
+# The route tests build requests by hand, which names `actix_http::Request`.
+actix-http = { workspace = true }

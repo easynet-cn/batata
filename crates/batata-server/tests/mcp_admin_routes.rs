@@ -370,6 +370,17 @@ where
     )
 }
 
+/// The resource-level status (`enable` / `disable`) in `ai_resource`.
+async fn resource_status(store: &ExternalDbPersistService) -> Option<String> {
+    ai_resource::Entity::find()
+        .filter(ai_resource::Column::Name.eq(NAME))
+        .filter(ai_resource::Column::NamespaceId.eq(NS))
+        .one(store.db())
+        .await
+        .expect("resource lookup")
+        .and_then(|row| row.status)
+}
+
 /// The status a version carries in `ai_resource_version`.
 async fn version_status(store: &ExternalDbPersistService, version: &str) -> Option<String> {
     store
@@ -406,10 +417,23 @@ where
         return Err(format!("create server failed ({status}): {out}"));
     }
 
+    // The maintainer client posts the draft as a form: the specification is a
+    // JSON string, and the version travels beside it.
     let mut next = registration();
     next.version = DRAFT_VERSION.to_string();
-    let body = serde_json::to_string(&next).expect("serialize");
-    let (status, out) = post_json(app, "/v3/admin/ai/mcp/draft", &body).await;
+    let spec = serde_json::to_string(&next).expect("serialize");
+    let (status, out) = post_form(
+        app,
+        "/v3/admin/ai/mcp/draft",
+        &format!(
+            "serverSpecification={}&mcpName={}&version={}&namespaceId={}",
+            percent_encode(&spec),
+            NAME,
+            DRAFT_VERSION,
+            NS
+        ),
+    )
+    .await;
     if status != StatusCode::OK {
         return Err(format!("create draft failed ({status}): {out}"));
     }
@@ -556,11 +580,16 @@ async fn labels_status_and_scope_take_effect() {
     let qs = format!("mcpName={NAME}");
 
     // Labels map a name to a version, and that version must be online — so
-    // this points at the one the server was created with.
+    // this points at the one the server was created with. Upstream sends the
+    // map as a JSON string in the `labels` parameter.
+    let labels = format!(r#"{{"stable":"{BASE_VERSION}"}}"#);
     let (status, out) = put_json(
         &app,
-        &format!("/v3/admin/ai/mcp/labels?{qs}"),
-        &format!(r#"{{"labels":{{"stable":"{BASE_VERSION}"}}}}"#),
+        &format!(
+            "/v3/admin/ai/mcp/labels?{qs}&labels={}",
+            percent_encode(&labels)
+        ),
+        "{}",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "update labels failed: {out}");
@@ -574,13 +603,20 @@ async fn labels_status_and_scope_take_effect() {
     .await;
     assert_eq!(status, StatusCode::OK, "update scope failed: {out}");
 
+    // `enabled=false` is the parameter the maintainer client sends; reading a
+    // `status` string instead used to turn this into an enable.
     let (status, out) = put_json(
         &app,
-        &format!("/v3/admin/ai/mcp/status?{qs}&status=DISABLED"),
+        &format!("/v3/admin/ai/mcp/status?{qs}&enabled=false"),
         "{}",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "update status failed: {out}");
+    assert_eq!(
+        resource_status(&store).await.as_deref(),
+        Some("disable"),
+        "enabled=false must disable the resource"
+    );
     println!("ok: labels, status and scope take effect");
 
     clean(&store).await;

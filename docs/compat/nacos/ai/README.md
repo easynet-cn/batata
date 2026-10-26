@@ -495,21 +495,47 @@ has no `LIKE`:
       The legacy config-group/data-id/tag constants in
       `service/constants.rs` were deleted; only the NamingService endpoint
       constants remain (endpoint resolution is still naming-based upstream too).
-- [ ] **MCP admin still runs on the legacy shim** — this is what the old
-      "rework `McpForm` into structured models" note was really about, and the
-      note was misleading: `McpForm`'s JSON-as-string parameters are a
-      deliberate Nacos SDK compatibility shim (the maintainer client posts
-      `serverSpecification=<JSON>`), not an unfinished model.
-      The actual problem: `api/v3/admin/ai/route.rs` still mounts
-      `mcp::routes()` from `batata-server`, which is backed by the **in-memory
-      `McpServerRegistry`** — while `batata-ai`'s `McpServerOperationService`
-      (the `ai_resource`-backed one the console uses) is not mounted on the
-      admin API at all. The legacy shim exposes ~5 endpoints where upstream's
-      `McpAdminController` has 13 subpaths plus base CRUD, matching the 25
-      handlers in `batata-console/src/v3/ai_mcp.rs`.
-      Fixing this means mirroring ~1164 lines of console handlers with admin
-      auth, so it deserves its own pass rather than a mechanical copy: the
-      handlers should be shared instead of duplicated.
+- [x] **MCP admin is served by the `ai_resource`-backed service** — an earlier
+      note here claimed the opposite ("still mounts `mcp::routes()` from
+      `batata-server`, backed by the in-memory `McpServerRegistry`"). That was
+      wrong: `api/v3/admin/ai/route.rs` mounts
+      `batata_ai::mcp_admin_routes()`, and `batata-ai/src/api/mcp.rs` carries
+      all 19 handlers of upstream's `McpAdminController` (base CRUD plus
+      `list`, `versions`, `version`, `draft` ×3, `submit`, `publish`,
+      `force-publish`, `redraft`, `online`, `offline`, `labels`, `status`,
+      `scope`). The surviving `McpServerRegistry` is only the MCP *Registry*
+      OpenAPI (`GET /v0/servers`), which upstream keeps in its own
+      `ai-registry-adaptor` module.
+      The note was also wrong about `McpForm`'s JSON-as-string parameters:
+      they are a deliberate Nacos SDK compatibility shim, not an unfinished
+      model.
+      What *was* genuinely wrong was the request contract of six endpoints,
+      which upstream's `McpMaintainerServiceImpl` pins down and the handlers
+      did not implement. All are fixed and covered by
+      `batata-ai/tests/mcp_admin_request_contract.rs`, which speaks the
+      maintainer client's wire format and asserts what the service received:
+      - **`PUT /status`** read a `status` string, so the maintainer client's
+        `enabled=false` — the only way it can disable a server — was read as
+        "no status given" and silently *enabled* it. It now takes upstream's
+        required `enabled` Boolean, with the console's `status=enable|disable`
+        still understood, and refuses a request that carries neither.
+      - **`PUT /labels`** required a JSON body, but upstream sends the map as a
+        JSON string in a `labels` *parameter*; the maintainer client got a 400.
+        Both encodings are now accepted.
+      - **`POST`/`PUT /draft`** required a JSON body, but upstream posts the
+        form encoding (`serverSpecification` is required and is a JSON string,
+        alongside `toolSpecification` / `resourceSpecification` /
+        `endpointSpecification`). Both are accepted; the content type decides.
+      - **`GET /versions`** ignored the `status` filter. It is now validated
+        against upstream's five statuses, lower-cased and applied before
+        pagination.
+      - **`GET /list`** defaulted to `blur` where upstream's `McpListForm`
+        defaults to `accurate`, and accepted any value; it now defaults and
+        validates like upstream.
+      - **`PUT` (update)** still ignores upstream's `latest` and
+        `overrideExisting`. Left alone deliberately: honouring them is a
+        service-level change (`update_mcp_server` takes neither), not a
+        request-parsing one.
 
 ### Phase 2 — MCP parity (largest gap)
 

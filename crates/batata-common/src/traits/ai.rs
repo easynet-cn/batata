@@ -607,10 +607,14 @@ pub trait McpServerService: Send + Sync {
     ) -> Page<McpServerBasicInfo>;
 
     /// The `list_mcp_server_versions` method.
+    ///
+    /// `status` filters by version status, as upstream's
+    /// `listMcpServerVersions` does; `None` means every status.
     async fn list_mcp_server_versions(
         &self,
         namespace: &str,
         name: &str,
+        status: Option<&str>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<McpServerVersionSummary>>;

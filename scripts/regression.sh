@@ -83,7 +83,7 @@ PERF_CASES=(naming config)
 # Crates run at every level. These are the ones whose failure means something
 # changed in a hot path; the rest are covered at --standard.
 CORE_CRATES=(batata-core batata-client batata-config batata-naming batata-plugin-consul)
-STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common batata-console)
+STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common batata-console batata-ai)
 FULL_CRATES=(batata-plugin-apollo)
 
 LEVEL=quick

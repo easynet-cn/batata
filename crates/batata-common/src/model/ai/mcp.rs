@@ -453,6 +453,12 @@ pub struct McpVersionsQuery {
     /// MCP server name
     #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
+    /// Filter by version status: `draft`, `reviewing`, `reviewed`, `online`
+    /// or `offline`.
+    ///
+    /// Upstream validates this against its five statuses and lower-cases it;
+    /// anything else is a client error rather than an empty page.
+    pub status: Option<String>,
     /// Page number (1-based, defaults to 1)
     #[serde(alias = "pageNo")]
     pub page_no: Option<u64>,
@@ -487,7 +493,10 @@ pub struct McpStatusQuery {
     /// MCP server name
     #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
-    /// `enable` or `disable`
+    /// Upstream's `McpServerStatusForm.enabled`, and the parameter the
+    /// maintainer client actually sends.
+    pub enabled: Option<bool>,
+    /// The console's spelling, `enable` or `disable`.
     pub status: Option<String>,
 }
 

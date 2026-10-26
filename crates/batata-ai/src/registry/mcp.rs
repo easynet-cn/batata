@@ -679,6 +679,7 @@ impl batata_common::McpServerService for McpServerRegistry {
         &self,
         _namespace: &str,
         _name: &str,
+        _status: Option<&str>,
         _page_no: u64,
         _page_size: u64,
     ) -> anyhow::Result<

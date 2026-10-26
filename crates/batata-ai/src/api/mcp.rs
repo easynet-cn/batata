@@ -2,12 +2,15 @@
 //!
 //! Admin: `/v3/admin/ai/mcp`
 //!
-//! Create and update keep the SDK's encoding: `serverSpecification`,
-//! `toolSpecification` and `endpointSpecification` arrive as JSON *strings*
-//! inside a form body — upstream `McpDetailForm`, parsed by
-//! `McpRequestUtil.parseMcpServerBasicInfo`. The maintainer client posts that
-//! shape, so it is preserved here even though every other endpoint on this
-//! scope takes ordinary query or JSON parameters.
+//! Write endpoints keep the SDK's encoding: `serverSpecification`,
+//! `toolSpecification`, `resourceSpecification` and `endpointSpecification`
+//! arrive as JSON *strings* inside a form body — upstream `McpDetailForm` and
+//! `McpServerDraftForm`, parsed by `McpRequestUtil`. The maintainer client
+//! posts exactly that shape, so it is what these handlers have to accept.
+//!
+//! Upstream's Spring form binding takes a parameter from the query string or
+//! the body alike, so a JSON body is accepted too where a client prefers it;
+//! the content type decides how the body is read.
 //!
 //! The handlers below are backed by the `ai_resource` service, the same one the
 //! console layer uses. The earlier admin implementation was backed by the
@@ -45,6 +48,136 @@ fn missing(field: &str) -> HttpResponse {
     )
 }
 
+/// Parameter that is present but not a value the domain accepts.
+fn invalid(message: impl Into<String>) -> HttpResponse {
+    Result::<()>::http_bad_request(&batata_common::error::PARAMETER_VALIDATE_ERROR, message)
+}
+
+/// Whether a request asked to enable or disable a server.
+///
+/// Upstream's `McpServerStatusForm` carries a required `enabled` Boolean and
+/// the maintainer client sends `enabled=false` to disable. The console talks in
+/// `status=enable|disable`, so both spellings are understood; `enabled` wins
+/// because it is the one with a defined meaning.
+fn resolve_enabled(
+    enabled: Option<bool>,
+    status: Option<&str>,
+) -> std::result::Result<bool, String> {
+    if let Some(enabled) = enabled {
+        return Ok(enabled);
+    }
+    match status.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) if s.eq_ignore_ascii_case("enable") || s.eq_ignore_ascii_case("enabled") => {
+            Ok(true)
+        }
+        Some(s) if s.eq_ignore_ascii_case("disable") || s.eq_ignore_ascii_case("disabled") => {
+            Ok(false)
+        }
+        Some(s) => Err(format!("status must be enable or disable, got '{s}'")),
+        None => Err("enabled is required".to_string()),
+    }
+}
+
+/// The version statuses upstream accepts on `GET /versions`.
+const VERSION_STATUSES: [&str; 5] = ["draft", "reviewing", "reviewed", "online", "offline"];
+
+/// Normalize the optional status filter, rejecting anything else.
+///
+/// Upstream lower-cases the value and rejects an unknown one rather than
+/// returning an empty page, which is the only way a caller learns it typo'd.
+fn resolve_version_status(
+    status: Option<&str>,
+) -> std::result::Result<Option<String>, HttpResponse> {
+    match status.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(s) => {
+            let lowered = s.to_ascii_lowercase();
+            if VERSION_STATUSES.contains(&lowered.as_str()) {
+                Ok(Some(lowered))
+            } else {
+                Err(invalid(format!(
+                    "Invalid MCP Version status: {s} (expected one of {})",
+                    VERSION_STATUSES.join(", ")
+                )))
+            }
+        }
+    }
+}
+
+/// Read the label map from either upstream's `labels` parameter or a JSON body.
+///
+/// `McpServerLabelsForm` carries `labels` as a JSON *string* parameter — the
+/// maintainer client serializes the map into it — while the console posts the
+/// map as a body. An absent value means "no custom labels", not an error.
+fn parse_labels(
+    from_param: Option<&str>,
+    body: &[u8],
+) -> std::result::Result<std::collections::HashMap<String, String>, HttpResponse> {
+    if let Some(raw) = from_param.map(str::trim).filter(|s| !s.is_empty()) {
+        return serde_json::from_str(raw).map_err(|e| invalid(format!("Invalid labels: {e}")));
+    }
+    let body = String::from_utf8_lossy(body);
+    let body = body.trim();
+    if body.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    // `{"labels": {...}}` is the documented shape; a bare map is accepted too.
+    if let Ok(request) = serde_json::from_str::<McpLabelsRequest>(body) {
+        return Ok(request.labels);
+    }
+    serde_json::from_str(body).map_err(|e| invalid(format!("Invalid labels: {e}")))
+}
+
+/// The request's content type, lower-cased.
+fn content_type(req: &HttpRequest) -> String {
+    use actix_web::http::header::CONTENT_TYPE;
+    req.headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Read a registration from either a form body or a JSON body.
+///
+/// Upstream posts the specifications as JSON strings in a form; the content
+/// type decides, with a JSON-looking body as the fallback for clients that
+/// never send one.
+fn parse_registration(
+    content_type: &str,
+    body: &[u8],
+) -> std::result::Result<McpServerRegistration, String> {
+    let body = body.trim_ascii();
+    if body.is_empty() {
+        return Err("a server specification is required".to_string());
+    }
+    if content_type.contains("json") || body.first() == Some(&b'{') {
+        return serde_json::from_slice::<McpServerRegistration>(body)
+            .map_err(|e| format!("Invalid server specification: {e}"));
+    }
+    let form: McpAdminForm =
+        serde_urlencoded::from_bytes(body).map_err(|e| format!("Invalid form body: {e}"))?;
+    form.into_registration()
+}
+
+/// `PUT /labels` parameters.
+///
+/// Upstream's `McpServerLabelsForm` carries `labels` as a JSON *string*
+/// parameter, not a body, so the maintainer client's call has to land.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpLabelsQuery {
+    /// Namespace identifier.
+    #[serde(default)]
+    namespace_id: Option<String>,
+    /// Server name.
+    #[serde(default, alias = "mcpName")]
+    mcp_name: Option<String>,
+    /// Label name -> version, as JSON.
+    #[serde(default)]
+    labels: Option<String>,
+}
+
 /// The SDK's create/update encoding: specifications as JSON strings in a form.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +195,10 @@ struct McpAdminForm {
     /// Tool specification, as JSON.
     #[serde(default, alias = "toolSpecification")]
     tool_specification: Option<String>,
+    /// Resource specification, as JSON. `McpServerDraftForm` carries it;
+    /// `McpDetailForm` does not.
+    #[serde(default, alias = "resourceSpecification")]
+    resource_specification: Option<String>,
     /// Endpoint specification, as JSON.
     #[serde(default, alias = "endpointSpecification")]
     endpoint_specification: Option<String>,
@@ -106,6 +243,19 @@ impl McpAdminForm {
         {
             reg.tools = serde_json::from_str(tools)
                 .map_err(|e| format!("Invalid toolSpecification: {e}"))?;
+        }
+        if let Some(resources) = self.resource_specification.as_deref()
+            && !resources.trim().is_empty()
+        {
+            // Upstream wraps the list: {"resources": [...], "extensions": {}}.
+            let spec: serde_json::Value = serde_json::from_str(resources)
+                .map_err(|e| format!("Invalid resourceSpecification: {e}"))?;
+            let entries = match spec.get("resources") {
+                Some(entries) => entries.clone(),
+                None => spec,
+            };
+            reg.resources = serde_json::from_value(entries)
+                .map_err(|e| format!("Invalid resourceSpecification: {e}"))?;
         }
         if let Some(endpoint) = self.endpoint_specification.as_deref()
             && !endpoint.trim().is_empty()
@@ -200,11 +350,17 @@ async fn list_servers(
     );
 
     let ns = normalize_namespace(query.namespace_id.as_deref());
+    // Upstream's `McpListForm` defaults to `accurate` and rejects anything
+    // else, so an unknown value is a client error rather than a silent blur.
+    let search = query.search.as_deref().unwrap_or("accurate");
+    if !search.eq_ignore_ascii_case("accurate") && !search.eq_ignore_ascii_case("blur") {
+        return invalid("Request parameter `search` should be `accurate` or `blur`.");
+    }
     let page = mcp_service
         .list_mcp_servers(
             ns,
             query.mcp_name.as_deref(),
-            query.search.as_deref().unwrap_or("blur"),
+            search,
             query.page_no.unwrap_or(1),
             query.page_size.unwrap_or(20),
             None,
@@ -233,10 +389,15 @@ async fn list_versions(
     let Some(name) = query.mcp_name.as_deref().filter(|n| !n.is_empty()) else {
         return missing("mcpName");
     };
+    let status = match resolve_version_status(query.status.as_deref()) {
+        Ok(status) => status,
+        Err(response) => return response,
+    };
     match mcp_service
         .list_mcp_server_versions(
             ns,
             name,
+            status.as_deref(),
             query.page_no.unwrap_or(1),
             query.page_size.unwrap_or(20),
         )
@@ -292,7 +453,7 @@ async fn create_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    form: web::Form<McpAdminForm>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -302,7 +463,7 @@ async fn create_server(
             .build()
     );
 
-    let registration = match form.into_inner().into_registration() {
+    let registration = match parse_registration(&content_type(&req), &body) {
         Ok(reg) => reg,
         Err(e) => {
             return Result::<()>::http_bad_request(
@@ -327,7 +488,7 @@ async fn update_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    form: web::Form<McpAdminForm>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -337,7 +498,7 @@ async fn update_server(
             .build()
     );
 
-    let registration = match form.into_inner().into_registration() {
+    let registration = match parse_registration(&content_type(&req), &body) {
         Ok(reg) => reg,
         Err(e) => {
             return Result::<()>::http_bad_request(
@@ -397,7 +558,7 @@ async fn create_draft(
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
     query: web::Query<McpDraftCreateQuery>,
-    body: web::Json<McpServerRegistration>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -407,7 +568,15 @@ async fn create_draft(
             .build()
     );
 
-    let mut registration = body.into_inner();
+    let mut registration = match parse_registration(&content_type(&req), &body) {
+        Ok(reg) => reg,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     let ns = normalize_namespace(query.namespace_id.as_deref());
     if !ns.is_empty() {
         registration.namespace = ns.to_string();
@@ -434,7 +603,7 @@ async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    body: web::Json<McpServerRegistration>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -444,7 +613,15 @@ async fn update_draft(
             .build()
     );
 
-    let registration = body.into_inner();
+    let registration = match parse_registration(&content_type(&req), &body) {
+        Ok(reg) => reg,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     match mcp_service
         .update_mcp_server_draft(&registration.namespace, &registration)
         .await
@@ -687,8 +864,8 @@ async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
     mcp_service: web::Data<Arc<dyn McpServerService>>,
-    query: web::Query<McpDetailQuery>,
-    body: web::Json<McpLabelsRequest>,
+    query: web::Query<McpLabelsQuery>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -702,10 +879,11 @@ async fn update_labels(
     let Some(name) = query.mcp_name.as_deref().filter(|n| !n.is_empty()) else {
         return missing("mcpName");
     };
-    match mcp_service
-        .update_mcp_server_labels(ns, name, body.into_inner().labels)
-        .await
-    {
+    let labels = match parse_labels(query.labels.as_deref(), &body) {
+        Ok(labels) => labels,
+        Err(response) => return response,
+    };
+    match mcp_service.update_mcp_server_labels(ns, name, labels).await {
         Ok(labels) => HttpResponse::Ok().json(Result::success(labels)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,
@@ -734,8 +912,13 @@ async fn update_status(
     let Some(name) = query.mcp_name.as_deref().filter(|n| !n.is_empty()) else {
         return missing("mcpName");
     };
-    // Upstream treats anything other than an explicit disable as enable.
-    let enabled = !matches!(query.status.as_deref(), Some(s) if s.eq_ignore_ascii_case("disabled"));
+    // Upstream requires `enabled`; the console's `status=enable|disable` is
+    // understood as well. Reading `status` alone would have turned the
+    // maintainer client's `enabled=false` into an *enable*.
+    let enabled = match resolve_enabled(query.enabled, query.status.as_deref()) {
+        Ok(enabled) => enabled,
+        Err(e) => return invalid(e),
+    };
     match mcp_service
         .update_mcp_server_status(ns, name, enabled)
         .await
@@ -802,4 +985,118 @@ pub fn admin_routes() -> Scope {
         .service(update_labels)
         .service(update_status)
         .service(update_scope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Upstream's maintainer client posts the specifications as JSON strings
+    /// in a form; that is what `createMcpServer` and `createMcpServerDraft`
+    /// send, so it is what has to parse.
+    #[test]
+    fn registration_is_read_from_the_sdk_form_encoding() {
+        let body =
+            br#"serverSpecification={"name":"svc","version":"2.0.0"}&namespaceId=ns1&mcpName=other"#;
+        let reg = parse_registration("application/x-www-form-urlencoded", body).expect("parse");
+        assert_eq!(reg.name, "svc", "the specification wins over mcpName");
+        assert_eq!(reg.version, "2.0.0");
+        assert_eq!(reg.namespace, "ns1");
+    }
+
+    /// `McpForm.validate` only requires one of `mcpId` / `mcpName`, and
+    /// `McpRequestUtil` falls back to the form-level name.
+    #[test]
+    fn registration_falls_back_to_the_form_level_name() {
+        let body = br#"serverSpecification={}&mcpName=from-form"#;
+        let reg = parse_registration("application/x-www-form-urlencoded", body).expect("parse");
+        assert_eq!(reg.name, "from-form");
+    }
+
+    /// `McpResourceSpecification` wraps the list; the list alone is accepted.
+    #[test]
+    fn resource_specification_is_unwrapped_like_upstream() {
+        let wrapped = br#"serverSpecification={"name":"svc"}&resourceSpecification={"resources":[{"uri":"file:///a","name":"a"}]}"#;
+        let reg = parse_registration("application/x-www-form-urlencoded", wrapped).expect("parse");
+        assert_eq!(reg.resources.len(), 1);
+        assert_eq!(reg.resources[0].name, "a");
+
+        let bare = br#"serverSpecification={"name":"svc"}&resourceSpecification=[{"uri":"file:///b","name":"b"}]"#;
+        let reg = parse_registration("application/x-www-form-urlencoded", bare).expect("parse");
+        assert_eq!(reg.resources.len(), 1);
+        assert_eq!(reg.resources[0].name, "b");
+    }
+
+    /// A JSON body is what the console posts; the content type decides.
+    #[test]
+    fn registration_is_read_from_a_json_body() {
+        let body = br#"{"name":"json-svc","namespace":"ns2"}"#;
+        let reg = parse_registration("application/json", body).expect("parse");
+        assert_eq!(reg.name, "json-svc");
+        assert_eq!(reg.namespace, "ns2");
+    }
+
+    #[test]
+    fn a_malformed_or_empty_body_is_refused() {
+        assert!(parse_registration("application/x-www-form-urlencoded", b"").is_err());
+        assert!(
+            parse_registration(
+                "application/x-www-form-urlencoded",
+                b"serverSpecification={not json"
+            )
+            .is_err()
+        );
+    }
+
+    /// `McpServerLabelsForm` carries `labels` as a JSON string parameter.
+    #[test]
+    fn labels_are_read_from_the_upstream_parameter() {
+        let labels = parse_labels(Some(r#"{"stable":"1.0.0"}"#), b"").expect("parse");
+        assert_eq!(labels.get("stable").map(String::as_str), Some("1.0.0"));
+    }
+
+    /// The console posts the map as a body instead.
+    #[test]
+    fn labels_are_read_from_a_json_body() {
+        let labels = parse_labels(None, br#"{"labels":{"beta":"2.0.0"}}"#).expect("parse");
+        assert_eq!(labels.get("beta").map(String::as_str), Some("2.0.0"));
+    }
+
+    #[test]
+    fn absent_labels_mean_no_custom_labels() {
+        assert!(parse_labels(None, b"").expect("parse").is_empty());
+    }
+
+    /// `enabled=false` is how the maintainer client disables a server. Reading
+    /// a `status` parameter instead used to turn that into an *enable*.
+    #[test]
+    fn enabled_false_disables() {
+        assert!(!resolve_enabled(Some(false), None).expect("resolve"));
+        assert!(!resolve_enabled(None, Some("disable")).expect("resolve"));
+        assert!(!resolve_enabled(None, Some("DISABLED")).expect("resolve"));
+        assert!(resolve_enabled(Some(true), None).expect("resolve"));
+        assert!(resolve_enabled(None, Some("enable")).expect("resolve"));
+    }
+
+    /// `enabled` is the parameter with a defined meaning, so it wins.
+    #[test]
+    fn enabled_wins_over_the_console_spelling() {
+        assert!(!resolve_enabled(Some(false), Some("enable")).expect("resolve"));
+    }
+
+    #[test]
+    fn an_unusable_status_is_refused() {
+        assert!(resolve_enabled(None, Some("maybe")).is_err());
+        assert!(resolve_enabled(None, None).is_err(), "enabled is required");
+    }
+
+    #[test]
+    fn version_status_is_normalized_and_validated() {
+        assert_eq!(
+            resolve_version_status(Some("ONLINE")).expect("resolve"),
+            Some("online".to_string())
+        );
+        assert_eq!(resolve_version_status(None).expect("resolve"), None);
+        assert!(resolve_version_status(Some("bogus")).is_err());
+    }
 }

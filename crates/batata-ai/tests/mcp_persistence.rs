@@ -407,7 +407,7 @@ async fn mcp_server_round_trip() {
     // ---- version list and detail -------------------------------------------
     // Version 1.0.0 was deleted above, so only 2.0.0 remains.
     let versions = svc
-        .list_mcp_server_versions(NS, NAME, 1, 10)
+        .list_mcp_server_versions(NS, NAME, None, 1, 10)
         .await
         .expect("list versions");
     assert_eq!(versions.total_count, 1);
@@ -417,6 +417,25 @@ async fn mcp_server_round_trip() {
         .find(|v| v.latest == Some(true))
         .expect("one version must be marked latest");
     assert_eq!(latest_entry.version, "2.0.0");
+
+    // The status filter is applied before pagination, like upstream's
+    // `listMcpServerVersions`, and matches case-insensitively.
+    let online = svc
+        .list_mcp_server_versions(NS, NAME, Some("online"), 1, 10)
+        .await
+        .expect("list online versions");
+    assert_eq!(
+        online.total_count, 1,
+        "2.0.0 is online, so the filter must keep it"
+    );
+    let drafts = svc
+        .list_mcp_server_versions(NS, NAME, Some("DRAFT"), 1, 10)
+        .await
+        .expect("list draft versions");
+    assert_eq!(
+        drafts.total_count, 0,
+        "no draft exists, so the filter must drop everything"
+    );
 
     let detail = svc
         .get_mcp_server_version(NS, NAME, "2.0.0")
@@ -476,7 +495,7 @@ async fn mcp_server_round_trip() {
     assert_eq!(replaced.summary.version, "4.0.0");
     assert_eq!(replaced.editing_version.as_deref(), Some("4.0.0"));
     let versions = svc
-        .list_mcp_server_versions(NS, NAME, 1, 10)
+        .list_mcp_server_versions(NS, NAME, None, 1, 10)
         .await
         .expect("list versions");
     assert!(

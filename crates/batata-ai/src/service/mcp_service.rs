@@ -769,10 +769,15 @@ impl McpServerOperationService {
     }
 
     /// List versions of one MCP server with pagination.
+    ///
+    /// `status` filters by version status, as upstream's
+    /// `listMcpServerVersions` does; `None` means every status. Filtering
+    /// happens before pagination, so a filtered page is still full.
     pub async fn list_mcp_server_versions(
         &self,
         namespace: &str,
         name: &str,
+        status: Option<&str>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<batata_common::model::Page<McpServerVersionSummary>> {
@@ -788,6 +793,9 @@ impl McpServerOperationService {
             .persistence
             .ai_resource_version_list(namespace, name, resource_type::MCP)
             .await?;
+        if let Some(status) = status {
+            rows.retain(|row| row.status.eq_ignore_ascii_case(status));
+        }
         rows.sort_by(|a, b| a.version.cmp(&b.version));
 
         let total_count = rows.len() as u64;
@@ -1406,10 +1414,11 @@ impl super::traits::McpServerService for McpServerOperationService {
         &self,
         namespace: &str,
         name: &str,
+        status: Option<&str>,
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<batata_common::model::Page<McpServerVersionSummary>> {
-        self.list_mcp_server_versions(namespace, name, page_no, page_size)
+        self.list_mcp_server_versions(namespace, name, status, page_no, page_size)
             .await
     }
 
