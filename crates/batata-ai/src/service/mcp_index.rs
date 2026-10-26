@@ -4,6 +4,7 @@
 use dashmap::DashMap;
 use tracing::{debug, warn};
 
+use batata_common::DEFAULT_NAMESPACE_ID;
 use batata_persistence::PersistenceService;
 
 use crate::model::{McpResourceExt, ResourceVersionInfo};
@@ -150,11 +151,21 @@ impl McpServerIndex {
     /// MCP servers are stored as `ai_resource` rows of type `mcp`, with the
     /// version index serialized into `version_info`.
     pub async fn refresh(&self, persistence: &dyn PersistenceService) {
-        // Namespaces to scan. The default (empty) namespace is included
-        // explicitly because `namespace_find_all` does not return it.
-        let mut namespaces = vec![String::new()];
+        // Namespaces to scan. Both spellings of the default namespace are
+        // listed explicitly: `namespace_find_all` only returns namespaces that
+        // have a row, and the built-in `public` one often has none — the
+        // embedded backend never stores it. Scanning only `""` left a
+        // standalone server's index empty after a restart, because every
+        // resource really lives under `public`.
+        let mut namespaces = vec![String::new(), DEFAULT_NAMESPACE_ID.to_string()];
         match persistence.namespace_find_all().await {
-            Ok(list) => namespaces.extend(list.into_iter().map(|n| n.namespace_id)),
+            Ok(list) => {
+                for namespace in list.into_iter().map(|n| n.namespace_id) {
+                    if !namespaces.contains(&namespace) {
+                        namespaces.push(namespace);
+                    }
+                }
+            }
             Err(e) => {
                 warn!(error = %e, "Failed to list namespaces for MCP index refresh");
             }

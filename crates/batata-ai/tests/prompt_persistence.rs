@@ -1,22 +1,17 @@
-//! Live-database coverage for the prompt service.
+//! Coverage for the prompt service.
 //!
 //! The prompt domain had **no tests at all**, and it is the last domain still
 //! backed by configs rather than `ai_resource`. These pin down the behaviour
 //! that is observable today so the storage migration has a regression baseline:
 //! the same assertions must still hold once prompts live in `ai_resource`.
 //!
-//! Run with a database:
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test prompt_persistence -- --ignored --test-threads=1
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
-use std::sync::Arc;
-
 use batata_ai::PromptOperationService;
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use common::TestStore;
 
 const NS: &str = "public";
 
@@ -24,10 +19,8 @@ const NS: &str = "public";
 /// one would make the next test see a duplicate version.
 const KEY: &str = "prompt-baseline";
 
-async fn setup() -> Arc<ExternalDbPersistService> {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    Arc::new(ExternalDbPersistService::new(conn))
+async fn setup() -> TestStore {
+    TestStore::open().await
 }
 
 async fn publish(
@@ -56,10 +49,9 @@ async fn clean(svc: &PromptOperationService) {
 
 /// A published version can be read back by version, by label and by listing.
 #[tokio::test]
-#[ignore]
 async fn publish_then_query_a_version() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     assert!(
@@ -91,10 +83,9 @@ async fn publish_then_query_a_version() {
 
 /// The client contract: an unchanged MD5 means "not modified", not "missing".
 #[tokio::test]
-#[ignore]
 async fn query_prompt_returns_none_when_the_client_md5_matches() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     publish(&svc, "1.0.0", "hello").await.expect("publish");
@@ -129,10 +120,9 @@ async fn query_prompt_returns_none_when_the_client_md5_matches() {
 
 /// Guards the API relies on: no duplicate versions, and a well-formed version.
 #[tokio::test]
-#[ignore]
 async fn publish_rejects_duplicates_and_malformed_versions() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     publish(&svc, "1.0.0", "hello")
@@ -158,10 +148,9 @@ async fn publish_rejects_duplicates_and_malformed_versions() {
 
 /// Labels route to a version, and listings see the prompt.
 #[tokio::test]
-#[ignore]
 async fn bind_label_then_query_by_label() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     publish(&svc, "1.0.0", "hello").await.expect("publish");
@@ -212,10 +201,9 @@ async fn bind_label_then_query_by_label() {
 
 /// Deleting removes the versions too, so nothing resolves afterwards.
 #[tokio::test]
-#[ignore]
 async fn delete_prompt_removes_everything() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     publish(&svc, "1.0.0", "hello").await.expect("publish");
@@ -234,8 +222,9 @@ async fn delete_prompt_removes_everything() {
 }
 
 /// Status of one version, read straight from the version table.
-async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
+async fn status_of(store: &TestStore, version: &str) -> String {
     store
+        .store()
         .ai_resource_version_find(NS, KEY, "prompt", version)
         .await
         .expect("version lookup")
@@ -245,10 +234,9 @@ async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
 
 /// The draft lifecycle, driven through the shared `version_lifecycle`.
 #[tokio::test]
-#[ignore]
 async fn prompt_version_lifecycle() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     let version = svc
@@ -310,10 +298,9 @@ async fn prompt_version_lifecycle() {
 
 /// A draft can be edited and then discarded.
 #[tokio::test]
-#[ignore]
 async fn draft_can_be_updated_and_discarded() {
     let store = setup().await;
-    let svc = PromptOperationService::new(store.clone());
+    let svc = PromptOperationService::new(store.store());
     clean(&svc).await;
 
     svc.create_draft(NS, KEY, Some("2.0.0"), "first", None, None, "tester")
@@ -336,6 +323,7 @@ async fn draft_can_be_updated_and_discarded() {
     svc.delete_draft(NS, KEY).await.expect("delete draft");
     assert!(
         store
+            .store()
             .ai_resource_version_find(NS, KEY, "prompt", "2.0.0")
             .await
             .expect("lookup")

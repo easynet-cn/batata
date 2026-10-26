@@ -1,42 +1,32 @@
-//! Live-database coverage for the Skill and AgentSpec version lifecycle.
+//! Coverage for the Skill and AgentSpec version lifecycle.
 //!
 //! `force_publish` and `redraft` were added to both domains so their admin APIs
 //! match upstream. They delegate to the shared `version_lifecycle`, which was
 //! extracted from MCP — these tests prove it behaves correctly for resource
 //! types it was not extracted from.
 //!
-//! Run with a database:
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test skill_agentspec_lifecycle -- --ignored --test-threads=1
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use batata_ai::{AgentSpecOperationService, SkillOperationService};
 use batata_common::model::ai::agentspec::{AGENTSPEC_TYPE, AgentSpec, AgentSpecResource};
 use batata_common::model::ai::skill::{SKILL_TYPE, Skill};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use common::TestStore;
 
 const NS: &str = "public";
 
-async fn setup() -> Arc<ExternalDbPersistService> {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    Arc::new(ExternalDbPersistService::new(conn))
+async fn setup() -> TestStore {
+    TestStore::open().await
 }
 
 /// Status of one version, read straight from the version table.
-async fn status_of(
-    store: &ExternalDbPersistService,
-    rt: &str,
-    name: &str,
-    version: &str,
-) -> String {
+async fn status_of(store: &TestStore, rt: &str, name: &str, version: &str) -> String {
     store
+        .store()
         .ai_resource_version_find(NS, name, rt, version)
         .await
         .expect("version lookup")
@@ -44,7 +34,8 @@ async fn status_of(
         .status
 }
 
-async fn clean(store: &ExternalDbPersistService, rt: &str, name: &str) {
+async fn clean(store: &TestStore, rt: &str, name: &str) {
+    let store = store.store();
     store
         .ai_resource_version_delete_all(NS, name, rt)
         .await
@@ -58,10 +49,9 @@ async fn clean(store: &ExternalDbPersistService, rt: &str, name: &str) {
 /// Skill: force-publish bypasses the review gate, and redraft sends a version
 /// back to draft.
 #[tokio::test]
-#[ignore]
 async fn skill_force_publish_and_redraft() {
     let store = setup().await;
-    let svc = SkillOperationService::new(store.clone(), None, false);
+    let svc = SkillOperationService::new(store.store(), None, false);
     let name = "lifecycle-skill";
     let version = "1.0.0";
     clean(&store, SKILL_TYPE, name).await;
@@ -111,10 +101,9 @@ async fn skill_force_publish_and_redraft() {
 
 /// AgentSpec: same lifecycle, same shared core.
 #[tokio::test]
-#[ignore]
 async fn agentspec_force_publish_and_redraft() {
     let store = setup().await;
-    let svc = AgentSpecOperationService::new(store.clone(), None, false);
+    let svc = AgentSpecOperationService::new(store.store(), None, false);
     let name = "lifecycle-agentspec";
     let version = "1.0.0";
     clean(&store, AGENTSPEC_TYPE, name).await;
@@ -161,10 +150,9 @@ async fn agentspec_force_publish_and_redraft() {
 /// `version/meta` exists to answer "what is in this version" without shipping
 /// resource file contents — that difference is the whole point of the endpoint.
 #[tokio::test]
-#[ignore]
 async fn agentspec_version_meta_omits_resource_contents() {
     let store = setup().await;
-    let svc = AgentSpecOperationService::new(store.clone(), None, false);
+    let svc = AgentSpecOperationService::new(store.store(), None, false);
     let name = "meta-agentspec";
     let version = "1.0.0";
     clean(&store, AGENTSPEC_TYPE, name).await;

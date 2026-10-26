@@ -6,26 +6,24 @@
 //! implementation, and that the SDK's create encoding still works:
 //! `serverSpecification` arrives as a JSON *string* inside a form body.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test mcp_admin_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::{
     McpServerIndex, McpServerOperationService,
     model::{McpCapability, McpServerRegistration, McpServerType, McpTransport},
 };
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
@@ -35,23 +33,6 @@ const NAME: &str = "admin-route-mcp";
 const BASE_VERSION: &str = "1.0.0";
 /// The version the lifecycle tests move through draft → submit → publish.
 const DRAFT_VERSION: &str = "2.0.0";
-
-/// Connect to the test database, failing fast with an actionable message.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The MCP admin routes never touch cluster state.
 struct StubClusterManager;
@@ -99,23 +80,9 @@ impl ClusterManager for StubClusterManager {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build an app exposing the real MCP admin routes.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
     svc: Arc<McpServerOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
@@ -245,19 +212,15 @@ fn registration() -> McpServerRegistration {
 /// The SDK posts the specification as a JSON string in a form field. That
 /// encoding must keep working, or every existing client breaks.
 #[actix_web::test]
-#[ignore]
 async fn create_accepts_the_sdk_form_encoding() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
 
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let spec = serde_json::to_string(&registration()).expect("serialize registration");
     let body = format!(
@@ -274,24 +237,20 @@ async fn create_accepts_the_sdk_form_encoding() {
     assert!(listed.contains(NAME), "must list the server: {listed}");
     println!("ok: admin create uses the SDK form encoding");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// A malformed specification is rejected rather than silently creating junk.
 #[actix_web::test]
-#[ignore]
 async fn create_rejects_a_malformed_specification() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
 
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let body = format!(
         "serverSpecification={}&namespaceId={}",
@@ -305,7 +264,7 @@ async fn create_rejects_a_malformed_specification() {
     );
     println!("ok: malformed specification is refused");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 // ============================================================================
@@ -370,20 +329,20 @@ where
     )
 }
 
-/// The resource-level status (`enable` / `disable`) in `ai_resource`.
-async fn resource_status(store: &ExternalDbPersistService) -> Option<String> {
-    ai_resource::Entity::find()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .filter(ai_resource::Column::NamespaceId.eq(NS))
-        .one(store.db())
+/// The resource-level status (`enable` / `disable`).
+async fn resource_status(store: &TestStore) -> Option<String> {
+    store
+        .store()
+        .ai_resource_find(NS, NAME, "mcp")
         .await
         .expect("resource lookup")
         .and_then(|row| row.status)
 }
 
-/// The status a version carries in `ai_resource_version`.
-async fn version_status(store: &ExternalDbPersistService, version: &str) -> Option<String> {
+/// The status a version carries.
+async fn version_status(store: &TestStore, version: &str) -> Option<String> {
     store
+        .store()
         .ai_resource_version_find(NS, NAME, "mcp", version)
         .await
         .expect("version lookup")
@@ -442,18 +401,14 @@ where
 
 /// A draft walks submit → publish, and only then is it online.
 #[actix_web::test]
-#[ignore]
 async fn draft_moves_through_submit_and_publish() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     with_draft(&app).await.expect("draft");
     assert_eq!(
@@ -473,24 +428,20 @@ async fn draft_moves_through_submit_and_publish() {
     );
     println!("ok: draft → submit → publish");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// force-publish exists to skip the review gate, so publishing a draft the
 /// normal way must fail while force-publish succeeds.
 #[actix_web::test]
-#[ignore]
 async fn force_publish_bypasses_review() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     with_draft(&app).await.expect("draft");
 
@@ -510,23 +461,19 @@ async fn force_publish_bypasses_review() {
     );
     println!("ok: force-publish bypasses review");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// redraft sends a published version back for editing.
 #[actix_web::test]
-#[ignore]
 async fn redraft_returns_a_version_to_draft() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     with_draft(&app).await.expect("draft");
     let qs = format!("mcpName={NAME}&version={DRAFT_VERSION}");
@@ -545,24 +492,20 @@ async fn redraft_returns_a_version_to_draft() {
     );
     println!("ok: redraft returns a version to draft");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Labels, status and scope are the three resource-level knobs; each endpoint
 /// must actually take effect.
 #[actix_web::test]
-#[ignore]
 async fn labels_status_and_scope_take_effect() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let spec = serde_json::to_string(&registration()).expect("serialize");
     let (status, out) = post_form(
@@ -619,23 +562,19 @@ async fn labels_status_and_scope_take_effect() {
     );
     println!("ok: labels, status and scope take effect");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// The version endpoints expose what the lifecycle produced.
 #[actix_web::test]
-#[ignore]
 async fn version_endpoints_report_the_lifecycle() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let svc = Arc::new(McpServerOperationService::new(
-        store.clone(),
+        store.store(),
         Arc::new(McpServerIndex::new()),
     ));
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     with_draft(&app).await.expect("draft");
 
@@ -662,5 +601,5 @@ async fn version_endpoints_report_the_lifecycle() {
     assert_eq!(status, StatusCode::OK, "delete draft failed: {out}");
     println!("ok: version endpoints report the lifecycle");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }

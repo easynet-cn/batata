@@ -83,7 +83,11 @@ PERF_CASES=(naming config)
 # Crates run at every level. These are the ones whose failure means something
 # changed in a hot path; the rest are covered at --standard.
 CORE_CRATES=(batata-core batata-client batata-config batata-naming batata-plugin-consul)
-STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common batata-console batata-ai)
+# `batata-server` owns the AI route tests (prompt, skill, MCP, agent, AgentSpec,
+# resource search). They used to be `#[ignore]`d behind a live database, which
+# also kept them out of the gate; they now run on the embedded backend, so the
+# crate has to be here or 51 of them are nobody's responsibility.
+STANDARD_CRATES=(batata-api batata-auth batata-persistence batata-consistency batata-server-common batata-console batata-ai batata-server)
 FULL_CRATES=(batata-plugin-apollo)
 
 LEVEL=quick

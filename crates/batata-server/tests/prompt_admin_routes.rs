@@ -4,43 +4,24 @@
 //! This one covers the HTTP layer: that the lifecycle endpoints are actually
 //! registered on the scope, and that form parameters reach the service.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test prompt_admin_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::PromptOperationService;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::ExternalDbPersistService;
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
 const KEY: &str = "route-prompt";
-
-/// Connect to the test database, failing fast with an actionable message.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The prompt routes never touch cluster state.
 struct StubClusterManager;
@@ -88,23 +69,9 @@ impl ClusterManager for StubClusterManager {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(KEY))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(KEY))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build an actix app exposing the real prompt admin routes.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
     svc: Arc<PromptOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
@@ -156,12 +123,9 @@ async fn build_app(
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<PromptOperationService>) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = Arc::new(PromptOperationService::new(store.clone()));
+async fn setup() -> (TestStore, Arc<PromptOperationService>) {
+    let store = TestStore::open().await;
+    let svc = Arc::new(PromptOperationService::new(store.store()));
     (store, svc)
 }
 
@@ -187,11 +151,10 @@ where
 
 /// The draft lifecycle is reachable over HTTP, and the review gate is enforced.
 #[actix_web::test]
-#[ignore]
 async fn draft_lifecycle_over_http() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/admin/ai/prompt";
 
@@ -236,16 +199,15 @@ async fn draft_lifecycle_over_http() {
     assert_eq!(status, StatusCode::OK, "publish failed: {body}");
     println!("ok: submit then publish");
 
-    clean(&store).await;
+    store.clean(KEY).await;
 }
 
 /// force-publish bypasses the review gate.
 #[actix_web::test]
-#[ignore]
 async fn force_publish_over_http() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/admin/ai/prompt";
     post_form(
@@ -265,16 +227,15 @@ async fn force_publish_over_http() {
     assert_eq!(status, StatusCode::OK, "force publish failed: {body}");
     println!("ok: force publish bypasses review");
 
-    clean(&store).await;
+    store.clean(KEY).await;
 }
 
 /// A lifecycle action on a prompt that does not exist is refused.
 #[actix_web::test]
-#[ignore]
 async fn lifecycle_action_on_a_missing_prompt_is_refused() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let (status, _) = post_form(
         &app,
@@ -310,11 +271,10 @@ where
 /// endpoints existed on the console layer only; the admin layer gained them
 /// later, so they are covered here too.
 #[actix_web::test]
-#[ignore]
 async fn governance_and_download_are_reachable_on_admin() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/admin/ai/prompt";
     let (status, body) = post_form(
@@ -341,17 +301,16 @@ async fn governance_and_download_are_reachable_on_admin() {
     assert!(body.contains("hello"), "must carry the template: {body}");
     println!("ok: version/download is reachable on admin");
 
-    clean(&store).await;
+    store.clean(KEY).await;
 }
 
 /// Both read endpoints 404 for a prompt that does not exist, rather than
 /// returning an empty document that looks like a match.
 #[actix_web::test]
-#[ignore]
 async fn governance_and_download_refuse_an_unknown_prompt() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/admin/ai/prompt";
     let (status, _) = get(&app, &format!("{base}/governance?promptKey={KEY}-absent")).await;

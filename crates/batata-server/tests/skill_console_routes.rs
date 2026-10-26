@@ -5,45 +5,26 @@
 //! `upload/batch`. The two upload ones are `multipart/form-data` upstream,
 //! unlike the JSON every other skill write uses.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test skill_console_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::SkillOperationService;
 use batata_common::model::ai::skill::{SKILL_TYPE, Skill};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
 const NAME: &str = "console-route-skill";
 const NS: &str = "public";
-
-/// Connect to the test database, failing fast with an actionable message.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The skill routes never touch cluster state.
 struct StubClusterManager;
@@ -91,23 +72,9 @@ impl ClusterManager for StubClusterManager {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build an actix app exposing the real console skill routes.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
     svc: Arc<SkillOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
@@ -163,12 +130,9 @@ async fn build_app(
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<SkillOperationService>) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = Arc::new(SkillOperationService::new(store.clone(), None, false));
+async fn setup() -> (TestStore, Arc<SkillOperationService>) {
+    let store = TestStore::open().await;
+    let svc = Arc::new(SkillOperationService::new(store.store(), None, false));
     (store, svc)
 }
 
@@ -242,8 +206,9 @@ fn one_skill_zip() -> Vec<u8> {
     batata_common::model::ai::skill_zip::skill_to_zip_bytes(&test_skill()).expect("build zip")
 }
 
-async fn status_of(store: &ExternalDbPersistService, version: &str) -> Option<String> {
+async fn status_of(store: &TestStore, version: &str) -> Option<String> {
     store
+        .store()
         .ai_resource_version_find(NS, NAME, SKILL_TYPE, version)
         .await
         .expect("version lookup")
@@ -252,14 +217,13 @@ async fn status_of(store: &ExternalDbPersistService, version: &str) -> Option<St
 
 /// force-publish bypasses the review gate: it works where publish does not.
 #[actix_web::test]
-#[ignore]
 async fn force_publish_bypasses_review() {
     let (store, svc) = setup().await;
-    clean(&store).await;
+    store.clean(NAME).await;
     svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
         .await
         .expect("create draft");
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";
 
@@ -286,19 +250,18 @@ async fn force_publish_bypasses_review() {
     assert_eq!(status_of(&store, "1.0.0").await.as_deref(), Some("online"));
     println!("ok: force-publish bypasses review");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// redraft moves a published version back to draft.
 #[actix_web::test]
-#[ignore]
 async fn redraft_returns_a_version_to_draft() {
     let (store, svc) = setup().await;
-    clean(&store).await;
+    store.clean(NAME).await;
     svc.create_draft(NS, NAME, None, Some("1.0.0"), Some(&test_skill()), "tester")
         .await
         .expect("create draft");
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/console/ai/skills";
     let version_json = format!("{{\"skillName\":\"{NAME}\",\"version\":\"1.0.0\"}}");
@@ -313,17 +276,16 @@ async fn redraft_returns_a_version_to_draft() {
     assert_eq!(status_of(&store, "1.0.0").await.as_deref(), Some("draft"));
     println!("ok: redraft returns a version to draft");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// upload/precheck reports what an upload would do, and persists nothing.
 #[actix_web::test]
-#[ignore]
 async fn upload_precheck_reports_without_persisting() {
     let (store, _svc) = setup().await;
-    clean(&store).await;
-    let svc = Arc::new(SkillOperationService::new(store.clone(), None, false));
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let svc = Arc::new(SkillOperationService::new(store.store(), None, false));
+    let app = build_app(store.store(), svc.clone()).await;
 
     let (status, body) = post_zip(
         &app,
@@ -338,6 +300,7 @@ async fn upload_precheck_reports_without_persisting() {
     // The point of a precheck: nothing was created.
     assert!(
         store
+            .store()
             .ai_resource_find(NS, NAME, SKILL_TYPE)
             .await
             .expect("lookup")
@@ -346,17 +309,16 @@ async fn upload_precheck_reports_without_persisting() {
     );
     println!("ok: precheck persisted nothing");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Downloading a version counts it. The counter is what the console sorts by,
 /// and it must survive being asked for twice.
 #[actix_web::test]
-#[ignore]
 async fn download_counts_the_download() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let (status, body) =
         post_zip(&app, "/v3/console/ai/skills/upload/batch", one_skill_zip()).await;
@@ -364,6 +326,7 @@ async fn download_counts_the_download() {
 
     let read_count = || async {
         store
+            .store()
             .ai_resource_find(NS, NAME, SKILL_TYPE)
             .await
             .expect("lookup")
@@ -373,6 +336,7 @@ async fn download_counts_the_download() {
 
     // The upload decides the version, so ask rather than assume.
     let version = store
+        .store()
         .ai_resource_version_list(NS, NAME, SKILL_TYPE)
         .await
         .expect("list versions")
@@ -392,16 +356,15 @@ async fn download_counts_the_download() {
     assert_eq!(read_count().await, Some(2), "the counter accumulates");
     println!("ok: download counts the download");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// upload/batch uploads the skills in the archive.
 #[actix_web::test]
-#[ignore]
 async fn upload_batch_creates_the_skill() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(NAME).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let (status, body) =
         post_zip(&app, "/v3/console/ai/skills/upload/batch", one_skill_zip()).await;
@@ -410,6 +373,7 @@ async fn upload_batch_creates_the_skill() {
 
     assert!(
         store
+            .store()
             .ai_resource_find(NS, NAME, SKILL_TYPE)
             .await
             .expect("lookup")
@@ -418,5 +382,5 @@ async fn upload_batch_creates_the_skill() {
     );
     println!("ok: upload/batch creates the skill");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }

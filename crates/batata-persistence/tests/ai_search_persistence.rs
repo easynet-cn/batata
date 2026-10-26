@@ -1,18 +1,20 @@
-//! Real-database behaviour tests for the AI search index persistence.
+//! Behaviour tests for the AI search index persistence.
 //!
 //! These exercise the operations that are easy to get subtly wrong across
-//! dialects — upserts (MySQL `ON DUPLICATE KEY UPDATE` vs PostgreSQL
-//! `ON CONFLICT ... DO UPDATE`) and delete-then-reinsert chunk replacement.
+//! backends — upserts (MySQL `ON DUPLICATE KEY UPDATE` vs PostgreSQL
+//! `ON CONFLICT ... DO UPDATE` vs RocksDB's single write per key) and
+//! delete-then-reinsert chunk replacement.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same assertions
+//! against a real database, which is the only way the dialect-specific SQL is
+//! exercised:
 //!
 //! ```bash
 //! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-persistence --test ai_search_persistence -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-persistence --test ai_search_persistence -- --ignored --nocapture
+//!   cargo test -p batata-persistence --test ai_search_persistence -- --nocapture
 //! ```
+
+use std::sync::Arc;
 
 use batata_persistence::entity::{
     ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
@@ -23,7 +25,100 @@ use batata_persistence::model::{
 use batata_persistence::sea_orm::{
     ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait, QueryFilter,
 };
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use batata_persistence::{EmbeddedPersistService, ExternalDbPersistService, PersistenceService};
+
+/// The backend the test runs against: embedded, unless `DATABASE_URL` is set.
+///
+/// Only the external variant can be asked for a raw connection, which is what
+/// the row-level cleanup needs; a fresh embedded store starts empty, so it
+/// needs no cleanup at all.
+///
+/// The temp dir is owned but never read — it exists to keep the RocksDB
+/// directory alive for as long as the store is.
+#[allow(dead_code)]
+enum Store {
+    Embedded(Arc<EmbeddedPersistService>, tempfile::TempDir),
+    External(Arc<ExternalDbPersistService>),
+}
+
+impl Store {
+    async fn open() -> Self {
+        match std::env::var("DATABASE_URL") {
+            Ok(url) => Self::External(Arc::new(ExternalDbPersistService::new(
+                connect_database(&url).await,
+            ))),
+            Err(_) => {
+                let dir = tempfile::tempdir().expect("temp dir");
+                let db = open_rocksdb(dir.path());
+                Self::Embedded(Arc::new(EmbeddedPersistService::new(db)), dir)
+            }
+        }
+    }
+
+    /// The service every assertion goes through.
+    fn service(&self) -> Arc<dyn PersistenceService> {
+        match self {
+            Self::Embedded(store, _) => store.clone(),
+            Self::External(store) => store.clone(),
+        }
+    }
+
+    fn backend(&self) -> String {
+        match self {
+            Self::Embedded(..) => "embedded".to_string(),
+            Self::External(store) => format!("{:?}", store.db().get_database_backend()),
+        }
+    }
+
+    /// Remove rows left by a previous run so the test is repeatable.
+    async fn clean(&self) {
+        let Self::External(store) = self else {
+            return;
+        };
+        let conn = store.db();
+        ai_resource_search_chunk::Entity::delete_many()
+            .filter(ai_resource_search_chunk::Column::ResourceName.eq(R_NAME))
+            .exec(conn)
+            .await
+            .expect("clean chunks");
+        ai_resource_search_document::Entity::delete_many()
+            .filter(ai_resource_search_document::Column::ResourceName.eq(R_NAME))
+            .exec(conn)
+            .await
+            .expect("clean documents");
+        ai_resource_task::Entity::delete_many()
+            .filter(ai_resource_task::Column::TaskType.eq("search_index"))
+            .exec(conn)
+            .await
+            .expect("clean tasks");
+    }
+}
+
+/// Open a RocksDB instance with just the column families this test needs.
+fn open_rocksdb(dir: &std::path::Path) -> Arc<rocksdb::DB> {
+    use rocksdb::{ColumnFamilyDescriptor, Options};
+
+    let mut options = Options::default();
+    options.create_if_missing(true);
+    options.create_missing_column_families(true);
+
+    let names = [
+        "batata_ai_resource",
+        "batata_ai_resource_version",
+        "batata_ai_resource_search_document",
+        "batata_ai_resource_search_chunk",
+        "batata_ai_resource_task",
+    ];
+    let descriptors: Vec<ColumnFamilyDescriptor> = names
+        .iter()
+        .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+        .collect();
+
+    Arc::new(
+        rocksdb::DB::open_cf_descriptors(&options, dir, descriptors)
+            .expect("open RocksDB with AI column families"),
+    )
+}
 
 /// Connect to the test database, failing fast with an actionable message.
 ///
@@ -50,26 +145,6 @@ const NS: &str = "public";
 const R_TYPE: &str = "skill";
 const R_NAME: &str = "probe-skill";
 const R_VERSION: &str = "1.0.0";
-
-/// Remove any rows left by a previous run so the test is repeatable.
-async fn clean(db: &ExternalDbPersistService) {
-    let conn = db.db();
-    ai_resource_search_chunk::Entity::delete_many()
-        .filter(ai_resource_search_chunk::Column::ResourceName.eq(R_NAME))
-        .exec(conn)
-        .await
-        .expect("clean chunks");
-    ai_resource_search_document::Entity::delete_many()
-        .filter(ai_resource_search_document::Column::ResourceName.eq(R_NAME))
-        .exec(conn)
-        .await
-        .expect("clean documents");
-    ai_resource_task::Entity::delete_many()
-        .filter(ai_resource_task::Column::TaskType.eq("search_index"))
-        .exec(conn)
-        .await
-        .expect("clean tasks");
-}
 
 fn document() -> AiResourceSearchDocumentInfo {
     AiResourceSearchDocumentInfo {
@@ -133,14 +208,12 @@ fn task(key: &str, next_execute_at: i64) -> AiResourceTaskInfo {
 }
 
 #[tokio::test]
-#[ignore]
 async fn search_index_persistence_round_trip() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = connect_database(&url).await;
-    let db = ExternalDbPersistService::new(conn);
-    println!("--- backend: {:?} ---", db.db().get_database_backend());
+    let store = Store::open().await;
+    let db = store.service();
+    println!("--- backend: {} ---", store.backend());
 
-    clean(&db).await;
+    store.clean().await;
 
     // ---- search document: insert then upsert-update -------------------------
     let id = db

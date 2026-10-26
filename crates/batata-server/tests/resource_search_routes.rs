@@ -3,30 +3,25 @@
 //! The index is built by the search consumer as versions are published; this
 //! covers the read side: `GET /v3/client/ai/resources/search`.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test resource_search_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::search::service::AiResourceSearchService;
 use batata_ai::{
     McpServerIndex, McpServerOperationService,
     model::{McpCapability, McpServerRegistration, McpServerType, McpTool, McpTransport},
 };
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::entity::{
-    ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
-    ai_resource_version,
-};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
@@ -34,23 +29,6 @@ const NS: &str = "public";
 const NAME: &str = "search-route-mcp";
 /// A word that appears only in this server's indexed content.
 const NEEDLE: &str = "zebrafish";
-
-/// Connect to the test database, failing fast with an actionable message.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The search route never touches cluster state.
 struct StubClusterManager;
@@ -98,41 +76,9 @@ impl ClusterManager for StubClusterManager {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_search_chunk::Entity::delete_many()
-        .filter(ai_resource_search_chunk::Column::ResourceName.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean chunks");
-    ai_resource_search_document::Entity::delete_many()
-        .filter(ai_resource_search_document::Column::ResourceName.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean documents");
-    ai_resource_task::Entity::delete_many()
-        .filter(
-            ai_resource_task::Column::TaskKey
-                .eq(batata_ai::search::task::task_key(NS, "mcp", NAME)),
-        )
-        .exec(db)
-        .await
-        .expect("clean tasks");
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build an app exposing the real client search route.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -204,17 +150,13 @@ where
 
 /// Indexing a server makes it findable through the client search endpoint.
 #[actix_web::test]
-#[ignore]
 async fn search_finds_an_indexed_resource() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
 
-    let mcp = McpServerOperationService::new(store.clone(), Arc::new(McpServerIndex::new()));
-    let search = AiResourceSearchService::new(store.clone());
+    let mcp = McpServerOperationService::new(store.store(), Arc::new(McpServerIndex::new()));
+    let search = AiResourceSearchService::new(store.store());
 
-    clean(&store).await;
+    store.clean_index(NS, NAME, "mcp").await;
     let registration = McpServerRegistration {
         name: NAME.to_string(),
         display_name: NAME.to_string(),
@@ -243,11 +185,13 @@ async fn search_finds_an_indexed_resource() {
 
     // Build the index the same way the consumer does on publish.
     let resource = store
+        .store()
         .ai_resource_find(NS, NAME, "mcp")
         .await
         .expect("find resource")
         .expect("resource must exist");
     let version = store
+        .store()
         .ai_resource_version_find(NS, NAME, "mcp", "1.0.0")
         .await
         .expect("find version")
@@ -260,7 +204,7 @@ async fn search_finds_an_indexed_resource() {
         "the index must be written"
     );
 
-    let app = build_app(store.clone()).await;
+    let app = build_app(store.store()).await;
 
     let (status, body) = get(
         &app,
@@ -279,5 +223,5 @@ async fn search_finds_an_indexed_resource() {
     );
     println!("ok: search rejects an empty query");
 
-    clean(&store).await;
+    store.clean_index(NS, NAME, "mcp").await;
 }

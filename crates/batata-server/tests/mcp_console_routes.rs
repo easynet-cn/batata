@@ -4,56 +4,29 @@
 //! one covers the HTTP layer on top of it: that the endpoints are actually
 //! registered on the scope, and that query / body parameters reach the service.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test mcp_console_routes -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-server --test mcp_console_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::model::{
     AgentCapabilities, AgentCard, AgentSkill, McpCapability, McpServerRegistration, McpServerType,
     McpTool, McpTransport,
 };
 use batata_ai::{A2aServerOperationService, McpServerIndex, McpServerOperationService};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::ExternalDbPersistService;
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
 const NS: &str = "public";
 const NAME: &str = "route-mcp";
-
-/// Connect to the test database, failing fast with an actionable message.
-///
-/// A stopped Podman container leaves the forwarded port *accepting* TCP while
-/// nothing completes the handshake, so a plain `Database::connect` blocks for
-/// the default ~30s per test. With fifteen tests here that is several minutes
-/// of silence ending in a pool-timeout message that reads like a code bug.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The MCP routes never touch cluster state, so every
 /// method returns a fixed value; the ones that would need real member data are
@@ -128,25 +101,10 @@ fn registration(version: &str, tool: &str) -> McpServerRegistration {
     }
 }
 
-/// Remove rows left by a previous run so the test is repeatable.
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
-/// Build an actix app exposing the real console MCP routes, backed by a real
-/// database and the real MCP service.
+/// Build an actix app exposing the real console MCP routes, backed by a
+/// throwaway store and the real MCP service.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
     svc: Arc<McpServerOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
@@ -213,24 +171,17 @@ async fn build_app(
     .await
 }
 
-/// Connect, clean and build the app together with the backing service.
-async fn setup() -> (
-    Arc<ExternalDbPersistService>,
-    Arc<McpServerOperationService>,
-) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+/// Open the store and build the backing service.
+async fn setup() -> (TestStore, Arc<McpServerOperationService>) {
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = Arc::new(McpServerOperationService::new(store.clone(), index));
-    clean(&store).await;
+    let svc = Arc::new(McpServerOperationService::new(store.store(), index));
+    store.clean(NAME).await;
     (store, svc)
 }
 
 /// GET /ai/mcp/versions lists the versions created through the service.
 #[actix_web::test]
-#[ignore]
 async fn versions_endpoint_lists_versions() {
     let (store, svc) = setup().await;
     // Drafts only exist for a server that has already been created.
@@ -238,7 +189,7 @@ async fn versions_endpoint_lists_versions() {
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::get()
         .uri("/ai/mcp/versions?mcpName=route-mcp")
         .to_request();
@@ -252,19 +203,18 @@ async fn versions_endpoint_lists_versions() {
         "body should list the version: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// GET /ai/mcp/version returns one version.
 #[actix_web::test]
-#[ignore]
 async fn version_endpoint_returns_one_version() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("2.0.0", "echo"))
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::get()
         .uri("/ai/mcp/version?mcpName=route-mcp&version=2.0.0")
         .to_request();
@@ -278,16 +228,15 @@ async fn version_endpoint_returns_one_version() {
         "body should name the version: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// A missing required parameter is rejected with 400 rather than reaching the
 /// service.
 #[actix_web::test]
-#[ignore]
 async fn versions_endpoint_requires_mcp_name() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::get()
         .uri("/ai/mcp/versions")
@@ -300,12 +249,11 @@ async fn versions_endpoint_requires_mcp_name() {
         "missing mcpName should be rejected"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// GET /ai/mcp/search returns ranked hits once the index has been built.
 #[actix_web::test]
-#[ignore]
 async fn search_endpoint_returns_ranked_hits() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
@@ -313,15 +261,13 @@ async fn search_endpoint_returns_ranked_hits() {
         .expect("create server");
 
     // Build the index the same way the background consumer would.
-    let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(
-        store.clone() as std::sync::Arc<dyn batata_persistence::PersistenceService>
-    );
+    let consumer = batata_ai::search::consumer::AiResourceIndexConsumer::new(store.store());
     svc.publish_mcp_server_version(NS, NAME, "1.0.0")
         .await
         .expect("publish schedules the task");
     consumer.consume_once().await.expect("consume");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::get()
         .uri("/ai/mcp/search?query=echo")
@@ -341,15 +287,14 @@ async fn search_endpoint_returns_ranked_hits() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// A missing query is rejected with 400.
 #[actix_web::test]
-#[ignore]
 async fn search_endpoint_requires_query() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::get().uri("/ai/mcp/search").to_request();
     let resp = test::call_service(&app, req).await;
@@ -359,16 +304,15 @@ async fn search_endpoint_requires_query() {
         "a missing query must be rejected"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// An unknown scope is rejected with 400 by the handler, before the service
 /// sees it.
 #[actix_web::test]
-#[ignore]
 async fn scope_endpoint_rejects_unknown_value() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::put()
         .uri("/ai/mcp/status?mcpName=route-mcp&status=bogus")
@@ -381,19 +325,18 @@ async fn scope_endpoint_rejects_unknown_value() {
         "unknown status should be rejected"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// POST /ai/mcp/draft reaches the service and creates the version.
 #[actix_web::test]
-#[ignore]
 async fn draft_endpoint_creates_version() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::post()
         .uri("/ai/mcp/draft?overwrite=false")
@@ -412,7 +355,7 @@ async fn draft_endpoint_creates_version() {
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("3.0.0"), "draft should be listed: {body}");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Create the server, then a draft version on top of it. The service requires
@@ -432,7 +375,7 @@ async fn assert_transition(uri: &str, expected_status: &str, label: &str) {
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
         .await
         .expect("create server");
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let req = test::TestRequest::post().uri(uri).to_request();
     let resp = test::call_service(&app, req).await;
@@ -445,17 +388,16 @@ async fn assert_transition(uri: &str, expected_status: &str, label: &str) {
         "{label} should move the version to '{expected_status}': {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// POST /ai/mcp/submit moves a draft to reviewing.
 #[actix_web::test]
-#[ignore]
 async fn submit_endpoint_moves_draft_to_reviewing() {
     let (store, svc) = setup().await;
     server_with_draft(&svc, "1.0.0", "2.0.0").await;
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::post()
         .uri("/ai/mcp/submit?mcpName=route-mcp&version=2.0.0")
         .to_request();
@@ -466,12 +408,11 @@ async fn submit_endpoint_moves_draft_to_reviewing() {
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("reviewing"), "submit should review: {body}");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// POST /ai/mcp/publish moves a reviewed version online.
 #[actix_web::test]
-#[ignore]
 async fn publish_endpoint_moves_reviewing_to_online() {
     let (store, svc) = setup().await;
     server_with_draft(&svc, "1.0.0", "2.0.0").await;
@@ -479,7 +420,7 @@ async fn publish_endpoint_moves_reviewing_to_online() {
         .await
         .expect("submit");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::post()
         .uri("/ai/mcp/publish?mcpName=route-mcp&version=2.0.0")
         .to_request();
@@ -490,17 +431,16 @@ async fn publish_endpoint_moves_reviewing_to_online() {
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("online"), "publish should go online: {body}");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// POST /ai/mcp/force-publish publishes without passing review.
 #[actix_web::test]
-#[ignore]
 async fn force_publish_endpoint_skips_review() {
     let (store, svc) = setup().await;
     server_with_draft(&svc, "1.0.0", "2.0.0").await;
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::post()
         .uri("/ai/mcp/force-publish?mcpName=route-mcp&version=2.0.0")
         .to_request();
@@ -518,12 +458,11 @@ async fn force_publish_endpoint_skips_review() {
         "force-publish should go online: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// POST /ai/mcp/redraft moves a version back to draft.
 #[actix_web::test]
-#[ignore]
 async fn redraft_endpoint_moves_version_back_to_draft() {
     assert_transition(
         "/ai/mcp/redraft?mcpName=route-mcp&version=1.0.0",
@@ -535,7 +474,6 @@ async fn redraft_endpoint_moves_version_back_to_draft() {
 
 /// POST /ai/mcp/offline takes an online version offline.
 #[actix_web::test]
-#[ignore]
 async fn offline_endpoint_takes_version_offline() {
     assert_transition(
         "/ai/mcp/offline?mcpName=route-mcp&version=1.0.0",
@@ -547,7 +485,6 @@ async fn offline_endpoint_takes_version_offline() {
 
 /// POST /ai/mcp/online brings an offline version back online.
 #[actix_web::test]
-#[ignore]
 async fn online_endpoint_brings_version_back_online() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
@@ -557,7 +494,7 @@ async fn online_endpoint_brings_version_back_online() {
         .await
         .expect("offline");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::post()
         .uri("/ai/mcp/online?mcpName=route-mcp&version=1.0.0")
         .to_request();
@@ -568,20 +505,19 @@ async fn online_endpoint_brings_version_back_online() {
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("online"), "online should go online: {body}");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// PUT /ai/mcp/labels replaces custom labels but keeps the server-managed
 /// `latest` label.
 #[actix_web::test]
-#[ignore]
 async fn labels_endpoint_replaces_labels_and_keeps_latest() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::put()
         .uri("/ai/mcp/labels?mcpName=route-mcp")
         .set_json(serde_json::json!({"labels": {"stable": "1.0.0"}}))
@@ -600,19 +536,18 @@ async fn labels_endpoint_replaces_labels_and_keeps_latest() {
         "the latest label must survive: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// PUT /ai/mcp/scope changes the visibility scope.
 #[actix_web::test]
-#[ignore]
 async fn scope_endpoint_sets_scope() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let req = test::TestRequest::put()
         .uri("/ai/mcp/scope?mcpName=route-mcp&scope=PUBLIC")
         .to_request();
@@ -620,7 +555,7 @@ async fn scope_endpoint_sets_scope() {
 
     assert_eq!(resp.status(), StatusCode::OK, "scope should succeed");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Post a JSON body to `/ai/mcp/import/validate` and return the response body.
@@ -645,10 +580,9 @@ where
 /// Import validation must judge the payload semantically, not merely parse it
 /// as JSON — that is the whole point of upstream's validation service.
 #[actix_web::test]
-#[ignore]
 async fn import_validate_rejects_an_incomplete_server() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     // Parses fine, but has no protocol, no description and no remote config.
     let body = validate_payload(&app, r#"[{"name":"broken"}]"#).await;
@@ -662,14 +596,13 @@ async fn import_validate_rejects_an_incomplete_server() {
         "missing description: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 #[actix_web::test]
-#[ignore]
 async fn import_validate_accepts_a_complete_server() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let content = r#"[{"name":"complete","protocol":"http","description":"does things","remoteServerConfig":{"url":"http://localhost:8080"}}]"#;
     let body = validate_payload(&app, content).await;
@@ -679,7 +612,7 @@ async fn import_validate_accepts_a_complete_server() {
         "one valid server: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 // ---- agent admin endpoints (`/v3/admin/ai/agents`) --------------------------
@@ -724,21 +657,6 @@ async fn register_agent(svc: &A2aServerOperationService, name: &str) {
         .unwrap_or_else(|e| panic!("register agent {name}: {e}"));
 }
 
-/// Remove rows for an agent so the tests are repeatable.
-async fn clean_agent(store: &ExternalDbPersistService, name: &str) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Post to an agent admin endpoint and return `(status, body)`.
 async fn agent_post<S>(app: &S, path: &str) -> (StatusCode, String)
 where
@@ -757,13 +675,12 @@ where
 
 /// The agent lifecycle endpoints drive the shared state machine over HTTP.
 #[actix_web::test]
-#[ignore]
 async fn agent_admin_endpoints_walk_the_lifecycle() {
     let (store, _svc) = setup().await;
-    let agents = Arc::new(A2aServerOperationService::new(store.clone()));
+    let agents = Arc::new(A2aServerOperationService::new(store.store()));
     register_agent(&agents, "route-agent").await;
 
-    let app = build_app(store.clone(), _svc.clone()).await;
+    let app = build_app(store.store(), _svc.clone()).await;
 
     let base = "/v3/admin/ai/agents";
     let name = "route-agent";
@@ -822,21 +739,20 @@ async fn agent_admin_endpoints_walk_the_lifecycle() {
         "must report the new status: {body}"
     );
 
-    clean_agent(&store, name).await;
-    clean(&store).await;
+    store.clean(name).await;
+    store.clean(NAME).await;
 }
 
 /// Drafts are created, updated, submitted and deleted through the endpoints.
 #[actix_web::test]
-#[ignore]
 async fn agent_admin_draft_endpoints_walk_the_flow() {
     use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
 
     let (store, _svc) = setup().await;
-    let agents = Arc::new(A2aServerOperationService::new(store.clone()));
+    let agents = Arc::new(A2aServerOperationService::new(store.store()));
     register_agent(&agents, "draft-agent").await;
 
-    let app = build_app(store.clone(), _svc.clone()).await;
+    let app = build_app(store.store(), _svc.clone()).await;
     let base = "/v3/admin/ai/agents";
     let name = "draft-agent";
 
@@ -922,16 +838,15 @@ async fn agent_admin_draft_endpoints_walk_the_flow() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK, "delete draft should succeed");
 
-    clean_agent(&store, name).await;
-    clean(&store).await;
+    store.clean(name).await;
+    store.clean(NAME).await;
 }
 
 /// The read endpoints and create / update / delete work over HTTP.
 #[actix_web::test]
-#[ignore]
 async fn agent_admin_crud_endpoints_work() {
     let (store, _svc) = setup().await;
-    let app = build_app(store.clone(), _svc.clone()).await;
+    let app = build_app(store.store(), _svc.clone()).await;
     let base = "/v3/admin/ai/agents";
     let name = "crud-agent";
 
@@ -994,22 +909,21 @@ async fn agent_admin_crud_endpoints_work() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "agent must be gone");
     println!("ok: delete removed the agent");
 
-    clean_agent(&store, name).await;
-    clean(&store).await;
+    store.clean(name).await;
+    store.clean(NAME).await;
 }
 
 /// Missing parameters are rejected rather than silently ignored.
 #[actix_web::test]
-#[ignore]
 async fn agent_admin_endpoints_require_the_version() {
     let (store, _svc) = setup().await;
-    let app = build_app(store.clone(), _svc.clone()).await;
+    let app = build_app(store.store(), _svc.clone()).await;
 
     let (status, _body) =
         agent_post(&app, "/v3/admin/ai/agents/offline?agentName=route-agent").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "version is required");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Post a JSON body to `/ai/mcp/import/execute` and return the response body.
@@ -1041,27 +955,11 @@ fn import_content(name: &str) -> String {
     )
 }
 
-/// Remove one server by name, including its versions.
-async fn clean_named(store: &ExternalDbPersistService, name: &str) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// A valid batch is actually imported: the server must exist afterwards.
 #[actix_web::test]
-#[ignore]
 async fn import_execute_creates_the_server() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let body = execute_payload(
         &app,
@@ -1081,13 +979,12 @@ async fn import_execute_creates_the_server() {
         .expect("detail lookup");
     assert!(detail.is_some(), "the imported server must exist");
 
-    clean_named(&store, "imported-create").await;
-    clean(&store).await;
+    store.clean("imported-create").await;
+    store.clean(NAME).await;
 }
 
 /// Without `overwrite`, an existing server is skipped and flagged, not clobbered.
 #[actix_web::test]
-#[ignore]
 async fn import_execute_skips_an_existing_server() {
     let (store, svc) = setup().await;
     let mut registration = registration("1.0.0", "echo");
@@ -1096,7 +993,7 @@ async fn import_execute_skips_an_existing_server() {
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let body = execute_payload(
         &app,
         serde_json::json!({ "content": import_content("imported-skip"), "namespace": NS }),
@@ -1113,16 +1010,15 @@ async fn import_execute_skips_an_existing_server() {
         "skips do not fail: {body}"
     );
 
-    clean_named(&store, "imported-skip").await;
-    clean(&store).await;
+    store.clean("imported-skip").await;
+    store.clean(NAME).await;
 }
 
 /// An invalid batch is refused outright unless the caller opts into skipping.
 #[actix_web::test]
-#[ignore]
 async fn import_execute_refuses_an_invalid_batch() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let body = execute_payload(
         &app,
@@ -1138,15 +1034,14 @@ async fn import_execute_refuses_an_invalid_batch() {
         "must explain why: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// A server that already exists is imported as an update.
 #[actix_web::test]
-#[ignore]
 async fn import_execute_updates_when_overwrite_is_requested() {
     let (store, svc) = setup().await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let content = import_content("imported-update");
     let body = execute_payload(
@@ -1170,21 +1065,20 @@ async fn import_execute_updates_when_overwrite_is_requested() {
         "overwrite must not skip: {body}"
     );
 
-    clean_named(&store, "imported-update").await;
-    clean(&store).await;
+    store.clean("imported-update").await;
+    store.clean(NAME).await;
 }
 
 /// A server that already exists in the namespace is reported as a duplicate
 /// rather than silently accepted.
 #[actix_web::test]
-#[ignore]
 async fn import_validate_flags_an_existing_server_as_duplicate() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
         .await
         .expect("create server");
 
-    let app = build_app(store.clone(), svc.clone()).await;
+    let app = build_app(store.store(), svc.clone()).await;
     let content = r#"[{"name":"route-mcp","protocol":"http","description":"d","version":"1.0.0","remoteServerConfig":{}}]"#;
     let body = validate_payload(&app, content).await;
     assert!(
@@ -1196,5 +1090,5 @@ async fn import_validate_flags_an_existing_server_as_duplicate() {
         "one duplicate: {body}"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }

@@ -1,18 +1,11 @@
-//! Real-database round-trip test for the MCP server service.
+//! Round-trip test for the MCP server service.
 //!
 //! Verifies the migration from config-backed storage to `ai_resource` /
 //! `ai_resource_version`: id stability, versioning, latest-version advance,
 //! in-place update, tool payload preservation and deletion.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_persistence -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_persistence -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
@@ -23,9 +16,7 @@ use batata_ai::model::{
     McpCapability, McpServerRegistration, McpServerType, McpTool, McpTransport,
 };
 use batata_ai::{McpServerIndex, McpServerOperationService};
-use batata_persistence::ExternalDbPersistService;
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use common::TestStore;
 
 const NS: &str = "public";
 const NAME: &str = "probe-mcp";
@@ -57,21 +48,6 @@ fn registration(version: &str, tool: &str) -> McpServerRegistration {
     }
 }
 
-/// Remove rows left by a previous run so the test is repeatable.
-async fn clean(store: &ExternalDbPersistService) {
-    let conn = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(conn)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(conn)
-        .await
-        .expect("clean resources");
-}
-
 /// Registration bound to [`LIFECYCLE_NAME`].
 fn lifecycle_registration(version: &str) -> McpServerRegistration {
     let mut reg = registration(version, "tool");
@@ -81,28 +57,15 @@ fn lifecycle_registration(version: &str) -> McpServerRegistration {
 
 /// draft → reviewing → online, then offline/online, redraft and force-publish.
 #[tokio::test]
-#[ignore]
 async fn mcp_version_lifecycle() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = McpServerOperationService::new(store.clone(), index);
-    println!("--- backend: {:?} ---", store.db().get_database_backend());
+    let svc = McpServerOperationService::new(store.store(), index);
+    println!("--- backend: {} ---", store.backend());
 
     // Clean up rows from a previous run, using the same filter the shared
     // helper applies to NAME.
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(LIFECYCLE_NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(LIFECYCLE_NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
+    store.clean(LIFECYCLE_NAME).await;
 
     // ---- published baseline ------------------------------------------------
     svc.create_mcp_server(NS, &lifecycle_registration("1.0.0"))
@@ -290,19 +253,14 @@ async fn mcp_version_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn mcp_server_round_trip() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = McpServerOperationService::new(store.clone(), index.clone());
-    println!("--- backend: {:?} ---", store.db().get_database_backend());
+    let svc = McpServerOperationService::new(store.store(), index.clone());
+    println!("--- backend: {} ---", store.backend());
 
-    clean(&store).await;
-    index
-        .refresh(store.as_ref() as &dyn batata_persistence::PersistenceService)
-        .await;
+    store.clean(NAME).await;
+    index.refresh(store.store().as_ref()).await;
 
     // ---- create ------------------------------------------------------------
     let id = svc
@@ -373,9 +331,7 @@ async fn mcp_server_round_trip() {
 
     // ---- index refresh rebuilds from ai_resource ---------------------------
     let fresh = Arc::new(McpServerIndex::new());
-    fresh
-        .refresh(store.as_ref() as &dyn batata_persistence::PersistenceService)
-        .await;
+    fresh.refresh(store.store().as_ref()).await;
     let entry = fresh
         .get_by_name(NS, NAME)
         .expect("index refresh must rebuild the entry from ai_resource");

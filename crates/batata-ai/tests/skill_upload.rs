@@ -1,30 +1,24 @@
-//! Live-database coverage for skill ZIP precheck and batch upload.
+//! Coverage for skill ZIP precheck and batch upload.
 //!
 //! `POST /upload/precheck` and `POST /upload/batch` both read a ZIP that may
 //! hold several skills — one-level subdirectories, each with its own SKILL.md.
 //! These tests drive the service behind them.
 //!
-//! Run with a database:
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test skill_upload -- --ignored --test-threads=1
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
 use std::io::{Cursor, Write};
-use std::sync::Arc;
 
 use batata_ai::SkillOperationService;
 use batata_common::model::ai::skill::{SKILL_TYPE, precheck_code};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use common::TestStore;
 
 const NS: &str = "public";
 
-async fn setup() -> Arc<ExternalDbPersistService> {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    Arc::new(ExternalDbPersistService::new(conn))
+async fn setup() -> TestStore {
+    TestStore::open().await
 }
 
 /// Build a ZIP in memory from (path, content) pairs.
@@ -40,7 +34,8 @@ fn build_zip(files: &[(&str, &str)]) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
-async fn clean(store: &ExternalDbPersistService, name: &str) {
+async fn clean(store: &TestStore, name: &str) {
+    let store = store.store();
     store
         .ai_resource_version_delete_all(NS, name, SKILL_TYPE)
         .await
@@ -53,10 +48,9 @@ async fn clean(store: &ExternalDbPersistService, name: &str) {
 
 /// A skill that does not exist yet is ready to upload at its manifest version.
 #[tokio::test]
-#[ignore]
 async fn precheck_marks_a_new_skill_ready() {
     let store = setup().await;
-    let svc = SkillOperationService::new(store.clone(), None, false);
+    let svc = SkillOperationService::new(store.store(), None, false);
     let name = "upload-precheck-new";
     clean(&store, name).await;
 
@@ -86,6 +80,7 @@ async fn precheck_marks_a_new_skill_ready() {
     // Nothing was persisted: that is the point of a precheck.
     assert!(
         store
+            .store()
             .ai_resource_find(NS, name, SKILL_TYPE)
             .await
             .expect("lookup")
@@ -99,10 +94,9 @@ async fn precheck_marks_a_new_skill_ready() {
 
 /// A directory without a SKILL.md is reported, not silently ignored.
 #[tokio::test]
-#[ignore]
 async fn precheck_flags_a_directory_without_a_manifest() {
     let store = setup().await;
-    let svc = SkillOperationService::new(store.clone(), None, false);
+    let svc = SkillOperationService::new(store.store(), None, false);
 
     let zip_bytes = build_zip(&[("gamma/notes.txt", "no manifest here")]);
 
@@ -128,10 +122,9 @@ async fn precheck_flags_a_directory_without_a_manifest() {
 
 /// Batch upload uses best effort: a bad entry does not discard the good ones.
 #[tokio::test]
-#[ignore]
 async fn batch_upload_reports_success_and_failure() {
     let store = setup().await;
-    let svc = SkillOperationService::new(store.clone(), None, false);
+    let svc = SkillOperationService::new(store.store(), None, false);
     let name = "upload-batch-ok";
     clean(&store, name).await;
 
@@ -160,6 +153,7 @@ async fn batch_upload_reports_success_and_failure() {
     // The good skill really landed.
     assert!(
         store
+            .store()
             .ai_resource_find(NS, name, SKILL_TYPE)
             .await
             .expect("lookup")

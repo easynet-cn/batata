@@ -1,28 +1,17 @@
-//! Real-database round-trip test for the A2A agent service.
+//! Round-trip test for the A2A agent service.
 //!
 //! Verifies the migration from config-backed storage to `ai_resource` /
 //! `ai_resource_version`: id stability, versioning, latest-version advance,
 //! in-place update, listing and deletion.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test a2a_persistence -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-ai --test a2a_persistence -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
-use std::sync::Arc;
-
 use batata_ai::A2aServerOperationService;
 use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use common::TestStore;
 
 const NS: &str = "public";
 const NAME: &str = "probe-agent";
@@ -59,31 +48,13 @@ fn card(version: &str) -> AgentCard {
     }
 }
 
-/// Remove rows left by a previous run so the test is repeatable.
-async fn clean(store: &ExternalDbPersistService) {
-    let conn = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(conn)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(conn)
-        .await
-        .expect("clean resources");
-}
-
 #[tokio::test]
-#[ignore]
 async fn a2a_agent_round_trip() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = A2aServerOperationService::new(store.clone());
-    println!("--- backend: {:?} ---", store.db().get_database_backend());
+    let store = TestStore::open().await;
+    let svc = A2aServerOperationService::new(store.store());
+    println!("--- backend: {} ---", store.backend());
 
-    clean(&store).await;
+    store.clean(NAME).await;
 
     // ---- register ----------------------------------------------------------
     let id = svc
@@ -228,8 +199,9 @@ async fn a2a_agent_round_trip() {
 }
 
 /// Status of one agent version, read straight from the version table.
-async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
+async fn status_of(store: &TestStore, version: &str) -> String {
     store
+        .store()
         .ai_resource_version_find(NS, NAME, "agent", version)
         .await
         .expect("version lookup")
@@ -243,14 +215,11 @@ async fn status_of(store: &ExternalDbPersistService, version: &str) -> String {
 /// this proves it behaves identically for a second resource type rather than
 /// only working for the one it was extracted from.
 #[tokio::test]
-#[ignore]
 async fn agent_version_lifecycle() {
-    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = A2aServerOperationService::new(store.clone());
+    let store = TestStore::open().await;
+    let svc = A2aServerOperationService::new(store.store());
 
-    clean(&store).await;
+    store.clean(NAME).await;
 
     // Registration publishes directly, so the version starts online.
     svc.register_agent(&card("1.0.0"), NS, "manual")
@@ -346,5 +315,5 @@ async fn agent_version_lifecycle() {
     );
     println!("ok: scope");
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }

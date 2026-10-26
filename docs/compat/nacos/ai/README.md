@@ -838,7 +838,18 @@ has no `LIKE`:
 
 ### Phase 4 — Tests and documentation
 
-- [ ] Port upstream AI test cases as Batata integration tests
+- [x] Port upstream AI test cases as Batata integration tests — the ports cover
+      every Batata-implemented surface upstream's controller and service tests
+      exercise: MCP admin/console/import, prompt, skill, agent (A2A), AgentSpec,
+      resource search, visibility and pipeline query. **They also now run in
+      CI**: they used to be `#[ignore]`d because they needed MySQL/PostgreSQL,
+      and the embedded backend implements the same `PersistenceService` trait,
+      so the default is a throwaway RocksDB store and `DATABASE_URL` opts into
+      the real database (which is how the dialect-specific SQL is still
+      exercised). Porting only the Batata-implemented subset: upstream's
+      ~300 AI tests also cover RAD/AgentSpec packaging, agent watch
+      projections, A2A migration and the vector channel, none of which Batata
+      implements.
 - [x] Add `docs/compat/nacos/ai/api-mapping.md` (endpoint-level mapping)
 - [x] Add `docs/compat/nacos/ai/model-mapping.md` (field-level mapping)
 - [x] Update `docs/feature-comparison.md` AI/module rows — added a 13-row AI
@@ -865,61 +876,74 @@ Counts are of test functions, taken from the sources (not from memory).
 
 | Crate | Tests | AI-relevant content |
 |---|---|---|
-| `batata-ai` | 94 | projection determinism, chunk hashing, task scheduling, **embedding (14)** |
+| `batata-ai` | 120 | projection determinism, chunk hashing, task scheduling, **embedding (14)** |
 | `batata-common` | 124 | AI models, traits |
 | `batata-persistence` | 47 | `ai_resource*` persistence, embedded backend |
 | `batata-console` | 24 | MCP console routes |
 
 `cargo test -p <crate> --lib`
 
-### Live database (`#[ignore]`, need `DATABASE_URL`)
+### Integration (embedded RocksDB by default, **runs in CI**)
+
+Every binary below runs against a throwaway RocksDB store, so it needs no
+containers and no `DATABASE_URL`. Set `DATABASE_URL` to run the exact same
+assertions against MySQL or PostgreSQL instead.
 
 | Test binary | Tests | What it pins down |
 |---|---|---|
-| `batata-server` / `mcp_console_routes` | 15 | all 14 MCP Admin endpoints end to end (path → handler → service → DB) |
+| `batata-server` / `mcp_console_routes` | 26 | all MCP console endpoints end to end (path → handler → service → store) |
+| `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
+| `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |
+| `batata-server` / `skill_console_routes` | 5 | force-publish, redraft, ZIP precheck and batch upload, download counting |
+| `batata-server` / `agent_console_routes` | 3 | A2A agent lifecycle on the console scope |
+| `batata-server` / `prompt_console_routes` | 2 | the console prompt scope and its governance view |
+| `batata-server` / `agentspec_console_routes` | 2 | AgentSpec force-publish and redraft |
+| `batata-server` / `resource_search_routes` | 1 | the client keyword-search endpoint |
+| `batata-ai` / `mcp_admin_request_contract` | 10 | what the upstream maintainer wire format makes the service receive |
+| `batata-ai` / `prompt_persistence` | 7 | publish/query/label/delete and the draft lifecycle |
 | `batata-ai` / `mcp_search_index` | 4 | publish → schedule → consume → keyword search |
-| `batata-ai` / `mcp_persistence` | 2 | `ai_resource` round-trip and the full version lifecycle |
 | `batata-ai` / `mcp_visibility` | 3 | MCP scope/owner enforcement |
+| `batata-ai` / `skill_upload` | 3 | ZIP precheck and batch upload |
+| `batata-ai` / `skill_agentspec_lifecycle` | 3 | force-publish and redraft for both domains |
+| `batata-ai` / `mcp_persistence` | 2 | `ai_resource` round-trip and the full version lifecycle |
+| `batata-ai` / `a2a_persistence` | 2 | A2A `ai_resource` round-trip and lifecycle |
 | `batata-ai` / `a2a_visibility` | 2 | A2A scope/owner enforcement |
-| `batata-ai` / `a2a_persistence` | 1 | A2A `ai_resource` round-trip |
+| `batata-ai` / `mcp_search_embedded` | 1 | the whole search loop on RocksDB, end to end |
 | `batata-persistence` / `ai_search_persistence` | 1 | document/chunk/task persistence |
-| `batata-migration` / `migration_smoke` | 1 | the AI tables exist after `Migrator::up` |
 
 ```bash
+# default: embedded RocksDB, no containers
+cargo test -p batata-ai --test mcp_search_index
+
+# the same assertions against a real database
 DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-  cargo test -p batata-ai --test mcp_search_index -- --ignored --test-threads=1
+  cargo test -p batata-ai --test mcp_search_index -- --test-threads=1
 ```
 
-Run on **MySQL 8.4** and **PostgreSQL 18**; both are expected to pass.
+With `DATABASE_URL` set, the same assertions run on **MySQL 8.4** and
+**PostgreSQL 18**; both are expected to pass.
 
 Two notes that cost real time and are easy to trip over:
 
 - **The Podman containers stop.** They do not come back after a machine
   restart or a `podman machine stop`, because Podman is daemonless and the
   `unless-stopped` policy is not enforced across a VM restart. The symptom is
-  a ~30s-per-test pool timeout. The live tests now use a 3s connect timeout and
-  panic with the URL plus a hint, so a stopped container costs seconds instead
-  of minutes and says what is wrong.
+  a ~30s-per-test pool timeout, and it only matters when you opt into a real
+  database: the default embedded store needs nothing. For that case the
+  helpers use a 3s connect timeout and panic with the URL plus a hint, so a
+  stopped container costs seconds instead of minutes and says what is wrong.
 - **Some binaries must stay separate.** `mcp_visibility` and `a2a_visibility`
   are separate test binaries on purpose: `VisibilityPluginManager` is a
   process-global singleton, so sharing a binary would leave auth disabled and
   nothing would be filtered.
 
-### Embedded RocksDB (no external database)
-
-| Test binary | Tests | What it pins down |
-|---|---|---|
-| `batata-ai` / `mcp_search_embedded` | 1 | the whole search loop on RocksDB: publish → schedule → consume → keyword search |
-
-`cargo test -p batata-ai --test mcp_search_embedded` — runs by default, needs
-nothing external.
-
 ### Not covered
 
 - Embedded + **Cluster** (Raft) search path — no test drives it.
-- Skill / AgentSpec / Prompt live paths (MCP and A2A are the covered domains).
 - Legacy console endpoints (`stats`, `importToolsFromMcp`, `import/validate`,
   `endpoint` add/remove).
+- The upstream AI surfaces Batata does not implement at all (RAD/AgentSpec
+  packaging, agent watch projections, A2A migration, the vector channel).
 
 ---
 

@@ -160,6 +160,10 @@ reqwest = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The AI route tests run on the embedded backend by default; these three are
+# what opening a throwaway RocksDB store costs.
+rocksdb = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "naming_bench"

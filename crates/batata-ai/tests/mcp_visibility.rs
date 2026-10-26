@@ -7,15 +7,8 @@
 //! with auth disabled the advisor returns `BaseVisibilityPredicate::All` and
 //! nothing would be filtered at all.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_visibility -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_visibility -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database.
 
 mod common;
 
@@ -26,9 +19,7 @@ use batata_ai::model::{
     McpCapability, McpServerRegistration, McpServerType, McpTool, McpTransport,
 };
 use batata_ai::{McpServerIndex, McpServerOperationService};
-use batata_persistence::ExternalDbPersistService;
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use common::TestStore;
 
 const NS: &str = "public";
 const NAME: &str = "vis-mcp";
@@ -58,38 +49,20 @@ fn registration() -> McpServerRegistration {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(NAME))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build a service with visibility **enabled** (auth enabled, no auth plugin).
-async fn setup() -> (Arc<ExternalDbPersistService>, McpServerOperationService) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+async fn setup() -> (TestStore, McpServerOperationService) {
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
     // `auth_enabled = true` makes the advisor return `Public` for an anonymous
     // caller, which is what we need to observe filtering.
-    let svc = McpServerOperationService::with_visibility(store.clone(), index, None, true);
-    clean(&store).await;
+    let svc = McpServerOperationService::with_visibility(store.store(), index, None, true);
+    store.clean(NAME).await;
     (store, svc)
 }
 
 /// A newly created server is private, so an anonymous caller must not see it —
 /// and the reported total must shrink, not just the page contents.
 #[tokio::test]
-#[ignore]
 async fn private_server_hidden_from_anonymous_list() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration())
@@ -104,13 +77,12 @@ async fn private_server_hidden_from_anonymous_list() {
         "a private server must be hidden from an anonymous caller"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// Publishing the scope makes the server visible, and the change must take
 /// effect immediately (the cached index entry has to be updated too).
 #[tokio::test]
-#[ignore]
 async fn public_server_visible_after_scope_change() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration())
@@ -129,12 +101,11 @@ async fn public_server_visible_after_scope_change() {
         "a public server must be visible to an anonymous caller"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }
 
 /// A private server must not be readable by an anonymous caller.
 #[tokio::test]
-#[ignore]
 async fn private_server_detail_rejected_for_anonymous() {
     let (store, svc) = setup().await;
     svc.create_mcp_server(NS, &registration())
@@ -149,5 +120,5 @@ async fn private_server_detail_rejected_for_anonymous() {
         "reading a private server anonymously must fail"
     );
 
-    clean(&store).await;
+    store.clean(NAME).await;
 }

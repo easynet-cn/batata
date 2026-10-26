@@ -5,43 +5,24 @@
 //! scope, and that they accept the form-encoded bodies the Nacos console UI
 //! sends (reads and deletes use query parameters instead).
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-server --test prompt_console_routes -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database. See `common/ai_store.rs`.
+
+#[path = "common/ai_store.rs"]
+mod ai_store;
 
 use std::sync::Arc;
 
 use actix_web::http::StatusCode;
 use actix_web::{App, test, web};
+use ai_store::TestStore;
 use batata_ai::PromptOperationService;
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
-use batata_persistence::ExternalDbPersistService;
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::config::Configuration;
 
 const KEY: &str = "console-route-prompt";
-
-/// Connect to the test database, failing fast with an actionable message.
-async fn connect_database(url: &str) -> sea_orm::DatabaseConnection {
-    use std::time::Duration;
-    let mut options = sea_orm::ConnectOptions::new(url.to_string());
-    options
-        .connect_timeout(Duration::from_secs(3))
-        .acquire_timeout(Duration::from_secs(3));
-    match sea_orm::Database::connect(options).await {
-        Ok(connection) => connection,
-        Err(error) => panic!(
-            "cannot reach the test database at {url}: {error}\n\
-             hint: containers do not come back on their own after a machine \
-             restart or a podman machine stop — try `podman start mysql postgres`"
-        ),
-    }
-}
 
 /// Cluster manager stub. The prompt routes never touch cluster state.
 struct StubClusterManager;
@@ -89,23 +70,9 @@ impl ClusterManager for StubClusterManager {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService) {
-    let db = store.db();
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(KEY))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(KEY))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 /// Build an actix app exposing the real console prompt routes.
 async fn build_app(
-    store: Arc<ExternalDbPersistService>,
+    store: Arc<dyn PersistenceService>,
     svc: Arc<PromptOperationService>,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
@@ -162,12 +129,9 @@ async fn build_app(
     .await
 }
 
-async fn setup() -> (Arc<ExternalDbPersistService>, Arc<PromptOperationService>) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let svc = Arc::new(PromptOperationService::new(store.clone()));
+async fn setup() -> (TestStore, Arc<PromptOperationService>) {
+    let store = TestStore::open().await;
+    let svc = Arc::new(PromptOperationService::new(store.store()));
     (store, svc)
 }
 
@@ -194,11 +158,10 @@ where
 /// The draft lifecycle is reachable on the console scope, and writes really do
 /// accept form-encoded bodies.
 #[actix_web::test]
-#[ignore]
 async fn draft_lifecycle_over_console_http() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     let base = "/v3/console/ai/prompt";
 
@@ -243,16 +206,15 @@ async fn draft_lifecycle_over_console_http() {
     assert_eq!(status, StatusCode::OK, "publish failed: {body}");
     println!("ok: submit then publish");
 
-    clean(&store).await;
+    store.clean(KEY).await;
 }
 
 /// The governance view exposes the state the UI needs to drive the lifecycle.
 #[actix_web::test]
-#[ignore]
 async fn governance_reports_lifecycle_state() {
     let (store, svc) = setup().await;
-    clean(&store).await;
-    let app = build_app(store.clone(), svc.clone()).await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
 
     post_form(
         &app,
@@ -284,5 +246,5 @@ async fn governance_reports_lifecycle_state() {
     );
     println!("ok: governance reports lifecycle state");
 
-    clean(&store).await;
+    store.clean(KEY).await;
 }

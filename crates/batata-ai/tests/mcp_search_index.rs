@@ -1,18 +1,12 @@
-//! Real-database test for the AI resource search index.
+//! Test for the AI resource search index.
 //!
 //! Covers the `base_index` projection end to end: scheduling a task, building
 //! the document and chunks, and the `source_digest` short circuit that makes
 //! rebuilds incremental.
 //!
-//! Ignored by default: needs a reachable database with the migrations applied.
-//!
-//! ```bash
-//! DATABASE_URL="mysql://root:devterry@127.0.0.1:3306/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_search_index -- --ignored --nocapture
-//!
-//! DATABASE_URL="postgres://postgres:devterry@127.0.0.1:5432/batata_ai_test" \
-//!   cargo test -p batata-ai --test mcp_search_index -- --ignored --nocapture
-//! ```
+//! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
+//! against a real database — the keyword search test also covers the raw SQL
+//! on both dialects, where PostgreSQL numbers placeholders and MySQL uses `?`.
 
 mod common;
 
@@ -27,12 +21,7 @@ use batata_ai::search::query;
 use batata_ai::search::service::AiResourceSearchService;
 use batata_ai::search::task;
 use batata_ai::{McpServerIndex, McpServerOperationService};
-use batata_persistence::entity::{
-    ai_resource, ai_resource_search_chunk, ai_resource_search_document, ai_resource_task,
-    ai_resource_version,
-};
-use batata_persistence::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use batata_persistence::{AiResourcePersistence, ExternalDbPersistService};
+use common::TestStore;
 
 const NS: &str = "public";
 const NAME: &str = "search-mcp";
@@ -62,57 +51,26 @@ fn registration(version: &str) -> McpServerRegistration {
     }
 }
 
-async fn clean(store: &ExternalDbPersistService, resource_type: &str, name: &str) {
-    let db = store.db();
-    ai_resource_search_chunk::Entity::delete_many()
-        .filter(ai_resource_search_chunk::Column::ResourceName.eq(name))
-        .exec(db)
-        .await
-        .expect("clean chunks");
-    ai_resource_search_document::Entity::delete_many()
-        .filter(ai_resource_search_document::Column::ResourceName.eq(name))
-        .exec(db)
-        .await
-        .expect("clean documents");
-    ai_resource_task::Entity::delete_many()
-        .filter(ai_resource_task::Column::TaskKey.eq(task::task_key(NS, resource_type, name)))
-        .exec(db)
-        .await
-        .expect("clean tasks");
-    ai_resource_version::Entity::delete_many()
-        .filter(ai_resource_version::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean versions");
-    ai_resource::Entity::delete_many()
-        .filter(ai_resource::Column::Name.eq(name))
-        .exec(db)
-        .await
-        .expect("clean resources");
-}
-
 #[tokio::test]
-#[ignore]
 async fn schedule_then_rebuild_then_skip() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = McpServerOperationService::new(store.clone(), index);
-    let search = AiResourceSearchService::new(store.clone());
+    let svc = McpServerOperationService::new(store.store(), index);
+    let search = AiResourceSearchService::new(store.store());
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
     svc.create_mcp_server(NS, &registration("1.0.0"))
         .await
         .expect("create server");
 
     let resource = store
+        .store()
         .ai_resource_find(NS, NAME, "mcp")
         .await
         .expect("find resource")
         .expect("resource must exist");
     let row = store
+        .store()
         .ai_resource_version_find(NS, NAME, "mcp", "1.0.0")
         .await
         .expect("find version")
@@ -122,6 +80,7 @@ async fn schedule_then_rebuild_then_skip() {
     search.schedule(NS, "mcp", NAME).await.expect("schedule");
     let key = task::task_key(NS, "mcp", NAME);
     let scheduled = store
+        .store()
         .task_find(&key)
         .await
         .expect("read task")
@@ -139,6 +98,7 @@ async fn schedule_then_rebuild_then_skip() {
     assert!(rebuilt, "first rebuild must write the index");
 
     let document = store
+        .store()
         .search_document_find(NS, "mcp", NAME, "1.0.0")
         .await
         .expect("read document")
@@ -152,6 +112,7 @@ async fn schedule_then_rebuild_then_skip() {
     assert_eq!(document.display_name, NAME);
 
     let chunks = store
+        .store()
         .search_chunk_list(NS, "mcp", NAME, "1.0.0")
         .await
         .expect("read chunks");
@@ -185,22 +146,18 @@ async fn schedule_then_rebuild_then_skip() {
     );
     println!("ok: unchanged rebuild skipped");
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
 }
 
 /// The consumer must turn a scheduled task into a built index.
 #[tokio::test]
-#[ignore]
 async fn consumer_builds_index_and_completes_task() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = McpServerOperationService::new(store.clone(), index);
-    let consumer = AiResourceIndexConsumer::new(store.clone());
+    let svc = McpServerOperationService::new(store.store(), index);
+    let consumer = AiResourceIndexConsumer::new(store.store());
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
 
     // Publishing schedules the task on its own.
     svc.create_mcp_server(NS, &registration("1.0.0"))
@@ -212,6 +169,7 @@ async fn consumer_builds_index_and_completes_task() {
 
     let key = task::task_key(NS, "mcp", NAME);
     let scheduled = store
+        .store()
         .task_find(&key)
         .await
         .expect("read task")
@@ -228,12 +186,14 @@ async fn consumer_builds_index_and_completes_task() {
     assert!(built >= 1, "at least one task must complete: {outcomes:?}");
 
     let document = store
+        .store()
         .search_document_find(NS, "mcp", NAME, "1.0.0")
         .await
         .expect("read document")
         .expect("consumer must have built the document");
     assert_eq!(document.status, "enabled");
     let chunks = store
+        .store()
         .search_chunk_list(NS, "mcp", NAME, "1.0.0")
         .await
         .expect("read chunks");
@@ -241,6 +201,7 @@ async fn consumer_builds_index_and_completes_task() {
     println!("ok: consumer built {} chunks", chunks.len());
 
     let finished = store
+        .store()
         .task_find(&key)
         .await
         .expect("read task")
@@ -259,21 +220,17 @@ async fn consumer_builds_index_and_completes_task() {
     );
     println!("ok: second poll skipped the completed task");
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
 }
 
 /// A task for a resource that no longer exists must be removed, not retried.
 #[tokio::test]
-#[ignore]
 async fn consumer_removes_task_for_missing_resource() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
-    let search = AiResourceSearchService::new(store.clone());
-    let consumer = AiResourceIndexConsumer::new(store.clone());
+    let store = TestStore::open().await;
+    let search = AiResourceSearchService::new(store.store());
+    let consumer = AiResourceIndexConsumer::new(store.store());
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
 
     // Schedule for a resource that was never created.
     search.schedule(NS, "mcp", NAME).await.expect("schedule");
@@ -290,12 +247,17 @@ async fn consumer_removes_task_for_missing_resource() {
     );
 
     assert!(
-        store.task_find(&key).await.expect("read task").is_none(),
+        store
+            .store()
+            .task_find(&key)
+            .await
+            .expect("read task")
+            .is_none(),
         "the task must be gone"
     );
     println!("ok: task removed for missing resource");
 
-    clean(&store, "mcp", NAME).await;
+    store.clean_index(NS, "mcp", NAME).await;
 }
 
 /// Keyword search must find the right resources and rank them by score.
@@ -303,21 +265,17 @@ async fn consumer_removes_task_for_missing_resource() {
 /// This also exercises the raw SQL on both dialects, where PostgreSQL numbers
 /// placeholders and MySQL uses `?`.
 #[tokio::test]
-#[ignore]
 async fn keyword_search_finds_and_ranks() {
     const ALPHA: &str = "search-alpha";
     const BETA: &str = "search-beta";
 
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| panic!("DATABASE_URL must be set for this ignored test"));
-    let conn = common::connect_database(&url).await;
-    let store = Arc::new(ExternalDbPersistService::new(conn));
+    let store = TestStore::open().await;
     let index = Arc::new(McpServerIndex::new());
-    let svc = McpServerOperationService::new(store.clone(), index);
-    let search = AiResourceSearchService::new(store.clone());
+    let svc = McpServerOperationService::new(store.store(), index);
+    let search = AiResourceSearchService::new(store.store());
 
-    clean(&store, "mcp", ALPHA).await;
-    clean(&store, "mcp", BETA).await;
+    store.clean_index(NS, "mcp", ALPHA).await;
+    store.clean_index(NS, "mcp", BETA).await;
 
     // Two servers: only ALPHA mentions "wombat".
     for (name, description) in [(ALPHA, "wombat wrangler"), (BETA, "platypus painter")] {
@@ -327,11 +285,13 @@ async fn keyword_search_finds_and_ranks() {
         svc.create_mcp_server(NS, &reg).await.expect("create");
 
         let resource = store
+            .store()
             .ai_resource_find(NS, name, "mcp")
             .await
             .expect("find resource")
             .expect("resource must exist");
         let row = store
+            .store()
             .ai_resource_version_find(NS, name, "mcp", "1.0.0")
             .await
             .expect("find version")
@@ -343,7 +303,7 @@ async fn keyword_search_finds_and_ranks() {
     }
 
     // ---- a term unique to one resource -------------------------------------
-    let page = query::search(&*store, NS, "wombat", &["mcp"], 1, 10)
+    let page = query::search(store.store().as_ref(), NS, "wombat", &["mcp"], 1, 10)
         .await
         .expect("search");
     assert_eq!(page.total_count, 1, "only ALPHA mentions wombat");
@@ -351,7 +311,7 @@ async fn keyword_search_finds_and_ranks() {
     println!("ok: unique term matched one resource");
 
     // ---- a term shared by both ---------------------------------------------
-    let page = query::search(&*store, NS, "mcp", &["mcp"], 1, 10)
+    let page = query::search(store.store().as_ref(), NS, "mcp", &["mcp"], 1, 10)
         .await
         .expect("search");
     assert!(
@@ -362,11 +322,11 @@ async fn keyword_search_finds_and_ranks() {
     println!("ok: shared term matched {} resources", page.total_count);
 
     // ---- pagination --------------------------------------------------------
-    let first = query::search(&*store, NS, "mcp", &["mcp"], 1, 1)
+    let first = query::search(store.store().as_ref(), NS, "mcp", &["mcp"], 1, 1)
         .await
         .expect("search");
     assert_eq!(first.page_items.len(), 1, "page size must be honoured");
-    let second = query::search(&*store, NS, "mcp", &["mcp"], 2, 1)
+    let second = query::search(store.store().as_ref(), NS, "mcp", &["mcp"], 2, 1)
         .await
         .expect("search");
     if second.page_items.is_empty() {
@@ -383,12 +343,12 @@ async fn keyword_search_finds_and_ranks() {
     println!("ok: pagination honoured");
 
     // ---- an empty query returns nothing ------------------------------------
-    let page = query::search(&*store, NS, "   ", &["mcp"], 1, 10)
+    let page = query::search(store.store().as_ref(), NS, "   ", &["mcp"], 1, 10)
         .await
         .expect("search");
     assert_eq!(page.total_count, 0, "a blank query must not match");
     println!("ok: blank query returned nothing");
 
-    clean(&store, "mcp", ALPHA).await;
-    clean(&store, "mcp", BETA).await;
+    store.clean_index(NS, "mcp", ALPHA).await;
+    store.clean_index(NS, "mcp", BETA).await;
 }
