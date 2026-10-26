@@ -418,6 +418,29 @@ impl AuthDataService for RemoteAuthDataService {
             .any(|role| role.role == GLOBAL_ADMIN_ROLE))
     }
 
+    async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
+        // No dedicated endpoint either. Nacos answers the same question from
+        // `getAllRoles()`, i.e. a full role scan; asking for the reserved role by
+        // name gets the same answer from a single small page.
+        let page =
+            AuthDataService::role_find_page(self, "", GLOBAL_ADMIN_ROLE, 1, LOOKUP_PAGE_SIZE, true)
+                .await?;
+
+        Ok(page.total_count > 0)
+    }
+
+    async fn create_admin_user(&self, username: &str, password: &str) -> anyhow::Result<()> {
+        // The core hashes the password and assigns the reserved admin role, so
+        // the console forwards the bootstrap instead of replaying it as a user
+        // create plus role create pair. Replaying would not even work: creating
+        // `ROLE_ADMIN` through `/v3/auth/role` is rejected as reserved.
+        self.post_form(
+            "/v3/auth/user/admin",
+            &[("username", username), ("password", password)],
+        )
+        .await
+    }
+
     async fn permission_find_page(
         &self,
         role: &str,

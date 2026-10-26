@@ -33,8 +33,17 @@ use batata_persistence::{
     traits::AuthPersistence,
 };
 
+use crate::model::GLOBAL_ADMIN_ROLE;
 use crate::service::rbac_cache::RbacSource;
 use crate::service::visibility_grant::{grant_with, revoke_with};
+
+/// bcrypt cost for locally stored passwords, kept identical to the handlers.
+const BCRYPT_COST: u32 = 10;
+
+/// Hash a plaintext password the way the `/v3/auth/**` handlers do.
+fn hash_password(password: &str) -> anyhow::Result<String> {
+    bcrypt::hash(password, BCRYPT_COST).map_err(|e| anyhow::anyhow!("hash password: {e}"))
+}
 
 /// Everything the auth plugin and the `/v3/auth/**` handlers read and write.
 ///
@@ -104,6 +113,20 @@ pub trait AuthDataService: RbacSource + Send + Sync {
 
     /// Check whether a user holds the global admin role.
     async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool>;
+
+    /// Check whether *any* user already holds the global admin role.
+    ///
+    /// Backs the "is the cluster still uninitialised?" question the admin
+    /// bootstrap endpoint asks before it creates the first administrator.
+    async fn role_has_global_admin(&self) -> anyhow::Result<bool>;
+
+    /// Bootstrap the first administrator.
+    ///
+    /// `password` is **plaintext**: the direct backend hashes it before storing
+    /// and then assigns the global admin role, while the remote backend forwards
+    /// the bootstrap to the core's `/v3/auth/user/admin`, which owns both steps.
+    /// Handing the hash to the core instead would hash it twice.
+    async fn create_admin_user(&self, username: &str, password: &str) -> anyhow::Result<()>;
 
     // ==================== Permission Operations ====================
 
@@ -238,6 +261,16 @@ impl<T: AuthPersistence + ?Sized> AuthDataService for T {
 
     async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool> {
         AuthPersistence::role_has_global_admin_by_username(self, username).await
+    }
+
+    async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
+        AuthPersistence::role_has_global_admin(self).await
+    }
+
+    async fn create_admin_user(&self, username: &str, password: &str) -> anyhow::Result<()> {
+        let password_hash = hash_password(password)?;
+        AuthPersistence::user_create(self, username, &password_hash, true).await?;
+        AuthPersistence::role_create(self, GLOBAL_ADMIN_ROLE, username).await
     }
 
     async fn permission_find_page(
@@ -423,6 +456,14 @@ impl AuthDataService for PersistenceAuthDataService {
         AuthDataService::role_has_global_admin_by_username(&*self.inner, username).await
     }
 
+    async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
+        AuthDataService::role_has_global_admin(&*self.inner).await
+    }
+
+    async fn create_admin_user(&self, username: &str, password: &str) -> anyhow::Result<()> {
+        AuthDataService::create_admin_user(&*self.inner, username, password).await
+    }
+
     async fn permission_find_page(
         &self,
         role: &str,
@@ -596,6 +637,14 @@ mod tests {
 
         async fn role_has_global_admin_by_username(&self, _username: &str) -> anyhow::Result<bool> {
             Ok(false)
+        }
+
+        async fn role_has_global_admin(&self) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn create_admin_user(&self, _username: &str, _password: &str) -> anyhow::Result<()> {
+            Ok(())
         }
 
         async fn permission_find_page(

@@ -209,6 +209,11 @@ async fn console_remote_deployment_proxies_to_core() {
             "server",
             "--batata.deployment.type=console",
             &format!("--batata.console.remote.server_addr={core_base}"),
+            // `batata.member.list` outranks both `conf/cluster.conf` (present in
+            // the workspace root, so it would win over `server_addr`) and
+            // `server_addr` itself. Pin it so the console really targets *this*
+            // core instead of whichever address the checkout happens to list.
+            "--batata.member.list=127.0.0.1:8848",
             &format!("--batata.console.port={CONSOLE_PORT}"),
             &format!("--batata.server.main.port={CONSOLE_MAIN_PORT}"),
             // Enable core + console auth so the console's `secured!` macro actually
@@ -488,9 +493,173 @@ async fn console_remote_deployment_proxies_to_core() {
     .await;
     assert_eq!(removed, StatusCode::OK, "console could not delete user");
 
+    // --- Guard 6: admin bootstrap is answered, not panicked on ---
+    //
+    // `/v3/auth/user/admin` is the first-run bootstrap the console UI calls. It
+    // has no `secured!` guard, but it still reads role data, so before the
+    // deployment-aware backend existed it reached for `AppState::persistence()`
+    // — `None` in console mode — and answered 500 instead of a real result.
+    //
+    // An admin already exists at this point (the core was seeded), so the console
+    // must report 409 "already initialised". Reaching that verdict requires the
+    // remote backend's global-admin lookup to have crossed to the core.
+    let bootstrap = auth_form(
+        &format!("{console_base}/v3/auth/user/admin"),
+        &token,
+        &[("username", "it-bootstrap"), ("password", "it-password")],
+    )
+    .await;
+    assert_eq!(
+        bootstrap,
+        StatusCode::CONFLICT,
+        "console admin bootstrap did not detect the existing admin through the remote backend"
+    );
+
     let _ = std::fs::remove_dir_all(&core_store);
     let _ = std::fs::remove_dir_all(&console_store);
     // Guards drop here and kill the child processes.
+}
+
+/// First-run bootstrap performed *through* an independently deployed console.
+///
+/// `POST /v3/auth/user/admin` is the endpoint the console UI calls on a brand new
+/// cluster. The separated console has no database, so it forwards the bootstrap
+/// to the core — and it must forward the **plaintext** password, because the core
+/// is the side that hashes. Hashing in the console and again in the core would
+/// create an administrator nobody can ever log in as.
+///
+/// So the real proof here is not the 200: it is that the very next login, which
+/// runs entirely in the console against the hash the core stored, succeeds.
+#[tokio::test]
+async fn console_remote_deployment_bootstraps_first_admin() {
+    let bin = match find_server_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("SKIP: batata-server binary not found");
+            return;
+        }
+    };
+    let root = workspace_root();
+
+    let core_port = 9948u16;
+    let console_port = 9290u16;
+    let console_main_port = 9291u16;
+
+    let core_store =
+        std::env::temp_dir().join(format!("batata-it-boot-core-{}", std::process::id()));
+    let console_store =
+        std::env::temp_dir().join(format!("batata-it-boot-console-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&core_store);
+    let _ = std::fs::remove_dir_all(&console_store);
+
+    // A core with authentication on and **no administrator yet**.
+    let core = Command::new(&bin)
+        .current_dir(&root)
+        .args([
+            "-m",
+            "standalone",
+            "-d",
+            "server",
+            &format!("--batata.server.main.port={core_port}"),
+            "--batata.core.auth.enabled=true",
+            &format!(
+                "--batata.persistence.embedded.data_dir={}",
+                core_store.display()
+            ),
+        ])
+        .stdout(std::fs::File::create(root.join("/tmp/it-boot-core.log")).unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn core");
+    let _core_guard = ChildGuard { child: core };
+
+    let core_base = format!("http://127.0.0.1:{core_port}");
+    assert!(
+        wait_for_http(
+            &core_base,
+            "/nacos/v3/admin/core/state/liveness",
+            Duration::from_secs(90)
+        )
+        .await,
+        "core server did not become ready"
+    );
+    // Deliberately no `seed_admin` here: the cluster must start uninitialised.
+
+    let console = Command::new(&bin)
+        .current_dir(&root)
+        .args([
+            "-m",
+            "standalone",
+            "-d",
+            "server",
+            "--batata.deployment.type=console",
+            &format!("--batata.console.remote.server_addr={core_base}"),
+            // See the note in the sibling test: without this the console would
+            // resolve `conf/cluster.conf` (8848) instead of this core.
+            &format!("--batata.member.list=127.0.0.1:{core_port}"),
+            &format!("--batata.console.port={console_port}"),
+            &format!("--batata.server.main.port={console_main_port}"),
+            "--batata.core.auth.enabled=true",
+            "--batata.core.auth.console.enabled=true",
+            &format!(
+                "--batata.persistence.embedded.data_dir={}",
+                console_store.display()
+            ),
+        ])
+        .stdout(std::fs::File::create(root.join("/tmp/it-boot-console.log")).unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn console-remote");
+    let _console_guard = ChildGuard { child: console };
+
+    let console_base = format!("http://127.0.0.1:{console_port}");
+    assert!(
+        wait_for_http(
+            &console_base,
+            "/v3/console/health/liveness",
+            Duration::from_secs(90)
+        )
+        .await,
+        "console-remote did not become ready"
+    );
+
+    let bootstrap = reqwest::Client::new()
+        .post(format!("{console_base}/v3/auth/user/admin"))
+        .form(&[("username", USER), ("password", PASS)])
+        .send()
+        .await
+        .expect("bootstrap request");
+    let bootstrap_status = bootstrap.status();
+    let bootstrap_body = bootstrap.text().await.unwrap_or_default();
+    assert_eq!(
+        bootstrap_status,
+        StatusCode::OK,
+        "separated console could not bootstrap the first admin through the core: {bootstrap_body}"
+    );
+
+    // The administrator now has to live on the core, not in the console.
+    let core_token = login(&format!("{core_base}/nacos/v3/auth/user/login")).await;
+    let users = auth_get(
+        &format!("{core_base}/nacos/v3/auth/user/list?username={USER}&pageNo=1&pageSize=10&search=accurate"),
+        &core_token,
+    )
+    .await;
+    assert!(
+        users.contains(USER),
+        "admin bootstrap did not reach the core: {users}"
+    );
+
+    // And the stored hash must verify exactly once: the console looks the user up
+    // over the remote backend and checks the password locally.
+    let token = login(&format!("{console_base}/v3/auth/user/login")).await;
+    assert!(
+        !token.is_empty(),
+        "login with the bootstrapped admin failed; the password was hashed twice \
+         (once in the console, once in the core)"
+    );
+
+    let _ = std::fs::remove_dir_all(&core_store);
+    let _ = std::fs::remove_dir_all(&console_store);
 }
 
 /// POST a form-encoded management call with the end user's token.

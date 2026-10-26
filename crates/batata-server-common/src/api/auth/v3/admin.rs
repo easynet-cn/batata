@@ -2,7 +2,8 @@ use actix_web::{HttpResponse, Responder, post, web};
 use serde::Deserialize;
 
 use crate::api::auth::{
-    model::{AUTHORIZATION_HEADER, GLOBAL_ADMIN_ROLE, TOKEN_PREFIX},
+    auth_data,
+    model::{AUTHORIZATION_HEADER, TOKEN_PREFIX},
     service::auth::encode_jwt_token,
 };
 use crate::model::AppState;
@@ -57,8 +58,16 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         );
     }
 
+    // Bootstrap is served from the deployment-aware auth data backend: a merged
+    // deployment writes to its own store, while an independently deployed console
+    // has no database and must ask the core instead.
+    let auth = match auth_data(&data) {
+        Ok(service) => service,
+        Err(response) => return response,
+    };
+
     // Check if a global admin already exists
-    let has_admin = match data.persistence().role_has_global_admin().await {
+    let has_admin = match auth.role_has_global_admin().await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("Failed to check global admin existence: {}", e);
@@ -75,32 +84,11 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         );
     }
 
-    // Hash password
-    let password_hash = match bcrypt::hash(&password, 10u32) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            return ApiResult::<String>::http_internal_error(e);
-        }
-    };
-
-    // Create user
-    if let Err(e) = data
-        .persistence()
-        .user_create(&username, &password_hash, true)
-        .await
-    {
+    // Create the user and hand it the global admin role. The plaintext password
+    // goes to the backend on purpose: the direct backend hashes it, the remote
+    // backend forwards it so the core does.
+    if let Err(e) = auth.create_admin_user(&username, &password).await {
         tracing::error!("Failed to create admin user '{}': {}", username, e);
-        return ApiResult::<String>::http_internal_error(e);
-    }
-
-    // Create admin role
-    if let Err(e) = data
-        .persistence()
-        .role_create(GLOBAL_ADMIN_ROLE, &username)
-        .await
-    {
-        tracing::error!("Failed to create admin role for '{}': {}", username, e);
         return ApiResult::<String>::http_internal_error(e);
     }
 
