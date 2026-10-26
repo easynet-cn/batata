@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use batata_client::model::OkOrBool;
 use batata_client::{BatataHttpClient, HttpClientConfig};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,20 @@ use crate::{
 /// Admin/maintainer HTTP client for Batata
 pub struct MaintainerClient {
     http_client: BatataHttpClient,
+}
+
+/// Render a service-CRD answer the way the maintainer API reports it.
+///
+/// Upstream replies with the string `"ok"` while Batata's own admin API replies
+/// with the boolean `true`, and both mean the same thing to a caller. Reading
+/// the payload as `OkOrBool` and collapsing it here keeps the published
+/// `Result<String>` signature tolerant of either.
+fn ok_or_bool_to_string(value: OkOrBool) -> String {
+    if value.0 {
+        "ok".to_string()
+    } else {
+        String::new()
+    }
 }
 
 impl MaintainerClient {
@@ -1968,9 +1983,16 @@ impl MaintainerClient {
             selector: &'a str,
         }
 
-        let response: ApiResponse<String> = self
+        // The admin naming endpoints are form-encoded (a JSON body is rejected
+        // with 415), so this mirrors `service_update` below rather than posting
+        // JSON. Upstream reaches the same place by appending the parameters to
+        // the query string.
+        //
+        // Upstream answers with the string "ok", Batata's own admin API with
+        // `true`; `OkOrBool` reads both.
+        let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_json(
+            .post_form(
                 admin_api_path::SERVICE,
                 &Form {
                     namespace_id,
@@ -1982,7 +2004,7 @@ impl MaintainerClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(ok_or_bool_to_string(response.data))
     }
 
     /// Service update.
@@ -2022,7 +2044,9 @@ impl MaintainerClient {
             selector: &'a str,
         }
 
-        let response: ApiResponse<String> = self
+        // See `service_create`: the payload is form-encoded and the answer is
+        // either "ok" (upstream) or `true` (Batata).
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_form(
                 admin_api_path::SERVICE,
@@ -2036,7 +2060,7 @@ impl MaintainerClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(ok_or_bool_to_string(response.data))
     }
 
     /// Service delete.
@@ -2065,7 +2089,8 @@ impl MaintainerClient {
             service_name: &'a str,
         }
 
-        let response: ApiResponse<String> = self
+        // See `service_create`: "ok" upstream, `true` on Batata.
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .delete_with_query(
                 admin_api_path::SERVICE,
@@ -2076,7 +2101,7 @@ impl MaintainerClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(ok_or_bool_to_string(response.data))
     }
 
     /// Service subscribers.

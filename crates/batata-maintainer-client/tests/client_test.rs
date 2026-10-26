@@ -8,7 +8,7 @@ use batata_maintainer_client::model::{
     AgentCard, AgentCardBasicInfo, ClusterInfo, ConfigCloneInfo, Instance, McpServerBasicInfo,
     SameConfigPolicy,
 };
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Create a MaintainerClient pointing at the wiremock server using identity auth
@@ -1088,6 +1088,35 @@ async fn test_service_list() {
     assert_eq!(page.page_items[0].service_name, "my-service");
 }
 
+/// Upstream `ServiceView` — and Batata's admin service list, which mirrors it —
+/// names the service `name`, not `serviceName`.
+#[tokio::test]
+async fn test_service_list_reads_name_field() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ns/service/list"))
+        .respond_with(api_ok_raw(page_json(
+            &[serde_json::json!({
+                "name": "my-service",
+                "groupName": "DEFAULT_GROUP",
+                "clusterCount": 1,
+                "ipCount": 2,
+                "healthyInstanceCount": 2,
+                "triggerFlag": ""
+            })],
+            1,
+        )))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let page = client
+        .service_list("", "DEFAULT_GROUP", "", 1, 10)
+        .await
+        .unwrap();
+    assert_eq!(page.page_items[0].service_name, "my-service");
+}
+
 #[tokio::test]
 async fn test_service_list_with_options() {
     let server = MockServer::start().await;
@@ -1164,6 +1193,45 @@ async fn test_service_create() {
     Mock::given(method("POST"))
         .and(path("/v3/admin/ns/service"))
         .respond_with(api_ok(&"ok".to_string()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let result = client
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "")
+        .await
+        .unwrap();
+    assert_eq!(result, "ok");
+}
+
+/// The admin naming endpoints are form-encoded: a JSON body is answered with
+/// 415, which is what a separated console hit when it created a service.
+#[tokio::test]
+async fn test_service_create_is_form_encoded() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ns/service"))
+        .and(body_string_contains("serviceName=new-svc"))
+        .respond_with(api_ok(&"ok".to_string()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let result = client
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "")
+        .await
+        .unwrap();
+    assert_eq!(result, "ok");
+}
+
+/// Upstream answers service CRUD with the string `"ok"`; Batata's own admin API
+/// answers with `true`. Both have to read as success.
+#[tokio::test]
+async fn test_service_create_accepts_boolean_payload() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ns/service"))
+        .respond_with(api_ok_raw(serde_json::json!(true)))
         .mount(&server)
         .await;
 

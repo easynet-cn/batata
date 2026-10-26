@@ -55,6 +55,11 @@ pub struct ServiceView {
     /// The `group_name` field.
     pub group_name: String,
     /// The `service_name` field.
+    ///
+    /// Upstream `ServiceView` — and Batata's admin service list, which mirrors
+    /// it — serialises this as `name`. The alias accepts both spellings so a
+    /// service list does not come back with every name blank.
+    #[serde(alias = "name")]
     pub service_name: String,
     /// The `cluster_count` field.
     pub cluster_count: i32,

@@ -662,6 +662,395 @@ async fn console_remote_deployment_bootstraps_first_admin() {
     let _ = std::fs::remove_dir_all(&console_store);
 }
 
+/// The console's **data plane** in independent deployment.
+///
+/// The guards above prove a separated console can authenticate, authorize and
+/// manage users. What they do not touch is the part an operator actually uses:
+/// browsing and editing configuration and services. Those go through
+/// `ConsoleDataSource`, whose remote implementation talks to the core with the
+/// maintainer client.
+///
+/// Because the console holds no database of its own, every byte it renders has
+/// to have crossed the process boundary. So each write performed here *through
+/// the console* is read back straight *from the core*, and each read through the
+/// console is checked against what the core stores. A console that silently fell
+/// back to a local empty store would fail every assertion.
+#[tokio::test]
+async fn console_remote_deployment_serves_config_and_naming_data_plane() {
+    let bin = match find_server_binary() {
+        Some(b) => b,
+        None => {
+            eprintln!("SKIP: batata-server binary not found");
+            return;
+        }
+    };
+    let root = workspace_root();
+
+    let core_port = 9648u16;
+    let console_port = 9490u16;
+    let console_main_port = 9491u16;
+
+    let core_store = std::env::temp_dir().join(format!("batata-it-dp-core-{}", std::process::id()));
+    let console_store =
+        std::env::temp_dir().join(format!("batata-it-dp-console-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&core_store);
+    let _ = std::fs::remove_dir_all(&console_store);
+
+    let core = Command::new(&bin)
+        .current_dir(&root)
+        .args([
+            "-m",
+            "standalone",
+            "-d",
+            "server",
+            &format!("--batata.server.main.port={core_port}"),
+            "--batata.core.auth.enabled=true",
+            &format!(
+                "--batata.persistence.embedded.data_dir={}",
+                core_store.display()
+            ),
+        ])
+        .stdout(std::fs::File::create("/tmp/it-dp-core.log").unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn core");
+    let _core_guard = ChildGuard { child: core };
+
+    let core_base = format!("http://127.0.0.1:{core_port}");
+    assert!(
+        wait_for_http(
+            &core_base,
+            "/nacos/v3/admin/core/state/liveness",
+            Duration::from_secs(90)
+        )
+        .await,
+        "core server did not become ready"
+    );
+    seed_admin(&core_base).await;
+
+    let console = Command::new(&bin)
+        .current_dir(&root)
+        .args([
+            "-m",
+            "standalone",
+            "-d",
+            "server",
+            "--batata.deployment.type=console",
+            &format!("--batata.console.remote.server_addr={core_base}"),
+            // `conf/cluster.conf` in the workspace root would otherwise win and
+            // send every maintainer call to 8848.
+            &format!("--batata.member.list=127.0.0.1:{core_port}"),
+            &format!("--batata.console.port={console_port}"),
+            &format!("--batata.server.main.port={console_main_port}"),
+            "--batata.core.auth.enabled=true",
+            "--batata.core.auth.console.enabled=true",
+            &format!(
+                "--batata.persistence.embedded.data_dir={}",
+                console_store.display()
+            ),
+        ])
+        .stdout(std::fs::File::create("/tmp/it-dp-console.log").unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn console-remote");
+    let _console_guard = ChildGuard { child: console };
+
+    let console_base = format!("http://127.0.0.1:{console_port}");
+    assert!(
+        wait_for_http(
+            &console_base,
+            "/v3/console/health/liveness",
+            Duration::from_secs(90)
+        )
+        .await,
+        "console-remote did not become ready"
+    );
+
+    let token = login(&format!("{console_base}/v3/auth/user/login")).await;
+    assert!(!token.is_empty(), "console login returned an empty token");
+    let core_token = login(&format!("{core_base}/nacos/v3/auth/user/login")).await;
+    assert!(!core_token.is_empty(), "core login returned an empty token");
+
+    let ns = "it-dp-ns";
+    let data_id = "it-dp-app.yaml";
+    let group = "DEFAULT_GROUP";
+    let config_qs = format!("dataId={data_id}&groupName={group}&namespaceId={ns}");
+
+    // --- Namespace: written through the console ---
+    let (status, body) = post_form(
+        &format!("{console_base}/v3/console/core/namespace"),
+        &token,
+        &[
+            ("customNamespaceId", ns),
+            ("namespaceName", ns),
+            ("namespaceDesc", "data-plane"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not create a namespace through the core: {body}"
+    );
+
+    // --- Config publish: written through the console, read from the core ---
+    let (status, body) = post_form(
+        &format!("{console_base}/v3/console/cs/config"),
+        &token,
+        &[
+            ("dataId", data_id),
+            ("groupName", group),
+            ("namespaceId", ns),
+            ("content", "batata=v1"),
+            ("type", "yaml"),
+            ("appName", ""),
+            ("configTags", ""),
+            ("desc", "data-plane"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not publish a config through the core: {body}"
+    );
+
+    let on_core = get_with(
+        &format!("{core_base}/nacos/v3/admin/cs/config?{config_qs}"),
+        &core_token,
+    )
+    .await;
+    assert!(
+        on_core.1.contains("batata=v1"),
+        "config published through the console is not stored on the core: {:?}",
+        on_core
+    );
+
+    // --- Config read: through the console, against what the core stores ---
+    let via_console = get_with(
+        &format!("{console_base}/v3/console/cs/config?{config_qs}"),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        via_console.0,
+        StatusCode::OK,
+        "console could not read the config back: {:?}",
+        via_console
+    );
+    assert!(
+        via_console.1.contains("batata=v1") && via_console.1.contains("\"code\":0"),
+        "console read did not return the core's content: {:?}",
+        via_console
+    );
+
+    // --- Config search through the console ---
+    let search = get_with(
+        &format!("{console_base}/v3/console/cs/config/list?{config_qs}&pageNo=1&pageSize=10"),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        search.0,
+        StatusCode::OK,
+        "console config search failed: {:?}",
+        search
+    );
+    assert!(
+        search.1.contains(data_id) && search.1.contains("\"code\":0"),
+        "console config search did not return the published data id: {:?}",
+        search
+    );
+
+    // --- Config update through the console lands on the core ---
+    let (status, body) = post_form(
+        &format!("{console_base}/v3/console/cs/config"),
+        &token,
+        &[
+            ("dataId", data_id),
+            ("groupName", group),
+            ("namespaceId", ns),
+            ("content", "batata=v2"),
+            ("type", "yaml"),
+            ("appName", ""),
+            ("configTags", ""),
+            ("desc", "data-plane"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not update the config: {body}"
+    );
+
+    let updated = get_with(
+        &format!("{core_base}/nacos/v3/admin/cs/config?{config_qs}"),
+        &core_token,
+    )
+    .await;
+    assert!(
+        updated.1.contains("batata=v2"),
+        "config update did not reach the core: {:?}",
+        updated
+    );
+
+    // --- Config history through the console ---
+    let history = get_with(
+        &format!("{console_base}/v3/console/cs/history/list?{config_qs}&pageNo=1&pageSize=10"),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        history.0,
+        StatusCode::OK,
+        "console config history failed: {:?}",
+        history
+    );
+    assert!(
+        history.1.contains("\"code\":0") && history.1.contains(data_id),
+        "console config history did not return the core's history rows: {:?}",
+        history
+    );
+
+    // --- Naming: service created through the console, verified on the core ---
+    let service = "it-dp-service";
+    let (status, body) = post_json(
+        &format!("{console_base}/v3/console/ns/service"),
+        &token,
+        serde_json::json!({
+            "serviceName": service,
+            "namespaceId": "public",
+            "groupName": group,
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not create a service through the core: {body}"
+    );
+
+    let service_on_core = get_with(
+        &format!(
+            "{core_base}/nacos/v3/admin/ns/service/list?serviceName={service}\
+             &namespaceId=public&pageNo=1&pageSize=10"
+        ),
+        &core_token,
+    )
+    .await;
+    assert!(
+        service_on_core.1.contains(service),
+        "service created through the console is not present on the core: {:?}",
+        service_on_core
+    );
+
+    let service_via_console = get_with(
+        &format!(
+            "{console_base}/v3/console/ns/service/list?namespaceId=public&pageNo=1&pageSize=10"
+        ),
+        &token,
+    )
+    .await;
+    assert!(
+        service_via_console.1.contains(service),
+        "console service list did not show the service stored on the core: {:?}",
+        service_via_console
+    );
+
+    // --- Deletes travel the same path ---
+    let (status, body) = delete_with(
+        &format!("{console_base}/v3/console/cs/config?{config_qs}"),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not delete the config: {body}"
+    );
+    let deleted = get_with(
+        &format!("{core_base}/nacos/v3/admin/cs/config?{config_qs}"),
+        &core_token,
+    )
+    .await;
+    assert!(
+        !deleted.1.contains("batata=v2"),
+        "config deleted through the console is still on the core: {:?}",
+        deleted
+    );
+
+    let (status, body) = delete_with(
+        &format!(
+            "{console_base}/v3/console/ns/service?serviceName={service}&namespaceId=public&groupName={group}"
+        ),
+        &token,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "console could not delete the service: {body}"
+    );
+
+    let _ = std::fs::remove_dir_all(&core_store);
+    let _ = std::fs::remove_dir_all(&console_store);
+}
+
+/// GET a console endpoint and return the raw status plus body.
+async fn get_with(url: &str, token: &str) -> (StatusCode, String) {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("console GET request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    (status, body)
+}
+
+/// POST a form-encoded console call and return the raw status plus body.
+async fn post_form(url: &str, token: &str, form: &[(&str, &str)]) -> (StatusCode, String) {
+    let resp = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token)
+        .form(form)
+        .send()
+        .await
+        .expect("console POST request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    (status, body)
+}
+
+/// POST a JSON console call and return the raw status plus body.
+async fn post_json(url: &str, token: &str, body: serde_json::Value) -> (StatusCode, String) {
+    let resp = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("console JSON POST request");
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    (status, text)
+}
+
+/// DELETE a console resource and return the raw status plus body.
+async fn delete_with(url: &str, token: &str) -> (StatusCode, String) {
+    let resp = reqwest::Client::new()
+        .delete(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("console DELETE request");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    (status, body)
+}
+
 /// POST a form-encoded management call with the end user's token.
 async fn auth_form(url: &str, token: &str, form: &[(&str, &str)]) -> StatusCode {
     let resp = reqwest::Client::new()

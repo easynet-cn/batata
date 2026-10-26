@@ -37,6 +37,45 @@ Convenience scripts are provided in the `scripts/` directory:
 ./scripts/test.sh separation
 ```
 
+## Separated Console Deployment
+
+`-d console` runs the console as its own process. It serves the web UI plus the
+`/v3/console/**` and `/v3/auth/**` surfaces, and holds **no** database, Raft log
+or RocksDB store — every byte it renders comes from a core node over HTTP.
+
+Addressing: the console resolves the core in this order, so the first match
+wins —
+
+1. `batata.member.list`
+2. `conf/cluster.conf`
+3. `batata.console.remote.server_addr`
+
+Because a checkout usually ships a `conf/cluster.conf`, pin the target
+explicitly when the core is not on the address listed there:
+
+```bash
+./target/release/batata-server -d console \
+  --batata.member.list=127.0.0.1:8848 \
+  --batata.console.port=8081
+```
+
+Authentication: the console runs the auth plugin **locally**, so token
+validation and the RBAC decision use the end user's identity; only the
+user/role/permission *data* is fetched from the core. Console-to-core calls
+authenticate with the server identity headers when they are configured
+(`batata.core.auth.server.identity.key` / `.value`), and fall back to
+`batata.console.remote.username` / `.password` otherwise. When auth is enabled,
+configure the identity pair so the console does not have to log in as a user.
+
+Known gaps in remote mode (they return an error instead of proxying):
+
+- cluster member state updates (`ConsoleDataSource::cluster_update_member_state`)
+- service cluster updates (`ConsoleDataSource::service_update_cluster`)
+
+Everything else on `/v3/console/**` — configuration CRUD, history, namespaces,
+services — is proxied and covered by
+`crates/batata-console/tests/console_remote_deployment.rs`.
+
 ## Standalone Mode
 
 ```bash
