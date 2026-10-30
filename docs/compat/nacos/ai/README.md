@@ -184,8 +184,8 @@ Goal: introduce the upstream layering before adding endpoints.
       > The trait default still returns an explicit "not supported by this
       storage backend" error, as a safety net for any backend added later that
       forgets to implement the index.
-- [ ] `runtime/` layer — **the dependency is not the blocker; the work simply
-      is not done.** Correction to an earlier note that called this blocked:
+- [x] `runtime/` layer — **the dependency is not the blocker; the work simply
+      was not done.** Correction to an earlier note that called this blocked:
       Batata does have the foundation it was said to lack —
       `EphemeralClientOperationService` (DashMap + Distro) for Naming ephemeral
       registrations, and `batata-ai`'s `AiEndpointService`, which already
@@ -206,6 +206,10 @@ Goal: introduce the upstream layering before adding endpoints.
       Coverage note: the range resolution is unit-tested, not route-tested —
       `NamingServiceProvider` has 47 methods, so a stub for an end-to-end
       discover test would dwarf the behaviour it checks.
+- [ ] `AgentRuntimePublicationCapacityGate` — upstream caps how many endpoints
+      one publisher may register. This is the only piece of the `runtime/`
+      layer still missing; it is a server-side protective limit rather than part
+      of the client contract, so `radV1: true` stands without it.
 - [x] **MCP admin moved onto the `ai_resource` service.** `api/v3/admin/ai/route.rs`
       mounted a legacy shim backed by the in-memory `McpServerRegistry`, which
       exposed ~5 endpoints; it now mounts `batata_ai::mcp_admin_routes()`, which
@@ -607,12 +611,16 @@ has no `LIKE`:
       `PromptAdminController`.
 
       Batata additionally keeps its own legacy console endpoints (`list`,
-      detail, create, update, delete, `endpoint` add/remove, `stats`,
-      `importToolsFromMcp`, `import/validate`). The `endpoint` pair has no
-      upstream counterpart.
+      detail, create, update, delete, `stats`, `importToolsFromMcp`,
+      `import/validate`).
 
-      > Not covered by tests: `search` (needs the async `search_index` task and
-      > the document/chunk index) and the legacy console endpoints above.
+      > Corrected 2026-10-30: an earlier revision of this note listed an
+      > `endpoint` add/remove pair here and called `search` untested. Neither is
+      > true. There is no `endpoint` route on the console MCP scope —
+      > `git log -S` finds no such route in `v3/ai_mcp.rs` at any point, and the
+      > only `/endpoints` surface is the RAD client contract
+      > (`/v3/client/ai/agents/endpoints`). And `search` has had two route tests
+      > since the `#[ignore]` clean-up; they just were never reflected here.
 - [x] ~~`online` / `offline`~~ — done (see above; also wired on
       `POST /ai/mcp/online` and `POST /ai/mcp/offline`)
 - [x] ~~Admin/Client controller split (management vs runtime discovery)~~ —
@@ -891,7 +899,8 @@ assertions against MySQL or PostgreSQL instead.
 
 | Test binary | Tests | What it pins down |
 |---|---|---|
-| `batata-server` / `mcp_console_routes` | 26 | all MCP console endpoints end to end (path → handler → service → store) |
+| `batata-server` / `mcp_console_routes` | 26 | the MCP console version lifecycle, `search`, `labels`, `scope`, import batch, A2A agent lifecycle |
+| `batata-server` / `mcp_console_crud_routes` | 11 | the rest of the console surface: `list`, detail, create/update/delete, `stats`, `status`, `importToolsFromMcp` |
 | `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
 | `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |
 | `batata-server` / `skill_console_routes` | 5 | force-publish, redraft, ZIP precheck and batch upload, download counting |
@@ -910,6 +919,7 @@ assertions against MySQL or PostgreSQL instead.
 | `batata-ai` / `a2a_visibility` | 2 | A2A scope/owner enforcement |
 | `batata-ai` / `mcp_search_embedded` | 1 | the whole search loop on RocksDB, end to end |
 | `batata-persistence` / `ai_search_persistence` | 1 | document/chunk/task persistence |
+| `batata-persistence` / `ai_search_distributed` | 1 | the same index on the **distributed (Raft)** backend, against a real one-node cluster |
 
 ```bash
 # default: embedded RocksDB, no containers
@@ -939,9 +949,13 @@ Two notes that cost real time and are easy to trip over:
 
 ### Not covered
 
-- Embedded + **Cluster** (Raft) search path — no test drives it.
-- Legacy console endpoints (`stats`, `importToolsFromMcp`, `import/validate`,
-  `endpoint` add/remove).
+- The **RAD client routes** (`GET /v3/client/ai/agents`, `POST`/`DELETE`
+  `/v3/client/ai/agents/endpoints`, `PUT .../endpoints/heartbeat`). The version
+  range resolution behind them is unit-tested (`service/version_range.rs`,
+  9 tests) but nothing drives the routes: `NamingServiceProvider` has 47
+  methods, so a stub would dwarf the behaviour it checks.
+- The legacy console `endpoint` add/remove pair this doc used to list — it
+  does not exist (see the correction above).
 - The upstream AI surfaces Batata does not implement at all (RAD/AgentSpec
   packaging, agent watch projections, A2A migration, the vector channel).
 
