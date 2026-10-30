@@ -488,8 +488,13 @@ has no `LIKE`:
 >   matches in memory, so it is O(chunks in namespace) rather than
 >   index-backed. Fine at current scale; it will not scale like the SQL path. A
 >   term index would be needed if the chunk count grows.
-> - **Embedded/Cluster**: the consumer loop runs on every node; this is
->   unverified — there is no test that drives the Raft-backed path.
+> - **Embedded/Cluster**: the consumer loop runs on every node. The
+>   Raft-backed *storage* path is now exercised —
+>   `batata-persistence/tests/ai_search_distributed.rs` builds a real one-node
+>   Raft cluster and drives document upsert, chunk replacement, keyword search
+>   and task scheduling through `DistributedPersistService`. What is still
+>   unverified is multi-node consumer behaviour: how the loop actually behaves
+>   when several nodes run it against the same Raft log.
 > - **Embedded/Cluster**: writes go through Raft; the consumer runs on every
 >   node and the claim is not atomic, so nodes can duplicate work (safe but
 >   wasteful). No per-node leader election for the consumer yet.
@@ -972,11 +977,16 @@ Two notes that cost real time and are easy to trip over:
 
 ### Not covered
 
-- The **RAD client routes** (`GET /v3/client/ai/agents`, `POST`/`DELETE`
-  `/v3/client/ai/agents/endpoints`, `PUT .../endpoints/heartbeat`). The version
-  range resolution behind them is unit-tested (`service/version_range.rs`,
-  9 tests) but nothing drives the routes: `NamingServiceProvider` has 47
-  methods, so a stub would dwarf the behaviour it checks.
+- **Update 2026-10-31: the RAD client routes are covered.** The note below
+  used to say a stub was impractical; that was wrong. `AiEndpointService` only
+  needs `Arc<dyn NamingServiceProvider>`, and `batata_naming::NamingService` is
+  a plain in-memory structure, so
+  `crates/batata-server/tests/agent_client_routes.rs` drives all five client
+  endpoints end to end (9 tests). Three deviations it found are listed as open
+  items in section 2: `DELETE /endpoints` cannot reach an unpublished runtime
+  version, `GET /` requires `version` where upstream resolves the `latest`
+  label, and the registration body is JSON rather than upstream's form +
+  `runtimeVersion` + `endpoints` JSON string.
 - The legacy console `endpoint` add/remove pair this doc used to list — it
   does not exist (see the correction above).
 - The upstream AI surfaces Batata does not implement at all (RAD/AgentSpec
