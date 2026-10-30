@@ -203,13 +203,35 @@ Goal: introduce the upstream layering before adding endpoints.
       Still missing: upstream's `AgentRuntimePublicationCapacityGate`, which
       caps endpoints per publisher. It is a server-side protective limit rather
       than part of the client contract, so it does not change the declaration.
-      Coverage note: the range resolution is unit-tested, not route-tested —
-      `NamingServiceProvider` has 47 methods, so a stub for an end-to-end
-      discover test would dwarf the behaviour it checks.
+      Coverage note: the range resolution used to be unit-tested only, because
+      `AiEndpointService` wants a `NamingServiceProvider` and that trait has 47
+      methods. It turned out no stub is needed — `batata_naming::NamingService`
+      is a plain in-memory structure, so
+      `crates/batata-server/tests/agent_client_routes.rs` drives all five
+      client endpoints end to end (9 tests).
 - [ ] `AgentRuntimePublicationCapacityGate` — upstream caps how many endpoints
       one publisher may register. This is the only piece of the `runtime/`
       layer still missing; it is a server-side protective limit rather than part
       of the client contract, so `radV1: true` stands without it.
+- [ ] **`AgentClientController` deviations found while route-testing it.** Two,
+      both pinned by a test so they stay deliberate:
+      - *`DELETE /endpoints` cannot reach an unpublished runtime version.*
+        Upstream's `AgentHttpClientLifecycleService#deregister` drops whatever
+        **that client** published, keyed by `clientId`; Batata has no
+        client-lifecycle store and instead enumerates
+        `A2aAgentService::list_versions`, so a version that was registered
+        through `POST /endpoints` but never published through the catalog
+        survives the delete.
+        (`deregister_cannot_reach_a_version_that_was_never_published`.)
+      - *`GET /` requires `version`.* Upstream's
+        `AgentDiscoveryApplicationService#resolveVersion` treats a missing
+        version as a request for the `latest` label and only 404s when the
+        agent has no such label; Batata answers 400 `version is required`.
+        (`discover_requires_a_version`.)
+      A third difference is wire-format only, not behaviour: upstream's
+      `AgentEndpointRegistrationForm` is form-encoded with `runtimeVersion`
+      plus a `versionRange` and `endpoints` as a **JSON string**; Batata takes
+      a JSON body and aliases `version`.
 - [x] **MCP admin moved onto the `ai_resource` service.** `api/v3/admin/ai/route.rs`
       mounted a legacy shim backed by the in-memory `McpServerRegistry`, which
       exposed ~5 endpoints; it now mounts `batata_ai::mcp_admin_routes()`, which
@@ -901,6 +923,7 @@ assertions against MySQL or PostgreSQL instead.
 |---|---|---|
 | `batata-server` / `mcp_console_routes` | 26 | the MCP console version lifecycle, `search`, `labels`, `scope`, import batch, A2A agent lifecycle |
 | `batata-server` / `mcp_console_crud_routes` | 11 | the rest of the console surface: `list`, detail, create/update/delete, `stats`, `status`, `importToolsFromMcp` |
+| `batata-server` / `agent_client_routes` | 9 | the RAD client contract: heartbeat liveness, publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback |
 | `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
 | `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |
 | `batata-server` / `skill_console_routes` | 5 | force-publish, redraft, ZIP precheck and batch upload, download counting |
