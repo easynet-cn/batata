@@ -1081,7 +1081,8 @@ Two notes that cost real time and are easy to trip over:
      placeholder, which also violates the "no stubs" rule.
 
    Follow-up: the unified AI resource import (`AiResourceImportAdminController`)
-   is a separate feature and remains unimplemented.
+   is a separate feature and was implemented afterwards — see
+   [§8 AI resource import](#8-ai-resource-import).
 
    Scope: this rule applies to the AI/MCP module. Config and naming v1/v2 APIs
    are **not** marked deprecated upstream and remain in scope.
@@ -1113,3 +1114,60 @@ Two notes that cost real time and are easy to trip over:
    In scope as logging, not persistence.
 4. Does `batata-copilot` have an upstream counterpart, or is it Batata-specific
    (and therefore excluded from parity work)?
+
+---
+
+## 8. AI resource import
+
+Upstream ships a generic importer in the `ai` module: the same four paths are
+mounted twice, as `/v3/admin/ai/import` (`AiResourceImportAdminController`,
+`ApiType.ADMIN_API`) and `/v3/console/ai/import`
+(`ConsoleAiResourceImportController`, `ApiType.CONSOLE_API`), both backed by
+`AiResourceImportManager` over pluggable `AiResourceImportServiceBuilder`
+plugins.
+
+Batata ports it in `batata-console/src/v3/ai_import.rs` and registers it with
+`admin_routes()` / `console_routes()`; the only difference between the two is
+the `ApiType` handed to `secured!`.
+
+### Sources
+
+The four default plugins are registered in upstream SPI order. `sourceId` is the
+plugin name; `pluginName` in the response is the **importer type**, which is why
+`mcp-official` reports `mcp-registry`:
+
+| sourceId | pluginName (importer type) | resourceTypes | endpoint |
+|---|---|---|---|
+| `mcp-registry-protocol` | `mcp-registry` | `mcp` | configurable, blank by default |
+| `mcp-official` | `mcp-registry` | `mcp` | `https://registry.modelcontextprotocol.io/v0/servers` |
+| `skills-well-known` | `skills-well-known` | `skill` | configurable, blank by default |
+| `skills-sh` | `skills-sh` | `skill` | `https://skills.sh` |
+
+Configurable endpoints come from
+`batata.ai.import.sources.<sourceId>.endpoint`; a blank one makes the source
+unusable (`PARAMETER_VALIDATE_ERROR`, "endpoint is missing"), matching upstream
+`validateEndpoint`. `batata.ai.import.enabled` and the per-source `enabled`
+switch mirror `nacos.plugin.ai-resource-import.enabled`.
+
+### Request contract
+
+`resourceType` and `sourceId` are mandatory on search/validate/execute, and
+`selectedItems` on validate/execute; a missing one is `PARAMETER_MISSING`, an
+unparseable `options`/`selectedItems` is `PARAMETER_VALIDATE_ERROR`, and an empty
+`selectedItems` list is rejected after parsing. Unknown source → 404
+`RESOURCE_NOT_FOUND`; a source that does not handle the type → 400.
+
+`validationToken` is accepted on the wire but never checked, and the validate
+response leaves it `null` — upstream does the same (`AiResourceImportManager`
+never populates it).
+
+### Known gap
+
+`mcp-registry` is fully implemented: search and fetch speak the MCP Registry
+protocol (`GET …?cursor=&limit=&search=`), and import creates or updates the
+server through `McpServerService`. The two **skill** sources are listed and
+routed but have no fetcher yet, so their items come back `INVALID` /
+`FAILED`/`SKIPPED` with an explicit "not implemented yet" message rather than a
+fabricated success. Upstream's `SkillsShImportService` and
+`SkillWellKnownImportService` (~1.4k lines of archive/zip handling) are not
+ported.

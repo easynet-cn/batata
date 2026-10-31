@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Deserializer};
 
 // ============================================================================
@@ -3476,6 +3478,59 @@ pub struct AiConfig {
     #[serde(default)]
     /// RAD (Runtime Agent Discovery) settings.
     pub rad: AiRadConfig,
+    #[serde(default)]
+    /// AI resource import settings.
+    pub import: AiImportConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+/// Configuration for `AiImportConfig`.
+///
+/// Mirrors upstream `nacos.plugin.ai-resource-import.*`: one module switch
+/// plus per-plugin overrides. Batata flattens the per-plugin keys to
+/// `batata.ai.import.sources.<pluginName>.<item>`, where `<pluginName>` is the
+/// importer's own id (`mcp-official`, `skills-sh`, ...).
+pub struct AiImportConfig {
+    #[serde(default = "default_true")]
+    /// Whether the AI resource import module is enabled at all.
+    pub enabled: bool,
+    #[serde(default)]
+    /// Per-source overrides, keyed by import source id.
+    pub sources: BTreeMap<String, AiImportSourceConfig>,
+}
+
+impl Default for AiImportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            sources: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+/// Configuration for `AiImportSourceConfig`.
+pub struct AiImportSourceConfig {
+    #[serde(default)]
+    /// Endpoint override for a source whose endpoint is not fixed.
+    ///
+    /// Upstream leaves these blank until an operator configures them, and a
+    /// blank endpoint makes the plugin unusable rather than falling back to a
+    /// hard-coded default.
+    pub endpoint: Option<String>,
+    #[serde(default = "default_true")]
+    /// Whether this individual source is enabled.
+    pub enabled: bool,
+}
+
+impl AiImportSourceConfig {
+    /// The configured endpoint, with blanks normalised to "not configured".
+    pub fn endpoint(&self) -> Option<&str> {
+        self.endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
