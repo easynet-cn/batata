@@ -1070,6 +1070,9 @@ impl AiResourcePersistence for EmbeddedPersistService {
             Some(existing) => {
                 stored.gmt_create = existing.gmt_create;
                 stored.gmt_modified = Some(now);
+                // See `AiResourcePersistence::task_upsert`: overwriting an
+                // existing task retires whatever lease is held on it.
+                stored.revision = existing.revision + 1;
             }
             None => {
                 stored.gmt_create = Some(now.clone());
@@ -1456,6 +1459,67 @@ mod tests {
             .unwrap()
             .expect("expired lease must be taken over");
         assert_eq!(taken.lease_token, leased.lease_token + 1);
+    }
+
+    /// Re-scheduling a resource retires the lease a worker already holds.
+    ///
+    /// `task_upsert` moves the revision on, which is what invalidates the
+    /// claim in flight. Without it, the re-schedule would reset `lease_token`
+    /// to `0` and the next claim would mint token `1` — the same token the
+    /// first worker is holding — so the stale worker's completion would be
+    /// accepted and the newer schedule silently lost.
+    #[tokio::test]
+    async fn test_embedded_reschedule_supersedes_an_in_flight_lease() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("rescheduled", now - 1_000))
+            .await
+            .unwrap();
+        let snapshot = svc.task_find("rescheduled").await.unwrap().expect("task");
+        let leased = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+        assert_eq!(leased.lease_token, 1);
+
+        // A new version of the resource arrives while the first worker runs.
+        svc.task_upsert(&task("rescheduled", now)).await.unwrap();
+        let stored = svc.task_find("rescheduled").await.unwrap().expect("task");
+        assert_eq!(stored.revision, 2, "the re-schedule must move the revision");
+        assert_eq!(stored.status, "pending");
+
+        // A second worker picks it up and, because the token was reset, gets
+        // the same token number the first worker holds.
+        let reclaimed = svc
+            .task_claim(&stored, 60_000, now)
+            .await
+            .unwrap()
+            .expect("the re-scheduled task must be claimable");
+        assert_eq!(reclaimed.lease_token, 1, "the token numbers collide");
+
+        // Only the revision keeps them apart, and it must.
+        let mut done = leased.clone();
+        done.status = "completed".to_string();
+        done.lease_token = 0;
+        done.lease_expire_at = None;
+        assert!(
+            !svc.task_update_leased(&done, leased.lease_token)
+                .await
+                .unwrap(),
+            "the superseded worker must not complete the task"
+        );
+
+        let mut done = reclaimed.clone();
+        done.status = "completed".to_string();
+        done.lease_token = 0;
+        done.lease_expire_at = None;
+        assert!(
+            svc.task_update_leased(&done, reclaimed.lease_token)
+                .await
+                .unwrap(),
+            "the current owner must still be able to complete it"
+        );
     }
 
     /// Renewing pushes the expiry forward so a long stage keeps the task.

@@ -307,6 +307,14 @@ that are still due, and `complete` / `retry` / `remove` / `advanceToEnhancement`
   claim for the same task are ordered and the loser's write is dropped. Both
   nodes see the same due task locally, so nothing else could separate them.
 
+Re-scheduling goes through `task_upsert`, which moves `revision` on when the row
+already exists (upstream's `revision = revision + 1`). That is what retires an
+in-flight worker: claims and their follow-up writes are pinned to the revision
+the worker read, so a schedule that lands mid-flight invalidates them. It also
+resolves a token collision — a re-schedule resets `lease_token` to `0`, so the
+next claim mints `1`, which can equal the token the running worker already
+holds. Without the revision bump those two would be indistinguishable.
+
 Renewal is ported too: the consumer's `TaskLease` pushes the 60s lease forward
 every 20s on a background task and once more before recording the outcome, so a
 long stage is not taken over while it is still running. A renewal is refused

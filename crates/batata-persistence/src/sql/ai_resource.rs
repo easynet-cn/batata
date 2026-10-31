@@ -981,6 +981,15 @@ impl AiResourcePersistence for ExternalDbPersistService {
 
     async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
         let now = Utc::now().naive_utc();
+        // See `AiResourcePersistence::task_upsert`: overwriting an existing
+        // task retires whatever lease is held on it by moving the revision on.
+        let existing = ai_resource_task::Entity::find_by_id(task.task_key.clone())
+            .one(&self.db)
+            .await?;
+        let revision = match &existing {
+            Some(row) => row.revision + 1,
+            None => task.revision,
+        };
         let model = ai_resource_task::ActiveModel {
             task_key: Set(task.task_key.clone()),
             namespace_id: Set(task.namespace_id.clone()),
@@ -990,7 +999,7 @@ impl AiResourcePersistence for ExternalDbPersistService {
             task_payload: Set(task.task_payload.clone()),
             task_result: Set(task.task_result.clone()),
             retry_count: Set(task.retry_count),
-            revision: Set(task.revision),
+            revision: Set(revision),
             lease_token: Set(task.lease_token),
             next_execute_at: Set(task.next_execute_at),
             lease_expire_at: Set(task.lease_expire_at),

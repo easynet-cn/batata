@@ -371,7 +371,17 @@ pub trait AiResourcePersistence: Send + Sync {
     // ai_resource_task operations
     // ========================================================================
 
-    /// Insert or update a task by its key.
+    /// Insert a task, or supersede the one already stored under its key.
+    ///
+    /// Mirrors upstream `JdbcAiResourceIndexTaskRepository.schedule`, whose
+    /// update path sets `revision = revision + 1`. That bump is what retires
+    /// an in-flight worker: the claim it holds is pinned to the revision it
+    /// read, so once the revision moves every write it still tries to make is
+    /// refused. Without it, re-scheduling a resource while a worker is
+    /// rebuilding it would reset `lease_token` to `0`, and a second worker's
+    /// claim would then mint the same token the first one is holding — the two
+    /// would be indistinguishable and the stale worker's completion would be
+    /// accepted.
     async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
         let _ = task;
         anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)

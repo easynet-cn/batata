@@ -1182,6 +1182,9 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(existing) => {
                 stored.gmt_create = existing.gmt_create;
                 stored.gmt_modified = Some(now);
+                // See `AiResourcePersistence::task_upsert`: overwriting an
+                // existing task retires whatever lease is held on it.
+                stored.revision = existing.revision + 1;
             }
             None => {
                 stored.gmt_create = Some(now.clone());
