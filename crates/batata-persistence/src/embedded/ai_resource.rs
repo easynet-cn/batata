@@ -1141,6 +1141,35 @@ impl AiResourcePersistence for EmbeddedPersistService {
         Ok(Some(claimed))
     }
 
+    async fn task_renew_lease(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<bool> {
+        let _guard = lock_tasks(self);
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(false);
+        };
+        // The token still being ours is not enough: once the expiry has passed
+        // another worker may already have taken over, and renewing then would
+        // hand the lease back to a worker that no longer owns it.
+        if stored.lease_token != task.lease_token {
+            return Ok(false);
+        }
+        if !stored
+            .lease_expire_at
+            .is_some_and(|expiry| expiry >= now_millis)
+        {
+            return Ok(false);
+        }
+        let mut renewed = stored.clone();
+        renewed.lease_expire_at = Some(now_millis + lease_millis);
+        renewed.gmt_modified = Some(now_rfc3339());
+        self.put_task(&renewed)?;
+        Ok(true)
+    }
+
     async fn task_update_leased(
         &self,
         task: &AiResourceTaskInfo,
@@ -1427,6 +1456,85 @@ mod tests {
             .unwrap()
             .expect("expired lease must be taken over");
         assert_eq!(taken.lease_token, leased.lease_token + 1);
+    }
+
+    /// Renewing pushes the expiry forward so a long stage keeps the task.
+    #[tokio::test]
+    async fn test_embedded_task_lease_renewal_extends_the_expiry() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("renew", now - 1_000)).await.unwrap();
+        let snapshot = svc.task_find("renew").await.unwrap().expect("task");
+        let claimed = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+
+        let later = now + 20_000;
+        assert!(svc.task_renew_lease(&claimed, 60_000, later).await.unwrap());
+        let stored = svc.task_find("renew").await.unwrap().expect("task");
+        assert_eq!(stored.lease_expire_at, Some(later + 60_000));
+
+        // Without the renewal the task would have come due again by now.
+        assert!(
+            svc.task_claim(&claimed, 60_000, later + 30_000)
+                .await
+                .unwrap()
+                .is_none(),
+            "a renewed lease must not be claimable"
+        );
+    }
+
+    /// A lease that has already lapsed cannot be renewed back.
+    ///
+    /// This is the case that makes renewal safe: once the expiry has passed
+    /// another worker may own the task, so a renewal arriving late has to fail
+    /// instead of stealing the task back.
+    #[tokio::test]
+    async fn test_embedded_task_lease_renewal_cannot_resurrect_a_lapsed_lease() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("lapsed", now - 1_000)).await.unwrap();
+        let snapshot = svc.task_find("lapsed").await.unwrap().expect("task");
+        let first = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+
+        // The lease simply runs out — nobody has taken the task over yet, so
+        // the token still matches. Renewal has to fail anyway: the task is due
+        // again and another worker may be about to claim it.
+        assert!(
+            !svc.task_renew_lease(&first, 60_000, now + 60_001)
+                .await
+                .unwrap(),
+            "a lapsed lease must not be renewable even before anyone takes over"
+        );
+
+        // Once a second worker has taken over, the token no longer matches.
+        let second = svc
+            .task_claim(&first, 60_000, now + 60_001)
+            .await
+            .unwrap()
+            .expect("expired lease must be taken over");
+
+        assert!(
+            !svc.task_renew_lease(&first, 60_000, now + 61_000)
+                .await
+                .unwrap(),
+            "the previous owner must not renew a lease it no longer holds"
+        );
+
+        // And the takeover survives: the successor still owns it.
+        assert!(
+            svc.task_renew_lease(&second, 60_000, now + 61_000)
+                .await
+                .unwrap()
+        );
+        let stored = svc.task_find("lapsed").await.unwrap().expect("task");
+        assert_eq!(stored.lease_token, second.lease_token);
     }
 
     /// A worker that lost the lease must not write over its successor.

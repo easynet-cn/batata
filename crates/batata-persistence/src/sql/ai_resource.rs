@@ -1136,6 +1136,34 @@ impl AiResourcePersistence for ExternalDbPersistService {
         Ok(Some(claimed))
     }
 
+    async fn task_renew_lease(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<bool> {
+        let lease_expire_at = now_millis + lease_millis;
+        // `lease_expire_at >= now` is upstream's guard against renewing a lease
+        // that has already lapsed and been taken over by another worker.
+        let result = ai_resource_task::Entity::update_many()
+            .col_expr(
+                ai_resource_task::Column::LeaseExpireAt,
+                Expr::value(lease_expire_at),
+            )
+            .col_expr(
+                ai_resource_task::Column::GmtModified,
+                Expr::value(Utc::now().naive_utc()),
+            )
+            .filter(ai_resource_task::Column::TaskKey.eq(task.task_key.clone()))
+            .filter(ai_resource_task::Column::TaskType.eq(task.task_type.clone()))
+            .filter(ai_resource_task::Column::LeaseToken.eq(task.lease_token))
+            .filter(ai_resource_task::Column::LeaseExpireAt.gte(now_millis))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected == 1)
+    }
+
     async fn task_update_leased(
         &self,
         task: &AiResourceTaskInfo,

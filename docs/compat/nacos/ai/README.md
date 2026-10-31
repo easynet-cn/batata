@@ -400,22 +400,25 @@ they carry no end-user identity.
       > compared against themselves, and 64 hex chars still fit `varchar(64)`).
       >
       - `search/consumer.rs`: `consume_once()` polls due tasks (batch 100),
-        skips completed and still-leased ones, claims with a 60s lease, runs
-        `base_index`, then completes / removes / retries. Retry backoff is
+        skips completed ones, claims with a 60s lease, runs `base_index`, then
+        completes / removes / retries. Retry backoff is
         `min(300, 5 << min(retry_count, 6))` seconds, matching upstream.
         Removal (not retry) is used when the resource is gone.
         `rebuild_latest_mcp` also prunes documents left by superseded
         versions, so only the latest version stays indexed.
 
-      Covered by `crates/batata-ai/tests/mcp_search_index.rs` — 3 tests on
-      both engines covering schedule→rebuild→skip, publish→consume→complete
-      →skip, and removal for a missing resource — plus 17 unit tests.
+        The lease is renewed every 20s while a stage runs (upstream's
+        `TaskLease`), and renewed once more before the outcome is recorded: a
+        worker whose lease lapsed meanwhile discards its result instead of
+        writing over its successor's task.
 
-      > Known limitation: claiming is **not** atomic. The persistence layer
-      > exposes an upsert for tasks but no compare-and-set, so two nodes could
-      > claim the same task. The projection is idempotent (keyed by
-      > `source_digest`), so the worst case is duplicate work, not a wrong
-      > index. A proper `task_claim` with a revision predicate would fix it.
+      Covered by `crates/batata-ai/tests/mcp_search_index.rs` — 5 tests on
+      both engines covering schedule→rebuild→skip, publish→consume→complete
+      →skip, removal for a missing resource, and two concurrent consumers
+      against one task — plus 17 unit tests.
+
+      > The claim is exclusive across nodes: see the note under
+      > `ai_resource*` below.
       >
       Wired into server startup: `start_ai_search_index_consumer` in
       `builder/app_builder.rs` spawns a poll loop every
@@ -458,9 +461,10 @@ they carry no end-user identity.
       both engines, plus 21 unit tests.
 
       > Still missing: the `llm_enhancement` stage and vector/embedding
-      > storage. Note the consumer loop runs on **every** node; with a
-      > non-atomic claim this is safe (idempotent projection) but means
-      > duplicate work across nodes.
+      > storage. The consumer loop runs on **every** node, which is safe
+      > because the claim is exclusive and because the projection is
+      > idempotent (keyed by `source_digest`); the most a node can do is
+      > pick up work another node has abandoned.
 
 ## Backend coverage (standalone vs cluster)
 
@@ -515,9 +519,13 @@ has no `LIKE`:
 >   **The index-task claim is exclusive across nodes**: the comparison is
 >   evaluated during the Raft apply (`AiWriteOp::PutIfUnchanged`), so two nodes
 >   that both see the same due task and both propose a claim are ordered and the
->   loser writes nothing — `two_nodes_cannot_both_claim_one_index_task` pins it
->   down. This mirrors upstream, which also relies on the claim's
->   compare-and-set rather than on electing a consumer leader.
+  >   loser writes nothing — `two_nodes_cannot_both_claim_one_index_task` pins it
+  >   down. This mirrors upstream, which also relies on the claim's
+  >   compare-and-set rather than on electing a consumer leader. Lease renewal
+  >   is replicated the same way, so every node compares against the expiry the
+  >   owner pushed forward; and a lease that has already lapsed cannot be
+  >   renewed back, even by the worker that used to hold it
+  >   (`a_renewed_lease_replicates_and_a_lapsed_one_cannot_be_renewed`).
 > - **Embedding computation: done.** `search::embedding` ports upstream's
 >   default `HashingAiResourceEmbeddingService` — model id
 >   `nacos-local-hashing-embedding-v1`, 384 dims, CRC32 bucket hashing with

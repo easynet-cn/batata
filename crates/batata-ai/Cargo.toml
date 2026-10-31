@@ -38,7 +38,7 @@ uuid = { workspace = true }
 dashmap = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 # Logging
 tracing = { workspace = true }

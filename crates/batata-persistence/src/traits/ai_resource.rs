@@ -427,6 +427,27 @@ pub trait AiResourcePersistence: Send + Sync {
         anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
     }
 
+    /// Push the lease expiry forward while the caller still owns the task.
+    ///
+    /// Mirrors upstream `AiResourceIndexTaskRepository.renewLease`: the update
+    /// lands only while the row still holds the caller's `lease_token` **and**
+    /// its current `lease_expire_at` has not passed. That second condition is
+    /// what stops a worker from resurrecting a lease another node has already
+    /// taken over — once the old expiry is in the past the row belongs to
+    /// whoever claimed it next, so renewal has to fail.
+    ///
+    /// Returns whether the lease is still held; `false` means the task was
+    /// taken over and the caller must stop working on it.
+    async fn task_renew_lease(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<bool> {
+        let _ = (task, lease_millis, now_millis);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
     /// Store a lifecycle transition only while the task still holds
     /// `lease_token`.
     ///

@@ -619,3 +619,140 @@ async fn two_nodes_cannot_both_claim_one_index_task() {
         n.node.shutdown().await.expect("shutdown raft node");
     }
 }
+
+/// A renewed lease reaches the other node, and a lapsed one cannot be
+/// renewed by anybody.
+///
+/// Renewal is a replicated write, so the expiry the owner pushes forward has to
+/// be the one every node later compares against — otherwise a second node would
+/// still see the original expiry, decide the task is overdue and start it a
+/// second time while the first is still running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_renewed_lease_replicates_and_a_lapsed_one_cannot_be_renewed() {
+    let root = tempfile::tempdir().expect("root temp dir");
+    let node1 = TestNode::start(root.path(), 1).await;
+    let node2 = TestNode::start(root.path(), 2).await;
+    let nodes = vec![node1, node2];
+
+    let mut members = BTreeMap::new();
+    for n in &nodes {
+        members.insert(
+            n.id,
+            BasicNode {
+                addr: n.addr.clone(),
+            },
+        );
+    }
+    nodes[0]
+        .node
+        .initialize(members)
+        .await
+        .expect("initialize cluster");
+    let _leader_idx = wait_for_leader(&nodes).await;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    nodes[0]
+        .store
+        .task_upsert(&index_task("renewed-task", now - 1_000))
+        .await
+        .expect("schedule task");
+    wait_for_task(&nodes, "renewed-task").await;
+
+    let snapshot = nodes[0]
+        .store
+        .task_find("renewed-task")
+        .await
+        .expect("read task")
+        .expect("task replicated");
+    let claimed = nodes[0]
+        .store
+        .task_claim(&snapshot, 60_000, now)
+        .await
+        .expect("claim")
+        .expect("the first claim must win");
+    wait_for_lease(&nodes, "renewed-task").await;
+
+    // Renew from the node that owns the lease and check the new expiry lands on
+    // the other node too.
+    let renewed_at = now + 20_000;
+    assert!(
+        nodes[0]
+            .store
+            .task_renew_lease(&claimed, 60_000, renewed_at)
+            .await
+            .expect("renew"),
+        "the owner must be able to renew"
+    );
+    let expected_expiry = renewed_at + 60_000;
+    for _ in 0..150 {
+        let mut agreed = true;
+        for n in &nodes {
+            let stored = n
+                .store
+                .task_find("renewed-task")
+                .await
+                .expect("read task")
+                .expect("task exists");
+            if stored.lease_expire_at != Some(expected_expiry) {
+                agreed = false;
+            }
+        }
+        if agreed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    for n in &nodes {
+        let stored = n
+            .store
+            .task_find("renewed-task")
+            .await
+            .expect("read task")
+            .expect("task exists");
+        assert_eq!(
+            stored.lease_expire_at,
+            Some(expected_expiry),
+            "the renewed expiry must be the one every node compares against"
+        );
+    }
+
+    // Once it has lapsed — before anyone has taken it over, so the token still
+    // matches — the owner must not be able to renew it.
+    let after_expiry = expected_expiry + 1;
+    assert!(
+        !nodes[0]
+            .store
+            .task_renew_lease(&claimed, 60_000, after_expiry)
+            .await
+            .expect("renew"),
+        "a lapsed lease must not be renewable even before anyone takes over"
+    );
+
+    let taken = nodes[1]
+        .store
+        .task_claim(&claimed, 60_000, after_expiry)
+        .await
+        .expect("claim")
+        .expect("an expired lease must be taken over");
+    assert!(
+        !nodes[0]
+            .store
+            .task_renew_lease(&claimed, 60_000, after_expiry)
+            .await
+            .expect("renew"),
+        "a lapsed lease must not be renewable by its previous owner"
+    );
+    // And the successor's renewal is the one that counts.
+    assert!(
+        nodes[1]
+            .store
+            .task_renew_lease(&taken, 60_000, after_expiry)
+            .await
+            .expect("renew"),
+        "the new owner must be able to renew"
+    );
+
+    for n in &nodes {
+        n.node.shutdown().await.expect("shutdown raft node");
+    }
+}

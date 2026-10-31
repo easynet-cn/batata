@@ -1261,6 +1261,34 @@ impl AiResourcePersistence for DistributedPersistService {
         Ok(landed.then_some(claimed))
     }
 
+    async fn task_renew_lease(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<bool> {
+        // As on the other backends, holding the token is not enough: a lease
+        // whose expiry has passed may already belong to another node, and a
+        // renewal that succeeded anyway would steal it back.
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(false);
+        };
+        if stored.lease_token != task.lease_token {
+            return Ok(false);
+        }
+        if !stored
+            .lease_expire_at
+            .is_some_and(|expiry| expiry >= now_millis)
+        {
+            return Ok(false);
+        }
+
+        let mut renewed = stored.clone();
+        renewed.lease_expire_at = Some(now_millis + lease_millis);
+        renewed.gmt_modified = Some(now_rfc3339());
+        self.task_write_if_unchanged(&stored, Some(&renewed)).await
+    }
+
     async fn task_update_leased(
         &self,
         task: &AiResourceTaskInfo,

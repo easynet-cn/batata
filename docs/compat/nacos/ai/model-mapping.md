@@ -295,6 +295,7 @@ that are still due, and `complete` / `retry` / `remove` / `advanceToEnhancement`
 | Upstream | Batata |
 |---|---|
 | `claim(task, leaseMillis)` | `AiResourcePersistence::task_claim` |
+| `renewLease(task, leaseMillis)` | `task_renew_lease` |
 | `complete` / `retry` (guarded) | `task_update_leased` |
 | `remove` (guarded) | `task_delete_leased` |
 
@@ -306,10 +307,12 @@ that are still due, and `complete` / `retry` / `remove` / `advanceToEnhancement`
   claim for the same task are ordered and the loser's write is dropped. Both
   nodes see the same due task locally, so nothing else could separate them.
 
-Not ported: lease **renewal** (upstream renews every 20s from a scheduled
-executor). Batata's worker holds the lease for its 60s without renewing; a stage
-that overruns has its task taken over and redone, which is safe because the
-projection is idempotent.
+Renewal is ported too: the consumer's `TaskLease` pushes the 60s lease forward
+every 20s on a background task and once more before recording the outcome, so a
+long stage is not taken over while it is still running. A renewal is refused
+when the stored expiry has already passed — the token matching is not enough,
+because a lapsed lease may already belong to whoever claimed the task next, and
+renewing it would steal the task back.
 
 ### Trace is **not** a table
 
