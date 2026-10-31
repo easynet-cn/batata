@@ -107,6 +107,7 @@ MySQL / PostgreSQL setups: [`docs/database.md`](docs/database.md)
 |----------|---------|---------|
 | Nacos V2 / V3 | Full | V1 intentionally unsupported |
 | Nacos gRPC | Full | Bidirectional streaming |
+| Nacos AI / MCP Registry | ~91% | MCP, Skill, AgentSpec, A2A, Prompt — [`docs/compat/nacos/ai/`](docs/compat/nacos/ai/) |
 | Consul | Full | Agent, Health, Catalog, KV, ACL |
 | Apollo | ~81% | Config/Admin/OpenAPI ported — [`docs/compat/apollo/`](docs/compat/apollo/) |
 

@@ -56,18 +56,19 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | OpenTelemetry | ✅ | ✅ | Full |
 | Operation Audit Logs | ✅ | ✅ | Full |
 | **AI Registry (MCP / A2A / Skill / AgentSpec / Prompt)** | | | |
-| MCP admin API (all 14 endpoints) | ✅ | ✅ | Full — service + HTTP + 15 route tests |
+| MCP admin API (all 19 endpoints) | ✅ | ✅ | Full — service + HTTP + 7 route tests |
+| MCP console API (all 22 endpoints) | ✅ | ✅ | Full, plus `/stats` and `/search` |
 | MCP draft lifecycle (draft → submit → publish → redraft) | ✅ | ✅ | Full |
 | MCP version labels / status / scope | ✅ | ✅ | Full |
 | MCP + A2A visibility (scope + owner) | ✅ | ✅ | Full — all four domains |
 | A2A agent registry CRUD + versions | ✅ | ✅ | Full |
-| Resource keyword search | ✅ | ✅ | Full — no vector channel |
+| Resource keyword search | ✅ | ✅ | Full — client API, projection, task queue and consumer |
 | `ai_resource` table-backed storage | ✅ | ✅ | Full — replaces the config-backed path |
+| MCP validation service | ✅ | ✅ | `batata_common::model::ai::mcp_validation` |
+| MCP import service | ✅ | ✅ | `/import/validate` + `/import/execute`; unified importer fetches the MCP Registry for real. `skills.sh` / well-known fetchers ❌ |
+| Runtime endpoint resolution + heartbeat | ✅ | ⚠️ | RAD client endpoints + heartbeat + version ranges; `McpClientController`'s 6 endpoints ❌ |
+| Prompt / Pipeline domains | ✅ | ⚠️ | Prompt 23/24 admin + 18/18 console; Pipeline 2/4 on both |
 | Vector / embedding search | ✅ | ❌ | Needs pgvector; embedder ported, storage not |
-| MCP validation service | ✅ | ❌ | Not implemented |
-| MCP import service (registry, `skills.sh`) | ✅ | ❌ | Not implemented |
-| Runtime endpoint resolution + heartbeat | ✅ | ❌ | Not implemented |
-| Prompt / Pipeline domains | ✅ | ❌ | Not implemented |
 
 ## Batata Exclusive Features
 
@@ -97,5 +98,5 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | API Compatibility | **100%+** | Full Nacos V2/V3 + Consul APIs |
 | Apollo Compatibility | **~81%** | Apollo Config/Admin/OpenAPI fully ported (see `docs/compat/apollo/`); legacy WebUI (SSO/signin) and apollo config-value encryption (`EncryptionDecorator`) not ported |
 | Cloud Native | **85%** | K8s, Prometheus, xDS (basic) |
-| AI Registry | **partial** | MCP complete and tested; A2A/Skill/AgentSpec CRUD; no validation, import, runtime layer or vector search (see `docs/compat/nacos/ai/`) |
+| AI Registry | **~91%** | 226 of 249 upstream AI endpoints matched (23 missing, 10 Batata-only extras). MCP admin/console, Skill, AgentSpec, A2A and resource import are at parity; open: `McpClientController` (6), Agent console lifecycle (8), Agent admin `/version` + `/runtime-endpoints`, Prompt admin `/version`, Pipeline `/{pipelineId}` + bare `GET`, vector channel (see `docs/compat/nacos/ai/`) |
 | **Overall** | **~98%** | Production ready — excluding the AI module, which is tracked separately above |

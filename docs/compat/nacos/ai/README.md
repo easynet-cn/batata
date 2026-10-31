@@ -125,24 +125,44 @@ Batata also has capabilities that are easy to overlook:
 
 ## 3. Domain / API matrix
 
-Legend: ✅ implemented · ⚠️ partial · ❌ missing · ❓ needs verification
+Legend: ✅ implemented · ⚠️ partial · ❌ missing · ➕ Batata-only
+
+Counts are admin / client / console endpoints; the per-endpoint tables live in
+[`api-mapping.md`](api-mapping.md#10-summary-counts), which is the source of
+truth for this section.
 
 | Domain | Upstream controllers | Batata | Status |
 |---|---|---|---|
-| MCP management | `McpAdminController` (list, versions, version, draft, submit, publish, force-publish, redraft, online, offline, labels, status, scope) | `api/v3/admin/ai/mcp.rs` — simplified form-based API (`McpForm`) | ⚠️ **main gap** |
-| MCP runtime / registry | `McpClientController`, `registry/mcp.rs` | `registry/mcp.rs` (`/v3/ai/mcp/servers`, `import`, `stats`) | ⚠️ |
-| A2A | `A2aAdminController` (list, version/list) | `admin/ai/a2a.rs`, `api/a2a.rs`, `registry/a2a.rs` | ⚠️ verify versioning |
-| Agent (entity) | `AgentAdminController` (+ `service/agent/`, ~50 files) | `api/agent_client.rs` only | ⚠️ client present, admin CRUD ❓ |
-| AgentSpec | `AgentSpecAdminController` (+ Client `search`) | `api/agentspec.rs` (full lifecycle + search) | ✅ close |
-| Skill | `SkillAdminController` (+ Client `search`), `SkillDownloadCountManager` | `api/skill.rs` (full lifecycle), `skills_registry.rs` | ✅ close |
-| Prompt | `PromptAdminController`, `PromptClientController` | `api/prompt.rs`, `service/prompt/`, `batata-copilot` | ⚠️ verify client contract |
-| Pipeline | `PipelineAdminController` | `api/pipeline.rs` | ❓ |
-| Resource import | `AiResourceImportAdminController`, importer forms | `batata-console/src/v3/ai_import.rs` | ⚠️ verify parity |
-| Resource search | `AiResourceSearchClientController` (+ `service/search/`, 41 files) | `api/*/search` per domain | ⚠️ verify parity |
-| Capability discovery | `AiCapabilityClientController` | not found | ❌ |
-| Trace / runtime | `service/trace/`, `service/runtime/` | not found | ❌ |
-| Visibility | `service/visibility/`, `VisibilityHelper` | not found | ❌ |
-| Repository abstraction | `service/repository/` | not found | ❌ |
+| MCP management | `McpAdminController` (19) | `batata-ai/src/api/mcp.rs` (19/19) | ✅ |
+| MCP console | `ConsoleMcpController` (22) | `console/src/v3/ai_mcp.rs` (22/22 + 2 extras) | ✅ |
+| **MCP runtime / client** | `McpClientController` (6) | — | ❌ **largest remaining gap** |
+| A2A | `A2aAdminController` (6), `ConsoleA2aController` (6) | `admin/ai/a2a.rs` (6 + 2), `console/v3/ai_a2a.rs` (6 + 3) | ✅ |
+| Agent (entity) | `AgentAdminController` (18), `AgentClientController` (7), `ConsoleAgentController` (18) | `api/agent.rs` (16), `api/agent_client.rs` (5), `console/v3/ai_agent.rs` (10) | ⚠️ client closest; admin 2 and console 8 missing |
+| AgentSpec | `AgentSpecAdminController` (18), Client (2), `ConsoleAgentSpecController` (17) | `api/agentspec.rs` + console (18 / 2 / 17 + 1 download) | ✅ |
+| Skill | `SkillAdminController` (20), Client (2), `ConsoleSkillController` (20) | `api/skill.rs` + console (20 / 2 / 20) | ✅ |
+| Prompt | `PromptAdminController` (24), Client (2), `ConsolePromptController` (18) | `api/prompt.rs` + console (23 / 2 / 18) | ⚠️ admin `/version` missing |
+| Pipeline | `PipelineAdminController` (4), `ConsolePipelineController` (4) | `api/pipeline.rs` + console (2 / — / 2) | ⚠️ `/{pipelineId}` and bare `GET` |
+| Resource import | `AiResourceImportAdminController` (4), `ConsoleAiResourceImportController` (4) | `console/src/v3/ai_import.rs`, mounted twice | ✅ (skill-source fetchers ❌) |
+| Resource search | `AiResourceSearchClientController` (1) | `api/search.rs` | ✅ |
+| Capability discovery | `AiCapabilityClientController` (1) | `api/capability.rs` | ✅ |
+| Copilot | `ConsoleCopilotController` (4) + `ConsoleCopilotConfigController` (2) | `batata-copilot` (6) | ✅ |
+| Trace | `service/trace/` | `batata_common::ai_trace` (JSON-line events) | ✅ as logging, not a table |
+| Visibility | `service/visibility/`, `VisibilityHelper` | `batata_visibility` over `ai_resource.scope`/`owner` | ✅ |
+| Repository abstraction | `service/repository/` | `batata-ai/src/repository/` | ✅ |
+| Search index | `service/search/` | `search/` (projection, scheduling, consumer) + `service/mcp_index.rs` | ✅ |
+| RAD runtime | `service/runtime/` | `endpoint_service.rs`, `version_range.rs`, `publication_gate.rs` | ⚠️ different shape |
+| MCP Registry OpenAPI | — | `registry/mcp_registry.rs` (`/v0/servers`, own port) | ➕ |
+| Skills registry | — | `api/skills_registry.rs` (`.well-known/skills`, `agent-skills`) | ➕ |
+
+Two things earlier revisions of this table got wrong, both now corrected in the
+mapping as well:
+
+- `/v3/ai/mcp/servers` was listed as a live Batata surface. It is implemented in
+  `registry/mcp.rs` but **never mounted** — see
+  [api-mapping §11](api-mapping.md#11-implemented-but-not-served).
+- Capability discovery, resource search, visibility, trace and the repository
+  abstraction were marked "not found". They exist; only the *directory names*
+  differ from upstream's.
 
 ---
 
@@ -386,7 +406,7 @@ they carry no end-user identity.
 
       > Not traced: read endpoints (upstream only traces writes), the A2A
       > batch-register endpoint, and gRPC / internal client paths.
-- [~] `search/` layer — **projection and scheduling done, consumer pending**.
+- [x] `search/` layer — **projection, scheduling and consumer all done.**
 
       Implemented (mirrors `AiResourceIndexMaintenanceService` and
       `AiResourceIndexServiceImpl.rebuildAiResource`):
@@ -733,8 +753,11 @@ has no `LIKE`:
       Batata has no matching server type.
       The **external sources** half — `AiResourceImportManager` with the
       `mcp-official` / `skills-sh` / well-known / MCP-registry-protocol
-      plugins, outbound fetching and `AiResourceImportSecurityGuard` — is
-      **not implemented**; see below.
+      plugins and outbound fetching — **is now implemented** (commit
+      `6841d72d`); see [§8](#8-ai-resource-import). `mcp-registry` searches,
+      fetches and really imports; the two skill sources are routed but have no
+      fetcher, and report it per item instead of fabricating success.
+      `AiResourceImportSecurityGuard` remains ❌.
 - [x] ~~Cache invalidation equivalent to `McpServerCacheInvalidateService`~~ —
       **not applicable, and already covered.** Upstream's service is a
       `Subscriber<LocalDataChangeEvent>`: it invalidates `McpServerIndex` when a
@@ -893,11 +916,16 @@ has no `LIKE`:
 - [x] AgentSpec admin parity — **complete.** `force-publish`, `redraft` and
       `version/meta` (upstream `getAgentSpecVersionMeta`) are all implemented;
       the entry that called `version/meta` missing is superseded.
-- [x] Resource import parity — **already implemented.** An earlier pass listed
-      this as a gap; `batata-console/src/v3/ai_import.rs` already exposes all
-      four upstream endpoints (`/sources`, `/search`, `/validate`, `/execute`)
-      and is mounted at `/v3/admin/ai/import`, matching upstream's
-      `AI_RESOURCE_IMPORT_ADMIN_PATH`.
+- [x] Resource import parity — **implemented.** An earlier pass listed this as a
+      gap; `batata-console/src/v3/ai_import.rs` exposes all four upstream
+      endpoints (`/sources`, `/search`, `/validate`, `/execute`) and is mounted
+      **twice** — `/v3/admin/ai/import` (`AI_RESOURCE_IMPORT_ADMIN_PATH`) and
+      `/v3/console/ai/import` (`AI_RESOURCE_IMPORT_CONSOLE_PATH`) — differing
+      only in the `ApiType` passed to `secured!`. Before `6841d72d` the console
+      mount did not exist: `v3::route::routes()` is itself a
+      `scope("/v3/console")` and can never be nested inside another one, so that
+      registration was dead code and `/v3/console/ai/import` was not served at
+      all. See [§8](#8-ai-resource-import).
 - [~] Resource search parity — the **client API is now exposed**:
       `GET /v3/client/ai/resources/search` calls the existing `query::search`
       and is covered by `tests/resource_search_routes.rs`. Two differences from
@@ -1093,11 +1121,15 @@ Two notes that cost real time and are easy to trip over:
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 — Baseline | **complete** | endpoint diff (`api-mapping.md`) + model diff (`model-mapping.md`) done |
-| 1 — Architecture | in progress | 3 upstream tables added (`m20260412_000014`); layers not started |
-| 2 — MCP | not started | largest gap |
-| 3 — Remaining domains | not started | |
-| 4 — Tests & docs | not started | |
+| 0 — Baseline | **complete** | endpoint diff (`api-mapping.md`) + model diff (`model-mapping.md`) |
+| 1 — Architecture | **complete** | 3 upstream tables (`m20260412_000014`); `repository/`, `visibility/`, `trace/`, `runtime/` (RAD), search projection + task queue + consumer all landed |
+| 2 — MCP | **complete except the client** | admin 19/19, console 22/22, MCP import real (commit `6841d72d`); `McpClientController`'s 6 endpoints are the only unported MCP surface |
+| 3 — Remaining domains | **nearly complete** | Skill / AgentSpec / A2A / import at parity. Open: Agent console lifecycle (8), Agent admin `/version` + `/runtime-endpoints`, Agent client `POST ""` + `/watch`, Prompt admin `/version`, Pipeline `/{pipelineId}` + bare `GET` on both surfaces |
+| 4 — Tests & docs | **in progress** | tests ported and running in CI; docs refreshed at `6841d72d` (this file, `api-mapping.md`, `model-mapping.md`) |
+
+Endpoint arithmetic: 249 upstream AI endpoints, 226 matched in Batata, 23
+missing, 10 Batata-only extras — see
+[api-mapping §10](api-mapping.md#10-summary-counts).
 
 ---
 
@@ -1112,8 +1144,20 @@ Two notes that cost real time and are easy to trip over:
 3. ~~Is AI tracing (`service/trace/`) in scope, or deferred?~~
    → resolved: tracing is **JSON-line event logging** (`@since 3.2.1`), no table.
    In scope as logging, not persistence.
-4. Does `batata-copilot` have an upstream counterpart, or is it Batata-specific
-   (and therefore excluded from parity work)?
+4. ~~Does `batata-copilot` have an upstream counterpart, or is it Batata-specific
+   (and therefore excluded from parity work)?~~
+   → resolved: upstream ships a `copilot` module with
+   `ConsoleCopilotController` (`/v3/console/copilot`, 4 SSE operations:
+   `skill/optimize`, `skill/generate`, `prompt/optimize`, `prompt/debug`) and
+   `ConsoleCopilotConfigController` (`config` GET/POST). Batata's
+   `batata-copilot` covers all 6, so it is **in scope**, not Batata-specific.
+   `CopilotConstants` also declares `/chat` and `/chat/history`, but no
+   controller registers them upstream.
+5. `McpClientController` (6 client endpoints) is the last whole upstream
+   controller with no Batata counterpart. Should it be ported onto the existing
+   `ai_resource` service, or folded into the RAD Agent client
+   (`/v3/client/ai/agents/endpoints`), which already covers the endpoint
+   registration half?
 
 ---
 

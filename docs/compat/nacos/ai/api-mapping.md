@@ -4,243 +4,391 @@ Endpoint-level comparison of the AI module against upstream Nacos.
 
 - **Upstream baseline**: `nacos` @ `1b6309f5086c163a1ff9c0469fabd4494ec09093` (2026-09-24, master)
 - **Upstream path constants**: `nacos/ai/src/main/java/com/alibaba/nacos/ai/constant/Constants.java`
-- **Batata mount points**: admin AI is mounted at `/v3/admin/ai` (`crates/batata-server/src/api/v3/admin/route.rs`), client AI at `/v3/client/ai` (`api/v3/client/route.rs`)
+- **Batata mount points**: admin AI at `/v3/admin/ai` (`crates/batata-server/src/api/v3/admin/ai/route.rs`),
+  client AI at `/v3/client/ai` (`api/v3/client/route.rs`), console AI at `/v3/console/ai/*`
+  (`crates/batata-server/src/startup/http.rs`)
+- **Last verified**: batata @ `6841d72d`. Counts were taken by enumerating
+  `#[get|post|put|delete(...)]` attributes on the Batata side and
+  `@*Mapping` annotations on the upstream side, not from prose.
 
-Legend: ✅ implemented · ⚠️ partial / differs · ❌ missing · ❓ needs verification
+> Re-verification note: `git diff 1b6309f50..HEAD -- ai/.../controller console/.../v3/ai`
+> is empty against the local `develop` checkout, so the baseline commit is still an
+> accurate description of these controllers.
 
-> The Batata column lists the relative routes found in each module. Where a module
-> scope differs from the upstream base path, the difference is called out.
+Legend: ✅ implemented · ⚠️ partial / differs · ❌ missing · ➕ Batata-only extra
+
+> The Batata column lists the relative route registered on each handler. Where a
+> surface exists in Batata but is **never mounted**, it is called out in
+> [§11](#11-implemented-but-not-served) instead of being counted as covered.
 
 ---
 
 ## 1. MCP
 
-Upstream base: `/v3/admin/ai/mcp` (`McpAdminController`), `/v3/client/ai/mcp` (`McpClientController`)
+Upstream bases: `/v3/admin/ai/mcp` (`McpAdminController`), `/v3/client/ai/mcp`
+(`McpClientController`), `/v3/console/ai/mcp` (`ConsoleMcpController`)
 
-| Upstream | Method | Batata | Status |
+### 1.1 Admin — 19/19 ✅
+
+| Upstream | Method | Batata (`batata-ai/src/api/mcp.rs`) | Status |
 |---|---|---|---|
-| `/v3/admin/ai/mcp/list` | GET | `admin/ai/mcp.rs` list | ⚠️ |
-| `/v3/admin/ai/mcp/versions` | GET | — | ❌ |
-| `/v3/admin/ai/mcp/version` | GET | — | ❌ |
-| `/v3/admin/ai/mcp/draft` | POST / PUT / DELETE | — | ❌ |
-| `/v3/admin/ai/mcp/submit` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/publish` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/force-publish` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/redraft` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/online` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/offline` | POST | — | ❌ |
-| `/v3/admin/ai/mcp/labels` | PUT | — | ❌ |
-| `/v3/admin/ai/mcp/status` | PUT | — | ❌ |
-| `/v3/admin/ai/mcp/scope` | PUT | — | ❌ |
-| `/v3/client/ai/mcp/endpoints` | POST / DELETE | — | ❌ |
-| `/v3/client/ai/mcp/endpoints/heartbeat` | PUT | — | ❌ |
-| `/v3/client/ai/mcp/search` | GET | — | ❌ |
+| `/list` | GET | `/list` | ✅ |
+| `""` | GET | `""` | ✅ |
+| `""` | POST | `""` | ✅ |
+| `""` | PUT | `""` | ✅ |
+| `""` | DELETE | `""` | ✅ |
+| `/versions` | GET | `/versions` | ✅ |
+| `/version` | GET | `/version` | ✅ |
+| `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
+| `/submit` | POST | `/submit` | ✅ |
+| `/publish` | POST | `/publish` | ✅ |
+| `/force-publish` | POST | `/force-publish` | ✅ |
+| `/redraft` | POST | `/redraft` | ✅ |
+| `/online` | POST | `/online` | ✅ |
+| `/offline` | POST | `/offline` | ✅ |
+| `/labels` | PUT | `/labels` | ✅ |
+| `/status` | PUT | `/status` | ✅ |
+| `/scope` | PUT | `/scope` | ✅ |
 
-Batata MCP today:
+Write endpoints accept the upstream encoding: the specification fields arrive as
+**JSON strings inside a form body** (`serverSpecification`, `toolSpecification`,
+`endpointSpecification`), which `parse_registration` handles; `PUT /status` takes
+the upstream `enabled` boolean while still tolerating console's
+`status=enable|disable`.
 
-- `crates/batata-server/src/api/v3/admin/ai/mcp.rs` — a **simplified form-based** API
-  built on `McpForm` (`namespaceId`, `mcpName`, `mcpId`, `version`,
-  `serverSpecification`, `toolSpecification`, `endpointSpecification`). No draft,
-  publish or versioning lifecycle.
-- `crates/batata-ai/src/registry/mcp.rs` — registry-style endpoints under a
-  different path scheme: `/v3/ai/mcp/servers` (GET/POST),
-  `/v3/ai/mcp/servers/{namespace}/{name}` (GET/PUT/DELETE),
-  `/v3/ai/mcp/servers/import`, `/v3/ai/mcp/stats`
+### 1.2 Client — 0/6 ❌
 
-**Assessment**: MCP is the largest gap. Two open decisions:
+| Upstream (`McpClientController`) | Method | Batata | Status |
+|---|---|---|---|
+| `""` | GET | — | ❌ |
+| `""` | POST | — | ❌ |
+| `/endpoints` | POST | — | ❌ |
+| `/endpoints` | DELETE | — | ❌ |
+| `/endpoints/heartbeat` | PUT | — | ❌ |
+| `/search` | GET | — | ❌ |
 
-1. Whether the `/v3/ai/mcp/servers` path scheme should be replaced by the upstream
-   `/v3/admin/ai/mcp` + `/v3/client/ai/mcp` split, or kept as an additional
-   compatibility surface.
-2. Whether the simplified `McpForm` API should be retired in favour of the full
-   upstream contract.
+`/v3/client/ai` mounts prompt, skill, agentspec, agent, capability and resource
+search — **no MCP scope**. The MCP *endpoint* runtime that Batata does have
+(`service/endpoint_service.rs`) is reached through the RAD Agent client
+(`/v3/client/ai/agents/endpoints`), not through `McpClientController`'s paths.
+
+### 1.3 Console — 22/22 ✅ (+2 extras)
+
+`batata-console/src/v3/ai_mcp.rs`, mounted at `/v3/console/ai/mcp`.
+
+Covers all 22 upstream `ConsoleMcpController` endpoints. Batata additionally
+serves `GET /stats` and `GET /search` (➕), which upstream places on other
+surfaces.
+
+**Assessment**: admin and console are at parity; the client surface is the
+remaining MCP gap.
 
 ---
 
 ## 2. Skill
 
-Upstream base: `/v3/admin/ai/skills` (`SkillAdminController`), `/v3/client/ai/skills` (`SkillClientController`)
+Upstream bases: `/v3/admin/ai/skills` (`SkillAdminController`),
+`/v3/client/ai/skills` (`SkillClientController`),
+`/v3/console/ai/skills` (`ConsoleSkillController`)
+
+### 2.1 Admin — 20/20 ✅
 
 | Upstream | Method | Batata (`api/skill.rs`) | Status |
 |---|---|---|---|
-| `/version` | GET | `version` | ✅ |
-| `/version/download` | GET | `version/download` | ✅ |
-| `/list` | GET | `list` | ✅ |
-| `/upload` | POST | `upload` | ✅ |
-| `/upload/precheck` | POST | — | ❌ |
-| `/upload/batch` | POST | — | ❌ |
-| `/draft` | POST / PUT / DELETE | `draft` (POST/PUT/DELETE) | ✅ |
-| `/submit` | POST | `submit` | ✅ |
-| `/publish` | POST | `publish` | ✅ |
-| `/force-publish` | POST | — | ❌ |
-| `/redraft` | POST | — | ❌ |
-| `/labels` | PUT | `labels` | ✅ |
-| `/biz-tags` | PUT | `biz-tags` | ✅ |
-| `/online` | POST | `online` | ✅ |
-| `/scope` | PUT | `scope` | ✅ |
-| `/offline` | POST | `offline` | ✅ |
-| `/v3/client/ai/skills/search` | GET | `search` | ✅ |
+| `""` | GET | `""` | ✅ |
+| `/version` | GET | `/version` | ✅ |
+| `/version/download` | GET | `/version/download` | ✅ |
+| `""` | DELETE | `""` | ✅ |
+| `/list` | GET | `/list` | ✅ |
+| `/upload` | POST (multipart) | `/upload` | ✅ |
+| `/upload/precheck` | POST (multipart) | `/upload/precheck` | ✅ |
+| `/upload/batch` | POST (multipart) | `/upload/batch` | ✅ |
+| `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
+| `/submit` | POST | `/submit` | ✅ |
+| `/publish` | POST | `/publish` | ✅ |
+| `/force-publish` | POST | `/force-publish` | ✅ |
+| `/redraft` | POST | `/redraft` | ✅ |
+| `/labels` | PUT | `/labels` | ✅ |
+| `/biz-tags` | PUT | `/biz-tags` | ✅ |
+| `/online` | POST | `/online` | ✅ |
+| `/scope` | PUT | `/scope` | ✅ |
+| `/offline` | POST | `/offline` | ✅ |
 
-Also present in Batata: `crates/batata-ai/src/api/skills_registry.rs` exposing the
-well-known registry (`.well-known/skills/index.json`, `SKILL.md`,
-`agent-skills/...`) and `/{namespace_id}/api/search`.
+### 2.2 Client — 2/2 ✅ · 2.3 Console — 20/20 ✅
 
-**Assessment**: closest to parity. Missing `upload/precheck`, `upload/batch`,
-`force-publish`, `redraft`.
+Also present in Batata: `crates/batata-ai/src/api/skills_registry.rs`, the
+well-known skills registry (`.well-known/skills/index.json`, `SKILL.md`,
+`agent-skills/...`, `/{namespace}/api/search`) — 7 routes, a Batata-side
+discovery surface with no single upstream controller.
+
+**Assessment**: parity on all three surfaces.
 
 ---
 
 ## 3. AgentSpec
 
-Upstream base: `/v3/admin/ai/agentspecs` (`AgentSpecAdminController`), `/v3/client/ai/agentspecs` (`AgentSpecClientController`)
+Upstream bases: `/v3/admin/ai/agentspecs` (`AgentSpecAdminController`),
+`/v3/client/ai/agentspecs` (`AgentSpecClientController`),
+`/v3/console/ai/agentspecs` (`ConsoleAgentSpecController`)
+
+### 3.1 Admin — 18/18 ✅ (+1 extra)
 
 | Upstream | Method | Batata (`api/agentspec.rs`) | Status |
 |---|---|---|---|
-| `/version` | GET | `version` | ✅ |
-| `/version/meta` | GET | — | ❌ |
-| `/list` | GET | `list` | ✅ |
-| `/upload` | POST | `upload` | ✅ |
-| `/draft` | POST / PUT / DELETE | `draft` (POST/PUT/DELETE) | ✅ |
-| `/submit` | POST | `submit` | ✅ |
-| `/publish` | POST | `publish` | ✅ |
-| `/force-publish` | POST | — | ❌ |
-| `/redraft` | POST | — | ❌ |
-| `/labels` | PUT | `labels` | ✅ |
-| `/biz-tags` | PUT | `biz-tags` | ✅ |
-| `/online` | POST | `online` | ✅ |
-| `/scope` | PUT | `scope` | ✅ |
-| `/offline` | POST | `offline` | ✅ |
-| `/v3/client/ai/agentspecs/search` | GET | `search` | ✅ |
+| `""` | GET | `""` | ✅ |
+| `/version` | GET | `/version` | ✅ |
+| `/version/meta` | GET | `/version/meta` | ✅ |
+| `""` | DELETE | `""` | ✅ |
+| `/list` | GET | `/list` | ✅ |
+| `/upload` | POST (multipart) | `/upload` | ✅ |
+| `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
+| `/submit` | POST | `/submit` | ✅ |
+| `/publish` | POST | `/publish` | ✅ |
+| `/force-publish` | POST | `/force-publish` | ✅ |
+| `/redraft` | POST | `/redraft` | ✅ |
+| `/labels` | PUT | `/labels` | ✅ |
+| `/biz-tags` | PUT | `/biz-tags` | ✅ |
+| `/online` | POST | `/online` | ✅ |
+| `/scope` | PUT | `/scope` | ✅ |
+| `/offline` | POST | `/offline` | ✅ |
+| — | — | `/version/download` | ➕ extra |
 
-**Assessment**: close to parity. Missing `version/meta`, `force-publish`, `redraft`.
+### 3.2 Client — 2/2 ✅ · 3.3 Console — 17/17 ✅ (+`/version/download` extra)
+
+**Assessment**: parity plus one download endpoint on admin and console.
 
 ---
 
 ## 4. Agent
 
-Upstream base: `/v3/admin/ai/agents` (`AgentAdminController`), `/v3/client/ai/agents` (`AgentClientController`)
+Upstream bases: `/v3/admin/ai/agents` (`AgentAdminController`),
+`/v3/client/ai/agents` (`AgentClientController`),
+`/v3/console/ai/agents` (`ConsoleAgentController`)
 
-| Upstream | Method | Batata | Status |
+### 4.1 Admin — 16/18 ⚠️
+
+| Upstream | Method | Batata (`api/agent.rs`) | Status |
 |---|---|---|---|
-| `/list` | GET | — | ❌ |
-| `/versions` | GET | — | ❌ |
+| `""` | GET | `""` | ✅ |
+| `""` | PUT | `""` | ✅ |
+| `""` | DELETE | `""` | ✅ |
+| `/list` | GET | `/list` | ✅ |
+| `/versions` | GET | `/versions` | ✅ |
 | `/version` | GET | — | ❌ |
 | `/runtime-endpoints` | GET | — | ❌ |
-| `/draft` | POST / PUT / DELETE | — | ❌ |
-| `/submit` | POST | — | ❌ |
-| `/publish` | POST | — | ❌ |
-| `/force-publish` | POST | — | ❌ |
-| `/redraft` | POST | — | ❌ |
-| `/online` | POST | — | ❌ |
-| `/offline` | POST | — | ❌ |
-| `/labels` | PUT | — | ❌ |
-| `/scope` | PUT | — | ❌ |
-| `/v3/client/ai/agents/search` | GET | `agent_client.rs` `search` | ✅ |
-| `/v3/client/ai/agents/watch` | POST | — | ❌ |
-| `/v3/client/ai/agents/endpoints` | POST / DELETE | `endpoints` (POST/DELETE) | ✅ |
-| `/v3/client/ai/agents/endpoints/heartbeat` | PUT | `endpoints/heartbeat` | ✅ |
+| `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
+| `/submit` | POST | `/submit` | ✅ |
+| `/publish` | POST | `/publish` | ✅ |
+| `/force-publish` | POST | `/force-publish` | ✅ |
+| `/redraft` | POST | `/redraft` | ✅ |
+| `/online` | POST | `/online` | ✅ |
+| `/offline` | POST | `/offline` | ✅ |
+| `/labels` | PUT | `/labels` | ✅ |
+| `/scope` | PUT | `/scope` | ✅ |
+| — | — | `""` POST | ➕ extra |
 
-**Assessment**: Batata covers only the **client** side. The whole admin lifecycle
-(upstream `service/agent/`, ~50 files) is missing.
+Note the asymmetry: **`/version` and `/runtime-endpoints` exist on the Batata
+console surface but not on the admin surface.** Upstream has them on both.
+
+### 4.2 Client — 5/7 ⚠️
+
+| Upstream | Method | Batata (`api/agent_client.rs`) | Status |
+|---|---|---|---|
+| `/search` | GET | `search` | ✅ |
+| `""` | GET | `""` | ✅ |
+| `/endpoints` | POST | `endpoints` | ✅ |
+| `/endpoints` | DELETE | `endpoints` | ✅ |
+| `/endpoints/heartbeat` | PUT | `endpoints/heartbeat` | ✅ |
+| `""` | POST | — | ❌ |
+| `/watch` | POST | — | ❌ |
+
+Batata's registration body is accepted as **form or JSON** (upstream sends the
+endpoints as a JSON string inside a form), `Endpoint` carries only a `uri`
+(no port; `split_uri` defaults to 80), and `versionRange` is persisted as
+instance metadata.
+
+### 4.3 Console — 10/18 ⚠️
+
+`batata-console/src/v3/ai_agent.rs`. Missing 8: `PUT ""`, `PUT /draft`,
+`/submit`, `/publish`, `/force-publish`, `/redraft`, `/online`, `/offline`.
+
+**Assessment**: the RAD client path is the best-covered part; the admin and
+console lifecycles lag by a small, well-defined set of endpoints.
 
 ---
 
 ## 5. Prompt
 
-Upstream base: `/v3/admin/ai/prompt` (`PromptAdminController`), `/v3/client/ai/prompt` (`PromptClientController`)
+Upstream bases: `/v3/admin/ai/prompt` (`PromptAdminController`),
+`/v3/client/ai/prompt` (`PromptClientController`),
+`/v3/console/ai/prompt` (`ConsolePromptController`)
+
+### 5.1 Admin — 23/24 ⚠️
 
 | Upstream | Method | Batata (`api/prompt.rs`) | Status |
 |---|---|---|---|
-| `/list` | GET | `list` | ✅ |
-| `/versions` | GET | `versions` | ✅ |
-| `/governance` | GET | — | ❌ |
+| `""` | POST | `""` | ✅ |
+| `""` | DELETE | `""` | ✅ |
+| `/list` | GET | `/list` | ✅ |
+| `/versions` | GET | `/versions` | ✅ |
 | `/version` | GET | — | ❌ |
-| `/version/download` | GET | — | ❌ |
-| `/draft` | POST / PUT / DELETE | — | ❌ |
-| `/submit` | POST | — | ❌ |
-| `/publish` | POST | — | ❌ |
-| `/force-publish` | POST | — | ❌ |
-| `/redraft` | POST | — | ❌ |
-| `/online` | POST | — | ❌ |
-| `/offline` | POST | — | ❌ |
-| `/labels` | PUT | — | ❌ |
-| `/description` | PUT | — | ❌ |
-| `/biz-tags` | PUT | — | ❌ |
-| `/metadata` | GET / PUT | `metadata` (GET/PUT) | ✅ |
-| `/detail` | GET | `detail` | ✅ |
-| `/label` | PUT / DELETE | `label` (PUT/DELETE) | ✅ |
-| `/v3/client/ai/prompt/search` | GET | — | ❌ |
+| `/version/download` | GET | `/version/download` | ✅ |
+| `/governance` | GET | `/governance` | ✅ |
+| `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
+| `/submit` | POST | `/submit` | ✅ |
+| `/publish` | POST | `/publish` | ✅ |
+| `/force-publish` | POST | `/force-publish` | ✅ |
+| `/redraft` | POST | `/redraft` | ✅ |
+| `/online` | POST | `/online` | ✅ |
+| `/offline` | POST | `/offline` | ✅ |
+| `/labels` | PUT | `/labels` | ✅ |
+| `/description` | PUT | `/description` | ✅ |
+| `/biz-tags` | PUT | `/biz-tags` | ✅ |
+| `/metadata` | GET / PUT | `/metadata` (GET/PUT) | ✅ |
+| `/detail` | GET | `/detail` | ✅ |
+| `/label` | PUT / DELETE | `/label` (PUT/DELETE) | ✅ |
 
-**Assessment**: partial. Batata has metadata/label/detail but **no draft-publish
-lifecycle**, which upstream has for prompts as well.
+Same asymmetry as Agent: `/version` exists on the console surface but not on
+the admin one.
+
+### 5.2 Client — 2/2 ✅ · 5.3 Console — 18/18 ✅
+
+**Assessment**: one admin endpoint missing.
 
 ---
 
 ## 6. Pipeline
 
-Upstream base: `/v3/admin/ai/pipelines` (`PipelineAdminController`)
+Upstream bases: `/v3/admin/ai/pipelines` (`PipelineAdminController`),
+`/v3/console/ai/pipelines` (`ConsolePipelineController`)
 
-| Upstream | Method | Batata (`api/pipeline.rs`) | Status |
+| Upstream | Method | Batata (`api/pipeline.rs`, `console/v3/ai_pipeline.rs`) | Status |
 |---|---|---|---|
-| `/{pipelineId}` | GET | `/{pipeline_id}` | ✅ |
-| — | GET | `""` (list) | ➕ extra |
+| `/list` | GET | `/list` (admin + console) | ✅ |
+| `/detail` | GET | `/detail` (admin + console) | ✅ |
+| `/{pipelineId}` | GET | — | ❌ |
+| `""` | GET | — | ❌ |
 
-**Assessment**: parity for the single upstream endpoint; Batata additionally
-exposes a list endpoint.
+**Assessment**: 2/4 on both admin and console; the two missing reads are the
+path-variable form and the bare collection read.
 
 ---
 
-## 7. AI resource import
+## 7. A2A
 
-Upstream base: `/v3/admin/ai/import` (`AiResourceImportAdminController`)
+Upstream bases: `/v3/admin/ai/a2a` (`A2aAdminController`),
+`/v3/console/ai/a2a` (`ConsoleA2aController`)
 
 | Upstream | Method | Batata | Status |
 |---|---|---|---|
-| `/sources` | GET | `batata-console/src/v3/ai_import.rs` | ❓ |
-| `/search` | POST | — | ❓ |
-| `/validate` | POST | — | ❓ |
-| `/execute` | POST | — | ❓ |
+| `""` | POST | admin + console `""` | ✅ |
+| `""` | GET | admin + console `""` | ✅ |
+| `""` | PUT | admin + console `""` | ✅ |
+| `""` | DELETE | admin + console `""` | ✅ |
+| `/list` | GET | `/list` | ✅ |
+| `/version/list` | GET | `/version/list` | ✅ |
+| — | — | admin `PUT/DELETE /endpoint` | ➕ extra |
+| — | — | console `/by-skill/{skill}`, `POST /batch`, `/stats` | ➕ extra |
 
-**Assessment**: Batata routes an AI import module, but the endpoint contract has
-not yet been compared in detail. Needs verification.
+**Assessment**: parity on both surfaces; Batata adds endpoint registration and
+three console lookups.
 
 ---
 
-## 8. Cross-cutting capabilities
+## 8. AI resource import
+
+Upstream: `/v3/admin/ai/import` (`AiResourceImportAdminController`) and
+`/v3/console/ai/import` (`ConsoleAiResourceImportController`)
+
+| Upstream | Method | Batata (`batata-console/src/v3/ai_import.rs`) | Status |
+|---|---|---|---|
+| `/sources` | GET | `admin_routes()` + `console_routes()` | ✅ |
+| `/search` | POST | same | ✅ |
+| `/validate` | POST | same | ✅ |
+| `/execute` | POST | same | ✅ |
+
+The four upstream importer plugins are registered in SPI order
+(`mcp-registry-protocol`, `mcp-official`, `skills-well-known`, `skills-sh`);
+the response's `pluginName` is the **importer type**, so `mcp-official` reports
+`mcp-registry`. `mcp-registry` performs real search/fetch/import; the two skill
+sources have **no fetcher yet** and report an explicit "not implemented yet"
+per item instead of fabricating success. See
+[README §8](../README.md#8-ai-resource-import).
+
+---
+
+## 9. Cross-cutting capabilities
 
 | Upstream | Batata | Status |
 |---|---|---|
-| `AiResourceSearchClientController` (unified resource search) | per-domain `search` endpoints | ❓ |
-| `AiCapabilityClientController` (capability discovery) | — | ❌ |
-| `service/trace/` (AI call tracing) | — | ❌ |
-| `service/runtime/` | — | ❌ |
-| `service/visibility/` + `VisibilityHelper` | — | ❌ |
-| `service/repository/` | — | ❌ |
-| `service/search/` (41 files) | ad-hoc per domain | ❌ |
-| `SkillDownloadCountManager` | — | ❌ |
-| `McpServerValidationService` | — | ❌ |
-| `McpServerImportService` / `McpLegacyImportAdapter` | partial (`registry/mcp.rs` import) | ⚠️ |
-| `McpServerCacheInvalidateService` | — | ❌ |
-| `McpEndpointOperationService` | `endpoint_service.rs` | ⚠️ |
+| `AiResourceSearchClientController` (`/v3/client/ai/resources/search`) | `api/search.rs` | ✅ |
+| `AiCapabilityClientController` (`/v3/client/ai/capabilities`) | `api/capability.rs` | ✅ |
+| `ConsoleCopilotController` (4 SSE ops) + `ConsoleCopilotConfigController` (2) | `batata-copilot` `/v3/console/copilot` (6) | ✅ |
+| `service/trace/` (AI call tracing) | `batata_common::ai_trace` (JSON-line event log) | ✅ as logging, not a table |
+| `service/visibility/` + `VisibilityHelper` | `batata_visibility` over `ai_resource.scope`/`owner` — 101 call sites across MCP, Skill, AgentSpec, A2A | ✅ |
+| `McpServerValidationService` | `batata_common::model::ai::mcp_validation` | ✅ |
+| `SkillDownloadCountManager` | `skill_service::download_skill_version` increments version + resource counts | ✅ |
+| `McpEndpointOperationService` | `service/endpoint_service.rs` | ✅ |
+| RAD capacity gate (`nacos.ai.rad.capacity.*`) | `service/publication_gate.rs` | ✅ |
+| `service/repository/` | `batata-ai/src/repository/` + `service/traits.rs` | ✅ |
+| `service/search/` (projection, scheduling, consumer) | `search/{mod,task,service,consumer,query,embedding}.rs`; `AiResourceIndexConsumer` started in `builder/app_builder.rs` | ✅ |
+| MCP resource index | `service/mcp_index.rs`, refreshed every 30s | ✅ |
+| `service/runtime/` (RAD) | split across `endpoint_service.rs`, `version_range.rs`, `publication_gate.rs` | ⚠️ different shape |
+| `McpServerImportService` / `McpLegacyImportAdapter` | console `/import/validate`, `/import/execute`, `/importToolsFromMcp` (upstream marks it `@Deprecated`) | ⚠️ |
+| `McpServerCacheInvalidateService` | — | ➖ not applicable: upstream's is a config-change subscriber (`mcp-server-versions` group); Batata stores servers in `ai_resource` and refreshes the index on a timer |
+| Copilot `/chat`, `/chat/history` | — | ➖ upstream declares the constants but registers no mapping |
+| `AiResourceImportSecurityGuard` | — | ❌ |
+| Skill-source importers (`skills-sh`, `skills-well-known` fetchers) | — | ❌ (routed, reported as unimplemented) |
 
 ---
 
-## 9. Summary counts
+## 10. Summary counts
 
-| Domain | Upstream endpoints | Batata covered | Gap |
-|---|---|---|---|
-| MCP | 16 | ~2 (different scheme) | **large** |
-| Skill | 17 | 13 | small |
-| AgentSpec | 15 | 12 | small |
-| Agent | 17 | 4 (client only) | **large** |
-| Prompt | 20 | 6 | **medium** |
-| Pipeline | 1 | 1 (+1 extra) | none |
-| Resource import | 4 | ❓ | unknown |
-| Cross-cutting | 12 | ~2 | **large** |
+| Surface | Upstream | Batata | Missing | Batata-only extras |
+|---|---|---|---|---|
+| MCP admin | 19 | 19 | 0 | 0 |
+| MCP client | 6 | 0 | **6** | 0 |
+| MCP console | 22 | 22 | 0 | 2 |
+| Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 |
+| AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 1 / 0 / 1 |
+| Agent admin / client / console | 18 / 7 / 18 | 16 / 5 / 10 | **2 / 2 / 8** | 1 / 0 / 0 |
+| Prompt admin / client / console | 24 / 2 / 18 | 23 / 2 / 18 | **1** / 0 / 0 | 0 |
+| Pipeline admin / console | 4 / 4 | 2 / 2 | **2 / 2** | 0 |
+| A2A admin / console | 6 / 6 | 6 / 6 | 0 | 2 / 3 |
+| Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 |
+| Copilot console | 6 | 6 | 0 | 0 |
+| Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 |
+| **Total** | **249** | **226 matched** | **23** | **10** |
+
+(`service/trace/` is deliberately excluded from the count: upstream emits
+JSON-line events and defines no endpoint for it.)
+
+The 23 missing endpoints, in one list:
+
+1. MCP client — all 6 of `McpClientController`.
+2. Agent — admin `/version`, `/runtime-endpoints`; client `POST ""`,
+   `/watch`; console `PUT ""`, `PUT /draft`, `/submit`, `/publish`,
+   `/force-publish`, `/redraft`, `/online`, `/offline` (12).
+3. Prompt — admin `/version` (1).
+4. Pipeline — `/{pipelineId}` and `""` on admin and console (4).
 
 ---
 
-## 10. Next
+## 11. Implemented but not served
 
-Field-level model comparison is tracked separately in `model-mapping.md` (to be
-produced). Implementation phases are tracked in `README.md`.
+`crates/batata-ai/src/registry/mcp.rs` still implements the pre-upstream
+registry scheme (`POST|GET|PUT|DELETE /v3/ai/mcp/servers…`, `/stats`) behind
+`pub fn configure`, re-exported as `batata_ai::configure_mcp`. **No caller
+mounts it** — the only mounted registry is `configure_mcp_registry`
+(`/v0/servers`, on its own 9080 port when `batata.ai.mcp_registry.enabled`).
+Earlier revisions of this document listed `/v3/ai/mcp/servers` as a live
+compatibility surface; it is reachable only from unit tests.
+
+---
+
+## 12. Next
+
+- MCP client (`McpClientController`, 6 endpoints) is the single largest gap.
+- Agent console lifecycle (8 endpoints) and the two Pipeline reads.
+- Field-level model comparison lives in [`model-mapping.md`](model-mapping.md);
+  phases and progress in [`README.md`](README.md).
