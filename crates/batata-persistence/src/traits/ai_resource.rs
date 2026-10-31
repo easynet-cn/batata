@@ -15,6 +15,34 @@ use crate::model::{
 const SEARCH_INDEX_UNSUPPORTED: &str =
     "AI resource search index is not supported by this storage backend";
 
+/// Task status meaning "waiting to be picked up".
+pub const TASK_STATUS_PENDING: &str = "pending";
+
+/// Task status meaning "leased by a worker".
+pub const TASK_STATUS_PROCESSING: &str = "processing";
+
+/// Whether a task may be claimed at `now_millis`.
+///
+/// Mirrors the `WHERE` clause upstream `JdbcAiResourceIndexTaskRepository.claim`
+/// puts on its `UPDATE`: a pending task past its scheduled time that holds no
+/// live lease, or a processing task whose lease has expired — the latter is how
+/// a crashed worker's task gets taken over.
+///
+/// [`Self::task_claim`] evaluates this against the stored row, so a task that
+/// another worker has just leased is not claimable even if the caller's copy
+/// still looked due.
+pub fn task_is_due(task: &AiResourceTaskInfo, now_millis: i64) -> bool {
+    match task.status.as_str() {
+        TASK_STATUS_PENDING if task.next_execute_at <= now_millis => task
+            .lease_expire_at
+            .is_none_or(|expiry| expiry < now_millis),
+        TASK_STATUS_PROCESSING => task
+            .lease_expire_at
+            .is_some_and(|expiry| expiry < now_millis),
+        _ => false,
+    }
+}
+
 /// Persistence operations for AI resources (skills, agentspecs, etc.)
 #[async_trait]
 pub trait AiResourcePersistence: Send + Sync {
@@ -372,6 +400,54 @@ pub trait AiResourcePersistence: Send + Sync {
     /// Delete a task by key.
     async fn task_delete(&self, task_key: &str) -> anyhow::Result<u64> {
         let _ = task_key;
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Take the lease on a due task.
+    ///
+    /// Mirrors upstream `AiResourceIndexTaskRepository.claim`: the store is
+    /// updated only while it still holds the (`revision`, `lease_token`) pair
+    /// the caller read *and* the stored row is still due, so two nodes polling
+    /// the same queue cannot both decide they own one task. The comparison has
+    /// to happen inside the store — on the cluster backend it happens during
+    /// the Raft apply — because a read-then-write on the caller would leave a
+    /// window for the other node.
+    ///
+    /// On success the claimed task is returned with `status = processing`,
+    /// `lease_token` bumped by one and `lease_expire_at` set to
+    /// `now_millis + lease_millis`. `None` means the task was not due or
+    /// another worker won the race.
+    async fn task_claim(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        let _ = (task, lease_millis, now_millis);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Store a lifecycle transition only while the task still holds
+    /// `lease_token`.
+    ///
+    /// Mirrors the `lease_token = ?` guard upstream puts on `complete` and
+    /// `retry`: a worker whose lease has been taken over must not write over
+    /// its successor's task. `lease_token` is the token the caller was handed
+    /// by [`Self::task_claim`]. Returns `false` when nothing was written.
+    async fn task_update_leased(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_token: i64,
+    ) -> anyhow::Result<bool> {
+        let _ = (task, lease_token);
+        anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
+    }
+
+    /// Delete a task only while it still holds `lease_token`.
+    ///
+    /// The [`Self::task_update_leased`] guard, for upstream's `remove`.
+    async fn task_delete_leased(&self, task_key: &str, lease_token: i64) -> anyhow::Result<bool> {
+        let _ = (task_key, lease_token);
         anyhow::bail!(SEARCH_INDEX_UNSUPPORTED)
     }
 }

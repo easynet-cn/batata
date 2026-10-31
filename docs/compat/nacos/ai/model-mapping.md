@@ -285,6 +285,32 @@ Source: `model/search/AiResourceIndexTask.java:26-30`
 So publishing a resource enqueues a task; the search index converges shortly
 after. It is **not** written synchronously on publish.
 
+#### Ownership: compare-and-set, not leader election
+
+Upstream does **not** elect a consumer leader — `JdbcAiResourceIndexTaskRepository.claim`
+is a conditional `UPDATE` guarded by `revision` **and** `lease_token`, restricted to rows
+that are still due, and `complete` / `retry` / `remove` / `advanceToEnhancement` /
+`restartFromBase` carry the same `lease_token = ?` guard. Batata mirrors that:
+
+| Upstream | Batata |
+|---|---|
+| `claim(task, leaseMillis)` | `AiResourcePersistence::task_claim` |
+| `complete` / `retry` (guarded) | `task_update_leased` |
+| `remove` (guarded) | `task_delete_leased` |
+
+- **Embedded**: the read-modify-write is held under a per-store lock, because
+  RocksDB has no compare-and-set.
+- **SQL**: a conditional `UPDATE`/`DELETE` in one statement.
+- **Raft cluster**: the comparison is evaluated during the *apply*
+  (`AiWriteOp::PutIfUnchanged` / `DeleteIfUnchanged`), so two nodes proposing a
+  claim for the same task are ordered and the loser's write is dropped. Both
+  nodes see the same due task locally, so nothing else could separate them.
+
+Not ported: lease **renewal** (upstream renews every 20s from a scheduled
+executor). Batata's worker holds the lease for its 60s without renewing; a stage
+that overruns has its task taken over and redone, which is safe because the
+projection is idempotent.
+
 ### Trace is **not** a table
 
 `service/trace/AiResourceTraceService` (`@since 3.2.1`) publishes

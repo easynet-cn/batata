@@ -10,7 +10,7 @@ use moka::sync::Cache;
 
 use batata_consistency::raft::node::RaftNode;
 use batata_consistency::raft::reader::RocksDbReader;
-use batata_consistency::raft::request::RaftRequest;
+use batata_consistency::raft::request::{RaftRequest, RaftResponse};
 
 use crate::model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
@@ -116,6 +116,15 @@ impl DistributedPersistService {
 
     /// Write through Raft consensus
     async fn raft_write(&self, request: RaftRequest) -> anyhow::Result<()> {
+        self.raft_write_response(request).await.map(|_| ())
+    }
+
+    /// Write through Raft consensus and keep the response.
+    ///
+    /// Needed by the handlers whose result is decided during apply: ID
+    /// allocation and compare-and-set writes report their outcome in
+    /// [`RaftResponse::data`].
+    async fn raft_write_response(&self, request: RaftRequest) -> anyhow::Result<RaftResponse> {
         let response = self
             .raft_node
             .write(request)
@@ -123,7 +132,7 @@ impl DistributedPersistService {
             .map_err(|e| anyhow::anyhow!("Raft write failed: {}", e))?;
 
         if response.success {
-            Ok(())
+            Ok(response)
         } else {
             Err(anyhow::anyhow!(
                 "Raft write rejected: {}",

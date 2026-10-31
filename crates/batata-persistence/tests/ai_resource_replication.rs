@@ -17,7 +17,9 @@ use batata_consistency::RocksDbReader;
 use batata_consistency::raft::{
     RaftConfig, RaftGrpcService, RaftManagementGrpcService, RaftNode, ServerState,
 };
-use batata_persistence::model::{AiResourceInfo, AiResourceSearchChunkInfo, Page};
+use batata_persistence::model::{
+    AiResourceInfo, AiResourceSearchChunkInfo, AiResourceTaskInfo, Page,
+};
 use batata_persistence::{AiResourcePersistence, DistributedPersistService};
 use batata_server_api::raft::raft_management_service_server::RaftManagementServiceServer;
 use batata_server_api::raft::raft_service_server::RaftServiceServer;
@@ -458,6 +460,158 @@ async fn both_nodes_agree_on_the_resource_list() {
         assert_eq!(
             page.total_count, 2,
             "every node must serve the same list from replicated state"
+        );
+    }
+
+    for n in &nodes {
+        n.node.shutdown().await.expect("shutdown raft node");
+    }
+}
+
+/// A due index task makes both nodes agree on its schedule.
+///
+/// Tasks are replicated state, so a task scheduled through one node has to be
+/// visible through the other; without this the two-node claim test below could
+/// only ever prove that one node could not see the other's work.
+async fn wait_for_task(nodes: &[TestNode], task_key: &str) {
+    for _ in 0..150 {
+        let mut seen = 0;
+        for n in nodes {
+            if n.store
+                .task_find(task_key)
+                .await
+                .expect("find task")
+                .is_some()
+            {
+                seen += 1;
+            }
+        }
+        if seen == nodes.len() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("task {task_key} did not replicate to every node");
+}
+
+/// Poll until every node reports the same non-zero lease token.
+async fn wait_for_lease(nodes: &[TestNode], task_key: &str) {
+    for _ in 0..150 {
+        let mut tokens = Vec::new();
+        for n in nodes {
+            tokens.push(
+                n.store
+                    .task_find(task_key)
+                    .await
+                    .expect("read task")
+                    .expect("task exists")
+                    .lease_token,
+            );
+        }
+        if tokens.iter().all(|t| *t == tokens[0] && *t != 0) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the winning lease did not replicate to every node");
+}
+
+fn index_task(task_key: &str, next_execute_at: i64) -> AiResourceTaskInfo {
+    AiResourceTaskInfo {
+        task_key: task_key.to_string(),
+        namespace_id: NS.to_string(),
+        task_type: "search_index".to_string(),
+        task_stage: "base_index".to_string(),
+        status: "pending".to_string(),
+        task_payload: "{}".to_string(),
+        task_result: None,
+        retry_count: 0,
+        revision: 1,
+        lease_token: 0,
+        next_execute_at,
+        lease_expire_at: None,
+        last_error: None,
+        gmt_create: None,
+        gmt_modified: None,
+    }
+}
+
+/// Two nodes polling the same queue must not both take the lease.
+///
+/// The claim is a compare-and-set evaluated during the Raft apply, so the two
+/// proposals are ordered and the loser's write is dropped. If the comparison
+/// were made on the proposing node instead, both nodes would read the same due
+/// task and both would hand themselves the lease.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_nodes_cannot_both_claim_one_index_task() {
+    let root = tempfile::tempdir().expect("root temp dir");
+    let node1 = TestNode::start(root.path(), 1).await;
+    let node2 = TestNode::start(root.path(), 2).await;
+    let nodes = vec![node1, node2];
+
+    let mut members = BTreeMap::new();
+    for n in &nodes {
+        members.insert(
+            n.id,
+            BasicNode {
+                addr: n.addr.clone(),
+            },
+        );
+    }
+    nodes[0]
+        .node
+        .initialize(members)
+        .await
+        .expect("initialize cluster");
+    let _leader_idx = wait_for_leader(&nodes).await;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    nodes[0]
+        .store
+        .task_upsert(&index_task("shared-task", now - 1_000))
+        .await
+        .expect("schedule task");
+    wait_for_task(&nodes, "shared-task").await;
+
+    // Both nodes read the same due task, then both try to claim it.
+    let mut snapshots = Vec::new();
+    for n in &nodes {
+        snapshots.push(
+            n.store
+                .task_find("shared-task")
+                .await
+                .expect("read task")
+                .expect("task replicated"),
+        );
+    }
+    let (first, second) = tokio::join!(
+        nodes[0].store.task_claim(&snapshots[0], 60_000, now),
+        nodes[1].store.task_claim(&snapshots[1], 60_000, now)
+    );
+    let claims = [first, second];
+
+    let winners = claims
+        .iter()
+        .filter(|c| c.as_ref().expect("claim must not error").is_some())
+        .count();
+    assert_eq!(
+        winners, 1,
+        "exactly one node may hold the lease, got {winners}"
+    );
+
+    // The winning lease is the replicated one; both nodes must agree on it.
+    wait_for_lease(&nodes, "shared-task").await;
+    for n in &nodes {
+        let stored = n
+            .store
+            .task_find("shared-task")
+            .await
+            .expect("read task")
+            .expect("task exists");
+        assert_eq!(stored.status, "processing");
+        assert_eq!(
+            stored.lease_token, 1,
+            "the winning claim must be the one every node stores"
         );
     }
 

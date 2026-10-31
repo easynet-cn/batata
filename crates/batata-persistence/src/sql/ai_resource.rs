@@ -13,6 +13,7 @@ use crate::entity::{
     ai_resource_version, pipeline_execution,
 };
 use crate::model::*;
+use crate::traits::ai_resource::{TASK_STATUS_PENDING, TASK_STATUS_PROCESSING};
 use crate::traits::*;
 
 use super::ExternalDbPersistService;
@@ -1069,6 +1070,150 @@ impl AiResourcePersistence for ExternalDbPersistService {
             .await?;
 
         Ok(result.rows_affected)
+    }
+
+    async fn task_claim(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        let now = Utc::now().naive_utc();
+        let lease_expire_at = now_millis + lease_millis;
+        // Bumped on the client rather than as `lease_token + 1` in SQL: the
+        // `WHERE lease_token = ?` below already pins the row to the value this
+        // caller read, so an absolute assignment is just as exclusive and does
+        // not depend on dialect-specific arithmetic.
+        let new_token = task.lease_token + 1;
+
+        // Mirrors upstream `JdbcAiResourceIndexTaskRepository.claim`: pending
+        // and scheduled with no live lease, or processing with an expired one.
+        let due = Condition::any()
+            .add(
+                Condition::all()
+                    .add(ai_resource_task::Column::Status.eq(TASK_STATUS_PENDING))
+                    .add(ai_resource_task::Column::NextExecuteAt.lte(now_millis))
+                    .add(
+                        Condition::any()
+                            .add(ai_resource_task::Column::LeaseExpireAt.is_null())
+                            .add(ai_resource_task::Column::LeaseExpireAt.lt(now_millis)),
+                    ),
+            )
+            .add(
+                Condition::all()
+                    .add(ai_resource_task::Column::Status.eq(TASK_STATUS_PROCESSING))
+                    .add(ai_resource_task::Column::LeaseExpireAt.lt(now_millis)),
+            );
+
+        let result = ai_resource_task::Entity::update_many()
+            .col_expr(
+                ai_resource_task::Column::Status,
+                Expr::value(TASK_STATUS_PROCESSING),
+            )
+            .col_expr(ai_resource_task::Column::LeaseToken, Expr::value(new_token))
+            .col_expr(
+                ai_resource_task::Column::LeaseExpireAt,
+                Expr::value(lease_expire_at),
+            )
+            .col_expr(ai_resource_task::Column::GmtModified, Expr::value(now))
+            .filter(ai_resource_task::Column::TaskKey.eq(task.task_key.clone()))
+            .filter(ai_resource_task::Column::TaskType.eq(task.task_type.clone()))
+            .filter(ai_resource_task::Column::Revision.eq(task.revision))
+            .filter(ai_resource_task::Column::LeaseToken.eq(task.lease_token))
+            .filter(due)
+            .exec(&self.db)
+            .await?;
+
+        if result.rows_affected != 1 {
+            return Ok(None);
+        }
+
+        let mut claimed = task.clone();
+        claimed.status = TASK_STATUS_PROCESSING.to_string();
+        claimed.lease_token = new_token;
+        claimed.lease_expire_at = Some(lease_expire_at);
+        claimed.gmt_modified = Some(now.to_string());
+        Ok(Some(claimed))
+    }
+
+    async fn task_update_leased(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_token: i64,
+    ) -> anyhow::Result<bool> {
+        let result = ai_resource_task::Entity::update_many()
+            .col_expr(
+                ai_resource_task::Column::NamespaceId,
+                Expr::value(task.namespace_id.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::TaskType,
+                Expr::value(task.task_type.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::TaskStage,
+                Expr::value(task.task_stage.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::Status,
+                Expr::value(task.status.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::TaskPayload,
+                Expr::value(task.task_payload.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::TaskResult,
+                Expr::value(task.task_result.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::RetryCount,
+                Expr::value(task.retry_count),
+            )
+            .col_expr(
+                ai_resource_task::Column::Revision,
+                Expr::value(task.revision),
+            )
+            .col_expr(
+                ai_resource_task::Column::LeaseToken,
+                Expr::value(task.lease_token),
+            )
+            .col_expr(
+                ai_resource_task::Column::NextExecuteAt,
+                Expr::value(task.next_execute_at),
+            )
+            .col_expr(
+                ai_resource_task::Column::LeaseExpireAt,
+                Expr::value(task.lease_expire_at),
+            )
+            .col_expr(
+                ai_resource_task::Column::LastError,
+                Expr::value(task.last_error.clone()),
+            )
+            .col_expr(
+                ai_resource_task::Column::GmtModified,
+                Expr::value(Utc::now().naive_utc()),
+            )
+            .filter(ai_resource_task::Column::TaskKey.eq(task.task_key.clone()))
+            .filter(ai_resource_task::Column::TaskType.eq(task.task_type.clone()))
+            .filter(ai_resource_task::Column::Revision.eq(task.revision))
+            .filter(ai_resource_task::Column::LeaseToken.eq(lease_token))
+            .filter(ai_resource_task::Column::Status.eq(TASK_STATUS_PROCESSING))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected == 1)
+    }
+
+    async fn task_delete_leased(&self, task_key: &str, lease_token: i64) -> anyhow::Result<bool> {
+        let result = ai_resource_task::Entity::delete_many()
+            .filter(ai_resource_task::Column::TaskKey.eq(task_key))
+            .filter(ai_resource_task::Column::LeaseToken.eq(lease_token))
+            .filter(ai_resource_task::Column::Status.eq(TASK_STATUS_PROCESSING))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected == 1)
     }
 
     async fn search_chunk_search(

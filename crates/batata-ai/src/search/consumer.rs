@@ -5,10 +5,12 @@
 //! backoff. The `llm_enhancement` stage and vector convergence are not
 //! implemented.
 //!
-//! Claiming is **not** atomic here: the persistence layer exposes an upsert but
-//! no compare-and-set for tasks, so two nodes could both claim the same task.
-//! The projection is idempotent (it is keyed by `source_digest`), so the worst
-//! case is duplicate work rather than a wrong index.
+//! Claiming is exclusive: the store hands out the lease only to the caller
+//! whose (`revision`, `lease_token`) pair still matches, so several nodes can
+//! poll the same queue without coordinating (upstream relies on the same
+//! compare-and-set rather than on electing a leader). The lease token fences
+//! the follow-up writes too — a worker whose lease was taken over cannot
+//! complete or remove a task it no longer owns.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -56,7 +58,8 @@ pub enum TaskOutcome {
     Removed,
     /// The stage failed; the task was rescheduled.
     Retried,
-    /// The task was skipped (already completed or still leased).
+    /// The task was skipped: already completed, still leased by another
+    /// worker, or the lease was lost before the outcome could be recorded.
     Skipped,
 }
 
@@ -64,8 +67,6 @@ pub enum TaskOutcome {
 pub struct AiResourceIndexConsumer {
     persistence: Arc<dyn PersistenceService>,
     search: AiResourceSearchService,
-    /// Token generator; injected so tests can control lease tokens.
-    lease_tokens: Box<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl AiResourceIndexConsumer {
@@ -75,17 +76,7 @@ impl AiResourceIndexConsumer {
         Self {
             persistence,
             search,
-            lease_tokens: Box::new(random_lease_token),
         }
-    }
-
-    /// Override the lease token generator (used by tests).
-    pub fn with_lease_tokens<F>(mut self, tokens: F) -> Self
-    where
-        F: Fn() -> i64 + Send + Sync + 'static,
-    {
-        self.lease_tokens = Box::new(tokens);
-        self
     }
 
     /// Poll once and process every due task. Returns the outcome per task.
@@ -98,79 +89,93 @@ impl AiResourceIndexConsumer {
 
         let mut outcomes = Vec::with_capacity(tasks.len());
         for task in tasks {
-            // Completed tasks stay in the table, so skip them explicitly.
+            // `task_find_due` answers on the scheduling columns only, so a
+            // completed task can still come back. `task_claim` would reject it
+            // anyway; skipping here keeps the outcome readable.
             if task.status == search::TASK_STATUS_COMPLETED {
                 outcomes.push(TaskOutcome::Skipped);
                 continue;
             }
-            // Still owned by another worker.
-            if task.status == search::TASK_STATUS_PROCESSING
-                && task.lease_expire_at.is_some_and(|expiry| expiry > now)
-            {
+
+            let Some(claimed) = self
+                .persistence
+                .task_claim(&task, LEASE_MILLIS, now)
+                .await?
+            else {
+                // Not due, or another worker took the lease first.
                 outcomes.push(TaskOutcome::Skipped);
                 continue;
-            }
+            };
+            let lease_token = claimed.lease_token;
 
-            let subject = match serde_json::from_str::<IndexTaskPayload>(&task.task_payload) {
-                Ok(payload) => payload.subject,
-                Err(e) => {
-                    warn!(task_key = %task.task_key, error = %e, "Unreadable index task payload");
-                    outcomes.push(TaskOutcome::Skipped);
-                    continue;
+            // An unreadable payload is treated as a failed stage rather than a
+            // silent skip: leaving the task due would re-pick it every poll.
+            let result = match serde_json::from_str::<IndexTaskPayload>(&claimed.task_payload) {
+                Ok(payload) => {
+                    self.search
+                        .rebuild_latest_mcp(&claimed.namespace_id, &payload.subject.resource_name)
+                        .await
                 }
+                Err(e) => Err(anyhow::anyhow!("unreadable index task payload: {e}")),
             };
 
-            // Claim.
-            let mut claimed = task.clone();
-            claimed.status = search::TASK_STATUS_PROCESSING.to_string();
-            claimed.lease_token = (self.lease_tokens)();
-            claimed.lease_expire_at = Some(now + LEASE_MILLIS);
-            claimed.revision = task.revision + 1;
-            self.persistence.task_upsert(&claimed).await?;
-
-            match self
-                .search
-                .rebuild_latest_mcp(&task.namespace_id, &subject.resource_name)
-                .await
-            {
+            match result {
                 Ok(true) => {
                     let mut done = claimed.clone();
                     done.status = search::TASK_STATUS_COMPLETED.to_string();
                     done.lease_token = 0;
                     done.lease_expire_at = None;
-                    done.revision = claimed.revision + 1;
-                    self.persistence.task_upsert(&done).await?;
-                    outcomes.push(TaskOutcome::Completed);
+                    outcomes.push(if self
+                        .persistence
+                        .task_update_leased(&done, lease_token)
+                        .await?
+                    {
+                        TaskOutcome::Completed
+                    } else {
+                        // The lease was taken over; the successor owns the task.
+                        warn!(task_key = %claimed.task_key, "Lost the index task lease before completing it");
+                        TaskOutcome::Skipped
+                    });
                 }
                 Ok(false) => {
                     // Resource gone: drop the task rather than retry forever.
-                    self.persistence.task_delete(&task.task_key).await?;
-                    outcomes.push(TaskOutcome::Removed);
+                    outcomes.push(
+                        if self
+                            .persistence
+                            .task_delete_leased(&claimed.task_key, lease_token)
+                            .await?
+                        {
+                            TaskOutcome::Removed
+                        } else {
+                            TaskOutcome::Skipped
+                        },
+                    );
                 }
                 Err(e) => {
                     let mut retry = claimed.clone();
                     retry.status = search::TASK_STATUS_PENDING.to_string();
                     retry.lease_token = 0;
                     retry.lease_expire_at = None;
-                    retry.retry_count = task.retry_count + 1;
+                    retry.retry_count = claimed.retry_count + 1;
                     retry.next_execute_at = now + retry_delay_seconds(retry.retry_count) * 1000;
                     retry.last_error = Some(e.to_string());
-                    retry.revision = claimed.revision + 1;
-                    self.persistence.task_upsert(&retry).await?;
-                    outcomes.push(TaskOutcome::Retried);
+                    outcomes.push(
+                        if self
+                            .persistence
+                            .task_update_leased(&retry, lease_token)
+                            .await?
+                        {
+                            TaskOutcome::Retried
+                        } else {
+                            TaskOutcome::Skipped
+                        },
+                    );
                 }
             }
         }
 
         Ok(outcomes)
     }
-}
-
-/// Default lease token source.
-fn random_lease_token() -> i64 {
-    // Monotonic-ish and distinct per process; uniqueness within a table is all
-    // that matters.
-    now_millis()
 }
 
 #[cfg(test)]

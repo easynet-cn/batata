@@ -512,10 +512,12 @@ has no `LIKE`:
 >   cluster and asserts a resource written through the follower is readable on
 >   the leader and vice versa, that deletes travel, that chunk replacement
 >   arrives as a whole batch, and that both nodes serve the same resource list.
->   The consumer loop still runs on every node and its claim is still not
->   atomic, so nodes can duplicate work — safe, because the projection is
->   keyed by `source_digest`, but wasteful. No leader election for the consumer
->   yet.
+>   **The index-task claim is exclusive across nodes**: the comparison is
+>   evaluated during the Raft apply (`AiWriteOp::PutIfUnchanged`), so two nodes
+>   that both see the same due task and both propose a claim are ordered and the
+>   loser writes nothing — `two_nodes_cannot_both_claim_one_index_task` pins it
+>   down. This mirrors upstream, which also relies on the claim's
+>   compare-and-set rather than on electing a consumer leader.
 > - **Embedding computation: done.** `search::embedding` ports upstream's
 >   default `HashingAiResourceEmbeddingService` — model id
 >   `nacos-local-hashing-embedding-v1`, 384 dims, CRC32 bucket hashing with

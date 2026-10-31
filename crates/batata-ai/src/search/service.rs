@@ -53,8 +53,18 @@ impl AiResourceSearchService {
         resource_name: &str,
     ) -> anyhow::Result<()> {
         let payload = task::IndexTaskPayload::new(resource_type, resource_name, false);
+        let task_key = task::task_key(namespace_id, resource_type, resource_name);
+        // Upstream `JdbcAiResourceIndexTaskRepository.schedule` bumps the
+        // revision of an existing row. That is what supersedes a worker that is
+        // mid-flight: its guarded completion carries the revision it claimed and
+        // no longer matches, so the fresh schedule wins instead of being marked
+        // done by the older run.
+        let revision = match self.persistence.task_find(&task_key).await? {
+            Some(existing) => existing.revision + 1,
+            None => 1,
+        };
         let task = AiResourceTaskInfo {
-            task_key: task::task_key(namespace_id, resource_type, resource_name),
+            task_key,
             namespace_id: namespace_id.to_string(),
             task_type: search::TASK_TYPE.to_string(),
             task_stage: search::STAGE_BASE_INDEX.to_string(),
@@ -62,7 +72,7 @@ impl AiResourceSearchService {
             task_payload: serde_json::to_string(&payload)?,
             task_result: None,
             retry_count: 0,
-            revision: 1,
+            revision,
             lease_token: 0,
             next_execute_at: now_millis(),
             lease_expire_at: None,

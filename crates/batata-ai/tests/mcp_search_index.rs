@@ -352,3 +352,59 @@ async fn keyword_search_finds_and_ranks() {
     store.clean_index(NS, "mcp", ALPHA).await;
     store.clean_index(NS, "mcp", BETA).await;
 }
+
+/// Two consumers polling the same queue must not both run the task.
+///
+/// Upstream relies on the claim being a compare-and-set rather than on
+/// electing a leader, so the second consumer sees the task as already leased
+/// and skips it. Before the claim was exclusive both consumers rebuilt the
+/// same index.
+///
+/// On a single node this is the scheduling columns doing the work — the task
+/// stops being "due" once it is leased. The cross-node case, where both nodes
+/// see the same due task and only the compare-and-set can separate them, is
+/// covered by `ai_resource_replication::two_nodes_cannot_both_claim_one_index_task`.
+#[tokio::test]
+async fn two_consumers_do_not_both_run_one_task() {
+    let store = TestStore::open().await;
+    let index = Arc::new(McpServerIndex::new());
+    let svc = McpServerOperationService::new(store.store(), index);
+    let consumer_a = AiResourceIndexConsumer::new(store.store());
+    let consumer_b = AiResourceIndexConsumer::new(store.store());
+
+    store.clean_index(NS, "mcp", NAME).await;
+
+    // Publishing schedules the task on its own.
+    svc.create_mcp_server(NS, &registration("1.0.0"))
+        .await
+        .expect("create server");
+    svc.publish_mcp_server_version(NS, NAME, "1.0.0")
+        .await
+        .expect("publish");
+
+    let (a, b) = tokio::join!(consumer_a.consume_once(), consumer_b.consume_once());
+    let a = a.expect("consumer a");
+    let b = b.expect("consumer b");
+
+    let ran = a
+        .iter()
+        .chain(b.iter())
+        .filter(|o| **o != TaskOutcome::Skipped)
+        .count();
+    assert_eq!(
+        ran, 1,
+        "exactly one consumer may own the task, got {a:?} and {b:?}"
+    );
+
+    // The winner completed it; the loser left it alone.
+    let key = task::task_key(NS, "mcp", NAME);
+    let stored = store
+        .store()
+        .task_find(&key)
+        .await
+        .expect("read task")
+        .expect("task must survive the race");
+    assert_eq!(stored.status, "completed");
+
+    store.clean_index(NS, "mcp", NAME).await;
+}

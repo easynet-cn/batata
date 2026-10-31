@@ -13,9 +13,25 @@ use crate::model::{
     AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
     PipelineExecutionInfo,
 };
-use crate::traits::ai_resource::AiResourcePersistence;
+use crate::traits::ai_resource::{AiResourcePersistence, TASK_STATUS_PROCESSING, task_is_due};
 
 use super::EmbeddedPersistService;
+
+/// Take the lock that serializes index-task mutations.
+///
+/// Panics are recovered on unlock so a poisoned lock (a task mutation that
+/// panicked) cannot wedge the whole queue.
+fn lock_tasks(service: &EmbeddedPersistService) -> std::sync::MutexGuard<'_, ()> {
+    service
+        .task_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Current time as an RFC 3339 string, matching the other embedded writers.
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
 
 /// Key for the auto-increment counter stored in the ai_resource CF
 const KEY_AI_RESOURCE_NEXT_ID: &str = "__ai_resource_next_id__";
@@ -1047,7 +1063,8 @@ impl AiResourcePersistence for EmbeddedPersistService {
     // ========================================================================
 
     async fn task_upsert(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let _guard = lock_tasks(self);
+        let now = now_rfc3339();
         let mut stored = task.clone();
         match self.get_task(&task.task_key)? {
             Some(existing) => {
@@ -1090,12 +1107,73 @@ impl AiResourcePersistence for EmbeddedPersistService {
     }
 
     async fn task_delete(&self, task_key: &str) -> anyhow::Result<u64> {
+        let _guard = lock_tasks(self);
         if self.get_task(task_key)?.is_none() {
             return Ok(0);
         }
         let cf = self.cf(CF_AI_RESOURCE_TASK)?;
         self.db.delete_cf(cf, task_key.as_bytes())?;
         Ok(1)
+    }
+
+    async fn task_claim(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        let _guard = lock_tasks(self);
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(None);
+        };
+        if stored.revision != task.revision || stored.lease_token != task.lease_token {
+            return Ok(None);
+        }
+        if !task_is_due(&stored, now_millis) {
+            return Ok(None);
+        }
+        let mut claimed = stored.clone();
+        claimed.status = TASK_STATUS_PROCESSING.to_string();
+        claimed.lease_token = stored.lease_token + 1;
+        claimed.lease_expire_at = Some(now_millis + lease_millis);
+        claimed.gmt_modified = Some(now_rfc3339());
+        self.put_task(&claimed)?;
+        Ok(Some(claimed))
+    }
+
+    async fn task_update_leased(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_token: i64,
+    ) -> anyhow::Result<bool> {
+        let _guard = lock_tasks(self);
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(false);
+        };
+        if stored.revision != task.revision
+            || stored.lease_token != lease_token
+            || stored.status != TASK_STATUS_PROCESSING
+        {
+            return Ok(false);
+        }
+        let mut updated = task.clone();
+        updated.gmt_create = stored.gmt_create;
+        updated.gmt_modified = Some(now_rfc3339());
+        self.put_task(&updated)?;
+        Ok(true)
+    }
+
+    async fn task_delete_leased(&self, task_key: &str, lease_token: i64) -> anyhow::Result<bool> {
+        let _guard = lock_tasks(self);
+        let Some(stored) = self.get_task(task_key)? else {
+            return Ok(false);
+        };
+        if stored.lease_token != lease_token || stored.status != TASK_STATUS_PROCESSING {
+            return Ok(false);
+        }
+        let cf = self.cf(CF_AI_RESOURCE_TASK)?;
+        self.db.delete_cf(cf, task_key.as_bytes())?;
+        Ok(true)
     }
 }
 
@@ -1262,5 +1340,159 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// Two workers holding the same snapshot must not both take the lease.
+    ///
+    /// Within one process the read-modify-write lock and the due check would
+    /// also reject the second claim; the cross-node case, where both nodes see
+    /// the same due task and only the compare-and-set separates them, is
+    /// covered by `ai_resource_replication::two_nodes_cannot_both_claim_one_index_task`.
+    #[tokio::test]
+    async fn test_embedded_task_claim_is_exclusive() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("claimed", now - 1_000))
+            .await
+            .unwrap();
+        let snapshot = svc.task_find("claimed").await.unwrap().expect("task");
+
+        let first = svc.task_claim(&snapshot, 60_000, now).await.unwrap();
+        let first = first.expect("the first claim must win");
+        assert_eq!(first.status, "processing");
+        assert_eq!(first.lease_token, snapshot.lease_token + 1);
+        assert_eq!(first.lease_expire_at, Some(now + 60_000));
+
+        // The loser still holds the pre-claim snapshot, which no longer matches.
+        let second = svc.task_claim(&snapshot, 60_000, now).await.unwrap();
+        assert!(
+            second.is_none(),
+            "a stale snapshot must not take the lease from its owner"
+        );
+    }
+
+    /// A task that is not due yet cannot be claimed ahead of time.
+    #[tokio::test]
+    async fn test_embedded_task_claim_respects_the_schedule() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("future", now + 60_000))
+            .await
+            .unwrap();
+        let snapshot = svc.task_find("future").await.unwrap().expect("task");
+
+        assert!(
+            svc.task_claim(&snapshot, 60_000, now)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Once it comes due it is claimable.
+        let later = now + 60_001;
+        let claimed = svc
+            .task_claim(&snapshot, 60_000, later)
+            .await
+            .unwrap()
+            .expect("due now");
+        assert_eq!(claimed.status, "processing");
+    }
+
+    /// An expired lease is taken over, which is how a crashed worker's task
+    /// gets picked up again.
+    #[tokio::test]
+    async fn test_embedded_task_claim_takes_over_an_expired_lease() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("leased", now - 1_000)).await.unwrap();
+        let snapshot = svc.task_find("leased").await.unwrap().expect("task");
+        let leased = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+
+        // Still inside the lease: the owner keeps it.
+        assert!(
+            svc.task_claim(&leased, 60_000, now + 1_000)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // After the lease expires: takeover.
+        let taken = svc
+            .task_claim(&leased, 60_000, now + 60_001)
+            .await
+            .unwrap()
+            .expect("expired lease must be taken over");
+        assert_eq!(taken.lease_token, leased.lease_token + 1);
+    }
+
+    /// A worker that lost the lease must not write over its successor.
+    #[tokio::test]
+    async fn test_embedded_task_writes_are_fenced_by_the_lease_token() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("fenced", now - 1_000)).await.unwrap();
+        let snapshot = svc.task_find("fenced").await.unwrap().expect("task");
+        let claimed = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+
+        let mut done = claimed.clone();
+        done.status = "completed".to_string();
+        done.lease_token = 0;
+        done.lease_expire_at = None;
+
+        // A stale token is rejected and nothing is written.
+        assert!(
+            !svc.task_update_leased(&done, claimed.lease_token - 1)
+                .await
+                .unwrap()
+        );
+        let stored = svc.task_find("fenced").await.unwrap().expect("task");
+        assert_eq!(stored.status, "processing", "the stale write must not land");
+
+        // The token the claim handed out is accepted.
+        assert!(
+            svc.task_update_leased(&done, claimed.lease_token)
+                .await
+                .unwrap()
+        );
+        let stored = svc.task_find("fenced").await.unwrap().expect("task");
+        assert_eq!(stored.status, "completed");
+    }
+
+    /// Deleting a task is fenced the same way an update is.
+    #[tokio::test]
+    async fn test_embedded_task_delete_is_fenced_by_the_lease_token() {
+        let (svc, _tmp) = create_test_service().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        svc.task_upsert(&task("removable", now - 1_000))
+            .await
+            .unwrap();
+        let snapshot = svc.task_find("removable").await.unwrap().expect("task");
+        let claimed = svc
+            .task_claim(&snapshot, 60_000, now)
+            .await
+            .unwrap()
+            .expect("claim");
+
+        assert!(
+            !svc.task_delete_leased("removable", claimed.lease_token - 1)
+                .await
+                .unwrap()
+        );
+        assert!(svc.task_find("removable").await.unwrap().is_some());
+
+        assert!(
+            svc.task_delete_leased("removable", claimed.lease_token)
+                .await
+                .unwrap()
+        );
+        assert!(svc.task_find("removable").await.unwrap().is_none());
     }
 }

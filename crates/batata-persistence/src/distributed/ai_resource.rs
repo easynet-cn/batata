@@ -22,10 +22,10 @@ use crate::model::{
     AiResourceSearchHitInfo, AiResourceTaskInfo, AiResourceVersionInfo, Page,
     PipelineExecutionInfo,
 };
-use crate::traits::ai_resource::AiResourcePersistence;
+use crate::traits::ai_resource::{AiResourcePersistence, TASK_STATUS_PROCESSING, task_is_due};
 
 use super::DistributedPersistService;
-use batata_consistency::raft::request::{AiWriteOp, RaftRequest};
+use batata_consistency::raft::request::{AiWriteOp, RaftRequest, RaftResponse};
 
 /// Key for the auto-increment counter stored in the ai_resource CF
 const KEY_AI_RESOURCE_NEXT_ID: &str = "__ai_resource_next_id__";
@@ -35,6 +35,27 @@ const KEY_AI_RESOURCE_VERSION_NEXT_ID: &str = "__ai_resource_version_next_id__";
 const KEY_SEARCH_DOCUMENT_NEXT_ID: &str = "__search_document_next_id__";
 /// Key for the auto-increment counter stored in the search chunk CF
 const KEY_SEARCH_CHUNK_NEXT_ID: &str = "__search_chunk_next_id__";
+
+/// Whether the compare-and-set ops in an [`RaftRequest::AiWrite`] all matched.
+///
+/// The state machine reports the outcome in [`RaftResponse::data`] as a
+/// little-endian `i64`. Missing data is treated as a lost comparison so a
+/// transport that dropped it can never be read as a successful claim.
+fn cas_matched(response: &RaftResponse) -> bool {
+    let Some(data) = response.data.as_deref() else {
+        return false;
+    };
+    let bytes: [u8; 8] = match data.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    i64::from_le_bytes(bytes) != 0
+}
+
+/// Current time as an RFC 3339 string, matching the other AI writers.
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
 
 impl DistributedPersistService {
     /// Build the key for an ai_resource entry
@@ -226,6 +247,39 @@ impl DistributedPersistService {
             return Ok(());
         }
         self.raft_write(RaftRequest::AiWrite { ops }).await
+    }
+
+    /// Overwrite (or, for `updated = None`, delete) one index task, but only
+    /// while it still holds exactly `stored`.
+    ///
+    /// The comparison is evaluated during the Raft apply against the same state
+    /// on every node, so two nodes that both read `stored` and both propose a
+    /// transition are ordered instead of racing: the loser's comparison fails
+    /// and its write is dropped. Returns whether the comparison matched.
+    async fn task_write_if_unchanged(
+        &self,
+        stored: &AiResourceTaskInfo,
+        updated: Option<&AiResourceTaskInfo>,
+    ) -> anyhow::Result<bool> {
+        let key = stored.task_key.as_bytes().to_vec();
+        let expected = Some(serde_json::to_vec(stored)?);
+        let op = match updated {
+            Some(task) => AiWriteOp::PutIfUnchanged {
+                cf: CF_AI_RESOURCE_TASK.to_string(),
+                key,
+                expected,
+                value: serde_json::to_vec(task)?,
+            },
+            None => AiWriteOp::DeleteIfUnchanged {
+                cf: CF_AI_RESOURCE_TASK.to_string(),
+                key,
+                expected,
+            },
+        };
+        let response = self
+            .raft_write_response(RaftRequest::AiWrite { ops: vec![op] })
+            .await?;
+        Ok(cas_matched(&response))
     }
 
     /// Allocate consecutive IDs from an AI auto-increment counter.
@@ -1174,5 +1228,67 @@ impl AiResourcePersistence for DistributedPersistService {
         }])
         .await?;
         Ok(1)
+    }
+
+    async fn task_claim(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_millis: i64,
+        now_millis: i64,
+    ) -> anyhow::Result<Option<AiResourceTaskInfo>> {
+        // The lease checks run here on a local read, but they are only a
+        // filter: what makes the claim exclusive is that the write carries the
+        // bytes this node read, so a node that lost the race simply does not
+        // write. Both nodes propose; the apply order decides the winner.
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(None);
+        };
+        if stored.revision != task.revision
+            || stored.lease_token != task.lease_token
+            || !task_is_due(&stored, now_millis)
+        {
+            return Ok(None);
+        }
+
+        let mut claimed = stored.clone();
+        claimed.status = TASK_STATUS_PROCESSING.to_string();
+        claimed.lease_token = stored.lease_token + 1;
+        claimed.lease_expire_at = Some(now_millis + lease_millis);
+        claimed.gmt_modified = Some(now_rfc3339());
+        let landed = self
+            .task_write_if_unchanged(&stored, Some(&claimed))
+            .await?;
+        Ok(landed.then_some(claimed))
+    }
+
+    async fn task_update_leased(
+        &self,
+        task: &AiResourceTaskInfo,
+        lease_token: i64,
+    ) -> anyhow::Result<bool> {
+        let Some(stored) = self.get_task(&task.task_key)? else {
+            return Ok(false);
+        };
+        if stored.revision != task.revision
+            || stored.lease_token != lease_token
+            || stored.status != TASK_STATUS_PROCESSING
+        {
+            return Ok(false);
+        }
+
+        let mut updated = task.clone();
+        updated.gmt_create = stored.gmt_create.clone();
+        updated.gmt_modified = Some(now_rfc3339());
+        self.task_write_if_unchanged(&stored, Some(&updated)).await
+    }
+
+    async fn task_delete_leased(&self, task_key: &str, lease_token: i64) -> anyhow::Result<bool> {
+        let Some(stored) = self.get_task(task_key)? else {
+            return Ok(false);
+        };
+        if stored.lease_token != lease_token || stored.status != TASK_STATUS_PROCESSING {
+            return Ok(false);
+        }
+        self.task_write_if_unchanged(&stored, None).await
     }
 }

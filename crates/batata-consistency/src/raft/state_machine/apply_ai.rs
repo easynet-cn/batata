@@ -18,17 +18,26 @@ use crate::raft::request::{AiWriteOp, RaftResponse};
 
 impl RocksStateMachine {
     /// Apply a batch of AI storage mutations as one `WriteBatch`.
+    ///
+    /// Compare-and-set ops ([`AiWriteOp::PutIfUnchanged`] and
+    /// [`AiWriteOp::DeleteIfUnchanged`]) are decided against committed state,
+    /// i.e. before this batch lands, so a batch must not compare a key it also
+    /// writes. Whether **every** comparison matched is reported in
+    /// [`RaftResponse::data`] as a little-endian `i64` (`1` or `0`).
     pub(super) fn apply_ai_write(&self, ops: &[AiWriteOp]) -> RaftResponse {
         if ops.is_empty() {
-            return RaftResponse::success();
+            return RaftResponse::success_with_data(1i64.to_le_bytes().to_vec());
         }
 
         let mut batch = WriteBatch::default();
+        let mut compared = true;
         for op in ops {
             let cf = match op {
                 AiWriteOp::Put { cf, .. }
                 | AiWriteOp::Delete { cf, .. }
-                | AiWriteOp::DeletePrefix { cf, .. } => self.db.cf_handle(cf),
+                | AiWriteOp::DeletePrefix { cf, .. }
+                | AiWriteOp::PutIfUnchanged { cf, .. }
+                | AiWriteOp::DeleteIfUnchanged { cf, .. } => self.db.cf_handle(cf),
             };
             let Some(cf) = cf else {
                 error!(
@@ -41,6 +50,24 @@ impl RocksStateMachine {
             match op {
                 AiWriteOp::Put { key, value, .. } => batch.put_cf(cf, key, value),
                 AiWriteOp::Delete { key, .. } => batch.delete_cf(cf, key),
+                AiWriteOp::PutIfUnchanged {
+                    key,
+                    expected,
+                    value,
+                    ..
+                } => match self.compare_cf(cf, key, expected.as_deref()) {
+                    Ok(true) => batch.put_cf(cf, key, value),
+                    // Lost the race: the mutation is dropped, not applied.
+                    Ok(false) => compared = false,
+                    Err(e) => return RaftResponse::failure(format!("AI compare failed: {e}")),
+                },
+                AiWriteOp::DeleteIfUnchanged { key, expected, .. } => {
+                    match self.compare_cf(cf, key, expected.as_deref()) {
+                        Ok(true) => batch.delete_cf(cf, key),
+                        Ok(false) => compared = false,
+                        Err(e) => return RaftResponse::failure(format!("AI compare failed: {e}")),
+                    }
+                }
                 AiWriteOp::DeletePrefix { prefix, .. } => {
                     // The scan runs against committed state, before this batch
                     // is written, and each node holds the same state, so the
@@ -75,8 +102,24 @@ impl RocksStateMachine {
                 error!("AI write batch failed: {e}");
                 RaftResponse::failure(format!("AI write failed: {e}"))
             },
-            |_| RaftResponse::success(),
+            |_| RaftResponse::success_with_data((i64::from(compared)).to_le_bytes().to_vec()),
         )
+    }
+
+    /// Whether `key` in `cf` currently holds exactly `expected`.
+    ///
+    /// `expected: None` means "the key must not exist".
+    fn compare_cf(
+        &self,
+        cf: &rocksdb::ColumnFamily,
+        key: &[u8],
+        expected: Option<&[u8]>,
+    ) -> anyhow::Result<bool> {
+        let stored = self.db.get_cf(cf, key)?;
+        Ok(match expected {
+            Some(expected) => stored.as_deref() == Some(expected),
+            None => stored.is_none(),
+        })
     }
 
     /// Bump an AI auto-increment counter and return the IDs it handed out.

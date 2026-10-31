@@ -593,6 +593,36 @@ pub enum AiWriteOp {
         /// Prefix bytes.
         prefix: Vec<u8>,
     },
+    /// Write `key` -> `value` in `cf` only while `key` still holds `expected`.
+    ///
+    /// The comparison happens during apply, so it is decided under the same
+    /// total order that orders the writes themselves: two nodes that read the
+    /// same value and both try to build on it cannot both win. A comparison
+    /// that fails writes nothing. Whether every comparison in the batch
+    /// matched is reported in [`RaftResponse::data`] as a little-endian `i64`
+    /// (`1` or `0`).
+    PutIfUnchanged {
+        /// Column family name.
+        cf: String,
+        /// Key bytes.
+        key: Vec<u8>,
+        /// Bytes the key must currently hold. `None` means "must not exist".
+        expected: Option<Vec<u8>>,
+        /// Bytes to store when the comparison matches.
+        value: Vec<u8>,
+    },
+    /// Remove `key` from `cf` only while `key` still holds `expected`.
+    ///
+    /// See [`AiWriteOp::PutIfUnchanged`] for how the comparison is ordered and
+    /// reported.
+    DeleteIfUnchanged {
+        /// Column family name.
+        cf: String,
+        /// Key bytes.
+        key: Vec<u8>,
+        /// Bytes the key must currently hold. `None` means "must not exist".
+        expected: Option<Vec<u8>>,
+    },
 }
 
 impl RaftRequest {

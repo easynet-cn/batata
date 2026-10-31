@@ -4,6 +4,7 @@
 use crate::bincode;
 use md5::Digest;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -34,6 +35,13 @@ mod ai_resource;
 pub struct EmbeddedPersistService {
     reader: RocksDbReader,
     db: Arc<DB>,
+    /// Serializes index-task mutations.
+    ///
+    /// Claiming a task is a read-modify-write that has to be atomic: the store
+    /// is updated only when it still holds the revision and lease token the
+    /// caller read. RocksDB has no compare-and-set, so the read and the write
+    /// are held together under this lock. Nothing is awaited while it is held.
+    task_lock: Mutex<()>,
 }
 
 impl EmbeddedPersistService {
@@ -43,6 +51,7 @@ impl EmbeddedPersistService {
         Self {
             reader: RocksDbReader::new(db.clone()),
             db,
+            task_lock: Mutex::new(()),
         }
     }
 
@@ -51,6 +60,7 @@ impl EmbeddedPersistService {
         Self {
             reader: RocksDbReader::new(db.clone()),
             db,
+            task_lock: Mutex::new(()),
         }
     }
 
