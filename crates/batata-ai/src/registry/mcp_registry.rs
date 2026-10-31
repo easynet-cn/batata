@@ -290,6 +290,20 @@ pub fn configure_mcp_registry(cfg: &mut web::ServiceConfig) {
     cfg.service(list_servers).service(get_server);
 }
 
+/// Wrap the registry for `App::app_data`, in the shape the two handlers above
+/// extract it.
+///
+/// actix keys application data by the *whole* `Data<T>` type, so the return
+/// type here is load-bearing: `Data::from(arc)` would produce
+/// `Data<McpServerRegistry>` instead of `Data<Arc<McpServerRegistry>>`, the
+/// extractor would miss, and every request would answer 500 with "Requested
+/// application data is not configured correctly". Naming the concrete type
+/// keeps registration and extraction in step — callers cannot pick the wrong
+/// form without failing to compile.
+pub fn registry_app_data(registry: Arc<McpServerRegistry>) -> web::Data<Arc<McpServerRegistry>> {
+    web::Data::new(registry)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

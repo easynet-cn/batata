@@ -19,7 +19,7 @@ use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 
 use crate::{
-    api::ai::{AgentRegistry, McpServerRegistry, configure_mcp_registry},
+    api::ai::{AgentRegistry, McpServerRegistry, configure_mcp_registry, registry_app_data},
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
@@ -275,7 +275,7 @@ pub fn mcp_registry_server(
             .wrap(crate::middleware::http_tracing::access_log_layer(
                 access_log_enabled,
             ))
-            .app_data(web::Data::from(mcp_registry.clone()))
+            .app_data(registry_app_data(mcp_registry.clone()))
             .configure(configure_mcp_registry)
     })
     .bind((address, port))?

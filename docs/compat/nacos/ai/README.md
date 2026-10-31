@@ -929,6 +929,7 @@ assertions against MySQL or PostgreSQL instead.
 | `batata-server` / `mcp_console_routes` | 26 | the MCP console version lifecycle, `search`, `labels`, `scope`, import batch, A2A agent lifecycle |
 | `batata-server` / `mcp_console_crud_routes` | 11 | the rest of the console surface: `list`, detail, create/update/delete, `stats`, `status`, `importToolsFromMcp` |
 | `batata-server` / `agent_client_routes` | 9 | the RAD client contract: heartbeat liveness, publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback |
+| `batata-server` / `mcp_registry_routes` | 2 | `GET /v0/servers` and `/v0/servers/{id}` on the standalone registry server, wired through the same `registry_app_data` helper production uses |
 | `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
 | `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |
 | `batata-server` / `skill_console_routes` | 5 | force-publish, redraft, ZIP precheck and batch upload, download counting |

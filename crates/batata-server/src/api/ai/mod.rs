@@ -46,4 +46,4 @@ pub use batata_ai::service::McpServerService;
 
 // Re-export configure functions for route setup
 /// Re-exported item.
-pub use batata_ai::configure_mcp_registry;
+pub use batata_ai::{configure_mcp_registry, registry_app_data};
