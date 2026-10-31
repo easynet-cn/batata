@@ -405,14 +405,33 @@ async fn register_endpoints(
     let form = body.into_inner();
     let ns = normalize_namespace(form.namespace_id.as_deref().unwrap_or(""));
 
-    // Register each endpoint in the batch
-    for endpoint in &form.endpoints {
-        endpoint_service.create_agent_endpoint(
-            ns,
-            &form.agent_name,
-            &form.version,
-            &endpoint.address,
-            endpoint.port,
+    // Upstream binds the external `clientId` header to an internal publisher
+    // and admits the batch through the capacity gate. Batata has no
+    // client-lifecycle store, so the header is used directly; without it there
+    // is no Client to charge and the batch is admitted unconditionally.
+    let client_id = get_header(&req, CLIENT_ID_HEADER);
+    let endpoints: Vec<(String, u16)> = form
+        .endpoints
+        .iter()
+        .map(|e| (e.address.clone(), e.port))
+        .collect();
+
+    if let Err(over) = endpoint_service.register_agent_endpoint_batch(
+        &client_id,
+        ns,
+        &form.agent_name,
+        &form.version,
+        &endpoints,
+    ) {
+        // Upstream raises `NacosApiException(NacosException.OVER_THRESHOLD,
+        // ErrorCode.AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT, ...)`, i.e. HTTP 503
+        // carrying business code 50103.
+        let error_code = batata_common::error::AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT;
+        return Result::<String>::http_response(
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            error_code.code,
+            error_code.message.to_string(),
+            over.to_string(),
         );
     }
 
@@ -454,21 +473,21 @@ async fn deregister_endpoints(
     let form = query.into_inner();
     let ns = normalize_namespace(form.namespace_id.as_deref().unwrap_or(""));
 
+    // Upstream drops whatever *that client* published; Batata has no
+    // client-lifecycle store, so it enumerates the catalog versions instead and
+    // releases the capacity reservation keyed the same way registration made it.
+    let client_id = get_header(&req, CLIENT_ID_HEADER);
+
     // List all versions for this agent, then delete endpoints for each version
     match a2a_service.list_versions(ns, &form.agent_name).await {
         Ok(versions) => {
             for vd in &versions {
-                let endpoints =
-                    endpoint_service.get_agent_endpoints(ns, &form.agent_name, &vd.version);
-                for ep in &endpoints {
-                    endpoint_service.delete_agent_endpoint(
-                        ns,
-                        &form.agent_name,
-                        &vd.version,
-                        &ep.address,
-                        ep.port,
-                    );
-                }
+                endpoint_service.deregister_agent_endpoint_batch(
+                    &client_id,
+                    ns,
+                    &form.agent_name,
+                    &vd.version,
+                );
             }
 
             tracing::info!(

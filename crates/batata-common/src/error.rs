@@ -423,6 +423,15 @@ pub const AGENT_VERSION_EXIST: ErrorCode<'static> = ErrorCode {
     message: "agent version has existed",
 };
 
+/// One Agent client owns the configured maximum number of Endpoint publications.
+///
+/// Upstream: `ErrorCode.AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT`, raised by
+/// `AgentRuntimePublicationCapacityGate`.
+pub const AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT: ErrorCode<'static> = ErrorCode {
+    code: 50103,
+    message: "Agent Endpoint publication capacity reached",
+};
+
 /// The skill was not found.
 pub const SKILL_NOT_FOUND: ErrorCode<'static> = ErrorCode {
     code: 50200,

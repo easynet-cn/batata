@@ -3473,6 +3473,44 @@ pub struct AiConfig {
     #[serde(default)]
     /// AI resource settings.
     pub resource: AiResourceConfig,
+    #[serde(default)]
+    /// RAD (Runtime Agent Discovery) settings.
+    pub rad: AiRadConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+/// Configuration for `AiRadConfig`.
+///
+/// Upstream spreads these over
+/// `nacos.ai.rad.capacity.publication.max-publications-per-client` and
+/// friends; Batata keeps the RAD capacity knobs one level deep, as
+/// `batata.ai.rad.max_publications_per_client`.
+pub struct AiRadConfig {
+    #[serde(default = "default_max_publications_per_client")]
+    /// Cap on Runtime Endpoint entries one publisher Client may own.
+    pub max_publications_per_client: i64,
+}
+
+fn default_max_publications_per_client() -> i64 {
+    100
+}
+
+impl AiRadConfig {
+    /// The cap, clamped to at least one publication per Client.
+    ///
+    /// A configured value below one would reject every publication outright, so
+    /// it is clamped rather than honoured.
+    pub fn publication_limit(&self) -> usize {
+        self.max_publications_per_client.max(1) as usize
+    }
+}
+
+impl Default for AiRadConfig {
+    fn default() -> Self {
+        Self {
+            max_publications_per_client: default_max_publications_per_client(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

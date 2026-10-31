@@ -39,6 +39,9 @@ pub use service::mcp_index::{McpServerIndex, McpServerIndexData};
 pub use service::mcp_service::McpServerOperationService;
 pub use service::pipeline_service::PipelineQueryService;
 pub use service::prompt::PromptOperationService;
+pub use service::publication_gate::{
+    AgentRuntimePublicationCapacityGate, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT, PublicationOverLimit,
+};
 pub use service::skill_service::SkillOperationService;
 pub use service::traits::{
     A2aAgentService, AgentSpecService, McpServerService, PipelineService, SkillService,

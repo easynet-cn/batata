@@ -344,9 +344,13 @@ impl AIServices {
     }
 
     /// Creates AI service adapters with config-backed persistence.
+    ///
+    /// `max_publications_per_client` caps how many Runtime Endpoint entries one
+    /// publisher Client may own (`batata.ai.rad.max_publications_per_client`).
     pub fn with_persistence(
         persistence: Arc<dyn batata_persistence::PersistenceService>,
         naming_service: Arc<dyn NamingServiceProvider>,
+        max_publications_per_client: usize,
     ) -> Self {
         let mcp_index = Arc::new(crate::service::ai::McpServerIndex::new());
         let mcp_service = Arc::new(crate::service::ai::McpServerOperationService::new(
@@ -354,7 +358,12 @@ impl AIServices {
             mcp_index.clone(),
         ));
         let prompt_service = Arc::new(batata_ai::PromptOperationService::new(persistence.clone()));
-        let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(naming_service));
+        let endpoint_service = Arc::new(
+            crate::service::ai::AiEndpointService::with_publication_limit(
+                naming_service,
+                max_publications_per_client,
+            ),
+        );
         // Runtime endpoint reads go through Naming, so the agent service needs
         // the endpoint backend; without it `GET /runtime-endpoints` has nothing
         // to ask.

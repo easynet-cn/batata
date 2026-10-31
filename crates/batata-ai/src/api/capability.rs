@@ -10,10 +10,10 @@
 //! including version *ranges* (`1.2.x`, `^1.2.0`, `latest`). All of that is
 //! implemented, backed by Naming ephemeral registrations.
 //!
-//! Not implemented: upstream's `AgentRuntimePublicationCapacityGate`, which
-//! caps how many endpoints one publisher may hold. That is a server-side
-//! protective limit rather than part of the contract, so it does not affect
-//! the declaration.
+//! Upstream's `AgentRuntimePublicationCapacityGate` caps how many endpoints one
+//! publisher may hold. It is implemented (`service/publication_gate.rs`), but
+//! as a server-side protective limit rather than part of the contract, so it
+//! does not affect the declaration either way.
 
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use batata_server_common::model::response::Result;

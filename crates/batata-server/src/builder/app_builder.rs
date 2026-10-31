@@ -616,13 +616,17 @@ impl AppBuilder {
         let ai_services = match (&app_state.persistence, &naming_service) {
             (Some(persist), Some(ns)) => {
                 info!("AI services using config-backed persistence");
-                AIServices::with_persistence(persist.clone(), ns.clone())
-                    .with_ai_resource_services(
-                        persist.clone(),
-                        app_state.auth_plugin.clone(),
-                        app_state.configuration.auth_enabled(),
-                    )
-                    .with_copilot(persist.clone())
+                AIServices::with_persistence(
+                    persist.clone(),
+                    ns.clone(),
+                    app_state.configuration.typed.ai.rad.publication_limit(),
+                )
+                .with_ai_resource_services(
+                    persist.clone(),
+                    app_state.auth_plugin.clone(),
+                    app_state.configuration.auth_enabled(),
+                )
+                .with_copilot(persist.clone())
             }
             _ => {
                 info!("AI services using in-memory storage (no persistence)");

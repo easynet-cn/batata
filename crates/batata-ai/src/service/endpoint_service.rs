@@ -9,16 +9,82 @@ use batata_api::naming::NamingServiceProvider;
 use batata_api::naming::model::Instance;
 
 use super::constants::*;
+use super::publication_gate::{
+    AgentRuntimePublicationCapacityGate, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT, PublicationOverLimit,
+};
 
 /// AI Endpoint Service for managing NamingService integrations
 pub struct AiEndpointService {
     naming_service: Arc<dyn NamingServiceProvider>,
+    /// Caps how many Runtime Endpoint entries one publisher Client may own.
+    publication_gate: AgentRuntimePublicationCapacityGate,
 }
 
 impl AiEndpointService {
-    /// Creates a new `AiEndpointService` backed by the given naming service.
+    /// Creates a new `AiEndpointService` backed by the given naming service,
+    /// using [`DEFAULT_MAX_PUBLICATIONS_PER_CLIENT`].
     pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
-        Self { naming_service }
+        Self::with_publication_limit(naming_service, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT)
+    }
+
+    /// Creates a new `AiEndpointService` with an explicit per-client
+    /// publication cap.
+    pub fn with_publication_limit(
+        naming_service: Arc<dyn NamingServiceProvider>,
+        max_publications_per_client: usize,
+    ) -> Self {
+        Self {
+            naming_service,
+            publication_gate: AgentRuntimePublicationCapacityGate::new(max_publications_per_client),
+        }
+    }
+
+    /// The publication capacity gate backing this service.
+    pub fn publication_gate(&self) -> &AgentRuntimePublicationCapacityGate {
+        &self.publication_gate
+    }
+
+    /// Replace one publisher Client's complete Agent Endpoint batch.
+    ///
+    /// Admitted through the capacity gate, so a Client that already owns the
+    /// configured maximum is rejected instead of growing without bound. A blank
+    /// `client_id` is admitted without accounting.
+    pub fn register_agent_endpoint_batch(
+        &self,
+        client_id: &str,
+        namespace: &str,
+        name: &str,
+        version: &str,
+        endpoints: &[(String, u16)],
+    ) -> Result<(), PublicationOverLimit> {
+        let key = AgentRuntimePublicationCapacityGate::publication_key(namespace, name, version);
+        self.publication_gate
+            .register_logical(client_id, &key, endpoints.len(), || {
+                for (address, port) in endpoints {
+                    self.create_agent_endpoint(namespace, name, version, address, *port);
+                }
+            })
+    }
+
+    /// Remove one Agent version's endpoints and release its reservation.
+    ///
+    /// The reservation survives a failed removal, so a Client stays charged for
+    /// what it still owns.
+    pub fn deregister_agent_endpoint_batch(
+        &self,
+        client_id: &str,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) {
+        let key = AgentRuntimePublicationCapacityGate::publication_key(namespace, name, version);
+        self.publication_gate
+            .deregister_logical(client_id, &key, || {
+                let endpoints = self.get_agent_endpoints(namespace, name, version);
+                for ep in &endpoints {
+                    self.delete_agent_endpoint(namespace, name, version, &ep.address, ep.port);
+                }
+            });
     }
 
     /// Register an MCP server endpoint in NamingService

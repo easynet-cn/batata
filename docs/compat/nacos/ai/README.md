@@ -200,19 +200,34 @@ Goal: introduce the upstream layering before adding endpoints.
       against the published versions, via
       `batata-ai/src/service/version_range.rs` (9 unit tests).
       The capability declaration now reports `radV1: true`.
-      Still missing: upstream's `AgentRuntimePublicationCapacityGate`, which
-      caps endpoints per publisher. It is a server-side protective limit rather
-      than part of the client contract, so it does not change the declaration.
       Coverage note: the range resolution used to be unit-tested only, because
       `AiEndpointService` wants a `NamingServiceProvider` and that trait has 47
       methods. It turned out no stub is needed — `batata_naming::NamingService`
       is a plain in-memory structure, so
       `crates/batata-server/tests/agent_client_routes.rs` drives all five
       client endpoints end to end (9 tests).
-- [ ] `AgentRuntimePublicationCapacityGate` — upstream caps how many endpoints
-      one publisher may register. This is the only piece of the `runtime/`
-      layer still missing; it is a server-side protective limit rather than part
-      of the client contract, so `radV1: true` stands without it.
+- [x] `AgentRuntimePublicationCapacityGate` — upstream caps how many endpoints
+      one publisher may register. Implemented in
+      `batata-ai/src/service/publication_gate.rs` and wired into
+      `POST/DELETE /v3/client/ai/agents/endpoints`, admitted under the
+      `clientId` header (upstream's `HTTP_CLIENT_ID_HEADER`). A client at the
+      cap is rejected with HTTP 503 carrying business code 50103, matching
+      upstream's `NacosException.OVER_THRESHOLD` +
+      `ErrorCode.AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT`.
+      **Two deliberate deltas, both from Batata having no client-lifecycle
+      store:**
+      - Upstream counts the *physical* entries its Naming `Client` owns plus a
+        logical reservation map. Batata's
+        `NamingServiceProvider::register_instance` carries no publisher
+        identity, so only the logical reservation half is tracked
+        (`registerLogical`/`deregisterLogical` semantics). The count is
+        therefore per-process and resets on restart.
+      - Upstream's `validateStatefulHeaders` makes `clientId` mandatory on
+        register; Batata keeps it optional, admitting an unattributable batch
+        the same way upstream's `client == null` branch does.
+      Config: `batata.ai.rad.max_publications_per_client` (upstream spells it
+      `nacos.ai.rad.capacity.publication.max-publications-per-client`), default
+      100 — the same default as upstream.
 - [ ] **`AgentClientController` deviations found while route-testing it.** Two,
       both pinned by a test so they stay deliberate:
       - *`DELETE /endpoints` cannot reach an unpublished runtime version.*
@@ -928,7 +943,7 @@ assertions against MySQL or PostgreSQL instead.
 |---|---|---|
 | `batata-server` / `mcp_console_routes` | 26 | the MCP console version lifecycle, `search`, `labels`, `scope`, import batch, A2A agent lifecycle |
 | `batata-server` / `mcp_console_crud_routes` | 11 | the rest of the console surface: `list`, detail, create/update/delete, `stats`, `status`, `importToolsFromMcp` |
-| `batata-server` / `agent_client_routes` | 9 | the RAD client contract: heartbeat liveness, publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback |
+| `batata-server` / `agent_client_routes` | 14 | the RAD client contract: heartbeat liveness, publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback, and the publication capacity gate (reject growth at the cap, allow replacement, per-client budgets, unknown client uncharged, deregistration releases) |
 | `batata-server` / `mcp_registry_routes` | 2 | `GET /v0/servers` and `/v0/servers/{id}` on the standalone registry server, wired through the same `registry_app_data` helper production uses |
 | `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
 | `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |

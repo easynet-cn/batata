@@ -35,7 +35,11 @@ impl ServiceInitializer for AiInitializer {
         let ai_services = if let Some(ref persist) = persistence {
             if let Some(ref ns) = naming_service {
                 tracing::info!("AI services using config-backed persistence");
-                crate::startup::AIServices::with_persistence(persist.clone(), ns.clone())
+                crate::startup::AIServices::with_persistence(
+                    persist.clone(),
+                    ns.clone(),
+                    ctx.config.typed.ai.rad.publication_limit(),
+                )
             } else {
                 tracing::info!("AI services using in-memory storage (no naming service)");
                 crate::startup::AIServices::new()

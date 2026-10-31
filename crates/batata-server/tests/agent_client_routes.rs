@@ -30,7 +30,9 @@ use actix_web::http::{Method, StatusCode};
 use actix_web::{App, test, web};
 use ai_store::TestStore;
 use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
-use batata_ai::{A2aServerOperationService, AiEndpointService};
+use batata_ai::{
+    A2aServerOperationService, AiEndpointService, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT,
+};
 use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
 use batata_persistence::PersistenceService;
 use batata_server_common::model::app_state::AppState;
@@ -133,13 +135,26 @@ fn registration(agent: &str, version: &str, endpoints: &[(&str, u16)]) -> serde_
     })
 }
 
-/// Build an app exposing the real client agent routes.
+/// Build an app exposing the real client agent routes, with the default
+/// per-client publication cap.
+async fn build_app(
+    store: Arc<dyn PersistenceService>,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
+    build_app_with_limit(store, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT).await
+}
+
+/// Build an app whose per-client publication cap is `limit`.
 ///
 /// `AiEndpointService` needs a `NamingServiceProvider`; `NamingService` is a
 /// plain in-memory structure, so the round trip is exercised without booting a
 /// naming cluster.
-async fn build_app(
+async fn build_app_with_limit(
     store: Arc<dyn PersistenceService>,
+    limit: usize,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -184,7 +199,7 @@ async fn build_app(
 
     let naming: Arc<dyn batata_api::naming::NamingServiceProvider> =
         Arc::new(batata_naming::NamingService::new());
-    let endpoints = Arc::new(AiEndpointService::new(naming));
+    let endpoints = Arc::new(AiEndpointService::with_publication_limit(naming, limit));
     let agents: Arc<dyn batata_common::A2aAgentService> =
         Arc::new(A2aServerOperationService::new(store));
 
@@ -579,4 +594,218 @@ async fn an_omitted_namespace_falls_back_to_the_default_one() {
     assert!(body.contains("\"address\":\"10.0.0.3\""), "{body}");
 
     store.clean(AGENT).await;
+}
+
+// ============================================================================
+// Publication capacity gate
+//
+// Upstream `AgentRuntimePublicationCapacityGate` caps how many Runtime
+// Endpoint entries one publisher Client may own. It rejects with
+// `NacosException.OVER_THRESHOLD` (HTTP 503) carrying business code 50103.
+// ============================================================================
+
+/// POST /endpoints with a `clientId` header, as a real publisher sends it.
+fn publish(
+    agent: &str,
+    version: &str,
+    endpoints: &[(&str, u16)],
+    client_id: &str,
+) -> actix_http::Request {
+    test::TestRequest::post()
+        .uri("/v3/client/ai/agents/endpoints")
+        .insert_header(("clientId", client_id))
+        .set_json(registration(agent, version, endpoints))
+        .to_request()
+}
+
+/// A Client at capacity cannot grow.
+#[actix_web::test]
+async fn a_client_at_capacity_cannot_grow_its_publications() {
+    const AGENT_A: &str = "capacity-agent-a";
+    const AGENT_B: &str = "capacity-agent-b";
+    let store = TestStore::open().await;
+    store.clean(AGENT_A).await;
+    store.clean(AGENT_B).await;
+    let app = build_app_with_limit(store.store(), 2).await;
+
+    let (status, body) = call(
+        &app,
+        publish(
+            AGENT_A,
+            "1.0.0",
+            &[("10.0.0.1", 8080), ("10.0.0.2", 8080)],
+            "client-1",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the first batch fits: {body}");
+
+    // A second agent version from the same client is growth -> rejected.
+    let (status, body) = call(
+        &app,
+        publish(AGENT_B, "1.0.0", &[("10.0.0.3", 8080)], "client-1"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "OVER_THRESHOLD maps to 503: {body}"
+    );
+    assert!(
+        body.contains("50103"),
+        "business code must be 50103: {body}"
+    );
+    assert!(body.contains("publication limit of 2"), "{body}");
+
+    store.clean(AGENT_A).await;
+    store.clean(AGENT_B).await;
+}
+
+/// Refreshing what a Client already published is admitted even when full.
+///
+/// Upstream's `ensureCapacity` only rejects when
+/// `requestedPublicationCount > existingPublicationCount`, so a full client can
+/// still re-publish the same size.
+#[actix_web::test]
+async fn replacing_a_publication_is_allowed_at_capacity() {
+    const AGENT: &str = "capacity-agent-replace";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app_with_limit(store.store(), 2).await;
+
+    for attempt in 1..=3 {
+        let (status, body) = call(
+            &app,
+            publish(
+                AGENT,
+                "1.0.0",
+                &[("10.0.0.1", 8080), ("10.0.0.2", 8080)],
+                "client-1",
+            ),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "re-publishing the same key must stay admitted (attempt {attempt}): {body}"
+        );
+    }
+
+    store.clean(AGENT).await;
+}
+
+/// Two different Clients have independent budgets.
+#[actix_web::test]
+async fn the_capacity_cap_is_per_client() {
+    const AGENT: &str = "capacity-agent-two-clients";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app_with_limit(store.store(), 1).await;
+
+    let (status, body) = call(
+        &app,
+        publish(AGENT, "1.0.0", &[("10.0.0.1", 8080)], "client-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "client-1 fills its budget: {body}");
+
+    let (status, body) = call(
+        &app,
+        publish(AGENT, "1.0.0", &[("10.0.0.2", 8080)], "client-2"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "client-2 has its own budget: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// Without a `clientId` there is no Client to charge, so the batch is admitted.
+///
+/// Upstream's gate takes the same branch (`client == null` -> `run()`). Batata
+/// keeps the header optional, unlike upstream's `validateStatefulHeaders`.
+#[actix_web::test]
+async fn a_request_without_a_client_id_is_not_charged() {
+    const AGENT: &str = "capacity-agent-anonymous";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app_with_limit(store.store(), 1).await;
+
+    for port in [8080u16, 8081, 8082] {
+        let (status, body) = call(
+            &app,
+            test::TestRequest::post()
+                .uri("/v3/client/ai/agents/endpoints")
+                .set_json(registration(AGENT, "1.0.0", &[("10.0.0.1", port)]))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "an unattributable batch must be admitted: {body}"
+        );
+    }
+
+    store.clean(AGENT).await;
+}
+
+/// DELETE /endpoints releases the reservation, so the budget frees up.
+#[actix_web::test]
+async fn deregistering_frees_the_client_budget() {
+    const AGENT: &str = "capacity-agent-release";
+    const OTHER: &str = "capacity-agent-release-other";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    store.clean(OTHER).await;
+
+    // DELETE enumerates catalog versions, so the agent must be published.
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app_with_limit(store.store(), 2).await;
+    let (status, body) = call(
+        &app,
+        publish(
+            AGENT,
+            "1.0.0",
+            &[("10.0.0.1", 8080), ("10.0.0.2", 8080)],
+            "client-1",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "fills the budget: {body}");
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::with_uri(&format!(
+            "/v3/client/ai/agents/endpoints?agentName={AGENT}&namespaceId={NS}&protocol=a2a"
+        ))
+        .method(Method::DELETE)
+        .insert_header(("clientId", "client-1"))
+        .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete must succeed: {body}");
+
+    // The slot is free again.
+    let (status, body) = call(
+        &app,
+        publish(OTHER, "1.0.0", &[("10.0.0.3", 8080)], "client-1"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "deregistration must release the reservation: {body}"
+    );
+
+    store.clean(AGENT).await;
+    store.clean(OTHER).await;
 }

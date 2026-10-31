@@ -15,6 +15,8 @@ pub mod mcp_index;
 pub mod mcp_service;
 pub mod pipeline_service;
 pub mod prompt;
+/// Per-client cap on Runtime Endpoint publications.
+pub mod publication_gate;
 pub mod skill_service;
 pub mod traits;
 pub mod version_lifecycle;
@@ -30,6 +32,9 @@ pub use agentspec_service::AgentSpecOperationService;
 pub use endpoint_service::AiEndpointService;
 pub use mcp_index::McpServerIndex;
 pub use mcp_service::McpServerOperationService;
+pub use publication_gate::{
+    AgentRuntimePublicationCapacityGate, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT, PublicationOverLimit,
+};
 pub use skill_service::SkillOperationService;
 pub use traits::A2aAgentService;
 pub use traits::McpServerService;
