@@ -665,13 +665,26 @@ pub fn main_server(
         // Prometheus metrics endpoint at /prometheus (metrics crate integration)
         .route("/prometheus", web::get().to(prometheus_metrics))
         // Kubernetes-compatible health endpoints
-        .route("/health/liveness", web::get().to(health_liveness))
-        .route("/health/readiness", web::get().to(health_readiness))
+        .service(health_routes())
     })
     .workers(workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .bind((address, port))?
     .run())
+}
+
+/// Kubernetes-compatible health endpoints, mounted on the main server.
+///
+/// Kept as a single function so `main_server` and `tests/health_routes.rs`
+/// share one wiring: the handlers extract `web::Data<AppState>`, and the
+/// servers register `web::Data::from(app_state)` — on an `Arc<AppState>` that
+/// yields `Data<AppState>`. Declaring the handlers as
+/// `web::Data<Arc<AppState>>` instead would extract a type nobody registers
+/// and turn every probe into a 500.
+pub fn health_routes() -> actix_web::Scope {
+    web::scope("")
+        .route("/health/liveness", web::get().to(health_liveness))
+        .route("/health/readiness", web::get().to(health_readiness))
 }
 
 /// Kubernetes liveness probe endpoint.
@@ -682,7 +695,7 @@ async fn health_liveness() -> HttpResponse {
 
 /// Kubernetes readiness probe endpoint.
 /// Returns 200 if the server is ready to accept traffic (DB connected, services initialized).
-async fn health_readiness(app_state: web::Data<Arc<AppState>>) -> HttpResponse {
+async fn health_readiness(app_state: web::Data<AppState>) -> HttpResponse {
     // Check if persistence service is available and healthy
     if let Some(ref persistence) = app_state.persistence {
         match persistence.health_check().await {

@@ -26,7 +26,7 @@ pub use grpc::{GrpcServers, start_grpc_servers};
 /// Re-exported item.
 pub use http::plugin_http_server;
 /// Re-exported item.
-pub use http::{AIServices, console_server, main_server, mcp_registry_server};
+pub use http::{AIServices, console_server, health_routes, main_server, mcp_registry_server};
 /// Re-exported item.
 pub use logging::{LogRotation, LoggingConfig, LoggingGuard, init_file_logging, init_logging};
 /// Re-exported item.
