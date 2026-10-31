@@ -41,5 +41,10 @@ moka = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
 openraft = { workspace = true }
+rocksdb = { workspace = true }
+# Needed to serve the Raft gRPC endpoint of a second in-process node, so the
+# AI replication tests use a real two-node cluster rather than a mock.
+batata-server-api = { workspace = true }
+tonic = { workspace = true }

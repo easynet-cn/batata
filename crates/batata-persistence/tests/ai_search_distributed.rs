@@ -10,10 +10,12 @@
 //! backends.
 //!
 //! Worth knowing before reading the assertions: on this backend the index is
-//! written **straight into RocksDB**, not through a Raft write. That is why the
-//! consumer loop runs on every node and each one builds its own copy — the
-//! index is node-local state derived from replicated data, not replicated
-//! state itself. The test documents that rather than fighting it.
+//! written **through Raft**, the same as the resources it indexes. It is
+//! replicated state, not node-local derived state, so every node ends up with
+//! the same index. `ai_resource_replication.rs` drives that across a real
+//! two-node cluster; this file stays on a single node and checks that the
+//! distributed backend implements the operations at all rather than falling
+//! through to the trait's "not supported by this storage backend" default.
 
 use std::collections::BTreeMap;
 use std::net::TcpListener;

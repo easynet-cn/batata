@@ -503,16 +503,19 @@ has no `LIKE`:
 >   matches in memory, so it is O(chunks in namespace) rather than
 >   index-backed. Fine at current scale; it will not scale like the SQL path. A
 >   term index would be needed if the chunk count grows.
-> - **Embedded/Cluster**: the consumer loop runs on every node. The
->   Raft-backed *storage* path is now exercised —
->   `batata-persistence/tests/ai_search_distributed.rs` builds a real one-node
->   Raft cluster and drives document upsert, chunk replacement, keyword search
->   and task scheduling through `DistributedPersistService`. What is still
->   unverified is multi-node consumer behaviour: how the loop actually behaves
->   when several nodes run it against the same Raft log.
-> - **Embedded/Cluster**: writes go through Raft; the consumer runs on every
->   node and the claim is not atomic, so nodes can duplicate work (safe but
->   wasteful). No per-node leader election for the consumer yet.
+> - **Embedded/Cluster**: writes are replicated. AI resources, the search index
+>   and the index tasks live in column families of the Raft state machine, and
+>   every mutation goes through consensus as `RaftRequest::AiWrite` (ID
+>   allocation as `AiAllocateIds`, so two nodes cannot hand out the same ID).
+>   Two suites cover it: `ai_search_distributed.rs` drives the operations on a
+>   one-node cluster, and `ai_resource_replication.rs` runs a real two-node
+>   cluster and asserts a resource written through the follower is readable on
+>   the leader and vice versa, that deletes travel, that chunk replacement
+>   arrives as a whole batch, and that both nodes serve the same resource list.
+>   The consumer loop still runs on every node and its claim is still not
+>   atomic, so nodes can duplicate work — safe, because the projection is
+>   keyed by `source_digest`, but wasteful. No leader election for the consumer
+>   yet.
 > - **Embedding computation: done.** `search::embedding` ports upstream's
 >   default `HashingAiResourceEmbeddingService` — model id
 >   `nacos-local-hashing-embedding-v1`, 384 dims, CRC32 bucket hashing with
@@ -964,6 +967,7 @@ assertions against MySQL or PostgreSQL instead.
 | `batata-ai` / `mcp_search_embedded` | 1 | the whole search loop on RocksDB, end to end |
 | `batata-persistence` / `ai_search_persistence` | 1 | document/chunk/task persistence |
 | `batata-persistence` / `ai_search_distributed` | 1 | the same index on the **distributed (Raft)** backend, against a real one-node cluster |
+| `batata-persistence` / `ai_resource_replication` | 4 | a real **two-node** cluster: follower write → leader read, delete propagation, distinct IDs under concurrent inserts, whole-batch chunk replacement, both nodes serving the same list |
 
 ```bash
 # default: embedded RocksDB, no containers

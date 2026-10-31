@@ -283,6 +283,7 @@ pub(super) fn json_to_bytes(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(value).unwrap_or_default()
 }
 
+mod apply_ai;
 mod apply_config;
 mod apply_lock;
 mod keys;
@@ -1248,6 +1249,14 @@ impl RocksStateMachine {
                 }
                 resp
             }
+
+            RaftRequest::AiWrite { ops } => self.apply_ai_write(&ops),
+
+            RaftRequest::AiAllocateIds {
+                cf,
+                counter_key,
+                count,
+            } => self.apply_ai_allocate_ids(&cf, &counter_key, count),
 
             RaftRequest::Noop => RaftResponse::success(),
 

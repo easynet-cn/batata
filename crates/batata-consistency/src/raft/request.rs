@@ -529,9 +529,70 @@ pub enum RaftRequest {
         payload: Vec<u8>,
     },
 
+    // ==================== AI resource storage ====================
+    /// Batched AI-storage mutation.
+    ///
+    /// The AI module keeps its resources, search index and index tasks in
+    /// column families of the Raft state machine's RocksDB. Every mutation the
+    /// distributed backend performs is expressed as an ordered list of these
+    /// ops and applied as one `WriteBatch`, so a node sees all of an operation
+    /// or none of it.
+    AiWrite {
+        /// Mutations to apply, in order.
+        ops: Vec<AiWriteOp>,
+    },
+
+    /// Allocate `count` consecutive IDs from an AI auto-increment counter.
+    ///
+    /// Allocation happens during apply rather than on the proposing node, so
+    /// the counter is bumped under the same serialization that orders the
+    /// writes themselves. Without this two nodes could read the same counter
+    /// value and hand out the same ID. The allocated IDs are returned in
+    /// [`RaftResponse::data`] as little-endian `i64`s.
+    AiAllocateIds {
+        /// Column family holding the counter.
+        cf: String,
+        /// Key the counter is stored under.
+        counter_key: String,
+        /// How many IDs to allocate.
+        count: u32,
+    },
+
     // ==================== No-op for membership changes ====================
     /// No-operation command, used internally
     Noop,
+}
+
+/// One mutation inside [`RaftRequest::AiWrite`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AiWriteOp {
+    /// Write `key` -> `value` in `cf`.
+    Put {
+        /// Column family name.
+        cf: String,
+        /// Key bytes.
+        key: Vec<u8>,
+        /// Value bytes.
+        value: Vec<u8>,
+    },
+    /// Remove `key` from `cf`.
+    Delete {
+        /// Column family name.
+        cf: String,
+        /// Key bytes.
+        key: Vec<u8>,
+    },
+    /// Remove every entry in `cf` whose key starts with `prefix`.
+    ///
+    /// Replicated as a prefix rather than as an explicit key list so the
+    /// payload stays small; the scan runs during apply against the same state
+    /// on every node, so it is deterministic.
+    DeletePrefix {
+        /// Column family name.
+        cf: String,
+        /// Prefix bytes.
+        prefix: Vec<u8>,
+    },
 }
 
 impl RaftRequest {
@@ -579,6 +640,8 @@ impl RaftRequest {
                     _ => "PluginWrite",
                 }
             }
+            RaftRequest::AiWrite { .. } => "AiWrite",
+            RaftRequest::AiAllocateIds { .. } => "AiAllocateIds",
             RaftRequest::Noop => "Noop",
         }
     }

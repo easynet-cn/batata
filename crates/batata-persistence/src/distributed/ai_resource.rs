@@ -1,11 +1,14 @@
 // AI resource persistence for the distributed (Raft cluster) backend
 //
-// Reads from local RocksDB state machine via self.reader.
-// Writes go directly to the local RocksDB (same pattern as CapacityPersistence)
-// because AI resource operations are not yet part of the RaftRequest enum.
-// When Raft-replicated AI resource writes are needed, add corresponding
-// RaftRequest variants and state machine apply methods, then switch writes
-// to self.raft_write().
+// Reads from the local RocksDB state machine via self.reader.
+//
+// Writes go through Raft. AI resources live in column families of the Raft
+// state machine, so writing them locally would leave every node with its own
+// private copy: a GET answered by one node would not see what another node
+// accepted, and a snapshot install would overwrite a follower's local writes
+// with the leader's. Every mutation is therefore proposed as
+// `RaftRequest::AiWrite` (or `AiAllocateIds` for the auto-increment counters)
+// and applied on every node.
 
 use async_trait::async_trait;
 
@@ -22,6 +25,7 @@ use crate::model::{
 use crate::traits::ai_resource::AiResourcePersistence;
 
 use super::DistributedPersistService;
+use batata_consistency::raft::request::{AiWriteOp, RaftRequest};
 
 /// Key for the auto-increment counter stored in the ai_resource CF
 const KEY_AI_RESOURCE_NEXT_ID: &str = "__ai_resource_next_id__";
@@ -54,47 +58,15 @@ impl DistributedPersistService {
     }
 
     /// Get the next auto-increment ID for ai_resource
-    fn next_ai_resource_id(&self) -> anyhow::Result<i64> {
-        let db = self.reader.db();
-        let cf = db
-            .cf_handle(CF_AI_RESOURCE)
-            .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE))?;
-        let current = match db.get_cf(cf, KEY_AI_RESOURCE_NEXT_ID.as_bytes())? {
-            Some(bytes) => {
-                let s = String::from_utf8(bytes.to_vec())?;
-                s.parse::<i64>()?
-            }
-            None => 0,
-        };
-        let next = current + 1;
-        db.put_cf(
-            cf,
-            KEY_AI_RESOURCE_NEXT_ID.as_bytes(),
-            next.to_string().as_bytes(),
-        )?;
-        Ok(next)
+    async fn next_ai_resource_id(&self) -> anyhow::Result<i64> {
+        self.ai_alloc_one_id(CF_AI_RESOURCE, KEY_AI_RESOURCE_NEXT_ID)
+            .await
     }
 
     /// Get the next auto-increment ID for ai_resource_version
-    fn next_ai_resource_version_id(&self) -> anyhow::Result<i64> {
-        let db = self.reader.db();
-        let cf = db.cf_handle(CF_AI_RESOURCE_VERSION).ok_or_else(|| {
-            anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE_VERSION)
-        })?;
-        let current = match db.get_cf(cf, KEY_AI_RESOURCE_VERSION_NEXT_ID.as_bytes())? {
-            Some(bytes) => {
-                let s = String::from_utf8(bytes.to_vec())?;
-                s.parse::<i64>()?
-            }
-            None => 0,
-        };
-        let next = current + 1;
-        db.put_cf(
-            cf,
-            KEY_AI_RESOURCE_VERSION_NEXT_ID.as_bytes(),
-            next.to_string().as_bytes(),
-        )?;
-        Ok(next)
+    async fn next_ai_resource_version_id(&self) -> anyhow::Result<i64> {
+        self.ai_alloc_one_id(CF_AI_RESOURCE_VERSION, KEY_AI_RESOURCE_VERSION_NEXT_ID)
+            .await
     }
 
     /// Read an AiResourceInfo from the ai_resource CF
@@ -113,14 +85,14 @@ impl DistributedPersistService {
     }
 
     /// Write an AiResourceInfo to the ai_resource CF
-    fn put_ai_resource(&self, key: &str, info: &AiResourceInfo) -> anyhow::Result<()> {
-        let db = self.reader.db();
-        let cf = db
-            .cf_handle(CF_AI_RESOURCE)
-            .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE))?;
+    async fn put_ai_resource(&self, key: &str, info: &AiResourceInfo) -> anyhow::Result<()> {
         let json = serde_json::to_vec(info)?;
-        db.put_cf(cf, key.as_bytes(), &json)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
+        self.ai_apply(vec![AiWriteOp::Put {
+            cf: CF_AI_RESOURCE.to_string(),
+            key: key.as_bytes().to_vec(),
+            value: json,
+        }])
+        .await
     }
 
     /// Read an AiResourceVersionInfo from the ai_resource_version CF
@@ -139,18 +111,18 @@ impl DistributedPersistService {
     }
 
     /// Write an AiResourceVersionInfo to the ai_resource_version CF
-    fn put_ai_resource_version(
+    async fn put_ai_resource_version(
         &self,
         key: &str,
         info: &AiResourceVersionInfo,
     ) -> anyhow::Result<()> {
-        let db = self.reader.db();
-        let cf = db.cf_handle(CF_AI_RESOURCE_VERSION).ok_or_else(|| {
-            anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE_VERSION)
-        })?;
         let json = serde_json::to_vec(info)?;
-        db.put_cf(cf, key.as_bytes(), &json)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
+        self.ai_apply(vec![AiWriteOp::Put {
+            cf: CF_AI_RESOURCE_VERSION.to_string(),
+            key: key.as_bytes().to_vec(),
+            value: json,
+        }])
+        .await
     }
 
     /// Scan all ai_resource entries matching a prefix
@@ -244,38 +216,76 @@ impl DistributedPersistService {
             .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", name))
     }
 
-    /// Get the next auto-increment ID for ai_resource_search_document
-    fn next_search_document_id(&self) -> anyhow::Result<i64> {
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_SEARCH_DOCUMENT)?;
-        let current = match db.get_cf(cf, KEY_SEARCH_DOCUMENT_NEXT_ID.as_bytes())? {
-            Some(bytes) => String::from_utf8(bytes.to_vec())?.parse::<i64>()?,
-            None => 0,
-        };
-        let next = current + 1;
-        db.put_cf(
-            cf,
-            KEY_SEARCH_DOCUMENT_NEXT_ID.as_bytes(),
-            next.to_string().as_bytes(),
-        )?;
-        Ok(next)
+    /// Apply AI storage mutations through Raft.
+    ///
+    /// One `RaftRequest::AiWrite` carries the whole batch, so a multi-key
+    /// operation (replace every chunk of a version, delete every version of a
+    /// resource) is replicated atomically instead of key by key.
+    async fn ai_apply(&self, ops: Vec<AiWriteOp>) -> anyhow::Result<()> {
+        if ops.is_empty() {
+            return Ok(());
+        }
+        self.raft_write(RaftRequest::AiWrite { ops }).await
     }
 
-    /// Get the next auto-increment ID for ai_resource_search_chunk
-    fn next_search_chunk_id(&self) -> anyhow::Result<i64> {
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_SEARCH_CHUNK)?;
-        let current = match db.get_cf(cf, KEY_SEARCH_CHUNK_NEXT_ID.as_bytes())? {
-            Some(bytes) => String::from_utf8(bytes.to_vec())?.parse::<i64>()?,
-            None => 0,
-        };
-        let next = current + 1;
-        db.put_cf(
-            cf,
-            KEY_SEARCH_CHUNK_NEXT_ID.as_bytes(),
-            next.to_string().as_bytes(),
-        )?;
-        Ok(next)
+    /// Allocate consecutive IDs from an AI auto-increment counter.
+    ///
+    /// The bump happens during apply, so the IDs are handed out under the same
+    /// total order as the writes that use them.
+    async fn ai_alloc_ids(
+        &self,
+        cf: &str,
+        counter_key: &str,
+        count: u32,
+    ) -> anyhow::Result<Vec<i64>> {
+        let response = self
+            .raft_node
+            .write(RaftRequest::AiAllocateIds {
+                cf: cf.to_string(),
+                counter_key: counter_key.to_string(),
+                count,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Raft write failed: {e}"))?;
+
+        if !response.success {
+            return Err(anyhow::anyhow!(
+                "Raft write rejected: {}",
+                response.message.unwrap_or_default()
+            ));
+        }
+
+        let data = response.data.unwrap_or_default();
+        if data.len() != count as usize * std::mem::size_of::<i64>() {
+            return Err(anyhow::anyhow!(
+                "AI id allocation returned {} bytes, expected {}",
+                data.len(),
+                count as usize * std::mem::size_of::<i64>()
+            ));
+        }
+
+        Ok(data
+            .chunks_exact(std::mem::size_of::<i64>())
+            .map(|chunk| {
+                let mut bytes = [0u8; std::mem::size_of::<i64>()];
+                bytes.copy_from_slice(chunk);
+                i64::from_le_bytes(bytes)
+            })
+            .collect())
+    }
+
+    /// Allocate a single ID from an AI auto-increment counter.
+    async fn ai_alloc_one_id(&self, cf: &str, counter_key: &str) -> anyhow::Result<i64> {
+        let ids = self.ai_alloc_ids(cf, counter_key, 1).await?;
+        ids.into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("AI id allocation returned no id"))
+    }
+
+    /// Get the next auto-increment ID for ai_resource_search_document
+    async fn next_search_document_id(&self) -> anyhow::Result<i64> {
+        self.ai_alloc_one_id(CF_AI_RESOURCE_SEARCH_DOCUMENT, KEY_SEARCH_DOCUMENT_NEXT_ID)
+            .await
     }
 
     /// Read one ai_resource_search_document entry
@@ -292,16 +302,18 @@ impl DistributedPersistService {
     }
 
     /// Write one ai_resource_search_document entry
-    fn put_search_document(
+    async fn put_search_document(
         &self,
         key: &str,
         info: &AiResourceSearchDocumentInfo,
     ) -> anyhow::Result<()> {
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_SEARCH_DOCUMENT)?;
         let json = serde_json::to_vec(info)?;
-        db.put_cf(cf, key.as_bytes(), &json)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
+        self.ai_apply(vec![AiWriteOp::Put {
+            cf: CF_AI_RESOURCE_SEARCH_DOCUMENT.to_string(),
+            key: key.as_bytes().to_vec(),
+            value: json,
+        }])
+        .await
     }
 
     /// Scan the chunks stored under a resource-version prefix
@@ -324,11 +336,15 @@ impl DistributedPersistService {
         Ok(results)
     }
 
-    /// Delete every chunk stored under a resource-version prefix
-    fn delete_search_chunks(&self, prefix: &str) -> anyhow::Result<u64> {
+    /// Count the chunks stored under a resource-version prefix.
+    ///
+    /// `DeletePrefix` is applied on every node and cannot report a count, so
+    /// the caller reads it here. Reads go to this node's copy of the state
+    /// machine, which is the leader's state for any write path.
+    fn count_search_chunks(&self, prefix: &str) -> anyhow::Result<u64> {
         let db = self.reader.db();
         let cf = self.cf(CF_AI_RESOURCE_SEARCH_CHUNK)?;
-        let mut deleted = 0u64;
+        let mut found = 0u64;
         for item in db.prefix_iterator_cf(cf, prefix.as_bytes()) {
             let (key, _) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             let key_str = String::from_utf8_lossy(&key);
@@ -338,10 +354,17 @@ impl DistributedPersistService {
             if key_str.starts_with("__") {
                 continue;
             }
-            db.delete_cf(cf, &key)?;
-            deleted += 1;
+            found += 1;
         }
-        Ok(deleted)
+        Ok(found)
+    }
+
+    /// Build the op that drops every chunk stored under a prefix
+    fn delete_prefix_op(cf: &str, prefix: &str) -> AiWriteOp {
+        AiWriteOp::DeletePrefix {
+            cf: cf.to_string(),
+            prefix: prefix.as_bytes().to_vec(),
+        }
     }
 
     /// Read one ai_resource_task entry
@@ -355,12 +378,14 @@ impl DistributedPersistService {
     }
 
     /// Write one ai_resource_task entry
-    fn put_task(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_TASK)?;
+    async fn put_task(&self, task: &AiResourceTaskInfo) -> anyhow::Result<()> {
         let json = serde_json::to_vec(task)?;
-        db.put_cf(cf, task.task_key.as_bytes(), &json)
-            .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))
+        self.ai_apply(vec![AiWriteOp::Put {
+            cf: CF_AI_RESOURCE_TASK.to_string(),
+            key: task.task_key.as_bytes().to_vec(),
+            value: json,
+        }])
+        .await
     }
 
     /// Scan every stored task (empty prefix iterates the whole column family)
@@ -398,7 +423,7 @@ impl AiResourcePersistence for DistributedPersistService {
     }
 
     async fn ai_resource_insert(&self, resource: &AiResourceInfo) -> anyhow::Result<i64> {
-        let id = self.next_ai_resource_id()?;
+        let id = self.next_ai_resource_id().await?;
         let mut info = resource.clone();
         info.id = id;
         let now = chrono::Utc::now().to_rfc3339();
@@ -409,7 +434,7 @@ impl AiResourcePersistence for DistributedPersistService {
             info.gmt_modified = Some(now);
         }
         let key = Self::ai_resource_key(&info.namespace_id, &info.resource_type, &info.name);
-        self.put_ai_resource(&key, &info)?;
+        self.put_ai_resource(&key, &info).await?;
         Ok(id)
     }
 
@@ -431,7 +456,7 @@ impl AiResourcePersistence for DistributedPersistService {
                 info.version_info = Some(version_info.to_string());
                 info.meta_version = new_meta_version;
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)?;
+                self.put_ai_resource(&key, &info).await?;
                 Ok(true)
             }
             None => Ok(false),
@@ -450,7 +475,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.biz_tags = Some(biz_tags.to_string());
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)
+                self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource not found: {}:{}:{}",
@@ -473,7 +498,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.description = Some(description.to_string());
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)
+                self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource not found: {}:{}:{}",
@@ -496,7 +521,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.status = Some(status.to_string());
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)
+                self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource not found: {}:{}:{}",
@@ -519,7 +544,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.scope = scope.to_string();
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)
+                self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource not found: {}:{}:{}",
@@ -542,7 +567,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.download_count += increment;
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource(&key, &info)
+                self.put_ai_resource(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource not found: {}:{}:{}",
@@ -560,13 +585,12 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_type: &str,
     ) -> anyhow::Result<u64> {
         let key = Self::ai_resource_key(namespace_id, resource_type, name);
-        let db = self.reader.db();
-        let cf = db
-            .cf_handle(CF_AI_RESOURCE)
-            .ok_or_else(|| anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE))?;
-        if db.get_cf(cf, key.as_bytes())?.is_some() {
-            db.delete_cf(cf, key.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        if self.get_ai_resource(&key)?.is_some() {
+            self.ai_apply(vec![AiWriteOp::Delete {
+                cf: CF_AI_RESOURCE.to_string(),
+                key: key.into_bytes(),
+            }])
+            .await?;
             Ok(1)
         } else {
             Ok(0)
@@ -658,7 +682,7 @@ impl AiResourcePersistence for DistributedPersistService {
         &self,
         version: &AiResourceVersionInfo,
     ) -> anyhow::Result<i64> {
-        let id = self.next_ai_resource_version_id()?;
+        let id = self.next_ai_resource_version_id().await?;
         let mut info = version.clone();
         info.id = id;
         let now = chrono::Utc::now().to_rfc3339();
@@ -674,7 +698,7 @@ impl AiResourcePersistence for DistributedPersistService {
             &info.name,
             &info.version,
         );
-        self.put_ai_resource_version(&key, &info)?;
+        self.put_ai_resource_version(&key, &info).await?;
         Ok(id)
     }
 
@@ -691,7 +715,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.status = status.to_string();
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource_version(&key, &info)
+                self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource version not found: {}:{}:{}:{}",
@@ -720,7 +744,7 @@ impl AiResourcePersistence for DistributedPersistService {
                     info.description = Some(desc.to_string());
                 }
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource_version(&key, &info)
+                self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource version not found: {}:{}:{}:{}",
@@ -745,7 +769,7 @@ impl AiResourcePersistence for DistributedPersistService {
             Some(mut info) => {
                 info.download_count += increment;
                 info.gmt_modified = Some(chrono::Utc::now().to_rfc3339());
-                self.put_ai_resource_version(&key, &info)
+                self.put_ai_resource_version(&key, &info).await
             }
             None => Err(anyhow::anyhow!(
                 "AI resource version not found: {}:{}:{}:{}",
@@ -787,13 +811,12 @@ impl AiResourcePersistence for DistributedPersistService {
         version: &str,
     ) -> anyhow::Result<u64> {
         let key = Self::ai_resource_version_key(namespace_id, resource_type, name, version);
-        let db = self.reader.db();
-        let cf = db.cf_handle(CF_AI_RESOURCE_VERSION).ok_or_else(|| {
-            anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE_VERSION)
-        })?;
-        if db.get_cf(cf, key.as_bytes())?.is_some() {
-            db.delete_cf(cf, key.as_bytes())
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+        if self.get_ai_resource_version(&key)?.is_some() {
+            self.ai_apply(vec![AiWriteOp::Delete {
+                cf: CF_AI_RESOURCE_VERSION.to_string(),
+                key: key.into_bytes(),
+            }])
+            .await?;
             Ok(1)
         } else {
             Ok(0)
@@ -807,30 +830,16 @@ impl AiResourcePersistence for DistributedPersistService {
         resource_type: &str,
     ) -> anyhow::Result<u64> {
         let prefix = Self::ai_resource_version_prefix(namespace_id, resource_type, name);
-        let db = self.reader.db();
-        let cf = db.cf_handle(CF_AI_RESOURCE_VERSION).ok_or_else(|| {
-            anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE_VERSION)
-        })?;
-        let mut count = 0u64;
-        let mut keys_to_delete = Vec::new();
-        let iter = db.prefix_iterator_cf(cf, prefix.as_bytes());
-        for item in iter {
-            let (key, _) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if !key_str.starts_with(&prefix) {
-                break;
-            }
-            if key_str.starts_with("__") {
-                continue;
-            }
-            keys_to_delete.push(key.to_vec());
+        let versions = self.scan_ai_resource_versions(&prefix)?;
+        if versions.is_empty() {
+            return Ok(0);
         }
-        for key in &keys_to_delete {
-            db.delete_cf(cf, key)
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            count += 1;
-        }
-        Ok(count)
+        self.ai_apply(vec![Self::delete_prefix_op(
+            CF_AI_RESOURCE_VERSION,
+            &prefix,
+        )])
+        .await?;
+        Ok(versions.len() as u64)
     }
 
     async fn ai_resource_version_delete_by_status(
@@ -841,33 +850,18 @@ impl AiResourcePersistence for DistributedPersistService {
         status: &str,
     ) -> anyhow::Result<u64> {
         let prefix = Self::ai_resource_version_prefix(namespace_id, resource_type, name);
-        let db = self.reader.db();
-        let cf = db.cf_handle(CF_AI_RESOURCE_VERSION).ok_or_else(|| {
-            anyhow::anyhow!("Column family '{}' not found", CF_AI_RESOURCE_VERSION)
-        })?;
-        let mut count = 0u64;
-        let mut keys_to_delete = Vec::new();
-        let iter = db.prefix_iterator_cf(cf, prefix.as_bytes());
-        for item in iter {
-            let (key, value) =
-                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let key_str = String::from_utf8_lossy(&key);
-            if !key_str.starts_with(&prefix) {
-                break;
-            }
-            if key_str.starts_with("__") {
-                continue;
-            }
-            let info: AiResourceVersionInfo = serde_json::from_slice(&value)?;
-            if info.status == status {
-                keys_to_delete.push(key.to_vec());
-            }
-        }
-        for key in &keys_to_delete {
-            db.delete_cf(cf, key)
-                .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
-            count += 1;
-        }
+        let versions = self.scan_ai_resource_versions(&prefix)?;
+        let doomed: Vec<AiWriteOp> = versions
+            .iter()
+            .filter(|v| v.status == status)
+            .map(|v| AiWriteOp::Delete {
+                cf: CF_AI_RESOURCE_VERSION.to_string(),
+                key: Self::ai_resource_version_key(namespace_id, resource_type, name, &v.version)
+                    .into_bytes(),
+            })
+            .collect();
+        let count = doomed.len() as u64;
+        self.ai_apply(doomed).await?;
         Ok(count)
     }
 
@@ -982,16 +976,16 @@ impl AiResourcePersistence for DistributedPersistService {
                 updated.id = existing.id;
                 updated.gmt_create = existing.gmt_create;
                 updated.gmt_modified = Some(now);
-                self.put_search_document(&key, &updated)?;
+                self.put_search_document(&key, &updated).await?;
                 Ok(existing.id)
             }
             None => {
-                let id = self.next_search_document_id()?;
+                let id = self.next_search_document_id().await?;
                 let mut created = document.clone();
                 created.id = id;
                 created.gmt_create = Some(now.clone());
                 created.gmt_modified = Some(now);
-                self.put_search_document(&key, &created)?;
+                self.put_search_document(&key, &created).await?;
                 Ok(id)
             }
         }
@@ -1009,9 +1003,11 @@ impl AiResourcePersistence for DistributedPersistService {
         if self.get_search_document(&key)?.is_none() {
             return Ok(0);
         }
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_SEARCH_DOCUMENT)?;
-        db.delete_cf(cf, key.as_bytes())?;
+        self.ai_apply(vec![AiWriteOp::Delete {
+            cf: CF_AI_RESOURCE_SEARCH_DOCUMENT.to_string(),
+            key: key.into_bytes(),
+        }])
+        .await?;
         Ok(1)
     }
 
@@ -1029,9 +1025,15 @@ impl AiResourcePersistence for DistributedPersistService {
     ) -> anyhow::Result<u64> {
         let prefix =
             Self::search_chunk_prefix(namespace_id, resource_type, resource_name, resource_version);
-        self.delete_search_chunks(&prefix)?;
 
         if chunks.is_empty() {
+            // Still replicated: the previous chunks have to go away on every
+            // node, not just this one.
+            self.ai_apply(vec![Self::delete_prefix_op(
+                CF_AI_RESOURCE_SEARCH_CHUNK,
+                &prefix,
+            )])
+            .await?;
             return Ok(0);
         }
 
@@ -1041,20 +1043,32 @@ impl AiResourcePersistence for DistributedPersistService {
             .map(|d| d.id)
             .unwrap_or_default();
 
+        // Allocate every ID in one Raft write; the chunks then go out as a
+        // single batch, so a version is never half-replaced on any node.
+        let ids = self
+            .ai_alloc_ids(
+                CF_AI_RESOURCE_SEARCH_CHUNK,
+                KEY_SEARCH_CHUNK_NEXT_ID,
+                chunks.len() as u32,
+            )
+            .await?;
+
         let now = chrono::Utc::now().to_rfc3339();
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_SEARCH_CHUNK)?;
-        for chunk in chunks {
-            let id = self.next_search_chunk_id()?;
+        let mut ops = Vec::with_capacity(chunks.len() + 1);
+        ops.push(Self::delete_prefix_op(CF_AI_RESOURCE_SEARCH_CHUNK, &prefix));
+        for (chunk, id) in chunks.iter().zip(ids) {
             let mut stored = chunk.clone();
             stored.id = id;
             stored.document_id = document_id;
             stored.gmt_create = Some(now.clone());
             stored.gmt_modified = Some(now.clone());
-            let json = serde_json::to_vec(&stored)?;
-            db.put_cf(cf, format!("{prefix}{id}").as_bytes(), &json)
-                .map_err(|e| anyhow::anyhow!("RocksDB put error: {}", e))?;
+            ops.push(AiWriteOp::Put {
+                cf: CF_AI_RESOURCE_SEARCH_CHUNK.to_string(),
+                key: format!("{prefix}{id}").into_bytes(),
+                value: serde_json::to_vec(&stored)?,
+            });
         }
+        self.ai_apply(ops).await?;
         Ok(chunks.len() as u64)
     }
 
@@ -1079,7 +1093,13 @@ impl AiResourcePersistence for DistributedPersistService {
     ) -> anyhow::Result<u64> {
         let prefix =
             Self::search_chunk_prefix(namespace_id, resource_type, resource_name, resource_version);
-        self.delete_search_chunks(&prefix)
+        let deleted = self.count_search_chunks(&prefix)?;
+        self.ai_apply(vec![Self::delete_prefix_op(
+            CF_AI_RESOURCE_SEARCH_CHUNK,
+            &prefix,
+        )])
+        .await?;
+        Ok(deleted)
     }
 
     async fn search_chunk_search(
@@ -1114,7 +1134,7 @@ impl AiResourcePersistence for DistributedPersistService {
                 stored.gmt_modified = Some(now);
             }
         }
-        self.put_task(&stored)
+        self.put_task(&stored).await
     }
 
     async fn task_find(&self, task_key: &str) -> anyhow::Result<Option<AiResourceTaskInfo>> {
@@ -1148,9 +1168,11 @@ impl AiResourcePersistence for DistributedPersistService {
         if self.get_task(task_key)?.is_none() {
             return Ok(0);
         }
-        let db = self.reader.db();
-        let cf = self.cf(CF_AI_RESOURCE_TASK)?;
-        db.delete_cf(cf, task_key.as_bytes())?;
+        self.ai_apply(vec![AiWriteOp::Delete {
+            cf: CF_AI_RESOURCE_TASK.to_string(),
+            key: task_key.as_bytes().to_vec(),
+        }])
+        .await?;
         Ok(1)
     }
 }
