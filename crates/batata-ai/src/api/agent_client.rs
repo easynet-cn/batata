@@ -118,11 +118,86 @@ struct AgentEndpointRegistration {
     #[serde(alias = "runtimeVersion")]
     version: String,
 
+    /// The constraint the batch advertises (Nacos: `versionRange`).
+    #[serde(default)]
+    version_range: String,
+
     #[serde(default)]
     protocol: String,
 
     #[serde(default)]
     endpoints: Vec<EndpointEntryInput>,
+}
+
+/// POST /endpoints as upstream's SDK sends it: a form whose `endpoints` field
+/// is a JSON *string*.
+///
+/// Upstream `AgentEndpointRegistrationForm` carries `namespaceId`, `agentName`,
+/// `runtimeVersion`, `versionRange`, `protocol` and `endpoints`; Batata's own
+/// JSON body is accepted as well, so the content type decides.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentEndpointRegistrationForm {
+    #[serde(default)]
+    namespace_id: Option<String>,
+
+    agent_name: String,
+
+    /// The runtime version the batch is published under.
+    #[serde(alias = "version")]
+    runtime_version: String,
+
+    /// The constraint the batch advertises, e.g. `1.x`.
+    #[serde(default)]
+    version_range: String,
+
+    #[serde(default)]
+    protocol: String,
+
+    /// `Vec<EndpointEntryInput>` as JSON.
+    #[serde(default)]
+    endpoints: String,
+}
+
+impl AgentEndpointRegistrationForm {
+    fn into_registration(self) -> std::result::Result<AgentEndpointRegistration, String> {
+        let endpoints = if self.endpoints.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str::<Vec<EndpointEntryInput>>(self.endpoints.trim())
+                .map_err(|e| format!("Invalid endpoints JSON: {e}"))?
+        };
+        Ok(AgentEndpointRegistration {
+            namespace_id: self.namespace_id,
+            agent_name: self.agent_name,
+            version: self.runtime_version,
+            version_range: self.version_range,
+            protocol: self.protocol,
+            endpoints,
+        })
+    }
+}
+
+/// Read a registration from either a form body or a JSON body.
+///
+/// Upstream posts the batch as a form with the endpoints as a JSON string; the
+/// content type decides, with a JSON-looking body as the fallback for a client
+/// that never sends one.
+fn parse_endpoint_registration(
+    content_type: &str,
+    body: &[u8],
+) -> std::result::Result<AgentEndpointRegistration, String> {
+    let body = body.trim_ascii();
+    if body.is_empty() {
+        return Err("an endpoint registration is required".to_string());
+    }
+    if content_type.contains("json") || body.first() == Some(&b'{') {
+        return serde_json::from_slice::<AgentEndpointRegistration>(body)
+            .map_err(|e| format!("Invalid endpoint registration: {e}"));
+    }
+    serde_urlencoded::from_bytes::<AgentEndpointRegistrationForm>(body)
+        .map_err(|e| format!("Invalid form body: {e}"))?
+        .into_registration()
 }
 
 /// DELETE /endpoints query parameters.
@@ -142,16 +217,65 @@ struct AgentEndpointDeregistration {
 }
 
 /// Endpoint entry in registration requests.
+///
+/// Two spellings are accepted because the two encodings upstream and Batata
+/// use do not agree on the shape: an upstream `Endpoint` is a `uri` (scheme,
+/// host, port and path in one string), while Batata models an endpoint as an
+/// address plus a port, which is what its Naming registration takes.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EndpointEntryInput {
-    address: String,
-    port: u16,
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    port: Option<u16>,
+    /// Upstream's `Endpoint.uri`, e.g. `http://10.0.0.1:8080/a2a`.
+    #[serde(default)]
+    uri: Option<String>,
     /// Accepted from the API for forward-compatibility; not yet consumed by
     /// `AiEndpointService::create_agent_endpoint` which does not accept metadata.
     #[serde(default)]
     #[allow(dead_code)]
     metadata: HashMap<String, String>,
+}
+
+impl EndpointEntryInput {
+    /// The `(address, port)` pair to register.
+    fn resolve(&self) -> std::result::Result<(String, u16), String> {
+        if let Some(address) = self.address.as_deref().filter(|a| !a.is_empty()) {
+            let port = self
+                .port
+                .ok_or_else(|| "endpoint 'port' is required when 'address' is used".to_string())?;
+            return Ok((address.to_string(), port));
+        }
+        let uri = self
+            .uri
+            .as_deref()
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| "endpoint requires 'address' and 'port', or a 'uri'".to_string())?;
+        split_uri(uri).ok_or_else(|| format!("endpoint uri '{uri}' has no host"))
+    }
+}
+
+/// Split an endpoint `uri` into its host and port.
+///
+/// Upstream carries the port inside the uri, so a client that sends one never
+/// sends a port. A uri without a port is served on the default HTTP port, which
+/// is the only sensible reading of an authority with no explicit port.
+fn split_uri(uri: &str) -> Option<(String, u16)> {
+    let authority = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let authority = authority.split(['/', '?']).next().unwrap_or(authority);
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, rest)| rest);
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse::<u16>().ok()?),
+        None => (authority, 80),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port))
 }
 
 // ============================================================================
@@ -326,20 +450,35 @@ async fn discover(
     );
 
     let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or(""));
-    let requested = match query.version.as_deref() {
-        Some(v) if !v.is_empty() => v.to_string(),
-        _ => {
-            return Result::<()>::http_bad_request(
-                &batata_common::error::PARAMETER_MISSING,
-                "version is required",
-            );
-        }
-    };
+    let requested = query.version.as_deref().map(str::trim).unwrap_or("");
 
-    // A range is resolved against what is actually published; an exact version
-    // is used as given, so asking for an unpublished one reports "not found"
-    // rather than quietly serving a different version's endpoints.
-    let version = if crate::service::version_range::is_range(&requested) {
+    // A missing version asks for the `latest` label — upstream
+    // `AgentDiscoveryApplicationService#resolveVersion` defaults the label to
+    // `latest` and only 404s when the agent carries no such label.
+    let version = if requested.is_empty() {
+        let versions = match agent_service.list_versions(ns, &query.agent_name).await {
+            Ok(versions) => versions,
+            Err(e) => {
+                return Result::<()>::http_bad_request(
+                    &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                    e.to_string(),
+                );
+            }
+        };
+        match versions.iter().find(|v| v.is_latest) {
+            Some(v) => v.version.clone(),
+            None => {
+                return Result::<()>::http_not_found(
+                    &batata_common::error::RESOURCE_NOT_FOUND,
+                    format!("agent '{}' has no latest version", query.agent_name),
+                );
+            }
+        }
+    } else if crate::service::version_range::is_range(requested) {
+        // A range is resolved against what is actually published; an exact
+        // version is used as given, so asking for an unpublished one reports
+        // "not found" rather than quietly serving a different version's
+        // endpoints.
         let versions = match agent_service.list_versions(ns, &query.agent_name).await {
             Ok(versions) => versions,
             Err(e) => {
@@ -350,7 +489,7 @@ async fn discover(
             }
         };
         let available: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
-        match crate::service::version_range::select_version(&available, &requested) {
+        match crate::service::version_range::select_version(&available, requested) {
             Some(v) => v.to_string(),
             None => {
                 return Result::<()>::http_not_found(
@@ -363,10 +502,11 @@ async fn discover(
             }
         }
     } else {
-        requested
+        requested.to_string()
     };
 
-    let endpoints = endpoint_service.get_agent_endpoints(ns, &query.agent_name, &version);
+    let endpoints =
+        endpoint_service.get_agent_endpoints_for_version(ns, &query.agent_name, &version);
     let endpoint_entries: Vec<EndpointEntry> = endpoints
         .iter()
         .map(EndpointEntry::from_endpoint_info)
@@ -392,7 +532,7 @@ async fn register_endpoints(
     req: HttpRequest,
     data: web::Data<AppState>,
     endpoint_service: web::Data<Arc<AiEndpointService>>,
-    body: web::Json<AgentEndpointRegistration>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -402,7 +542,16 @@ async fn register_endpoints(
             .build()
     );
 
-    let form = body.into_inner();
+    let content_type = get_header(&req, "content-type");
+    let form = match parse_endpoint_registration(&content_type, &body) {
+        Ok(form) => form,
+        Err(e) => {
+            return Result::<String>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     let ns = normalize_namespace(form.namespace_id.as_deref().unwrap_or(""));
 
     // Upstream binds the external `clientId` header to an internal publisher
@@ -410,17 +559,28 @@ async fn register_endpoints(
     // client-lifecycle store, so the header is used directly; without it there
     // is no Client to charge and the batch is admitted unconditionally.
     let client_id = get_header(&req, CLIENT_ID_HEADER);
-    let endpoints: Vec<(String, u16)> = form
+    let endpoints = match form
         .endpoints
         .iter()
-        .map(|e| (e.address.clone(), e.port))
-        .collect();
+        .map(EndpointEntryInput::resolve)
+        .collect::<std::result::Result<Vec<(String, u16)>, String>>()
+    {
+        Ok(endpoints) => endpoints,
+        Err(e) => {
+            return Result::<String>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
+    let version_range = Some(form.version_range.as_str()).filter(|r| !r.is_empty());
 
     if let Err(over) = endpoint_service.register_agent_endpoint_batch(
         &client_id,
         ns,
         &form.agent_name,
         &form.version,
+        version_range,
         &endpoints,
     ) {
         // Upstream raises `NacosApiException(NacosException.OVER_THRESHOLD,
@@ -439,6 +599,7 @@ async fn register_endpoints(
         namespace = %ns,
         agent_name = %form.agent_name,
         version = %form.version,
+        version_range = %form.version_range,
         protocol = %form.protocol,
         endpoint_count = form.endpoints.len(),
         "Agent endpoints registered via client API"
@@ -473,22 +634,23 @@ async fn deregister_endpoints(
     let form = query.into_inner();
     let ns = normalize_namespace(form.namespace_id.as_deref().unwrap_or(""));
 
-    // Upstream drops whatever *that client* published; Batata has no
-    // client-lifecycle store, so it enumerates the catalog versions instead and
-    // releases the capacity reservation keyed the same way registration made it.
+    // Upstream drops whatever *that client* published
+    // (`AgentRuntimeRegistryService#deregisterPublisher`), so it reaches a
+    // runtime version that was never published through the catalog. Batata's
+    // Naming path carries no publisher identity, so the client's own
+    // reservations are consulted alongside the catalog.
     let client_id = get_header(&req, CLIENT_ID_HEADER);
 
     // List all versions for this agent, then delete endpoints for each version
     match a2a_service.list_versions(ns, &form.agent_name).await {
         Ok(versions) => {
-            for vd in &versions {
-                endpoint_service.deregister_agent_endpoint_batch(
-                    &client_id,
-                    ns,
-                    &form.agent_name,
-                    &vd.version,
-                );
-            }
+            let catalog: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
+            endpoint_service.deregister_agent_publication(
+                &client_id,
+                ns,
+                &form.agent_name,
+                &catalog,
+            );
 
             tracing::info!(
                 namespace = %ns,
@@ -552,4 +714,66 @@ pub fn agent_client_routes() -> actix_web::Scope {
         .service(register_endpoints)
         .service(deregister_endpoints)
         .service(heartbeat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_uri_is_split_into_host_and_port() {
+        assert_eq!(
+            split_uri("http://10.0.0.1:8080/a2a"),
+            Some(("10.0.0.1".to_string(), 8080))
+        );
+        assert_eq!(
+            split_uri("https://agent.example.com:9443"),
+            Some(("agent.example.com".to_string(), 9443))
+        );
+        // No scheme, no path: still an authority.
+        assert_eq!(
+            split_uri("10.0.0.2:7000"),
+            Some(("10.0.0.2".to_string(), 7000))
+        );
+    }
+
+    /// Upstream's `Endpoint` has no port field, so a uri without one is served
+    /// on the default HTTP port rather than being rejected.
+    #[test]
+    fn a_uri_without_a_port_uses_the_default_http_port() {
+        assert_eq!(
+            split_uri("http://10.0.0.3/a2a"),
+            Some(("10.0.0.3".to_string(), 80))
+        );
+    }
+
+    #[test]
+    fn a_uri_without_a_host_is_rejected() {
+        assert_eq!(split_uri("http:///a2a"), None);
+        assert_eq!(split_uri("http://:8080"), None);
+        // A non-numeric port is not a port.
+        assert_eq!(split_uri("http://10.0.0.1:http"), None);
+    }
+
+    #[test]
+    fn an_endpoint_entry_resolves_from_either_spelling() {
+        let entry: EndpointEntryInput =
+            serde_json::from_str(r#"{"address":"h","port":1}"#).expect("address + port");
+        assert_eq!(entry.resolve(), Ok(("h".to_string(), 1)));
+
+        let entry: EndpointEntryInput =
+            serde_json::from_str(r#"{"uri":"http://h:2/x"}"#).expect("uri");
+        assert_eq!(entry.resolve(), Ok(("h".to_string(), 2)));
+    }
+
+    /// A half-specified endpoint is a client error, not a silent default.
+    #[test]
+    fn an_endpoint_entry_without_an_address_or_uri_is_rejected() {
+        let entry: EndpointEntryInput = serde_json::from_str(r#"{"port":1}"#).expect("port only");
+        assert!(entry.resolve().is_err());
+
+        let entry: EndpointEntryInput =
+            serde_json::from_str(r#"{"address":"h"}"#).expect("address only");
+        assert!(entry.resolve().is_err());
+    }
 }

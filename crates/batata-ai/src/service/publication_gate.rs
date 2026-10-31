@@ -178,6 +178,43 @@ impl AgentRuntimePublicationCapacityGate {
         all.get(client_id).map(|m| m.values().sum()).unwrap_or(0)
     }
 
+    /// The Agent versions one Client published, read back from its
+    /// reservations.
+    ///
+    /// Upstream answers "what did this Client publish?" from the Naming
+    /// `Client`, which owns the instances it registered. Batata's registration
+    /// path carries no publisher identity, so the reservation map is the only
+    /// record of it — which is also why deregistration has to consult it: a
+    /// runtime version that was never published through the catalog is not
+    /// discoverable any other way.
+    ///
+    /// Returns an empty vec for a blank `client_id`: nothing is accounted for
+    /// an unattributable request, so there is nothing to read back.
+    pub fn owned_versions(
+        &self,
+        client_id: &str,
+        namespace: &str,
+        agent_name: &str,
+    ) -> Vec<String> {
+        if client_id.is_empty() {
+            return Vec::new();
+        }
+        let prefix = format!("{namespace}::{agent_name}::");
+        let all = self
+            .logical_publications
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        all.get(client_id)
+            .map(|reservations| {
+                reservations
+                    .keys()
+                    .filter_map(|key| key.strip_prefix(&prefix))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Build the logical publication key for one Runtime publication.
     ///
     /// Upstream keys a logical publication by `(namespaceId, agentName, version)`;
@@ -296,6 +333,45 @@ mod tests {
         // Distinguishes "no client" from "client with no reservations" so the
         // map does not grow without bound.
         assert!(!gate.logical_publications.lock().unwrap().contains_key("c1"));
+    }
+
+    /// Deregistring reads back what the Client published, so a runtime version
+    /// that never went through the catalog can still be removed.
+    #[test]
+    fn owned_versions_reports_every_version_one_client_published() {
+        let gate = AgentRuntimePublicationCapacityGate::new(10);
+        gate.register_logical("c1", "public::a::1.0.0", 1, || {})
+            .expect("1.0.0");
+        gate.register_logical("c1", "public::a::3.0.0", 1, || {})
+            .expect("3.0.0");
+        gate.register_logical("c1", "public::other::1.0.0", 1, || {})
+            .expect("another agent");
+        gate.register_logical("c2", "public::a::2.0.0", 1, || {})
+            .expect("another client");
+
+        let mut owned = gate.owned_versions("c1", "public", "a");
+        owned.sort();
+        assert_eq!(owned, vec!["1.0.0".to_string(), "3.0.0".to_string()]);
+    }
+
+    #[test]
+    fn owned_versions_is_empty_without_a_client() {
+        let gate = AgentRuntimePublicationCapacityGate::new(10);
+        gate.register_logical("", "public::a::1.0.0", 1, || {})
+            .expect("unattributable");
+        assert!(gate.owned_versions("", "public", "a").is_empty());
+    }
+
+    /// The version is the part after the last `::`, so a name containing the
+    /// separator would be split at the wrong place — kept honest by using the
+    /// same helper that built the key.
+    #[test]
+    fn owned_versions_round_trips_through_the_publication_key() {
+        let gate = AgentRuntimePublicationCapacityGate::new(10);
+        let key = AgentRuntimePublicationCapacityGate::publication_key("public", "a", "1.2.3");
+        gate.register_logical("c1", &key, 1, || {})
+            .expect("register");
+        assert_eq!(gate.owned_versions("c1", "public", "a"), vec!["1.2.3"]);
     }
 
     #[test]

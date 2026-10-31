@@ -29,6 +29,13 @@ pub const METADATA_AI_MCP_SERVICE: &str = "__nacos.ai.mcp.service__";
 /// Metadata key marking a naming service entry as an AI/A2A managed service
 pub const METADATA_AI_A2A_SERVICE: &str = "__nacos.ai.a2a.service__";
 
+/// Metadata key holding the version range a registered endpoint batch
+/// advertises.
+///
+/// Upstream keeps it on the endpoint's `RuntimeVersionBinding`; Batata has no
+/// binding model, so the range travels with the instance it was published for.
+pub const METADATA_AGENT_VERSION_RANGE: &str = "versionRange";
+
 // =============================================================================
 // Helper Functions
 // =============================================================================

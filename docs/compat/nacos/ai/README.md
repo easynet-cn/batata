@@ -228,25 +228,39 @@ Goal: introduce the upstream layering before adding endpoints.
       Config: `batata.ai.rad.max_publications_per_client` (upstream spells it
       `nacos.ai.rad.capacity.publication.max-publications-per-client`), default
       100 — the same default as upstream.
-- [ ] **`AgentClientController` deviations found while route-testing it.** Two,
-      both pinned by a test so they stay deliberate:
-      - *`DELETE /endpoints` cannot reach an unpublished runtime version.*
+- [x] **`AgentClientController` deviations found while route-testing it —
+      closed.** Three were listed; all three are now ports rather than
+      deltas, each pinned by a test.
+      - *`DELETE /endpoints` could not reach an unpublished runtime version.*
         Upstream's `AgentHttpClientLifecycleService#deregister` drops whatever
-        **that client** published, keyed by `clientId`; Batata has no
-        client-lifecycle store and instead enumerates
-        `A2aAgentService::list_versions`, so a version that was registered
-        through `POST /endpoints` but never published through the catalog
-        survives the delete.
-        (`deregister_cannot_reach_a_version_that_was_never_published`.)
-      - *`GET /` requires `version`.* Upstream's
-        `AgentDiscoveryApplicationService#resolveVersion` treats a missing
-        version as a request for the `latest` label and only 404s when the
-        agent has no such label; Batata answers 400 `version is required`.
-        (`discover_requires_a_version`.)
-      A third difference is wire-format only, not behaviour: upstream's
-      `AgentEndpointRegistrationForm` is form-encoded with `runtimeVersion`
-      plus a `versionRange` and `endpoints` as a **JSON string**; Batata takes
-      a JSON body and aliases `version`.
+        **that client** published, keyed by `clientId`. Batata's Naming path
+        carries no publisher identity, so the client's own *reservations* are
+        now consulted alongside the catalog: `deregister_agent_publication`
+        unions `list_versions` with
+        `AgentRuntimePublicationCapacityGate::owned_versions`, which is the
+        only record of a version registered through `POST /endpoints` that was
+        never published. The catalog half is still needed because the
+        reservation map is in-process and does not survive a restart.
+        (`deregister_reaches_a_runtime_version_that_was_never_published`.)
+      - *`GET /` required `version`.* It now resolves the `latest` label and
+        404s only when the agent carries none, which is what
+        `AgentDiscoveryApplicationService#resolveVersion` does and what the
+        gRPC discovery path in `handler/ai_handler.rs` already did.
+        (`discover_without_a_version_resolves_the_latest_label`, plus the
+        404 counterpart.)
+      - *Wire format.* `POST /endpoints` now reads upstream's form
+        (`namespaceId`, `agentName`, `runtimeVersion`, `versionRange`,
+        `protocol`, `endpoints` as a JSON string) as well as Batata's JSON
+        body, decided by content type the way `api/mcp.rs` already does. An
+        upstream `Endpoint` is a `uri`, so a host and port are parsed out of
+        it; `address` + `port` are still accepted.
+      `versionRange` is also applied rather than merely accepted: it is stored
+      as instance metadata and `get_agent_endpoints_for_version` serves a
+      batch whose advertised range covers the requested version — upstream's
+      `RuntimeVersionBinding` filtering
+      (`AgentRuntimeRegistryService#loadSnapshotItems`). The range grammar is
+      Batata's own (`1.x`, `^1.2.0`), not upstream's Maven-style `[1.0,2.0)`.
+      (`a_registered_version_range_serves_a_concrete_version_in_it`.)
 - [x] **MCP admin moved onto the `ai_resource` service.** `api/v3/admin/ai/route.rs`
       mounted a legacy shim backed by the in-memory `McpServerRegistry`, which
       exposed ~5 endpoints; it now mounts `batata_ai::mcp_admin_routes()`, which
@@ -1012,11 +1026,9 @@ Two notes that cost real time and are easy to trip over:
   needs `Arc<dyn NamingServiceProvider>`, and `batata_naming::NamingService` is
   a plain in-memory structure, so
   `crates/batata-server/tests/agent_client_routes.rs` drives all five client
-  endpoints end to end (9 tests). Three deviations it found are listed as open
-  items in section 2: `DELETE /endpoints` cannot reach an unpublished runtime
-  version, `GET /` requires `version` where upstream resolves the `latest`
-  label, and the registration body is JSON rather than upstream's form +
-  `runtimeVersion` + `endpoints` JSON string.
+  endpoints end to end (17 tests). The three deviations it found —
+  `DELETE /endpoints`, a missing `version` on `GET /`, and the registration
+  wire format — have since been closed; see the phase-1 entry above.
 - The legacy console `endpoint` add/remove pair this doc used to list — it
   does not exist (see the correction above).
 - The upstream AI surfaces Batata does not implement at all (RAD/AgentSpec

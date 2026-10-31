@@ -54,6 +54,31 @@ pub fn select_version<'a>(available: &[&'a str], requested: &str) -> Option<&'a 
         .max_by(|a, b| compare_versions(a, b))
 }
 
+/// Whether one concrete version satisfies a registered constraint.
+///
+/// This is the other direction from [`select_version`]: a publisher registers
+/// its endpoints under a runtime version *and* advertises the constraint they
+/// serve (`1.x`, `^1.2.0`, …), so a caller asking for a concrete version has to
+/// be answered by whichever registration covers it. Upstream's equivalent is
+/// `RuntimeVersionRangeSupport.contains(versionRange, version)`.
+///
+/// The constraint is read with Batata's own grammar, so a publisher and a
+/// client always agree on what `1.x` means.
+pub fn contains(range: &str, version: &str) -> bool {
+    let range = range.trim();
+    let version = version.trim();
+    // `latest` and a blank constraint only mean something when there is a set
+    // to pick the highest of. As a binding over one concrete version they
+    // would match every version, which is not what a publisher advertises.
+    if range.is_empty() || range.eq_ignore_ascii_case("latest") {
+        return false;
+    }
+    // `select_version` over a single candidate is exactly "does `range` admit
+    // `version`": an exact constraint matches only itself, and a range
+    // matches when the candidate falls inside the half-open bounds.
+    select_version(&[version], range) == Some(version)
+}
+
 /// Whether a constraint asks for a range at all.
 ///
 /// Lets a caller distinguish "this is a range" from "this is an exact version
@@ -192,5 +217,38 @@ mod tests {
         assert!(is_range("1.2.x"));
         assert!(is_range("^1.0.0"));
         assert!(!is_range("1.2.5"));
+    }
+
+    #[test]
+    fn a_wildcard_constraint_covers_every_version_in_its_span() {
+        assert!(contains("1.x", "1.0.0"));
+        assert!(contains("1.x", "1.9.9"));
+        assert!(!contains("1.x", "2.0.0"));
+        assert!(contains("1.2.x", "1.2.5"));
+        assert!(!contains("1.2.x", "1.3.0"));
+    }
+
+    /// The constraint a publisher advertises is read with the same grammar a
+    /// client uses to ask, so the two cannot disagree.
+    #[test]
+    fn a_caret_constraint_covers_its_own_major() {
+        assert!(contains("^1.2.0", "1.2.0"));
+        assert!(contains("^1.2.0", "1.4.1"));
+        assert!(!contains("^1.2.0", "1.1.0"));
+        assert!(!contains("^1.2.0", "2.0.0"));
+    }
+
+    #[test]
+    fn an_exact_constraint_covers_only_itself() {
+        assert!(contains("1.2.5", "1.2.5"));
+        assert!(!contains("1.2.5", "1.2.6"));
+    }
+
+    /// `latest` on a *binding* is not a constraint on one concrete version, so
+    /// it must not be read as "matches anything".
+    #[test]
+    fn latest_is_not_a_binding_constraint() {
+        assert!(!contains("latest", "1.0.0"));
+        assert!(!contains("", "1.0.0"));
     }
 }

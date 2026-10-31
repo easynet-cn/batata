@@ -10,13 +10,14 @@
 //! Two upstream facts worth knowing before reading the cases below:
 //! - `AgentEndpointRegistrationForm` carries `runtimeVersion` plus a
 //!   `versionRange`, and `endpoints` is a **JSON string** inside a form-encoded
-//!   body. Batata accepts a JSON body instead and aliases `version`.
+//!   body. Batata accepts that form *and* a JSON body, and reads `version` as
+//!   an alias for `runtimeVersion`.
 //! - `AgentClientController#deregisterEndpoints` delegates to
 //!   `AgentHttpClientLifecycleService.deregister(clientId, requestModule, ns,
 //!   agentName, protocol)`, which drops whatever *that client* published.
-//!   Batata has no client-lifecycle store, so it approximates by enumerating
-//!   the published catalog versions — see
-//!   [`deregister_cannot_reach_a_version_that_was_never_published`].
+//!   Batata's Naming path carries no publisher identity, so the client's own
+//!   publication reservations are consulted alongside the catalog — see
+//!   [`deregister_reaches_a_runtime_version_that_was_never_published`].
 //!
 //! Runs on the embedded backend; set `DATABASE_URL` to run the same cases
 //! against a real database. See `common/ai_store.rs`.
@@ -317,14 +318,60 @@ async fn registered_endpoints_are_discoverable_by_exact_version() {
     store.clean(AGENT).await;
 }
 
-/// GET / without a version is rejected.
+/// GET / without a version resolves the `latest` label.
 ///
-/// Upstream would resolve the `latest` label instead
-/// (`AgentDiscoveryApplicationService#resolveVersion`), so this is a Batata
-/// deviation rather than a port — asserted so the difference stays deliberate.
+/// Upstream `AgentDiscoveryApplicationService#resolveVersion` defaults the
+/// label to `latest` and only 404s when the agent carries none, so a client
+/// that omits the parameter gets the current version rather than a 400.
 #[actix_web::test]
-async fn discover_requires_a_version() {
+async fn discover_without_a_version_resolves_the_latest_label() {
     const AGENT: &str = "client-agent-discover";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+    agents
+        .update_agent_card(&card(AGENT, "1.5.0"), NS, "manual")
+        .await
+        .expect("publish 1.5.0");
+
+    let app = build_app(store.store()).await;
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/endpoints")
+            .set_json(registration(AGENT, "1.5.0", &[("10.0.0.4", 7070)]))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "register must succeed: {body}");
+
+    let (status, body) = get(
+        &app,
+        &format!("/v3/client/ai/agents?agentName={AGENT}&namespaceId={NS}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "discover must succeed: {body}");
+    assert!(
+        body.contains("\"version\":\"1.5.0\""),
+        "the latest label must be resolved: {body}"
+    );
+    assert!(body.contains("\"address\":\"10.0.0.4\""), "{body}");
+
+    store.clean(AGENT).await;
+}
+
+/// GET / without a version 404s when the agent has no `latest` label.
+///
+/// Upstream's `resolveVersion` throws not-found rather than falling back to
+/// some other version, which is the same choice the range path already makes.
+#[actix_web::test]
+async fn discover_without_a_version_reports_not_found_when_there_is_no_latest_label() {
+    const AGENT: &str = "client-agent-no-latest";
     let store = TestStore::open().await;
     store.clean(AGENT).await;
     let app = build_app(store.store()).await;
@@ -337,10 +384,10 @@ async fn discover_requires_a_version() {
 
     assert_eq!(
         status,
-        StatusCode::BAD_REQUEST,
-        "a missing version must be rejected: {body}"
+        StatusCode::NOT_FOUND,
+        "an agent with no latest version must not be served: {body}"
     );
-    assert!(body.contains("version is required"), "{body}");
+    assert!(body.contains("no latest version"), "{body}");
 
     store.clean(AGENT).await;
 }
@@ -474,13 +521,14 @@ async fn deregister_removes_the_endpoints_of_every_published_version() {
     store.clean(AGENT).await;
 }
 
-/// DELETE /endpoints cannot reach a version that is not in the catalog.
+/// DELETE /endpoints reaches a runtime version that is not in the catalog.
 ///
-/// This pins the known gap described in the module header: upstream removes
-/// *the client's* publication, so it works for a runtime version that was
-/// never published, while Batata enumerates `list_versions` and finds nothing.
+/// Upstream removes *the client's* publication, so it works for a version that
+/// was registered as a runtime endpoint but never published. Batata's Naming
+/// path carries no publisher identity, so the client's reservations are the
+/// record of what it published — without them this version would survive.
 #[actix_web::test]
-async fn deregister_cannot_reach_a_version_that_was_never_published() {
+async fn deregister_reaches_a_runtime_version_that_was_never_published() {
     const AGENT: &str = "client-agent-dereg";
     let store = TestStore::open().await;
     store.clean(AGENT).await;
@@ -495,10 +543,7 @@ async fn deregister_cannot_reach_a_version_that_was_never_published() {
     // Published: 1.0.0. Endpoint published under an unpublished 3.0.0.
     let (status, body) = call(
         &app,
-        test::TestRequest::post()
-            .uri("/v3/client/ai/agents/endpoints")
-            .set_json(registration(AGENT, "3.0.0", &[("10.0.0.7", 6060)]))
-            .to_request(),
+        publish(AGENT, "3.0.0", &[("10.0.0.7", 6060)], "client-1"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "register must succeed: {body}");
@@ -509,6 +554,7 @@ async fn deregister_cannot_reach_a_version_that_was_never_published() {
             "/v3/client/ai/agents/endpoints?agentName={AGENT}&namespaceId={NS}"
         ))
         .method(Method::DELETE)
+        .insert_header(("clientId", "client-1"))
         .to_request(),
     )
     .await;
@@ -521,9 +567,113 @@ async fn deregister_cannot_reach_a_version_that_was_never_published() {
     .await;
     assert_eq!(status, StatusCode::OK, "discover: {body}");
     assert!(
-        body.contains("\"address\":\"10.0.0.7\""),
-        "KNOWN GAP: Batata enumerates published versions, so an unpublished \
-         runtime version survives deregistration. Endpoints: {body}"
+        body.contains("\"endpoints\":[]"),
+        "an unpublished runtime version must be deregistered too: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// POST /endpoints accepts upstream's form encoding.
+///
+/// `AgentEndpointRegistrationForm` is a form whose `endpoints` field is a JSON
+/// string of upstream `Endpoint`s (`uri`, not `address` + `port`), so a real
+/// Java client cannot reach a handler that only reads JSON.
+#[actix_web::test]
+async fn register_accepts_the_upstream_form_encoding() {
+    const AGENT: &str = "client-agent-form";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app(store.store()).await;
+
+    let form = serde_urlencoded::to_string([
+        ("namespaceId", NS),
+        ("agentName", AGENT),
+        ("runtimeVersion", "1.0.0"),
+        ("protocol", "a2a"),
+        (
+            "endpoints",
+            r#"[{"uri":"http://10.0.0.5:8080/a2a"},{"address":"10.0.0.6","port":9090}]"#,
+        ),
+    ])
+    .expect("encode form");
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/endpoints")
+            .insert_header(("content-type", "application/x-www-form-urlencoded"))
+            .set_payload(form)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "form register must succeed: {body}");
+
+    let (status, body) = get(
+        &app,
+        &format!("/v3/client/ai/agents?agentName={AGENT}&version=1.0.0&namespaceId={NS}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "discover: {body}");
+    // The uri's host and port become the endpoint; the path is dropped.
+    assert!(body.contains("\"address\":\"10.0.0.5\""), "{body}");
+    assert!(body.contains("\"port\":8080"), "{body}");
+    assert!(body.contains("\"address\":\"10.0.0.6\""), "{body}");
+    assert!(body.contains("\"port\":9090"), "{body}");
+
+    store.clean(AGENT).await;
+}
+
+/// A batch that advertises a version range serves a concrete version in it.
+///
+/// Upstream binds each endpoint to a `RuntimeVersionBinding` and admits it when
+/// the binding's range covers the requested version, so a publisher can serve
+/// a whole minor line from one runtime version.
+#[actix_web::test]
+async fn a_registered_version_range_serves_a_concrete_version_in_it() {
+    const AGENT: &str = "client-agent-range-binding";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app(store.store()).await;
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/endpoints")
+            .set_json(serde_json::json!({
+                "agentName": AGENT,
+                "version": "1.5.0",
+                "versionRange": "1.x",
+                "protocol": "a2a",
+                "endpoints": [{"address": "10.0.0.8", "port": 7070}],
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "register must succeed: {body}");
+
+    // Published under 1.5.0, requested as 1.2.0: inside the advertised range.
+    let (status, body) = get(
+        &app,
+        &format!("/v3/client/ai/agents?agentName={AGENT}&version=1.2.0&namespaceId={NS}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "discover: {body}");
+    assert!(
+        body.contains("\"address\":\"10.0.0.8\""),
+        "1.x must cover 1.2.0: {body}"
+    );
+
+    // Outside the range: the endpoints must not be served.
+    let (status, body) = get(
+        &app,
+        &format!("/v3/client/ai/agents?agentName={AGENT}&version=2.0.0&namespaceId={NS}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "discover: {body}");
+    assert!(
+        body.contains("\"endpoints\":[]"),
+        "1.x must not cover 2.0.0: {body}"
     );
 
     store.clean(AGENT).await;
