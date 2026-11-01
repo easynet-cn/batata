@@ -143,7 +143,7 @@ fn content_type(req: &HttpRequest) -> String {
 /// Upstream posts the specifications as JSON strings in a form; the content
 /// type decides, with a JSON-looking body as the fallback for clients that
 /// never send one.
-fn parse_registration(
+pub(crate) fn parse_registration(
     content_type: &str,
     body: &[u8],
 ) -> std::result::Result<McpServerRegistration, String> {

@@ -7,11 +7,11 @@ Endpoint-level comparison of the AI module against upstream Nacos.
 - **Batata mount points**: admin AI at `/v3/admin/ai` (`crates/batata-server/src/api/v3/admin/ai/route.rs`),
   client AI at `/v3/client/ai` (`api/v3/client/route.rs`), console AI at `/v3/console/ai/*`
   (`crates/batata-server/src/startup/http.rs`)
-- **Last verified**: batata @ `6841d72d`, recounted against HEAD. Counts were
+- **Last verified**: batata @ `7ae42260`, recounted against HEAD. Counts were
   taken by enumerating `#[get|post|put|delete(...)]` attributes on the Batata
   side and `@*Mapping` annotations on the upstream side, not from prose. The
-  second recount (see §10 re-count note) corrected the totals to 237 matched /
-  8 missing / 4 deprecated.
+  third recount (see §10 re-count note) corrected the totals to 243 matched /
+  2 missing / 4 deprecated.
 
 > Re-verification note: `git diff 1b6309f50..HEAD -- ai/.../controller console/.../v3/ai`
 > is empty against the local `develop` checkout, so the baseline commit is still an
@@ -58,21 +58,39 @@ Write endpoints accept the upstream encoding: the specification fields arrive as
 the upstream `enabled` boolean while still tolerating console's
 `status=enable|disable`.
 
-### 1.2 Client — 0/6 ❌
+### 1.2 Client — 6/6 ✅
 
-| Upstream (`McpClientController`) | Method | Batata | Status |
+`batata-ai/src/api/mcp_client.rs`, mounted at `/v3/client/ai/mcp`
+(`crates/batata-server/src/api/v3/client/route.rs`).
+
+| Upstream (`McpClientController`, `@Since("3.3.0")`) | Method | Batata | Status |
 |---|---|---|---|
-| `""` | GET | — | ❌ |
-| `""` | POST | — | ❌ |
-| `/endpoints` | POST | — | ❌ |
-| `/endpoints` | DELETE | — | ❌ |
-| `/endpoints/heartbeat` | PUT | — | ❌ |
-| `/search` | GET | — | ❌ |
+| `""` | GET | `query_server` | ✅ |
+| `""` | POST | `release` | ✅ |
+| `/endpoints` | POST | `register_endpoint` | ✅ |
+| `/endpoints` | DELETE | `deregister_endpoint` | ✅ |
+| `/endpoints/heartbeat` | PUT | `heartbeat` | ✅ |
+| `/search` | GET | `search` | ✅ |
 
-`/v3/client/ai` mounts prompt, skill, agentspec, agent, capability and resource
-search — **no MCP scope**. The MCP *endpoint* runtime that Batata does have
-(`service/endpoint_service.rs`) is reached through the RAD Agent client
-(`/v3/client/ai/agents/endpoints`), not through `McpClientController`'s paths.
+`query`/`release`/`search` reuse the real MCP domain storage
+(`McpServerService`); the endpoint family reuses `AiEndpointService`
+(`service/endpoint_service.rs`), which registers/deregisters **real**
+NamingService instances — the same backing Nacos uses for its HTTP-client
+runtime, where the endpoints are Naming instances under the server's service
+ref. Two documented simplifications versus upstream:
+
+- Upstream binds the external `clientId` / `Request-Module` headers to a shared
+  Naming HTTP client (`HttpConnectionBasedClientManager`) for identity,
+  namespace binding and liveness/heartbeat. Batata has no such client store, so
+  the headers are read (and `clientId` is required) but not yet used to bind a
+  client or enforce the `Request-Module` value — matching the sibling Agent
+  client surface (`agent_client.rs`).
+- `release` with `createDraft=false` performs a direct-online *create*; the
+  upstream overwrite-an-existing-version path is not yet handled (it returns
+  the create error instead).
+
+**Assessment**: the client surface is at parity; all remaining gaps are the two
+Agent client endpoints.
 
 ### 1.3 Console — 22/22 ✅ (+2 extras)
 
@@ -377,7 +395,7 @@ per item instead of fabricating success. See
 | Surface | Upstream | Batata | Missing | Deprecated | Batata-only extras |
 |---|---|---|---|---|---|
 | MCP admin | 19 | 19 | 0 | 0 | 0 |
-| MCP client | 6 | 0 | **6** | 0 | 0 |
+| MCP client | 6 | 6 | 0 | 0 | 0 |
 | MCP console | 22 | 22 | 0 | 0 | 2 |
 | Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 | 0 |
 | AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 0 | 1 / 0 / 1 |
@@ -388,7 +406,7 @@ per item instead of fabricating success. See
 | Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 | 0 |
 | Copilot console | 6 | 6 | 0 | 0 | 0 |
 | Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 | 0 |
-| **Total** | **249** | **237 matched** | **8** | **4** | **10** |
+| **Total** | **249** | **243 matched** | **2** | **4** | **10** |
 
 (`service/trace/` is deliberately excluded from the count: upstream emits
 JSON-line events and defines no endpoint for it.)
@@ -411,11 +429,17 @@ JSON-line events and defines no endpoint for it.)
 > serving them), so they are not functional gaps. The four genuinely missing
 > endpoints are the six `McpClientController` routes and the two Agent client
 > routes (`POST ""` publish-from-app-code, `/watch` long-poll).
+>
+> A third recount closed the six `McpClientController` routes: they were
+> implemented in `batata-ai/src/api/mcp_client.rs`, backed by `McpServerService`
+> (query/release/search) and `AiEndpointService` (the endpoint family — real
+> NamingService instance registration, mirroring `agent_client.rs`). The totals
+> are now **243 matched / 2 missing / 4 deprecated**; the only remaining gaps
+> are the two Agent client routes.
 
-The 8 missing endpoints, in one list:
+The 2 missing endpoints, in one list:
 
-1. MCP client — all 6 of `McpClientController`.
-2. Agent — client `POST ""` (publish from app code) and `/watch` (long-poll) (2).
+1. Agent — client `POST ""` (publish from app code) and `/watch` (long-poll) (2).
 
 ---
 
@@ -433,10 +457,10 @@ compatibility surface; it is reachable only from unit tests.
 
 ## 12. Next
 
-- MCP client (`McpClientController`, 6 endpoints) is the single largest gap and
-  the only remaining client-surface gap.
-- The two Agent client endpoints (`POST ""` publish, `/watch` long-poll) need a
-  watch/change-notification subsystem before they can be aligned.
+- The two Agent client endpoints (`POST ""` publish, `/watch` long-poll) are the
+  only remaining AI gaps; `POST ""` needs an `AgentPublishApplicationService`
+  (publish-from-app-code) and `/watch` needs a watch/change-notification
+  subsystem before they can be aligned.
 - The two Pipeline legacy reads per surface (`/{pipelineId}`, `""`) are
   upstream-deprecated and off-by-default; Batata matches that default and does
   not plan to serve them.

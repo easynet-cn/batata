@@ -17,6 +17,7 @@ pub fn client_routes() -> Scope {
                 .service(batata_ai::skill_client_routes())
                 .service(batata_ai::agentspec_client_routes())
                 .service(batata_ai::agent_client_routes())
+                .service(batata_ai::mcp_client_routes())
                 .service(batata_ai::capability_client_routes())
                 .service(batata_ai::resource_search_client_routes()),
         )

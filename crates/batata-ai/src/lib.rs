@@ -56,6 +56,7 @@ pub use api::agentspec::{
 };
 pub use api::capability::client_routes as capability_client_routes;
 pub use api::mcp::{admin_routes as mcp_admin_routes, configure as configure_mcp};
+pub use api::mcp_client::client_routes as mcp_client_routes;
 pub use api::pipeline::admin_routes as pipeline_admin_routes;
 pub use api::prompt::{admin_routes as prompt_admin_routes, client_routes as prompt_client_routes};
 pub use api::search::client_routes as resource_search_client_routes;

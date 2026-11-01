@@ -6,6 +6,7 @@ pub mod agent_client;
 pub mod agentspec;
 pub mod capability;
 pub mod mcp;
+pub mod mcp_client;
 pub mod pipeline;
 pub mod prompt;
 pub mod search;
