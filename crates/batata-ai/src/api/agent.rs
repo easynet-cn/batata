@@ -58,6 +58,22 @@ pub struct AgentListForm {
     pub page_size: Option<u32>,
 }
 
+/// Query parameters for `GET /runtime-endpoints`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgentRuntimeEndpointForm {
+    /// Namespace ID (defaults to the public namespace).
+    #[serde(alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    /// Agent name.
+    #[serde(alias = "agentName")]
+    pub agent_name: Option<String>,
+    /// Target version.
+    pub version: Option<String>,
+    /// Protocol the caller wants the snapshot for, e.g. `JSONRPC`.
+    #[serde(default)]
+    pub protocol: Option<String>,
+}
+
 /// Query parameters for `POST /draft`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AgentDraftForm {
@@ -273,6 +289,112 @@ async fn update_agent(
     {
         Ok(()) => HttpResponse::Ok().json(Result::success("ok")),
         Err(e) => Result::<()>::http_internal_error(e),
+    }
+}
+
+/// GET /v3/admin/ai/agents/version — get one exact agent version definition
+#[get("/version")]
+async fn get_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    service: web::Data<Arc<dyn A2aAgentService>>,
+    query: web::Query<AgentVersionForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    let name = match query.agent_name.as_deref().filter(|n| !n.is_empty()) {
+        Some(n) => n,
+        None => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "agentName is required",
+            );
+        }
+    };
+    let version = match query.version.as_deref().filter(|v| !v.is_empty()) {
+        Some(v) => v,
+        None => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "version is required",
+            );
+        }
+    };
+
+    let username = req
+        .extensions()
+        .get::<batata_common::IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+
+    // `get_agent_card` with an explicit version resolves the exact version
+    // definition, which is exactly what `/version` asks for.
+    match service
+        .get_agent_card(ns, name, Some(version), Some(&username))
+        .await
+    {
+        Ok(Some(card)) => HttpResponse::Ok().json(Result::success(card)),
+        Ok(None) => Result::<()>::http_not_found(
+            &batata_common::error::AGENT_NOT_FOUND,
+            format!("Agent '{}' version '{}' not found", name, version),
+        ),
+        Err(e) => Result::<()>::http_internal_error(e),
+    }
+}
+
+/// GET /v3/admin/ai/agents/runtime-endpoints — one version's live endpoint snapshot
+#[get("/runtime-endpoints")]
+async fn get_runtime_endpoints(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    service: web::Data<Arc<dyn A2aAgentService>>,
+    query: web::Query<AgentRuntimeEndpointForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    let name = match query.agent_name.as_deref().filter(|n| !n.is_empty()) {
+        Some(n) => n,
+        None => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "agentName is required",
+            );
+        }
+    };
+    let version = match query.version.as_deref().filter(|v| !v.is_empty()) {
+        Some(v) => v,
+        None => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "version is required",
+            );
+        }
+    };
+    let protocol = query.protocol.as_deref().unwrap_or_default();
+
+    match service
+        .get_runtime_endpoints(ns, name, protocol, version)
+        .await
+    {
+        Ok(view) => HttpResponse::Ok().json(Result::success(view)),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
     }
 }
 
@@ -633,6 +755,8 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(get_agent_detail)
         .service(list_agents)
         .service(list_agent_versions)
+        .service(get_version)
+        .service(get_runtime_endpoints)
         .service(create_agent)
         .service(update_agent)
         .service(delete_agent)

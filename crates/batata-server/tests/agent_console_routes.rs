@@ -184,6 +184,26 @@ where
     (status, String::from_utf8_lossy(&body).to_string())
 }
 
+/// POST or PUT a form-encoded body, as the console UI does for every write.
+async fn put_form<S>(app: &S, uri: &str, form: &str) -> (StatusCode, String)
+where
+    S: actix_web::dev::Service<
+            actix_http::Request,
+            Response = actix_web::dev::ServiceResponse,
+            Error = actix_web::Error,
+        >,
+{
+    let req = test::TestRequest::put()
+        .uri(uri)
+        .insert_header(("content-type", "application/x-www-form-urlencoded"))
+        .set_payload(form.to_string())
+        .to_request();
+    let resp = test::call_service(app, req).await;
+    let status = resp.status();
+    let body = test::read_body(resp).await;
+    (status, String::from_utf8_lossy(&body).to_string())
+}
+
 /// The agent lifecycle is reachable on `/v3/console/ai/agents`, and the review
 /// gate is enforced.
 #[actix_web::test]
@@ -234,6 +254,80 @@ async fn draft_lifecycle_over_console_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "publish failed: {body}");
     println!("ok: submit then publish");
+
+    store.clean(NAME).await;
+}
+
+/// `PUT /` replaces every writable field of one agent on the console surface,
+/// matching upstream `ConsoleAgentController.updateAgent`.
+#[actix_web::test]
+async fn agent_is_updatable_over_console_http() {
+    let (store, svc) = setup().await;
+    store.clean(NAME).await;
+    register(&svc).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let base = "/v3/console/ai/agents";
+    let (status, body) = put_form(
+        &app,
+        base,
+        &format!("agentName={NAME}&version=1.0.0&displayName=Renamed&description=updated"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "update failed: {body}");
+
+    // The updated description must be visible on a subsequent read.
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}?agentName={NAME}&version=1.0.0"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(
+        body.contains("updated"),
+        "updated description must survive the round trip: {body}"
+    );
+    println!("ok: PUT / updates the agent");
+
+    store.clean(NAME).await;
+}
+
+/// `PUT /draft` replaces the content of one exact draft on the console surface.
+#[actix_web::test]
+async fn draft_is_updatable_over_console_http() {
+    let (store, svc) = setup().await;
+    store.clean(NAME).await;
+    register(&svc).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let base = "/v3/console/ai/agents";
+    let (status, body) = post_form(
+        &app,
+        &format!("{base}/draft"),
+        &format!("agentName={NAME}&version=2.0.0&description=drafted"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+
+    let (status, body) = put_form(
+        &app,
+        &format!("{base}/draft"),
+        &format!("agentName={NAME}&version=2.0.0&description=revised"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "update draft failed: {body}");
+
+    let req = test::TestRequest::get()
+        .uri(&format!("{base}/version?agentName={NAME}&version=2.0.0"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(
+        body.contains("revised"),
+        "revised draft description must survive the round trip: {body}"
+    );
+    println!("ok: PUT /draft updates the draft");
 
     store.clean(NAME).await;
 }

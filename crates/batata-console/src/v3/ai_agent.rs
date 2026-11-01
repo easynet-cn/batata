@@ -192,6 +192,36 @@ fn default_page_size() -> u32 {
     10
 }
 
+/// Build the `AgentCard` the console form carries. The console form sends the
+/// A2A interface fields a form can hold; richer content (call interfaces,
+/// extensions) is filled in by the draft editor and accepted-but-not-stored
+/// here so nothing is silently dropped on the round trip.
+fn draft_card(form: &AgentDraftCreateForm) -> AgentCard {
+    AgentCard {
+        name: form.agent_name.clone(),
+        display_name: form
+            .display_name
+            .clone()
+            .unwrap_or_else(|| form.agent_name.clone()),
+        description: form.description.clone().unwrap_or_default(),
+        version: form.version.clone(),
+        url: String::new(),
+        protocol_version: String::new(),
+        capabilities: AgentCapabilities::default(),
+        skills: Vec::new(),
+        default_input_modes: Vec::new(),
+        default_output_modes: Vec::new(),
+        preferred_transport: None,
+        provider: None,
+        documentation_url: None,
+        icon_url: form.icon_url.clone(),
+        supports_authenticated_extended_card: None,
+        metadata: std::collections::HashMap::new(),
+        tags: Vec::new(),
+        ..Default::default()
+    }
+}
+
 // ============================================================================
 // Read handlers
 // ============================================================================
@@ -382,29 +412,7 @@ async fn create_draft(
 
     // Fields the console form does not carry are left at their defaults; the
     // draft editor fills them in.
-    let card = AgentCard {
-        name: form.agent_name.clone(),
-        display_name: form
-            .display_name
-            .clone()
-            .unwrap_or_else(|| form.agent_name.clone()),
-        description: form.description.clone().unwrap_or_default(),
-        version: form.version.clone(),
-        url: String::new(),
-        protocol_version: String::new(),
-        capabilities: AgentCapabilities::default(),
-        skills: Vec::new(),
-        default_input_modes: Vec::new(),
-        default_output_modes: Vec::new(),
-        preferred_transport: None,
-        provider: None,
-        documentation_url: None,
-        icon_url: form.icon_url.clone(),
-        supports_authenticated_extended_card: None,
-        metadata: std::collections::HashMap::new(),
-        tags: Vec::new(),
-        ..Default::default()
-    };
+    let card = draft_card(&form);
 
     let result = agent_service.create_agent_draft(ns, &card, false).await;
     trace_write(
@@ -464,6 +472,80 @@ async fn delete_draft(
 // ============================================================================
 // Version lifecycle handlers
 // ============================================================================
+
+/// PUT /v3/console/ai/agents — Replace every writable field of one agent
+#[put("")]
+async fn update_agent(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agent_service: web::Data<Arc<dyn A2aAgentService>>,
+    body: web::Form<AgentDraftCreateForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/agents")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let card = draft_card(&form);
+    let result = agent_service.update_agent_card(&card, ns, "manual").await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENT,
+        batata_common::ai_trace::OP_UPDATE_RESOURCE,
+        Some(&form.agent_name),
+        None,
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
+/// PUT /v3/console/ai/agents/draft — Replace the content of one exact draft
+#[put("/draft")]
+async fn update_draft(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agent_service: web::Data<Arc<dyn A2aAgentService>>,
+    body: web::Form<AgentDraftCreateForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/agents")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let form = body.into_inner();
+    let ns = normalize_namespace(&form.namespace_id);
+    let card = draft_card(&form);
+    let result = agent_service.update_agent_draft(ns, &card).await;
+    trace_write(
+        &req,
+        batata_common::ai_trace::RESOURCE_TYPE_AGENT,
+        batata_common::ai_trace::OP_UPDATE_DRAFT,
+        Some(&form.agent_name),
+        Some(&form.version),
+        ai_trace::outcome_of(&result),
+    );
+    match result {
+        Ok(detail) => HttpResponse::Ok().json(common_response::Result::success(detail)),
+        Err(e) => common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
 
 /// Build the handler for one version action. Each action differs only in the
 /// service call and the trace operation.
@@ -685,6 +767,8 @@ pub fn routes() -> Scope {
         .service(get_version)
         .service(get_runtime_endpoints)
         .service(create_draft)
+        .service(update_agent)
+        .service(update_draft)
         .service(delete_draft)
         .service(submit)
         .service(publish)

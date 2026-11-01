@@ -165,7 +165,7 @@ Upstream bases: `/v3/admin/ai/agents` (`AgentAdminController`),
 `/v3/client/ai/agents` (`AgentClientController`),
 `/v3/console/ai/agents` (`ConsoleAgentController`)
 
-### 4.1 Admin — 16/18 ⚠️
+### 4.1 Admin — 18/18 ✅
 
 | Upstream | Method | Batata (`api/agent.rs`) | Status |
 |---|---|---|---|
@@ -174,8 +174,8 @@ Upstream bases: `/v3/admin/ai/agents` (`AgentAdminController`),
 | `""` | DELETE | `""` | ✅ |
 | `/list` | GET | `/list` | ✅ |
 | `/versions` | GET | `/versions` | ✅ |
-| `/version` | GET | — | ❌ |
-| `/runtime-endpoints` | GET | — | ❌ |
+| `/version` | GET | `/version` | ✅ |
+| `/runtime-endpoints` | GET | `/runtime-endpoints` | ✅ |
 | `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
 | `/submit` | POST | `/submit` | ✅ |
 | `/publish` | POST | `/publish` | ✅ |
@@ -187,8 +187,11 @@ Upstream bases: `/v3/admin/ai/agents` (`AgentAdminController`),
 | `/scope` | PUT | `/scope` | ✅ |
 | — | — | `""` POST | ➕ extra |
 
-Note the asymmetry: **`/version` and `/runtime-endpoints` exist on the Batata
-console surface but not on the admin surface.** Upstream has them on both.
+Both `/version` and `/runtime-endpoints` were added to the admin surface to
+match upstream, which exposes them on the admin controller as well as the
+console one. `GET /runtime-endpoints` returns a 400 rather than an empty
+snapshot when no endpoint backend is configured, so an agent that genuinely has
+no endpoints is distinguishable from a misconfiguration.
 
 ### 4.2 Client — 5/7 ⚠️
 
@@ -202,18 +205,34 @@ console surface but not on the admin surface.** Upstream has them on both.
 | `""` | POST | — | ❌ |
 | `/watch` | POST | — | ❌ |
 
+The two missing client endpoints are not simply unported routes:
+
+- `POST ""` is `AgentClientController.publish`, which publishes an Agent Version
+  *from application code* via `AgentPublishApplicationService` and a full
+  `AgentPublishRequest` body. Batata's client surface covers the RAD runtime
+  endpoint lifecycle (`/endpoints`) but not version publishing from a client, so
+  wiring this would imply a capability that does not exist. Left as a gap.
+- `/watch` is a long-poll (`DeferredResult`) that blocks until the agent
+  discovery projection for one client generation changes. Batata has no watch /
+  change-notification subsystem, so this cannot be aligned without building one.
+
 Batata's registration body is accepted as **form or JSON** (upstream sends the
 endpoints as a JSON string inside a form), `Endpoint` carries only a `uri`
 (no port; `split_uri` defaults to 80), and `versionRange` is persisted as
 instance metadata.
 
-### 4.3 Console — 10/18 ⚠️
+### 4.3 Console — 18/18 ✅
 
-`batata-console/src/v3/ai_agent.rs`. Missing 8: `PUT ""`, `PUT /draft`,
-`/submit`, `/publish`, `/force-publish`, `/redraft`, `/online`, `/offline`.
+`batata-console/src/v3/ai_agent.rs`. The two previously unported lifecycle
+writes — `PUT ""` (replace every writable field) and `PUT /draft` (replace the
+draft being edited) — are now mounted and form-encoded, matching
+`ConsoleAgentController.updateAgent` / `updateDraft`. All other console
+endpoints (the version-action macro for submit/publish/force-publish/redraft/
+online/offline, plus list/versions/version/runtime-endpoints/labels/scope/
+delete) were already present.
 
-**Assessment**: the RAD client path is the best-covered part; the admin and
-console lifecycles lag by a small, well-defined set of endpoints.
+**Assessment**: the admin, client and console Agent surfaces are now at parity
+except for the two client endpoints in [§4.2](#42-client--57).
 
 ---
 
@@ -351,24 +370,30 @@ per item instead of fabricating success. See
 | MCP console | 22 | 22 | 0 | 2 |
 | Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 |
 | AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 1 / 0 / 1 |
-| Agent admin / client / console | 18 / 7 / 18 | 16 / 5 / 10 | **2 / 2 / 8** | 1 / 0 / 0 |
+| Agent admin / client / console | 18 / 7 / 18 | 18 / 5 / 18 | **0 / 2 / 0** | 1 / 0 / 0 |
 | Prompt admin / client / console | 24 / 2 / 18 | 23 / 2 / 18 | **1** / 0 / 0 | 0 |
 | Pipeline admin / console | 4 / 4 | 2 / 2 | **2 / 2** | 0 |
 | A2A admin / console | 6 / 6 | 6 / 6 | 0 | 2 / 3 |
 | Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 |
 | Copilot console | 6 | 6 | 0 | 0 |
 | Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 |
-| **Total** | **249** | **226 matched** | **23** | **10** |
+| **Total** | **249** | **236 matched** | **13** | **10** |
 
 (`service/trace/` is deliberately excluded from the count: upstream emits
 JSON-line events and defines no endpoint for it.)
 
-The 23 missing endpoints, in one list:
+> Re-count note: an earlier version of this document listed **23** missing and
+> attributed **12** of them to the Agent domain. That was a drift error — the
+> console Agent surface already implemented the six version-action endpoints
+> (`submit`/`publish`/`force-publish`/`redraft`/`online`/`offline`) through the
+> `version_action!` macro, so only `PUT ""` and `PUT /draft` were actually
+> missing on the console side. The real Agent gap is **2** (both on the client
+> surface), not 12. The corrected totals are 236 matched / 13 missing.
+
+The 13 missing endpoints, in one list:
 
 1. MCP client — all 6 of `McpClientController`.
-2. Agent — admin `/version`, `/runtime-endpoints`; client `POST ""`,
-   `/watch`; console `PUT ""`, `PUT /draft`, `/submit`, `/publish`,
-   `/force-publish`, `/redraft`, `/online`, `/offline` (12).
+2. Agent — client `POST ""` (publish from app code) and `/watch` (long-poll) (2).
 3. Prompt — admin `/version` (1).
 4. Pipeline — `/{pipelineId}` and `""` on admin and console (4).
 
@@ -389,6 +414,8 @@ compatibility surface; it is reachable only from unit tests.
 ## 12. Next
 
 - MCP client (`McpClientController`, 6 endpoints) is the single largest gap.
-- Agent console lifecycle (8 endpoints) and the two Pipeline reads.
+- The two Agent client endpoints (`POST ""` publish, `/watch` long-poll) need a
+  watch/change-notification subsystem before they can be aligned.
+- The two Pipeline reads (`/{pipelineId}` and `""` on admin and console).
 - Field-level model comparison lives in [`model-mapping.md`](model-mapping.md);
   phases and progress in [`README.md`](README.md).
