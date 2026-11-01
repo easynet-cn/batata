@@ -432,6 +432,15 @@ pub const AGENT_ENDPOINT_PUBLICATION_OVER_LIMIT: ErrorCode<'static> = ErrorCode 
     message: "Agent Endpoint publication capacity reached",
 };
 
+/// Too many long-poll Agent discovery subscriptions for one client / node.
+///
+/// Upstream: `ErrorCode.AGENT_DISCOVERY_SUBSCRIPTION_OVER_LIMIT`, raised by
+/// `AgentHttpWatchRegistry` capacity admission (returned as HTTP 503).
+pub const AGENT_DISCOVERY_SUBSCRIPTION_OVER_LIMIT: ErrorCode<'static> = ErrorCode {
+    code: 50104,
+    message: "Agent discovery subscription capacity reached",
+};
+
 /// The skill was not found.
 pub const SKILL_NOT_FOUND: ErrorCode<'static> = ErrorCode {
     code: 50200,

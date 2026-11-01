@@ -116,6 +116,9 @@ pub fn console_server(
         if let Some(ref svc) = ai_services.endpoint_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
+        if let Some(ref svc) = ai_services.watch_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
         if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
             // The console layer reaches prompts through the trait, since
@@ -295,6 +298,8 @@ pub struct AIServices {
     pub a2a_service: Option<Arc<dyn batata_ai::A2aAgentService>>,
     /// `endpoint_service` field.
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
+    /// `watch_service` field.
+    pub watch_service: Option<Arc<batata_ai::service::agent_watch::AgentHttpWatchService>>,
     /// `mcp_index` field.
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
     /// `prompt_service` field.
@@ -333,6 +338,7 @@ impl AIServices {
             mcp_service: None,
             a2a_service: None,
             endpoint_service: None,
+            watch_service: None,
             mcp_index: None,
             prompt_service: None,
             skill_service: None,
@@ -390,12 +396,26 @@ impl AIServices {
             batata_ai::service::pipeline_service::PipelineQueryService::new(persistence.clone()),
         );
 
+        // Agent Watch long-poll: projects the same discovery result the `GET /`
+        // handler serves and fingerprints it, so a client can long-poll for a
+        // change. The projector reuses the live A2A + endpoint services.
+        let a2a_trait: Arc<dyn batata_common::A2aAgentService> = a2a_service.clone();
+        let watch_service = Arc::new(batata_ai::service::agent_watch::AgentHttpWatchService::new(
+            Arc::new(batata_ai::service::agent_watch::DiscoveryProjector {
+                a2a: a2a_trait,
+                endpoint: Some(endpoint_service.clone()),
+            }),
+            batata_ai::service::agent_watch::WatchCapacityConfig::default(),
+        ));
+        watch_service.start();
+
         Self {
             mcp_registry: Arc::new(McpServerRegistry::new()),
             agent_registry: Arc::new(AgentRegistry::new()),
             mcp_service: Some(mcp_service),
             a2a_service: Some(a2a_service),
             endpoint_service: Some(endpoint_service),
+            watch_service: Some(watch_service),
             mcp_index: Some(mcp_index),
             prompt_service: Some(prompt_service),
             skill_service: Some(skill_service),
@@ -607,6 +627,9 @@ pub fn main_server(
             app = app.app_data(web::Data::new(distro.clone()));
         }
         if let Some(ref svc) = ai_services.endpoint_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.watch_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
         if let Some(ref svc) = ai_services.prompt_service {

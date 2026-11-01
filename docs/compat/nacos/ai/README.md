@@ -998,7 +998,7 @@ assertions against MySQL or PostgreSQL instead.
 |---|---|---|
 | `batata-server` / `mcp_console_routes` | 26 | the MCP console version lifecycle, `search`, `labels`, `scope`, import batch, A2A agent lifecycle |
 | `batata-server` / `mcp_console_crud_routes` | 11 | the rest of the console surface: `list`, detail, create/update/delete, `stats`, `status`, `importToolsFromMcp` |
-| `batata-server` / `agent_client_routes` | 14 | the RAD client contract: heartbeat liveness, publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback, and the publication capacity gate (reject growth at the cap, allow replacement, per-client budgets, unknown client uncharged, deregistration releases) |
+| `batata-server` / `agent_client_routes` | 29 | the RAD client contract: heartbeat liveness, publish-from-code (first version auto-submits, already-published is a no-op, new version without autoSubmit stays a draft, autoSubmit submits a new version), publish→discover round trip, version-range resolution, 404 on an unsatisfiable range, deregistration, catalog search, default-namespace fallback, the publication capacity gate (reject growth at the cap, allow replacement, per-client budgets, unknown client uncharged, deregistration releases), and the `/watch` long poll (immediate change for a known agent, out-of-range generation/timeout, invalid fingerprint, empty watches, duplicate id, and the subscription capacity gate returning 503/50104) |
 | `batata-server` / `mcp_registry_routes` | 2 | `GET /v0/servers` and `/v0/servers/{id}` on the standalone registry server, wired through the same `registry_app_data` helper production uses |
 | `batata-server` / `mcp_admin_routes` | 7 | the SDK `serverSpecification` form encoding, labels, status, scope, lifecycle |
 | `batata-server` / `prompt_admin_routes` | 5 | prompt lifecycle over the admin scope |
@@ -1053,10 +1053,12 @@ Two notes that cost real time and are easy to trip over:
   used to say a stub was impractical; that was wrong. `AiEndpointService` only
   needs `Arc<dyn NamingServiceProvider>`, and `batata_naming::NamingService` is
   a plain in-memory structure, so
-  `crates/batata-server/tests/agent_client_routes.rs` drives all five client
-  endpoints end to end (17 tests). The three deviations it found —
+  `crates/batata-server/tests/agent_client_routes.rs` drives all seven client
+  endpoints end to end (29 tests). The three deviations it found —
   `DELETE /endpoints`, a missing `version` on `GET /`, and the registration
-  wire format — have since been closed; see the phase-1 entry above.
+  wire format — have since been closed; see the phase-1 entry above. The
+  `POST ""` publish-from-code route was the sixth client endpoint and is now
+  covered, and the `/watch` long poll was the seventh and is now covered too.
 - The legacy console `endpoint` add/remove pair this doc used to list — it
   does not exist (see the correction above).
 - The upstream AI surfaces Batata does not implement at all (RAD/AgentSpec

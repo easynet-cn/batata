@@ -1,8 +1,10 @@
 //! Agent Client HTTP API handlers -- Nacos 3.x compatible (F-NAC-CLIENT-010/011)
 //!
-//! Client: `/v3/client/ai/agents` (5 endpoints)
+//! Client: `/v3/client/ai/agents` (7 endpoints)
 //! - GET    /search             - Search visible Agent catalog entries
 //! - GET    /                   - Discover one exact Agent version and its endpoints
+//! - POST   /                   - Publish (code-first) one exact Agent version
+//! - POST   /watch              - Long-poll for changed Agent discovery projections
 //! - POST   /endpoints          - Register agent endpoints (replace batch)
 //! - DELETE /endpoints          - Deregister agent endpoints
 //! - PUT    /endpoints/heartbeat - Refresh client liveness
@@ -19,6 +21,8 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
+use crate::model::AgentCard;
+use crate::service::agent_watch::{AgentHttpWatchService, WatchError, parse_watch_request};
 use crate::service::traits::A2aAgentService;
 use crate::{AiEndpointService, EndpointInfo};
 
@@ -254,6 +258,51 @@ impl EndpointEntryInput {
             .filter(|u| !u.is_empty())
             .ok_or_else(|| "endpoint requires 'address' and 'port', or a 'uri'".to_string())?;
         split_uri(uri).ok_or_else(|| format!("endpoint uri '{uri}' has no host"))
+    }
+}
+
+/// Read a watch request from either a form body or a JSON body.
+///
+/// Upstream posts `AgentWatchBatchForm` as a form whose `watches` field is a
+/// JSON *string*; a JSON-looking body is accepted as a fallback with the same
+/// `watches` shape (a JSON array is serialized back to a string so the shared
+/// parser can consume it uniformly).
+fn parse_watch_form(
+    content_type: &str,
+    body: &[u8],
+) -> std::result::Result<(Option<i64>, Option<i64>, String), String> {
+    let body = body.trim_ascii();
+    if body.is_empty() {
+        return Err("a watch request body is required".to_string());
+    }
+    if content_type.contains("json") || body.first() == Some(&b'{') {
+        let value: serde_json::Value =
+            serde_json::from_slice(body).map_err(|e| format!("Invalid watch JSON: {e}"))?;
+        let generation = value.get("generation").and_then(|v| v.as_i64());
+        let timeout_millis = value.get("timeoutMillis").and_then(|v| v.as_i64());
+        let watches = value
+            .get("watches")
+            .map(|v| v.to_string())
+            .ok_or_else(|| "`watches` field is required".to_string())?;
+        Ok((generation, timeout_millis, watches))
+    } else {
+        #[derive(Deserialize)]
+        struct RawWatchForm {
+            #[serde(default)]
+            generation: Option<String>,
+            #[serde(default, alias = "timeoutMillis")]
+            timeout_millis: Option<String>,
+            #[serde(default)]
+            watches: Option<String>,
+        }
+        let form: RawWatchForm =
+            serde_urlencoded::from_bytes(body).map_err(|e| format!("Invalid watch form: {e}"))?;
+        let generation = form.generation.and_then(|s| s.parse().ok());
+        let timeout_millis = form.timeout_millis.and_then(|s| s.parse().ok());
+        let watches = form
+            .watches
+            .ok_or_else(|| "`watches` field is required".to_string())?;
+        Ok((generation, timeout_millis, watches))
     }
 }
 
@@ -695,22 +744,159 @@ async fn heartbeat(req: HttpRequest, data: web::Data<AppState>) -> impl Responde
     HttpResponse::Ok().json(Result::success(info))
 }
 
+/// POST / publish query parameters.
+///
+/// `autoSubmit` mirrors Nacos `AgentPublishForm.autoSubmit` (default false): it
+/// submits the created draft through the review pipeline even for a non-first
+/// version. The agent card is the request body, exactly like the admin
+/// `create_draft` route.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct AgentPublishQuery {
+    #[serde(alias = "namespaceId")]
+    namespace_id: Option<String>,
+    #[serde(alias = "autoSubmit", default)]
+    auto_submit: Option<bool>,
+}
+
+/// POST /v3/client/ai/agents -- Publish (code-first) one exact Agent Version.
+///
+/// Mirrors Nacos `AgentClientController.publish`: the request body is the agent
+/// card, and the call creates or replaces a draft and (for the first version, or
+/// when `autoSubmit` is set) submits it through the review pipeline. Returns the
+/// resulting `AgentVersionDetail`.
+#[post("")]
+async fn publish(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    agent_service: web::Data<Arc<dyn A2aAgentService>>,
+    query: web::Query<AgentPublishQuery>,
+    body: web::Json<AgentCard>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(query.namespace_id.as_deref().unwrap_or_default());
+    match agent_service
+        .publish_agent_from_code(ns, &body.into_inner(), query.auto_submit.unwrap_or(false))
+        .await
+    {
+        Ok(detail) => HttpResponse::Ok().json(Result::success(detail)),
+        Err(e) => Result::<()>::http_internal_error(e),
+    }
+}
+
+/// POST /v3/client/ai/agents/watch -- Wait for any changed Agent discovery
+/// projection in one complete client generation.
+///
+/// Mirrors Nacos `AgentClientController.watch`: the body is an
+/// `AgentWatchBatchForm` (form- or JSON-encoded) carrying `generation`,
+/// `timeoutMillis` and `watches` — a JSON string of the watched discovery
+/// requests and the fingerprints each client last observed. Returns an opaque
+/// `AgentWatchBatchResponse` listing which `clientWatchId`s changed.
+#[post("/watch")]
+async fn watch(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    watch_service: web::Data<Arc<AgentHttpWatchService>>,
+    body: web::Bytes,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let content_type = get_header(&req, "content-type");
+    let (generation, timeout_millis, watches) = match parse_watch_form(&content_type, &body) {
+        Ok(v) => v,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
+    let request = match parse_watch_request(generation, timeout_millis, &watches) {
+        Ok(r) => r,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e.message().to_string(),
+            );
+        }
+    };
+
+    let client_id = get_header(&req, CLIENT_ID_HEADER);
+    let identity = get_header(&req, REQUEST_MODULE_HEADER);
+    let namespace_id = request
+        .watches
+        .first()
+        .and_then(|w| w.discovery_request.namespace_id.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| DEFAULT_NAMESPACE_ID.to_string());
+    let payload_bytes = watches.len();
+
+    let handle = match watch_service
+        .watch(request, payload_bytes, &client_id, &identity, &namespace_id)
+        .await
+    {
+        Ok(h) => h,
+        Err(e) => return map_watch_error(&e),
+    };
+
+    match handle.receiver.await {
+        Ok(response) => HttpResponse::Ok().json(Result::success(response)),
+        Err(_) => Result::<()>::http_internal_error(anyhow::anyhow!(
+            "Agent HTTP Watch connection closed without a response"
+        )),
+    }
+}
+
+/// Map a [`WatchError`] to an HTTP response (mirrors upstream OVER_THRESHOLD).
+fn map_watch_error(e: &WatchError) -> HttpResponse {
+    match e {
+        WatchError::Capacity(message) => {
+            let code = batata_common::error::AGENT_DISCOVERY_SUBSCRIPTION_OVER_LIMIT;
+            Result::<()>::http_response(
+                actix_web::http::StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                code.code,
+                code.message.to_string(),
+                message.clone(),
+            )
+        }
+        WatchError::Server(message) => {
+            Result::<()>::http_internal_error(anyhow::anyhow!(message.clone()))
+        }
+    }
+}
+
 // ============================================================================
 // Route configuration
 // ============================================================================
 
 /// Configure client agent routes at `/v3/client/ai/agents`.
 ///
-/// Registers 5 endpoints matching Nacos `AgentClientController`:
+/// Registers 7 endpoints matching Nacos `AgentClientController`:
+/// - `POST   /`                   -> publish
 /// - `GET    /search`             -> search
 /// - `GET    /`                   -> discover
+/// - `POST   /watch`              -> watch
 /// - `POST   /endpoints`          -> register_endpoints
 /// - `DELETE /endpoints`          -> deregister_endpoints
 /// - `PUT    /endpoints/heartbeat` -> heartbeat
 pub fn agent_client_routes() -> actix_web::Scope {
     web::scope("/agents")
+        .service(publish)
         .service(search)
         .service(discover)
+        .service(watch)
         .service(register_endpoints)
         .service(deregister_endpoints)
         .service(heartbeat)

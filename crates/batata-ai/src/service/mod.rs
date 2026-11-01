@@ -2,6 +2,8 @@
 
 /// Config-backed operation service for A2A (Agent-to-Agent) agents.
 pub mod a2a_service;
+/// Agent Watch long-poll subsystem (Nacos `AgentClientController.watch`).
+pub mod agent_watch;
 /// Persistence-backed operation service for AgentSpecs.
 pub mod agentspec_service;
 /// Shared constants for AI config groups, tags, and app names.
@@ -38,3 +40,5 @@ pub use publication_gate::{
 pub use skill_service::SkillOperationService;
 pub use traits::A2aAgentService;
 pub use traits::McpServerService;
+
+pub use agent_watch::{AgentHttpWatchService, WatchCapacityConfig, WatchHandle};

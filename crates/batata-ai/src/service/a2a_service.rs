@@ -1007,6 +1007,83 @@ impl A2aServerOperationService {
         }
         Ok(())
     }
+
+    /// Client code-first publication: create-or-replace a draft and, for the
+    /// first version or when `auto_submit` is set, submit it through the review
+    /// pipeline. Mirrors Nacos `AgentPublishApplicationService.publish`: an
+    /// already-published version is returned unchanged, and the agent is
+    /// bootstrapped as an empty resource shell on first publication so its first
+    /// version is a draft (rather than the `ONLINE` version `register_agent`
+    /// produces).
+    pub async fn publish_agent_from_code(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        auto_submit: bool,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        let name = &card.name;
+        let version = &card.version;
+
+        // An already-published version is returned unchanged (upstream: status
+        // != DRAFT -> return current).
+        if let Ok(existing) = self.version_row(namespace, name, version).await {
+            if existing.status != version_status::DRAFT {
+                return Ok(existing);
+            }
+        }
+
+        let first_version = self
+            .persistence
+            .ai_resource_find(namespace, name, resource_type::AGENT)
+            .await?
+            .is_none();
+
+        if first_version {
+            self.ensure_agent_resource_shell(namespace, name).await?;
+        }
+
+        let mut detail = self.create_agent_draft(namespace, card, true).await?;
+
+        if detail.status == version_status::DRAFT && (first_version || auto_submit) {
+            detail = self.submit_agent_version(namespace, name, version).await?;
+        }
+
+        Ok(detail)
+    }
+
+    /// Create the agent resource row without any version, so the first client
+    /// code-first publish can introduce the agent as a draft instead of the
+    /// `ONLINE` version that `register_agent` creates.
+    async fn ensure_agent_resource_shell(&self, namespace: &str, name: &str) -> anyhow::Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().naive_utc().to_string();
+        let info = AiResourceInfo {
+            id: 0,
+            name: name.to_string(),
+            resource_type: resource_type::AGENT.to_string(),
+            description: None,
+            status: Some(meta_status::ENABLE.to_string()),
+            namespace_id: namespace.to_string(),
+            biz_tags: None,
+            ext: Some(Self::ext_json(&id, "code")?),
+            from: AGENT_DEFAULT_FROM.to_string(),
+            version_info: Some(serde_json::to_string(&AgentCardVersionInfo {
+                id: id.clone(),
+                name: name.to_string(),
+                latest_published_version: String::new(),
+                registration_type: "code".to_string(),
+                version_details: vec![],
+            })?),
+            meta_version: 1,
+            scope: scope::PRIVATE.to_string(),
+            owner: String::new(),
+            download_count: 0,
+            gmt_create: Some(now.clone()),
+            gmt_modified: Some(now),
+        };
+        self.persistence.ai_resource_insert(&info).await?;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -1048,7 +1125,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         agent_name: &str,
         version: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.delete_agent(namespace, agent_name, version).await
+        self.delete_agent(namespace, agent_name, version).await?;
+        crate::service::agent_watch::publish_agent_change(namespace, agent_name);
+        Ok(())
     }
 
     async fn list_agents(
@@ -1115,6 +1194,19 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         self.create_agent_draft(namespace, card, overwrite).await
     }
 
+    async fn publish_agent_from_code(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        auto_submit: bool,
+    ) -> anyhow::Result<AgentVersionDetail> {
+        let detail = self
+            .publish_agent_from_code(namespace, card, auto_submit)
+            .await?;
+        crate::service::agent_watch::publish_agent_change(namespace, &card.name);
+        Ok(detail)
+    }
+
     async fn update_agent_draft(
         &self,
         namespace: &str,
@@ -1138,7 +1230,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.submit_agent_version(namespace, name, version).await
+        let detail = self.submit_agent_version(namespace, name, version).await?;
+        crate::service::agent_watch::publish_agent_change(namespace, name);
+        Ok(detail)
     }
 
     async fn publish_agent_version(
@@ -1147,7 +1241,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.publish_agent_version(namespace, name, version).await
+        let detail = self.publish_agent_version(namespace, name, version).await?;
+        crate::service::agent_watch::publish_agent_change(namespace, name);
+        Ok(detail)
     }
 
     async fn force_publish_agent_version(
@@ -1175,7 +1271,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.online_agent_version(namespace, name, version).await
+        let detail = self.online_agent_version(namespace, name, version).await?;
+        crate::service::agent_watch::publish_agent_change(namespace, name);
+        Ok(detail)
     }
 
     async fn offline_agent_version(
@@ -1184,7 +1282,9 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         name: &str,
         version: &str,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.offline_agent_version(namespace, name, version).await
+        let detail = self.offline_agent_version(namespace, name, version).await?;
+        crate::service::agent_watch::publish_agent_change(namespace, name);
+        Ok(detail)
     }
 
     async fn update_agent_labels(

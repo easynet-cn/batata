@@ -764,6 +764,15 @@ impl batata_common::A2aAgentService for AgentRegistry {
         anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
 
+    async fn publish_agent_from_code(
+        &self,
+        _namespace: &str,
+        _card: &AgentCard,
+        _auto_submit: bool,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+        anyhow::bail!(VERSIONING_UNSUPPORTED)
+    }
+
     async fn redraft_agent_version(
         &self,
         _namespace: &str,

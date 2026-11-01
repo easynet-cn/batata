@@ -31,6 +31,9 @@ use actix_web::http::{Method, StatusCode};
 use actix_web::{App, test, web};
 use ai_store::TestStore;
 use batata_ai::model::{AgentCapabilities, AgentCard, AgentSkill};
+use batata_ai::service::agent_watch::{
+    AgentHttpWatchService, DiscoveryProjector, WatchCapacityConfig,
+};
 use batata_ai::{
     A2aServerOperationService, AiEndpointService, DEFAULT_MAX_PUBLICATIONS_PER_CLIENT,
 };
@@ -137,7 +140,7 @@ fn registration(agent: &str, version: &str, endpoints: &[(&str, u16)]) -> serde_
 }
 
 /// Build an app exposing the real client agent routes, with the default
-/// per-client publication cap.
+/// per-client publication cap and default watch capacity.
 async fn build_app(
     store: Arc<dyn PersistenceService>,
 ) -> impl actix_web::dev::Service<
@@ -156,6 +159,20 @@ async fn build_app(
 async fn build_app_with_limit(
     store: Arc<dyn PersistenceService>,
     limit: usize,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
+    build_app_with_limit_and_watch(store, limit, WatchCapacityConfig::default()).await
+}
+
+/// Build an app whose per-client publication cap is `limit` and whose watch
+/// transport uses `watch_capacity`.
+async fn build_app_with_limit_and_watch(
+    store: Arc<dyn PersistenceService>,
+    limit: usize,
+    watch_capacity: WatchCapacityConfig,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -204,6 +221,19 @@ async fn build_app_with_limit(
     let agents: Arc<dyn batata_common::A2aAgentService> =
         Arc::new(A2aServerOperationService::new(store));
 
+    // The watch transport reuses the same projector the discover handler uses,
+    // so an endpoint change fans out to long-polling clients without a second
+    // source of truth.
+    let a2a_trait: Arc<dyn batata_common::A2aAgentService> = agents.clone();
+    let watch_service = Arc::new(AgentHttpWatchService::new(
+        Arc::new(DiscoveryProjector {
+            a2a: a2a_trait,
+            endpoint: Some(endpoints.clone()),
+        }),
+        watch_capacity,
+    ));
+    watch_service.start();
+
     test::init_service(
         App::new()
             .app_data(web::Data::from(app_state))
@@ -211,6 +241,7 @@ async fn build_app_with_limit(
             // `Data<Arc<...>>`, so the registered type is the `Arc` itself.
             .app_data(web::Data::new(endpoints))
             .app_data(web::Data::new(agents))
+            .app_data(web::Data::new(watch_service))
             // Mounted exactly as `api/v3/client/route.rs` does.
             .service(web::scope("/v3/client/ai").service(batata_ai::agent_client_routes())),
     )
@@ -958,4 +989,410 @@ async fn deregistering_frees_the_client_budget() {
 
     store.clean(AGENT).await;
     store.clean(OTHER).await;
+}
+
+// ============================================================================
+// Client publish (code-first)
+//
+// Upstream `AgentClientController#publish` writes a draft from the request and,
+// for the first version or when `autoSubmit` is set, submits it through the
+// review pipeline. Batata bootstraps a new agent as a draft-bearing resource
+// shell; an already-published version is returned unchanged.
+// ============================================================================
+
+/// POST "" with a card for a brand-new agent submits the first version.
+///
+/// Upstream always submits the first version (autoSubmit only governs later
+/// ones), so the returned detail is `reviewing`, not `draft`.
+#[actix_web::test]
+async fn publish_submits_the_first_version_of_a_new_agent() {
+    const AGENT: &str = "client-agent-publish-new";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app(store.store()).await;
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/v3/client/ai/agents?namespaceId={NS}"))
+            .set_json(card(AGENT, "1.0.0"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "publish must succeed: {body}");
+    assert!(body.contains(&format!("\"name\":\"{AGENT}\"")), "{body}");
+    assert!(body.contains("\"version\":\"1.0.0\""), "{body}");
+    assert!(
+        body.contains("\"status\":\"reviewing\""),
+        "the first version must be submitted: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// POST "" without a body fails before any draft is written.
+#[actix_web::test]
+async fn publish_without_a_body_is_rejected() {
+    const AGENT: &str = "client-agent-publish-nobody";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+    let app = build_app(store.store()).await;
+
+    let (status, _) = call(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/v3/client/ai/agents?namespaceId={NS}"))
+            .to_request(),
+    )
+    .await;
+    assert!(
+        status.is_client_error(),
+        "a missing card must not be accepted: {status}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// Publishing an already-published version returns it unchanged.
+///
+/// This is the mutant check for the `status != DRAFT -> return current` guard:
+/// without it the handler would create a competing draft instead.
+#[actix_web::test]
+async fn publishing_an_existing_published_version_is_a_no_op() {
+    const AGENT: &str = "client-agent-publish-existing";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app(store.store()).await;
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/v3/client/ai/agents?namespaceId={NS}"))
+            .set_json(card(AGENT, "1.0.0"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "publish must succeed: {body}");
+    assert!(
+        body.contains("\"status\":\"online\""),
+        "an already-published version must be returned unchanged: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// A new version of an existing agent stays a draft without autoSubmit.
+#[actix_web::test]
+async fn publishing_a_new_version_without_auto_submit_stays_a_draft() {
+    const AGENT: &str = "client-agent-publish-draft";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app(store.store()).await;
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/v3/client/ai/agents?namespaceId={NS}"))
+            .set_json(card(AGENT, "2.0.0"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "publish must succeed: {body}");
+    assert!(
+        body.contains("\"status\":\"draft\""),
+        "a new version without autoSubmit must stay a draft: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// autoSubmit submits an otherwise-draft new version of an existing agent.
+///
+/// Mutant check for the submit branch: drop it and a 2.0.0 with autoSubmit
+/// would be left as `draft`.
+#[actix_web::test]
+async fn auto_submit_publishes_a_new_version_of_an_existing_agent() {
+    const AGENT: &str = "client-agent-publish-autosubmit";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app(store.store()).await;
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!(
+                "/v3/client/ai/agents?namespaceId={NS}&autoSubmit=true"
+            ))
+            .set_json(card(AGENT, "2.0.0"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "publish must succeed: {body}");
+    assert!(
+        body.contains("\"status\":\"reviewing\""),
+        "autoSubmit must submit the new version: {body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+// ============================================================================
+// Client watch (long-poll)
+//
+// Upstream `AgentClientController.watch` returns an opaque invalidation listing
+// which `clientWatchId`s changed, given the fingerprints each client last
+// observed. Batata recomputes the projection and completes immediately when the
+// fingerprint differs, or on a later write / timeout. The validation guards
+// below mirror `AgentWatchBatchForm.toRequest`; the capacity gate mirrors
+// upstream's OVER_THRESHOLD (HTTP 503, business code 50104).
+// ============================================================================
+
+/// One watch item JSON for `agent` carrying `fp` as the last-observed
+/// fingerprint.
+fn watch_item(agent: &str, fp: &str) -> serde_json::Value {
+    serde_json::json!({
+        "clientWatchId": format!("w-{agent}"),
+        "discoveryRequest": {
+            "namespaceId": "public",
+            "reference": {"agentName": agent, "version": "1.0.0"}
+        },
+        "materializedFingerprint": fp
+    })
+}
+
+/// A complete watch body.
+fn watch_body(generation: i64, timeout: i64, items: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        "generation": generation,
+        "timeoutMillis": timeout,
+        "watches": items
+    })
+}
+
+const ZERO_FP: &str =
+    "sha256-canonical-json-v1:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// POST /watch reports a change for a known agent the client has not seen.
+///
+/// The projector computes the real fingerprint; the client submits an all-zero
+/// fingerprint, so the two cannot agree and the batch completes immediately
+/// with `changed: true`.
+#[actix_web::test]
+async fn watch_reports_a_change_for_a_known_agent() {
+    const AGENT: &str = "client-agent-watch-known";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app(store.store()).await;
+    // Publish an endpoint so the projection is `Available` with a real fingerprint.
+    let (status, body) = call(
+        &app,
+        publish(AGENT, "1.0.0", &[("10.0.0.1", 8080)], "client-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "register must succeed: {body}");
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/watch")
+            .set_json(watch_body(1, 5000, vec![watch_item(AGENT, ZERO_FP)]))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "watch must succeed: {body}");
+    assert!(body.contains("\"changed\":true"), "{body}");
+    assert!(
+        body.contains(&format!("\"changedClientWatchIds\":[\"w-{AGENT}\"]")),
+        "{body}"
+    );
+
+    store.clean(AGENT).await;
+}
+
+/// A negative or missing generation is rejected before any long poll begins.
+#[actix_web::test]
+async fn watch_rejects_out_of_range_generation() {
+    let store = TestStore::open().await;
+    let app = build_app(store.store()).await;
+
+    for generation in [-1i64, -100] {
+        let (status, _body) = call(
+            &app,
+            test::TestRequest::post()
+                .uri("/v3/client/ai/agents/watch")
+                .set_json(watch_body(generation, 5000, vec![watch_item("a", ZERO_FP)]))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "generation {generation} must be rejected"
+        );
+    }
+}
+
+/// A timeout outside [1000, 60000] is rejected.
+#[actix_web::test]
+async fn watch_rejects_out_of_range_timeout() {
+    let store = TestStore::open().await;
+    let app = build_app(store.store()).await;
+
+    for timeout in [999i64, 60001, 0] {
+        let (status, _body) = call(
+            &app,
+            test::TestRequest::post()
+                .uri("/v3/client/ai/agents/watch")
+                .set_json(watch_body(1, timeout, vec![watch_item("a", ZERO_FP)]))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "timeout {timeout} must be rejected"
+        );
+    }
+}
+
+/// A malformed fingerprint is rejected.
+#[actix_web::test]
+async fn watch_rejects_invalid_fingerprint() {
+    let store = TestStore::open().await;
+    let app = build_app(store.store()).await;
+
+    let (status, _body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/watch")
+            .set_json(watch_body(
+                1,
+                5000,
+                vec![watch_item("a", "not-a-fingerprint")],
+            ))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "bad fingerprint must be rejected"
+    );
+}
+
+/// An empty `watches` array is rejected.
+#[actix_web::test]
+async fn watch_rejects_empty_watches() {
+    let store = TestStore::open().await;
+    let app = build_app(store.store()).await;
+
+    let (status, _body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/watch")
+            .set_json(watch_body(1, 5000, vec![]))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "empty watches must be rejected"
+    );
+}
+
+/// Duplicate `clientWatchId`s within one batch are rejected.
+#[actix_web::test]
+async fn watch_rejects_duplicate_client_watch_id() {
+    let store = TestStore::open().await;
+    let app = build_app(store.store()).await;
+
+    let items = vec![watch_item("a", ZERO_FP), watch_item("a", ZERO_FP)];
+    let (status, _body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/watch")
+            .set_json(watch_body(1, 5000, items))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "duplicate ids must be rejected"
+    );
+}
+
+/// A request that exceeds the configured byte limit is rejected with the
+/// upstream OVER_THRESHOLD mapping (HTTP 503, business code 50104).
+///
+/// The default capacity is large; breaching `max_request_bytes` is the one
+/// guard that fires before any projection is computed, so it exercises the
+/// 503/50104 mapping without needing a live waiter.
+#[actix_web::test]
+async fn watch_rejects_oversized_request_with_capacity_error() {
+    const AGENT: &str = "client-agent-watch-cap";
+    let store = TestStore::open().await;
+    store.clean(AGENT).await;
+
+    let agents = A2aServerOperationService::new(store.store());
+    agents
+        .register_agent(&card(AGENT, "1.0.0"), NS, "manual")
+        .await
+        .expect("register 1.0.0");
+
+    let app = build_app_with_limit_and_watch(
+        store.store(),
+        DEFAULT_MAX_PUBLICATIONS_PER_CLIENT,
+        WatchCapacityConfig {
+            max_request_bytes: 1,
+            ..WatchCapacityConfig::default()
+        },
+    )
+    .await;
+
+    let (status, body) = call(
+        &app,
+        test::TestRequest::post()
+            .uri("/v3/client/ai/agents/watch")
+            .set_json(watch_body(1, 5000, vec![watch_item(AGENT, ZERO_FP)]))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "OVER_THRESHOLD maps to 503: {body}"
+    );
+    assert!(
+        body.contains("50104"),
+        "business code must be 50104: {body}"
+    );
+
+    store.clean(AGENT).await;
 }

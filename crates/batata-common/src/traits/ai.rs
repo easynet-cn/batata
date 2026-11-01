@@ -925,6 +925,16 @@ pub trait A2aAgentService: Send + Sync {
         protocol: &str,
         version: &str,
     ) -> anyhow::Result<ConsoleRuntimeEndpointView>;
+
+    /// Client code-first publication: create-or-replace a draft and, for the
+    /// first version or when `auto_submit` is set, submit it through the review
+    /// pipeline. Returns the resulting version.
+    async fn publish_agent_from_code(
+        &self,
+        namespace: &str,
+        card: &AgentCard,
+        auto_submit: bool,
+    ) -> anyhow::Result<AgentVersionDetail>;
 }
 
 /// Trait for pipeline query operations

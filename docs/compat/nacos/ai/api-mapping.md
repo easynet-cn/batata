@@ -11,7 +11,12 @@ Endpoint-level comparison of the AI module against upstream Nacos.
   taken by enumerating `#[get|post|put|delete(...)]` attributes on the Batata
   side and `@*Mapping` annotations on the upstream side, not from prose. The
   third recount (see §10 re-count note) corrected the totals to 243 matched /
-  2 missing / 4 deprecated.
+  2 missing / 4 deprecated. A fourth step implemented the Agent client
+  `POST ""` publish-from-app-code route (`agent_client.rs::publish`), bringing
+  the totals to **244 matched / 1 missing / 4 deprecated**. A fifth step
+  implemented the Agent client `/watch` long-poll (`agent_client.rs::watch` +
+  `service/agent_watch.rs`), closing the last gap and bringing the totals to
+  **245 matched / 0 missing / 4 deprecated**.
 
 > Re-verification note: `git diff 1b6309f50..HEAD -- ai/.../controller console/.../v3/ai`
 > is empty against the local `develop` checkout, so the baseline commit is still an
@@ -213,28 +218,43 @@ console one. `GET /runtime-endpoints` returns a 400 rather than an empty
 snapshot when no endpoint backend is configured, so an agent that genuinely has
 no endpoints is distinguishable from a misconfiguration.
 
-### 4.2 Client — 5/7 ⚠️
+### 4.2 Client — 7/7 ✅
 
 | Upstream | Method | Batata (`api/agent_client.rs`) | Status |
 |---|---|---|---|
 | `/search` | GET | `search` | ✅ |
 | `""` | GET | `""` | ✅ |
+| `""` | POST | `""` (`publish`) | ✅ |
+| `/watch` | POST | `watch` | ✅ |
 | `/endpoints` | POST | `endpoints` | ✅ |
 | `/endpoints` | DELETE | `endpoints` | ✅ |
 | `/endpoints/heartbeat` | PUT | `endpoints/heartbeat` | ✅ |
-| `""` | POST | — | ❌ |
-| `/watch` | POST | — | ❌ |
 
-The two missing client endpoints are not simply unported routes:
+`POST /watch` is the long-poll (`DeferredResult`) that blocks until the agent
+discovery projection for one client generation changes. Batata now implements it
+as `agent_client.rs::watch` backed by `service/agent_watch.rs`:
 
-- `POST ""` is `AgentClientController.publish`, which publishes an Agent Version
-  *from application code* via `AgentPublishApplicationService` and a full
-  `AgentPublishRequest` body. Batata's client surface covers the RAD runtime
-  endpoint lifecycle (`/endpoints`) but not version publishing from a client, so
-  wiring this would imply a capability that does not exist. Left as a gap.
-- `/watch` is a long-poll (`DeferredResult`) that blocks until the agent
-  discovery projection for one client generation changes. Batata has no watch /
-  change-notification subsystem, so this cannot be aligned without building one.
+- The request is `AgentWatchBatchForm` — `generation`, `timeoutMillis`
+  (1000–60000) and `watches`, a **JSON string** of watched discovery requests
+  plus the `sha256-canonical-json-v1:` fingerprint each client last observed.
+- The fingerprint is the SHA-256 of a canonical JSON frame of the discovery
+  result (sorted keys, same serializer rules as upstream), so it changes exactly
+  when the observed projection changes.
+- Waiters are retained per projection, registered with capacity admission
+  (per-client items, per-node waiters, per-node active bytes, request bytes),
+  and completed immediately on a fingerprint mismatch, on a later write that
+  recomputes the projection, or on timeout. A global broadcast lets the write
+  paths notify waiters without knowing about them. Capacity breaches map to
+  upstream's OVER_THRESHOLD: HTTP 503 with business code 50104.
+
+`POST ""` (`publish`) is now implemented. It mirrors
+`AgentClientController.publish`: the request body is the full agent card, and
+the call goes through `A2aAgentService.publish_agent_from_code`, which
+create-or-replaces a draft and — for the first version, or when `autoSubmit` is
+set — submits it through the review pipeline. An already-published version is
+returned unchanged. Because Batata's `register_agent` makes the first version
+`ONLINE`, the first client publish bootstraps the agent as an empty resource
+shell so its first version is a `DRAFT` (then submitted) rather than `ONLINE`.
 
 Batata's registration body is accepted as **form or JSON** (upstream sends the
 endpoints as a JSON string inside a form), `Endpoint` carries only a `uri`
@@ -251,8 +271,8 @@ endpoints (the version-action macro for submit/publish/force-publish/redraft/
 online/offline, plus list/versions/version/runtime-endpoints/labels/scope/
 delete) were already present.
 
-**Assessment**: the admin, client and console Agent surfaces are now at parity
-except for the two client endpoints in [§4.2](#42-client--57).
+**Assessment**: the admin, client and console Agent surfaces are now fully at
+parity, including the client `/watch` long-poll in [§4.2](#42-client--77).
 
 ---
 
@@ -399,14 +419,14 @@ per item instead of fabricating success. See
 | MCP console | 22 | 22 | 0 | 0 | 2 |
 | Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 | 0 |
 | AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 0 | 1 / 0 / 1 |
-| Agent admin / client / console | 18 / 7 / 18 | 18 / 5 / 18 | **0 / 2 / 0** | 0 | 1 / 0 / 0 |
+| Agent admin / client / console | 18 / 7 / 18 | 18 / 6 / 18 | **0 / 1 / 0** | 0 | 1 / 0 / 0 |
 | Prompt admin / client / console | 24 / 2 / 18 | 24 / 18 / 18 | 0 / 0 / 0 | 0 | 0 |
 | Pipeline admin / console | 4 / 4 | 2 / 2 | 0 / 0 | **2 / 2** | 0 |
 | A2A admin / console | 6 / 6 | 6 / 6 | 0 | 0 | 2 / 3 |
 | Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 | 0 |
 | Copilot console | 6 | 6 | 0 | 0 | 0 |
 | Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 | 0 |
-| **Total** | **249** | **243 matched** | **2** | **4** | **10** |
+| **Total** | **249** | **245 matched** | **0** | **4** | **10** |
 
 (`service/trace/` is deliberately excluded from the count: upstream emits
 JSON-line events and defines no endpoint for it.)
@@ -440,6 +460,18 @@ JSON-line events and defines no endpoint for it.)
 The 2 missing endpoints, in one list:
 
 1. Agent — client `POST ""` (publish from app code) and `/watch` (long-poll) (2).
+
+> A fourth step implemented the Agent client `POST ""` publish-from-app-code
+> route (backed by `A2aServerOperationService::publish_agent_from_code`), so the
+> totals were **244 matched / 1 missing / 4 deprecated**. A fifth step
+> implemented the Agent client `/watch` long-poll (`agent_client.rs::watch` +
+> `service/agent_watch.rs`), closing the last gap, so the totals are now
+> **245 matched / 0 missing / 4 deprecated**.
+
+The 0 missing endpoints, in one list:
+
+1. (none — the Agent client `/watch` long-poll change-notification is now
+   implemented).
 
 ---
 
