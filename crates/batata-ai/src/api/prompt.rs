@@ -401,6 +401,56 @@ async fn query_detail(
     }
 }
 
+/// GET /v3/admin/ai/prompt/version — Get a specific version detail (canonical)
+///
+/// Mirrors `PromptAdminController.getVersionDetail` (`@Since("3.2.1")`). Unlike
+/// the legacy `/detail`, this carries only `version` (no label resolution) and
+/// requires it. Returns the same `PromptVersionInfo` shape as `/detail`.
+#[get("version")]
+async fn get_version(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptQueryForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Ai)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ns = normalize_namespace(&query.namespace_id);
+    let version = match query.version.as_deref() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "version is required",
+            );
+        }
+    };
+
+    match prompt_service
+        .query_detail(ns, &query.prompt_key, Some(version), None)
+        .await
+    {
+        Ok(Some(info)) => HttpResponse::Ok().json(Result::success(info)),
+        Ok(None) => Result::<()>::http_not_found(
+            &batata_common::error::RESOURCE_NOT_FOUND,
+            format!(
+                "Prompt '{}' version '{}' not found",
+                query.prompt_key, version
+            ),
+        ),
+        Err(e) => Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            e.to_string(),
+        ),
+    }
+}
+
 /// GET /v3/admin/ai/prompt/governance — Governance detail with version summaries
 #[get("governance")]
 async fn get_governance(
@@ -1210,6 +1260,7 @@ pub fn admin_routes() -> actix_web::Scope {
         .service(list_prompts)
         .service(list_versions)
         .service(query_detail)
+        .service(get_version)
         .service(get_governance)
         .service(download_version)
         .service(bind_label)

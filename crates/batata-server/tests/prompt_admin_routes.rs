@@ -304,6 +304,60 @@ async fn governance_and_download_are_reachable_on_admin() {
     store.clean(KEY).await;
 }
 
+/// `GET /version` is the canonical version-detail read (the legacy `/detail`
+/// additionally resolves labels). It must answer for an existing version and
+/// refuse a missing `version` parameter with 400 rather than a silent 404.
+#[actix_web::test]
+async fn version_detail_is_reachable_on_admin() {
+    let (store, svc) = setup().await;
+    store.clean(KEY).await;
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let base = "/v3/admin/ai/prompt";
+    let (status, body) = post_form(
+        &app,
+        &format!("{base}/draft"),
+        &format!("promptKey={KEY}&version=1.0.0&template=hello"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create draft failed: {body}");
+
+    // Canonical read: a specific version.
+    let (status, body) = get(
+        &app,
+        &format!("{base}/version?promptKey={KEY}&version=1.0.0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "version read failed: {body}");
+    assert!(body.contains(KEY), "must name the prompt: {body}");
+    assert!(body.contains("hello"), "must carry the template: {body}");
+    println!("ok: GET /version answers for an existing version");
+
+    // Guard: missing `version` is a parameter error, never a silent 404.
+    let (status, _) = get(&app, &format!("{base}/version?promptKey={KEY}")).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a missing version must be 400, got {status}"
+    );
+    println!("ok: GET /version refuses a missing version");
+
+    // Unknown prompt + version → 404, not a fabricated empty document.
+    let (status, _) = get(
+        &app,
+        &format!("{base}/version?promptKey={KEY}-absent&version=9.9.9"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an unknown prompt must 404 on version read"
+    );
+    println!("ok: GET /version refuses an unknown prompt");
+
+    store.clean(KEY).await;
+}
+
 /// Both read endpoints 404 for a prompt that does not exist, rather than
 /// returning an empty document that looks like a match.
 #[actix_web::test]

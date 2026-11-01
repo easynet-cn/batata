@@ -7,15 +7,17 @@ Endpoint-level comparison of the AI module against upstream Nacos.
 - **Batata mount points**: admin AI at `/v3/admin/ai` (`crates/batata-server/src/api/v3/admin/ai/route.rs`),
   client AI at `/v3/client/ai` (`api/v3/client/route.rs`), console AI at `/v3/console/ai/*`
   (`crates/batata-server/src/startup/http.rs`)
-- **Last verified**: batata @ `6841d72d`. Counts were taken by enumerating
-  `#[get|post|put|delete(...)]` attributes on the Batata side and
-  `@*Mapping` annotations on the upstream side, not from prose.
+- **Last verified**: batata @ `6841d72d`, recounted against HEAD. Counts were
+  taken by enumerating `#[get|post|put|delete(...)]` attributes on the Batata
+  side and `@*Mapping` annotations on the upstream side, not from prose. The
+  second recount (see §10 re-count note) corrected the totals to 237 matched /
+  8 missing / 4 deprecated.
 
 > Re-verification note: `git diff 1b6309f50..HEAD -- ai/.../controller console/.../v3/ai`
 > is empty against the local `develop` checkout, so the baseline commit is still an
 > accurate description of these controllers.
 
-Legend: ✅ implemented · ⚠️ partial / differs · ❌ missing · ➕ Batata-only extra
+Legend: ✅ implemented · ⚠️ partial / differs · ❌ missing · ➕ Batata-only extra · ➖ upstream-deprecated / off-by-default (intentionally not served)
 
 > The Batata column lists the relative route registered on each handler. Where a
 > surface exists in Batata but is **never mounted**, it is called out in
@@ -242,7 +244,7 @@ Upstream bases: `/v3/admin/ai/prompt` (`PromptAdminController`),
 `/v3/client/ai/prompt` (`PromptClientController`),
 `/v3/console/ai/prompt` (`ConsolePromptController`)
 
-### 5.1 Admin — 23/24 ⚠️
+### 5.1 Admin — 24/24 ✅
 
 | Upstream | Method | Batata (`api/prompt.rs`) | Status |
 |---|---|---|---|
@@ -250,7 +252,7 @@ Upstream bases: `/v3/admin/ai/prompt` (`PromptAdminController`),
 | `""` | DELETE | `""` | ✅ |
 | `/list` | GET | `/list` | ✅ |
 | `/versions` | GET | `/versions` | ✅ |
-| `/version` | GET | — | ❌ |
+| `/version` | GET | `/version` | ✅ |
 | `/version/download` | GET | `/version/download` | ✅ |
 | `/governance` | GET | `/governance` | ✅ |
 | `/draft` | POST / PUT / DELETE | `/draft` (POST/PUT/DELETE) | ✅ |
@@ -267,12 +269,13 @@ Upstream bases: `/v3/admin/ai/prompt` (`PromptAdminController`),
 | `/detail` | GET | `/detail` | ✅ |
 | `/label` | PUT / DELETE | `/label` (PUT/DELETE) | ✅ |
 
-Same asymmetry as Agent: `/version` exists on the console surface but not on
-the admin one.
+The admin `/version` read (`@Since("3.2.1")`) was the last gap on this surface;
+it is now served at `GET /version`, reusing the same `query_detail` projection as
+the legacy `/detail` but requiring `version` and resolving no label.
 
 ### 5.2 Client — 2/2 ✅ · 5.3 Console — 18/18 ✅
 
-**Assessment**: one admin endpoint missing.
+**Assessment**: parity on all three surfaces.
 
 ---
 
@@ -285,11 +288,19 @@ Upstream bases: `/v3/admin/ai/pipelines` (`PipelineAdminController`),
 |---|---|---|---|
 | `/list` | GET | `/list` (admin + console) | ✅ |
 | `/detail` | GET | `/detail` (admin + console) | ✅ |
-| `/{pipelineId}` | GET | — | ❌ |
-| `""` | GET | — | ❌ |
+| `/{pipelineId}` | GET | — | ➖ deprecated |
+| `""` | GET | — | ➖ deprecated |
 
-**Assessment**: 2/4 on both admin and console; the two missing reads are the
-path-variable form and the bare collection read.
+Both missing reads are **not** live gaps. Upstream marks
+`GET /{pipelineId}` and `GET` (base path) `@Deprecated(since = "3.2.1",
+forRemoval = true)` *and* gates them behind `CompatibilityHelper.check`, which
+throws **410 GONE** unless `nacos.core.api.compatibility.enabled=true`. They are
+off by default — upstream serves them only after an operator explicitly flips
+that flag. Batata therefore matches upstream's default (not serving them). The
+two live reads (`/list`, `/detail`) are implemented on both surfaces.
+
+**Assessment**: 2/2 live endpoints implemented on admin and console; the other 2
+per surface are deprecated and off-by-default, not functional gaps.
 
 ---
 
@@ -363,21 +374,21 @@ per item instead of fabricating success. See
 
 ## 10. Summary counts
 
-| Surface | Upstream | Batata | Missing | Batata-only extras |
-|---|---|---|---|---|
-| MCP admin | 19 | 19 | 0 | 0 |
-| MCP client | 6 | 0 | **6** | 0 |
-| MCP console | 22 | 22 | 0 | 2 |
-| Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 |
-| AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 1 / 0 / 1 |
-| Agent admin / client / console | 18 / 7 / 18 | 18 / 5 / 18 | **0 / 2 / 0** | 1 / 0 / 0 |
-| Prompt admin / client / console | 24 / 2 / 18 | 23 / 2 / 18 | **1** / 0 / 0 | 0 |
-| Pipeline admin / console | 4 / 4 | 2 / 2 | **2 / 2** | 0 |
-| A2A admin / console | 6 / 6 | 6 / 6 | 0 | 2 / 3 |
-| Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 |
-| Copilot console | 6 | 6 | 0 | 0 |
-| Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 |
-| **Total** | **249** | **236 matched** | **13** | **10** |
+| Surface | Upstream | Batata | Missing | Deprecated | Batata-only extras |
+|---|---|---|---|---|---|
+| MCP admin | 19 | 19 | 0 | 0 | 0 |
+| MCP client | 6 | 0 | **6** | 0 | 0 |
+| MCP console | 22 | 22 | 0 | 0 | 2 |
+| Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 | 0 |
+| AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 0 | 1 / 0 / 1 |
+| Agent admin / client / console | 18 / 7 / 18 | 18 / 5 / 18 | **0 / 2 / 0** | 0 | 1 / 0 / 0 |
+| Prompt admin / client / console | 24 / 2 / 18 | 24 / 18 / 18 | 0 / 0 / 0 | 0 | 0 |
+| Pipeline admin / console | 4 / 4 | 2 / 2 | 0 / 0 | **2 / 2** | 0 |
+| A2A admin / console | 6 / 6 | 6 / 6 | 0 | 0 | 2 / 3 |
+| Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 | 0 |
+| Copilot console | 6 | 6 | 0 | 0 | 0 |
+| Cross-cutting (resource search, capability) | 2 | 2 | 0 | 0 | 0 |
+| **Total** | **249** | **237 matched** | **8** | **4** | **10** |
 
 (`service/trace/` is deliberately excluded from the count: upstream emits
 JSON-line events and defines no endpoint for it.)
@@ -387,15 +398,24 @@ JSON-line events and defines no endpoint for it.)
 > console Agent surface already implemented the six version-action endpoints
 > (`submit`/`publish`/`force-publish`/`redraft`/`online`/`offline`) through the
 > `version_action!` macro, so only `PUT ""` and `PUT /draft` were actually
-> missing on the console side. The real Agent gap is **2** (both on the client
-> surface), not 12. The corrected totals are 236 matched / 13 missing.
+> missing on the console side. The real Agent gap was **2** (both on the client
+> surface), not 12, giving 236 matched / 13 missing.
+>
+> A second recount corrected the totals to **237 matched / 8 missing / 4
+> deprecated**: the Prompt admin `GET /version` read was implemented (closing
+> that gap), and the two Pipeline reads per surface (`GET /{pipelineId}`, `GET`
+> base path) were reclassified as **upstream-deprecated and off-by-default**
+> — upstream marks them `@Deprecated(forRemoval = true)` and gates them behind
+> `CompatibilityHelper.check`, which returns **410 GONE** unless
+> `nacos.core.api.compatibility.enabled=true`. Batata matches that default (not
+> serving them), so they are not functional gaps. The four genuinely missing
+> endpoints are the six `McpClientController` routes and the two Agent client
+> routes (`POST ""` publish-from-app-code, `/watch` long-poll).
 
-The 13 missing endpoints, in one list:
+The 8 missing endpoints, in one list:
 
 1. MCP client — all 6 of `McpClientController`.
 2. Agent — client `POST ""` (publish from app code) and `/watch` (long-poll) (2).
-3. Prompt — admin `/version` (1).
-4. Pipeline — `/{pipelineId}` and `""` on admin and console (4).
 
 ---
 
@@ -413,9 +433,12 @@ compatibility surface; it is reachable only from unit tests.
 
 ## 12. Next
 
-- MCP client (`McpClientController`, 6 endpoints) is the single largest gap.
+- MCP client (`McpClientController`, 6 endpoints) is the single largest gap and
+  the only remaining client-surface gap.
 - The two Agent client endpoints (`POST ""` publish, `/watch` long-poll) need a
   watch/change-notification subsystem before they can be aligned.
-- The two Pipeline reads (`/{pipelineId}` and `""` on admin and console).
+- The two Pipeline legacy reads per surface (`/{pipelineId}`, `""`) are
+  upstream-deprecated and off-by-default; Batata matches that default and does
+  not plan to serve them.
 - Field-level model comparison lives in [`model-mapping.md`](model-mapping.md);
   phases and progress in [`README.md`](README.md).
