@@ -211,11 +211,11 @@ Status: `✅ pass` | `⏳ pending` | `❌ fail` | `⏭️ skip` (feature ⚪/⛔
 ## 14. adminservice — Server config (`ServerConfigControllerTest`)
 
 > Source: `apollo-adminservice/src/test/java/.../adminservice/controller/ServerConfigControllerTest.java`
-> Note: upstream path is `/server/config/find-all-config`; batata uses `/serverconfigs`
+> Paths aligned with upstream (2026-11-02): `GET /server/config/find-all-config`, `POST /server/config` (upsert), `DELETE /server/config?key=&cluster=&operator=`
 
 | T-ID | Feature | Upstream method | Type | Status | Skip reason |
 |------|---------|-----------------|------|--------|-------------|
-| T-APO-ADMSVC-011-01 | F-APO-ADMSVC-011 | findAllServerConfig | HTTP_API | ⏳ | path: /server/config/find-all-config |
+| T-APO-ADMSVC-011-01 | F-APO-ADMSVC-011 | findAllServerConfig | HTTP_API | ⏳ | path aligned: /server/config/find-all-config |
 | T-APO-ADMSVC-012-01 | F-APO-ADMSVC-012 | createOrUpdatePortalDBConfig | HTTP_API | ⏳ | |
 | T-APO-ADMSVC-012-02 | F-APO-ADMSVC-012 | createConfigShouldUseKeyAndClusterAsIdentity | HTTP_API | ⏳ | |
 | T-APO-ADMSVC-012-03 | F-APO-ADMSVC-012 | updateConfigShouldOnlyAffectTargetClusterWhenSameKeyExists | HTTP_API | ⏳ | |

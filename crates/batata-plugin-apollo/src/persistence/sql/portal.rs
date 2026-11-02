@@ -770,6 +770,37 @@ impl ServerConfigPersistence for SqlApolloPersistence {
         active_model.delete(db).await?;
         Ok(())
     }
+
+    async fn create_or_update_server_config(
+        &self,
+        dto: crate::api::dto::ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
+        let db = &self.db;
+        let existing = apollo_server_config::Entity::find()
+            .filter(apollo_server_config::Column::Key.eq(&dto.key))
+            .one(db)
+            .await?;
+        let now = Utc::now().naive_utc();
+        let operator = dto.data_change_created_by.clone().unwrap_or_default();
+        if let Some(model) = existing {
+            let mut active_model: apollo_server_config::ActiveModel = model.into();
+            active_model.value = Set(dto.value);
+            active_model.comment = Set(dto.comment);
+            active_model.data_change_last_modified_by = Set(Some(operator));
+            active_model.data_change_last_time = Set(Some(now));
+            Ok(active_model.update(db).await?)
+        } else {
+            let active_model = apollo_server_config::ActiveModel {
+                key: Set(dto.key),
+                value: Set(dto.value),
+                comment: Set(dto.comment),
+                data_change_created_by: Set(operator),
+                data_change_created_time: Set(now),
+                ..Default::default()
+            };
+            Ok(active_model.insert(db).await?)
+        }
+    }
 }
 
 #[async_trait]

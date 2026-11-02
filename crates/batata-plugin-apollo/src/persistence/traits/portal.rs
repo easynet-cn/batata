@@ -303,6 +303,11 @@ pub trait ServerConfigPersistence {
         value: &str,
         operator: &str,
     ) -> anyhow::Result<()>;
+    /// Upstream-equivalent `createOrUpdateConfig`: upsert by key.
+    async fn create_or_update_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model>;
     /// Deletes the specified resource.
     async fn delete_server_config(&self, key: &str, operator: &str) -> anyhow::Result<()>;
 }
@@ -677,6 +682,12 @@ impl<T: ApolloPersistenceService + ?Sized> ServerConfigPersistence for Arc<T> {
         operator: &str,
     ) -> anyhow::Result<()> {
         ServerConfigPersistence::update_server_config(&**self, key, value, operator).await
+    }
+    async fn create_or_update_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
+        ServerConfigPersistence::create_or_update_server_config(&**self, dto).await
     }
     async fn delete_server_config(&self, key: &str, operator: &str) -> anyhow::Result<()> {
         ServerConfigPersistence::delete_server_config(&**self, key, operator).await

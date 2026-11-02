@@ -49,39 +49,82 @@ async fn tier2_server_config_crud_via_http() {
         data_change_created_by: Some("tester".into()),
         data_change_created_time: None,
     };
+
+    // CREATE (POST /server/config)
     let create = test::TestRequest::post()
-        .uri("/serverconfigs")
+        .uri("/server/config")
         .insert_header(("content-type", "application/json"))
         .set_payload(serde_json::to_string(&dto).unwrap())
         .to_request();
     let resp = test::call_service(&app, create).await;
     assert_eq!(resp.status(), 200, "server config create should succeed");
 
-    let get = test::TestRequest::get()
-        .uri("/serverconfigs/sc1")
+    // LIST (GET /server/config/find-all-config)
+    let list = test::TestRequest::get()
+        .uri("/server/config/find-all-config")
         .to_request();
-    let resp = test::call_service(&app, get).await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["value"], "v1");
-
-    let list = test::TestRequest::get().uri("/serverconfigs").to_request();
     let resp = test::call_service(&app, list).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.as_array().unwrap().iter().any(|c| c["key"] == "sc1"));
+    assert!(
+        body.as_array().unwrap().iter().any(|c| c["key"] == "sc1"),
+        "created key must appear in find-all-config"
+    );
 
+    // UPSERT/UPDATE via the same POST with a new value (upstream createOrUpdateConfig)
+    let mut upd = dto.clone();
+    upd.value = "v2".into();
+    let update = test::TestRequest::post()
+        .uri("/server/config")
+        .insert_header(("content-type", "application/json"))
+        .set_payload(serde_json::to_string(&upd).unwrap())
+        .to_request();
+    let resp = test::call_service(&app, update).await;
+    assert_eq!(resp.status(), 200, "server config upsert should succeed");
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["value"], "v2", "upsert must update the existing key");
+
+    // DELETE (DELETE /server/config?key=&cluster=&operator=)
     let del = test::TestRequest::delete()
-        .uri("/serverconfigs/sc1?operator=admin")
+        .uri("/server/config?key=sc1&cluster=default&operator=admin")
         .to_request();
     let resp = test::call_service(&app, del).await;
     assert_eq!(resp.status(), 200);
 
-    let get = test::TestRequest::get()
-        .uri("/serverconfigs/sc1")
+    // Gone from the list afterwards
+    let list = test::TestRequest::get()
+        .uri("/server/config/find-all-config")
         .to_request();
-    let resp = test::call_service(&app, get).await;
-    assert_eq!(resp.status(), 404);
+    let resp = test::call_service(&app, list).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(
+        !body.as_array().unwrap().iter().any(|c| c["key"] == "sc1"),
+        "deleted key must no longer appear"
+    );
+
+    // Lock-in: PUT is not a supported verb on /server/config (upstream uses POST upsert)
+    let put = test::TestRequest::put()
+        .uri("/server/config")
+        .insert_header(("content-type", "application/json"))
+        .set_payload(serde_json::to_string(&dto).unwrap())
+        .to_request();
+    let resp = test::call_service(&app, put).await;
+    assert_eq!(
+        resp.status(),
+        405,
+        "PUT /server/config must be 405 (use POST upsert)"
+    );
+
+    // Lock-in: GET-by-key sub-path must not exist (removed to match upstream)
+    let get_by_key = test::TestRequest::get()
+        .uri("/server/config/sc1")
+        .to_request();
+    let resp = test::call_service(&app, get_by_key).await;
+    assert_eq!(
+        resp.status(),
+        404,
+        "GET /server/config/<key> sub-path must not exist"
+    );
 }
 
 #[actix_web::test]

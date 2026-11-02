@@ -1115,30 +1115,13 @@ async fn list_server_configs(data: web::Data<Arc<dyn ApolloPersistenceService>>)
     }
 }
 
-async fn get_server_config(
-    data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    key: web::Path<String>,
-) -> impl Responder {
-    let service = ServerConfigService::new(data.get_ref().clone());
-    match service.get(key.as_str()).await {
-        Ok(Some(config)) => HttpResponse::Ok().json(config),
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
-            status: 404,
-            message: format!("Server config not found: {}", key),
-        }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
-    }
-}
-
-async fn create_server_config(
+/// Upstream-equivalent `POST /server/config` — upsert by key.
+async fn create_or_update_server_config(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     body: web::Json<ServerConfigDTO>,
 ) -> impl Responder {
     let service = ServerConfigService::new(data.get_ref().clone());
-    match service.create(body.into_inner()).await {
+    match service.create_or_update(body.into_inner()).await {
         Ok(config) => HttpResponse::Ok().json(config),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
@@ -1147,42 +1130,33 @@ async fn create_server_config(
     }
 }
 
-async fn update_server_config(
-    data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    body: web::Json<ServerConfigDTO>,
-) -> impl Responder {
-    let dto = body.into_inner();
-    let service = ServerConfigService::new(data.get_ref().clone());
-    let operator = dto
-        .data_change_created_by
-        .clone()
-        .unwrap_or_else(|| "admin".to_string());
-    match service.update(&dto.key, &dto.value, &operator).await {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
-            status: 400,
-            message: e.to_string(),
-        }),
-    }
-}
-
+/// Upstream-equivalent `DELETE /server/config?key=&cluster=&operator=`.
 async fn delete_server_config(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    key: web::Path<String>,
-    operator: web::Query<Value>,
+    query: web::Query<DeleteServerConfigQuery>,
 ) -> impl Responder {
-    let op = operator
-        .get("operator")
-        .and_then(|v| v.as_str())
-        .unwrap_or("admin");
+    let operator = query
+        .operator
+        .clone()
+        .unwrap_or_else(|| "admin".to_string());
     let service = ServerConfigService::new(data.get_ref().clone());
-    match service.delete(key.as_str(), op).await {
+    match service.delete(&query.key, &operator).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ErrorResponse {
             status: 404,
             message: e.to_string(),
         }),
     }
+}
+
+/// Query parameters for `DELETE /server/config`, matching upstream
+/// `ServerConfigController.deleteConfig(key, cluster, operator)`.
+#[derive(Debug, serde::Deserialize)]
+struct DeleteServerConfigQuery {
+    key: String,
+    #[allow(dead_code)]
+    cluster: String,
+    operator: Option<String>,
 }
 
 async fn list_app_namespaces(
@@ -2890,14 +2864,12 @@ pub fn configure_admin_routes(cfg: &mut actix_web::web::ServiceConfig) {
             .route(web::delete().to(delete_branch_admin))
     )
     .service(
-        web::resource("/serverconfigs").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+        web::resource("/server/config/find-all-config").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
             .route(web::get().to(list_server_configs))
-            .route(web::post().to(create_server_config))
-            .route(web::put().to(update_server_config))
     )
     .service(
-        web::resource("/serverconfigs/{key}").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
-            .route(web::get().to(get_server_config))
+        web::resource("/server/config").wrap(crate::middleware::auth::AdminAuthMiddleware::new())
+            .route(web::post().to(create_or_update_server_config))
             .route(web::delete().to(delete_server_config))
     )
     .service(

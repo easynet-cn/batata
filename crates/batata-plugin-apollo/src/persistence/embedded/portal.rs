@@ -762,6 +762,36 @@ impl ServerConfigPersistence for EmbeddedApolloPersistence {
         store.delete(key.as_bytes())?;
         Ok(())
     }
+
+    async fn create_or_update_server_config(
+        &self,
+        dto: ServerConfigDTO,
+    ) -> anyhow::Result<apollo_server_config::Model> {
+        let store = self.store(CF_APOLLO_SERVER_CONFIG);
+        let now = Utc::now().naive_utc();
+        let operator = dto.data_change_created_by.clone().unwrap_or_default();
+        if let Some(mut model) = store.get::<apollo_server_config::Model>(dto.key.as_bytes())? {
+            model.value = dto.value;
+            model.comment = dto.comment;
+            model.data_change_last_modified_by = Some(operator);
+            model.data_change_last_time = Some(now);
+            store.put(dto.key.as_bytes(), &model)?;
+            Ok(model)
+        } else {
+            let model = apollo_server_config::Model {
+                id: self.next_id(),
+                key: dto.key.clone(),
+                value: dto.value,
+                comment: dto.comment,
+                data_change_created_by: operator,
+                data_change_created_time: now,
+                data_change_last_modified_by: None,
+                data_change_last_time: Some(now),
+            };
+            store.put(dto.key.as_bytes(), &model)?;
+            Ok(model)
+        }
+    }
 }
 
 #[async_trait]

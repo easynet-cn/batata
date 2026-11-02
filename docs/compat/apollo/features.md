@@ -128,8 +128,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-ADMSVC-008 | GET `/appnamespaces` | | 🟢 | | list public appnamespaces |
 | F-APO-ADMSVC-009 | GET `/appnamespaces/{publicNamespaceName}/namespaces` | | 🟢 | | associated namespaces |
 | F-APO-ADMSVC-010 | GET `/appnamespaces/{publicNamespaceName}/associated-namespaces/count` | | 🟢 | | |
-| F-APO-ADMSVC-011 | GET `/serverconfigs` | | 🟢 | | list server config (path: `/serverconfigs`, not `/server/config/find-all-config`) |
-| F-APO-ADMSVC-012 | POST/PUT/DELETE `/serverconfigs/{key}` | | 🟢 | | set/update/delete server config |
+| F-APO-ADMSVC-011 | GET `/server/config/find-all-config` | | 🟢 | route_test | list server config (aligned with upstream `ServerConfigController.findAllServerConfig`) |
+| F-APO-ADMSVC-012 | POST `/server/config` + DELETE `/server/config?key=&cluster=&operator=` | | 🟢 | route_test | upsert by key (`createOrUpdateConfig`); delete by key+cluster. GET-by-key and PUT removed to match upstream. Identity is key-only (single config space); `cluster` query param is accepted but not used for storage |
 | F-APO-ADMSVC-013 | GET `/instance-configs?instanceId=` | | 🟢 | | instance config query (batata-specific) |
 | F-APO-ADMSVC-014 | POST `/instances` | | 🟢 | | client instance registration |
 | F-APO-ADMSVC-015 | PUT `/instances` | | 🟢 | | client instance heartbeat |
@@ -228,14 +228,14 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-APO-PMISC-010 | GET `/openapi/v1/organizations` | `openapi_organizations` | 🟢 | p6_portal_misc_test | returns a fixed default organization `[{orgId:"1", orgName:"default"}]`. Single-tenant degradation. |
 | F-APO-PMISC-011 | GET `/openapi/v1/user` | `openapi_current_user` | 🟢 | p6_portal_misc_test | fixed admin user `{username:"apollo", roles:["ROLE_ADMIN"], ...}`. Single-tenant degradation. |
 | F-APO-PMISC-012 | GET/POST/PUT/DELETE `/openapi/v1/users` | `openapi_list/create/update/delete_user` | 🟢 | p6_portal_misc_test | user CRUD over `UserPersistence`; always includes the fixed admin entry on list. |
-| F-APO-PMISC-013 | GET/POST/DELETE `/openapi/v1/user-tokens` | | ⚪ | | DB schema only, no API endpoints |
-| F-APO-PMISC-014 | GET `/openapi/v1/consumers` / consumer-tokens | | 🟡 | | open platform |
-| F-APO-PMISC-015 | GET/POST `/openapi/v1/configs/import|export` | | ⚪ | | NOT at OpenAPI path (exists at admin path) |
+| F-APO-PMISC-013 | GET/POST/DELETE `/openapi/v1/user-tokens` (+ `/{id}/revoke|rotate`, `/{id}`, `/capabilities`, `/users/{username}/tokens(/...)`) | | 🟢 | | routes registered at the OpenAPI path now (was ⚪ on 2026-09-02 — schema+service+persistence were done, the routes were added later). Single-tenant: `capabilities`/`current` return the fixed admin token identity. |
+| F-APO-PMISC-014 | GET/POST/DELETE `/openapi/v1/consumers` / consumer-tokens (+ `/by-appId`, `/{appId}`, `/{token}/assign-role`, `/consumer-tokens/by-appId`) | | 🟢 | | open platform; routes registered (was 🟡). |
+| F-APO-PMISC-015 | GET/POST `/openapi/v1/configs/import|export` (+ `/configs/{appId}/{cluster}/{ns}/export`, `/import`) | | 🟢 | | now registered at the OpenAPI path (was ⚪ — existed only at admin path on 2026-09-02). |
 | F-APO-PMISC-016 | GET `/openapi/v1/system-info` | `openapi_system_info` | 🟢 | p6_portal_misc_test | returns `{apolloVersion, gitCommitId}` from cargo env. Single-tenant degradation (no upstream version). |
-| F-APO-PMISC-017 | GET/POST `/openapi/v1/server/portal-db/config*` | | 🟡 | | server config |
-| F-APO-PMISC-018 | GET `/openapi/v1/apollo/audit/*` | | ⚪ | | NOT at OpenAPI path (exists at admin path) |
-| F-APO-PMISC-019 | GET `/openapi/v1/favorites` | | ⚪ | | NOT at OpenAPI path (exists at admin path) |
-| F-APO-PMISC-020 | GET `/openapi/v1/global-search/item-info/by-key-or-value` | | ⚪ | | NOT at OpenAPI path (exists at `/search`) |
+| F-APO-PMISC-017 | GET/POST `/openapi/v1/server/portal-db/config*` (+ `/envs/{env}/config-db/config(/find-all)`) | | 🟢 | | now registered at the OpenAPI path (was 🟡). |
+| F-APO-PMISC-018 | GET `/openapi/v1/apollo/audit/*` (+ `/apollo/audit/properties`, `/logs`, `/logs/opName`, `/logs/by-name-or-type-or-operator`, `/logs/dataInfluences/field`, `/trace`) | | 🟢 | | now registered at the OpenAPI path (was ⚪ — existed only at admin path on 2026-09-02). |
+| F-APO-PMISC-019 | GET `/openapi/v1/favorites` (+ `/favorites/{favoriteId}`) | | 🟢 | | now registered at the OpenAPI path (was ⚪ — existed only at admin path on 2026-09-02). |
+| F-APO-PMISC-020 | GET `/openapi/v1/global-search/item-info/by-key-or-value` | | 🟢 | | now registered at the OpenAPI path (was ⚪ — existed only at `/search` on 2026-09-02). |
 | F-APO-PMISC-021 | Portal token / session auth | `OpenApiAuthMiddleware` | 🟢 | | Three mechanisms, all enforced: ① ConsumerToken — raw `Authorization` header looked up in `apollo_consumer_token` + appId match; ② user token (portal-management paths) — `UserTokenService::validate` (sha256 + prefix); ③ session cookie — **not** implemented (degraded: no portal session store in batata), so portal UI traffic must use a consumer or user token. `/openapi/v1/user/login` is public. See `src/middleware/auth.rs`. |
 
 ## 13. portal — legacy WebAPI (`F-APO-LEGACY-`) (deprecated, low priority)
@@ -282,6 +282,38 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 ---
 
+# Section 15 — Expanded OpenAPI v1 surface (2026-11-02 reconciliation)
+
+> Reconciled against upstream `~/work/github/easynet-cn/apollo` (master @ `c8bf9b8c`, 2026-09-27) and batata `crates/batata-plugin-apollo/src/route/openapi.rs`.
+> The OpenAPI surface grew well beyond what Sections 9–12 tracked. All of the following routes are **registered** in `openapi.rs` (verified by source grep). They were added after the 2026-09-02 snapshot. Where upstream enforces `@PreAuthorize` permission or a portal session, batata degrades to the single-tenant payload (always-true permission, fixed admin user/token) — the **route exists** but the **authz semantics are simplified**.
+>
+> ⚠️ Upstream OpenAPI v1 HTTP mappings live in build-time-generated `com.ctrip.framework.apollo.openapi.api.*ManagementApi` interfaces (openapi-generator from `apollo-openapi` v0.3.12 + a fork-extended spec, **not committed** in this checkout). So upstream literal paths for `envs` / `organizations` / `accesskeys` / `permissions` / `users` could not be byte-verified; the rows below are derived from the parallel `portal/controller/` sources + the `/openapi/v1` prefix and flagged **[D]**.
+
+| ID | HTTP action (method + path) | Status | Notes |
+|----|------------------------------|--------|-------|
+| F-APO-OAPIX-001 | POST `/openapi/v1/apps/{appId}/namespaces/{namespaceName}/permission-init` | 🟢 [D] | init app namespace permission roles |
+| F-APO-OAPIX-002 | POST `/openapi/v1/apps/{appId}/envs/{env}/clusters/{clusterName}/namespaces/permission-init` | 🟢 [D] | init cluster-namespace permission |
+| F-APO-OAPIX-003 | GET `/openapi/v1/apps/{appId}/namespaces/{namespaceName}/permissions/{permissionType}` | 🟢 [D] | ns permission check (single-tenant: always true) |
+| F-APO-OAPIX-004 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces/{namespaceName}/permissions/{permissionType}` | 🟢 [D] | env-ns permission check |
+| F-APO-OAPIX-005 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces/permissions/{permissionType}` | 🟢 [D] | cluster-ns permission check |
+| F-APO-OAPIX-006 | GET `/openapi/v1/apps/{appId}/role-users` | 🟢 [D] | app role users |
+| F-APO-OAPIX-007 | GET `/openapi/v1/apps/{appId}/namespaces/{namespaceName}/role-users` | 🟢 [D] | ns role users |
+| F-APO-OAPIX-008 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces/{namespaceName}/role-users` | 🟢 [D] | env-ns role users |
+| F-APO-OAPIX-009 | GET `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces/role-users` | 🟢 [D] | cluster-ns role users |
+| F-APO-OAPIX-010 | GET/POST/DELETE `/openapi/v1/apps/{appId}/namespaces/{namespaceName}/roles/{roleType}` | 🟢 [D] | ns role assign/remove |
+| F-APO-OAPIX-011 | GET/POST/DELETE `/openapi/v1/envs/{env}/apps/{appId}/clusters/{clusterName}/namespaces/roles/{roleType}` | 🟢 [D] | env-cluster-ns role |
+| F-APO-OAPIX-012 | POST `/openapi/v1/system/roles/create-application` | 🟢 [D] | grant create-app role |
+| F-APO-OAPIX-013 | GET/POST `/openapi/v1/system/roles/create-application/role-users` | 🟢 [D] | create-app role users |
+| F-APO-OAPIX-014 | GET/POST `/openapi/v1/system/role/manage-app-master` | 🟢 [D] | manage-app-master toggle/query |
+| F-APO-OAPIX-015 | GET `/openapi/v1/apps/{appId}/envs/{env}/clusters/{clusterName}/namespaces/{namespaceName}/usage` | 🟢 [D] | namespace usage (single-tenant: maps to all canonical envs) |
+| F-APO-OAPIX-016 | GET `/openapi/v1/page-settings` | 🟢 | page settings (wiki/flags) |
+| F-APO-OAPIX-017 | GET `/openapi/v1/users/enabled` | 🟢 | enable/disable user |
+| F-APO-OAPIX-018 | GET `/openapi/v1/users/{username}` | 🟢 | user by id |
+
+> **Coverage note:** batata's OpenAPI v1 surface (`openapi.rs`) registers **120 resource paths / 153 HTTP methods**, versus an upstream count of ~95 (65 byte-verified + 30 derived-[D]). The batata count exceeds upstream because it adds the extended management endpoints above plus a few batata-specific utilities. The only OpenAPI v1 paths upstream lists that batata does **not** appear to register are the `items/batch-create` / `items/batch-update` / `items/batch-delete` granular batch verbs (batata folds these into `PUT .../items` text-apply + `POST .../items`), and the `/user-tokens/current` (whoami) alias (batata uses `GET /user-tokens` list + `/capabilities`). These are minor deltas, not hard gaps.
+
+---
+
 # Summary (auto-updated)
 
 | Section | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Total | Impl rate |
@@ -297,10 +329,11 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 9 portal apps/ns | 25 | 1 | 0 | 0 | 0 | 26 | 98% |
 | 10 portal items | 12 | 0 | 0 | 0 | 0 | 12 | 100% |
 | 11 portal releases | 14 | 0 | 0 | 0 | 0 | 14 | 100% |
-| 12 portal misc | 13 | 3 | 0 | 5 | 0 | 21 | 69% |
+| 12 portal misc | 20 | 1 | 0 | 0 | 0 | 21 | 98% |
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
-| **Total** | 144 | 5 | 0 | 32 | 0 | 181 | 81% |
+| 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
+| **Total** | 169 | 3 | 0 | 27 | 0 | 199 | 86% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >
@@ -325,6 +358,8 @@ Orphan-migration disposition: `apollo_service_registry` now wired (metaservice);
 > 2026-09-01 doc-audit correction (markers vs. code): **ADMSVC-005 🟡→🟢** and **ADMSVC-006 ⚪→🟢** — both access-key route groups are in fact registered on the admin path (`admin.rs`: `/apps/{app_id}/accesskeys` POST+GET, `/{id}` DELETE, `/{id}/enable` and `/{id}/disable` PUT); the "NOT registered / NOT implemented" notes were stale. Section 4 impl rate 84% → 95%. This is the same class of drift the audit phase flagged (markers based on assumed rather than verified state), so remaining ⚪/🟡 cells should still be re-checked against the route tables before being treated as gaps.
 >
 > 2026-09-02 upstream parity review (vs `~/work/github/easynet-cn/apollo`): reconciled the feature matrix against upstream source. Confirmed **configs/sync (`admin.rs` `/configs/sync` + `/configs/sync/app`, and openapi `items/synchronize`) IS implemented** — a prior verbal claim of "namespace sync not implemented" was wrong (search-noise false negative); `F-APO-ADMSVC-017` 🟢 and `F-APO-PITEM-010` 🟢 stand. Added **Section 14 (storage-layer capabilities)** for non-HTTP upstream behaviors. Corrected an earlier mistaken claim: batata's `batata.config.encryption` (Nacos-side, `aes-gcm`, default on) does **NOT** apply to the apollo plugin's separate storage and therefore does **NOT** cover apollo's `EncryptionDecorator` config-value encryption — `F-APO-STORE-001/002` are **⚪ not implemented** (genuine gap, separate from batata/nacos encryption). Total 179→181, 🟢 144, ⚪ 32, impl rate **81%**. Net: all external Apollo HTTP contracts faithfully ported; only genuine gaps are legacy WebUI (SSO/signin, deprecated) and apollo config-value encryption.
+>
+> 2026-11-02 reconciliation (vs `~/work/github/easynet-cn/apollo` master @ `c8bf9b8c`, 2026-09-27). Re-derived the whole matrix from source (batata `route/*.rs` route tables + upstream controllers) instead of from the prior markers — the **same drift class the 2026-08/09 audits warned about had recurred**: 7 `PMISC` rows marked ⚪/🟡 were stale because the routes were added after the 09-02 snapshot. Corrected: **PMISC-013/015/017/018/019/020 ⚪→🟢** (user-tokens, configs import/export, server/portal-db config, apollo/audit+logs/trace, favorites, global-search are now registered at the OpenAPI path — they only existed at the admin path on 09-02) and **PMISC-014 🟡→🟢** (consumers). Added **Section 15 (expanded OpenAPI v1 surface)** — 18 rows for the permission-init / role-users / system-roles / usage / page-settings / user sub-paths that `openapi.rs` now routes but Sections 9–12 never tracked; all 🟢 (route present; authz degraded to single-tenant). Two caveats verified: ① upstream OpenAPI v1 HTTP mappings are build-generated (`*ManagementApi` interfaces, openapi-generator from `apollo-openapi` v0.3.12 + a fork-extended spec **not committed**), so `envs`/`organizations`/`accesskeys`/`permissions`/`users` upstream paths are **derived [D]**, not byte-verified; ② the only OpenAPI v1 upstream paths batata lacks are the granular `items/batch-*` verbs (folded into `PUT .../items` text-apply) and `/user-tokens/current` alias — minor deltas, not hard gaps. Net totals: **199 rows, 🟢 169 / 🟡 3 / ⚪ 27, impl rate 86%** (was 181 / 144 / 81%). The only **genuine** remaining gaps are still the same two: legacy WebAPI (Section 13, deprecated upstream, intentional skip) and apollo `EncryptionDecorator` config-value encryption (Section 14).
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 calibration: CFGSVC-006/PMISC-006 verified implemented ⚪→🟢; CFGSVC-007 AccessKey exists but opt-in-only ⚪→🟡; META-001~003 placeholder host-echo ⚪→🟡; LONGPOL notes corrected to reflect actual hold-behavior.
 
