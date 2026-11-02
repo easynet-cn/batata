@@ -419,8 +419,8 @@ per item instead of fabricating success. See
 | MCP console | 22 | 22 | 0 | 0 | 2 |
 | Skill admin / client / console | 20 / 2 / 20 | 20 / 2 / 20 | 0 | 0 | 0 |
 | AgentSpec admin / client / console | 18 / 2 / 17 | 18 / 2 / 17 | 0 | 0 | 1 / 0 / 1 |
-| Agent admin / client / console | 18 / 7 / 18 | 18 / 6 / 18 | **0 / 1 / 0** | 0 | 1 / 0 / 0 |
-| Prompt admin / client / console | 24 / 2 / 18 | 24 / 18 / 18 | 0 / 0 / 0 | 0 | 0 |
+| Agent admin / client / console | 18 / 7 / 18 | 18 / 7 / 18 | 0 / 0 / 0 | 0 | 1 / 0 / 0 |
+| Prompt admin / client / console | 24 / 2 / 18 | 24 / 2 / 18 | 0 / 0 / 0 | 0 | 0 |
 | Pipeline admin / console | 4 / 4 | 2 / 2 | 0 / 0 | **2 / 2** | 0 |
 | A2A admin / console | 6 / 6 | 6 / 6 | 0 | 0 | 2 / 3 |
 | Resource import admin / console | 4 / 4 | 4 / 4 | 0 | 0 | 0 |
