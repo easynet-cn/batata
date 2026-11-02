@@ -767,6 +767,10 @@ impl BatataApiClient {
     // ============== Service APIs ==============
 
     /// Create a new service
+    ///
+    /// `ephemeral` mirrors upstream `ServiceForm.ephemeral`. Upstream applies it
+    /// on create only (`ConsoleServiceController.createService`); `updateService`
+    /// ignores it, so `service_update` takes no such argument.
     #[allow(clippy::too_many_arguments)]
     pub async fn service_create(
         &self,
@@ -776,6 +780,7 @@ impl BatataApiClient {
         protect_threshold: f32,
         metadata: &str,
         selector: &str,
+        ephemeral: bool,
     ) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -786,6 +791,7 @@ impl BatataApiClient {
             protect_threshold: f32,
             metadata: &'a str,
             selector: &'a str,
+            ephemeral: bool,
         }
 
         let response: ApiResponse<OkOrBool> = self
@@ -799,6 +805,7 @@ impl BatataApiClient {
                     protect_threshold,
                     metadata,
                     selector,
+                    ephemeral,
                 },
             )
             .await?;

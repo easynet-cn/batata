@@ -691,6 +691,7 @@ impl ConsoleDataSource for LocalDataSource {
         protect_threshold: f32,
         metadata: &str,
         selector: &str,
+        ephemeral: bool,
     ) -> anyhow::Result<bool> {
         let naming = self
             .naming_service
@@ -723,6 +724,7 @@ impl ConsoleDataSource for LocalDataSource {
             metadata: metadata_map,
             selector_type,
             selector_expression,
+            ephemeral,
             ..Default::default()
         };
 

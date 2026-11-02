@@ -1955,6 +1955,9 @@ impl MaintainerClient {
     /// * `protect_threshold` - The `protect_threshold` parameter.
     /// * `metadata` - The `metadata` parameter.
     /// * `selector` - The `selector` parameter.
+    /// * `ephemeral` - The `ephemeral` parameter, mirroring upstream
+    ///   `ServiceForm.ephemeral`. Only meaningful on create: upstream
+    ///   `ConsoleServiceController.updateService` does not apply it.
     ///
     /// # Returns
     /// The `anyhow::Result<String>` result.
@@ -1969,6 +1972,7 @@ impl MaintainerClient {
         protect_threshold: f32,
         metadata: &str,
         selector: &str,
+        ephemeral: bool,
     ) -> anyhow::Result<String> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -1981,6 +1985,7 @@ impl MaintainerClient {
             metadata: &'a str,
             #[serde(skip_serializing_if = "str::is_empty")]
             selector: &'a str,
+            ephemeral: bool,
         }
 
         // The admin naming endpoints are form-encoded (a JSON body is rejected
@@ -2001,6 +2006,7 @@ impl MaintainerClient {
                     protect_threshold,
                     metadata,
                     selector,
+                    ephemeral,
                 },
             )
             .await?;

@@ -1198,7 +1198,7 @@ async fn test_service_create() {
 
     let client = make_client(&server).await;
     let result = client
-        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "")
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "", false)
         .await
         .unwrap();
     assert_eq!(result, "ok");
@@ -1218,7 +1218,29 @@ async fn test_service_create_is_form_encoded() {
 
     let client = make_client(&server).await;
     let result = client
-        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "")
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "", false)
+        .await
+        .unwrap();
+    assert_eq!(result, "ok");
+}
+
+/// Upstream's console forwards `ServiceForm.ephemeral` to the core on create
+/// (`ConsoleServiceController.createService` -> `ServiceMetadata.setEphemeral`,
+/// and `ServiceRemoteHandler` re-sends it when the console is deployed
+/// separately), so the separated console has to put it in the form body.
+#[tokio::test]
+async fn test_service_create_forwards_ephemeral() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ns/service"))
+        .and(body_string_contains("ephemeral=true"))
+        .respond_with(api_ok(&"ok".to_string()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let result = client
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "", true)
         .await
         .unwrap();
     assert_eq!(result, "ok");
@@ -1237,7 +1259,7 @@ async fn test_service_create_accepts_boolean_payload() {
 
     let client = make_client(&server).await;
     let result = client
-        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "")
+        .service_create("", "DEFAULT_GROUP", "new-svc", 0.8, "", "", false)
         .await
         .unwrap();
     assert_eq!(result, "ok");

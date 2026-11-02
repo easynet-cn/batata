@@ -835,6 +835,7 @@ impl ConsoleDataSource for RemoteDataSource {
         protect_threshold: f32,
         metadata: &str,
         selector: &str,
+        ephemeral: bool,
     ) -> anyhow::Result<bool> {
         self.client
             .service_create(
@@ -844,6 +845,7 @@ impl ConsoleDataSource for RemoteDataSource {
                 protect_threshold,
                 metadata,
                 selector,
+                ephemeral,
             )
             .await?;
         Ok(true)

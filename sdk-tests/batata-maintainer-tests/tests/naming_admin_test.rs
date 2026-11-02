@@ -15,7 +15,7 @@ async fn test_instance_create_and_delete() {
 
     // Create service first
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -71,7 +71,7 @@ async fn test_instance_get_detail() {
 
     let service = format!("adm-idet-{}", common::test_id());
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
     client
@@ -130,7 +130,7 @@ async fn test_service_create_and_delete() {
     let service = format!("adm-svc-{}", common::test_id());
 
     let ok = client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.5, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.5, "", "", false)
         .await
         .unwrap();
     assert!(ok);
@@ -156,7 +156,7 @@ async fn test_service_list() {
 
     let service = format!("adm-slist-{}", common::test_id());
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
 
@@ -181,7 +181,7 @@ async fn test_instance_health_update() {
 
     let service = format!("adm-hlth-{}", common::test_id());
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
     client
@@ -254,7 +254,7 @@ async fn test_service_subscribers() {
 
     let service = format!("adm-subs-{}", common::test_id());
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
 

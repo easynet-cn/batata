@@ -127,7 +127,7 @@ async fn test_service_subscriber_clients() {
 
     let service = format!("sub-cli-{}", common::test_id());
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
 

@@ -16,7 +16,7 @@ async fn test_service_update() {
 
     // Create service
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.5, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.5, "", "", false)
         .await
         .unwrap();
 
@@ -52,7 +52,7 @@ async fn test_service_cluster_update() {
 
     // Create service and register instance (to create a cluster)
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
     client
@@ -116,7 +116,7 @@ async fn test_instance_update() {
 
     // Create service + instance
     client
-        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "")
+        .service_create("public", "DEFAULT_GROUP", &service, 0.0, "", "", false)
         .await
         .unwrap();
     client

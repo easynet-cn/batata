@@ -90,6 +90,11 @@ struct ServiceForm {
     group_name: Option<String>,
     #[serde(alias = "serviceName")]
     service_name: String,
+    /// Service-level ephemeral flag, matching upstream `ServiceForm.ephemeral`.
+    /// Upstream only applies it on create (`ConsoleServiceController.createService`);
+    /// `updateService` ignores it, so the update handler does not read it.
+    #[serde(default)]
+    ephemeral: Option<bool>,
     #[serde(default, alias = "protectThreshold")]
     protect_threshold: Option<f32>,
     #[serde(default)]
@@ -314,6 +319,7 @@ async fn create_service(
     );
 
     let threshold = form.protect_threshold.unwrap_or(0.0);
+    let ephemeral = form.ephemeral.unwrap_or(false);
     let metadata_str = form
         .metadata
         .as_ref()
@@ -334,6 +340,7 @@ async fn create_service(
             threshold,
             &metadata_str,
             &selector_str,
+            ephemeral,
         )
         .await
     {
@@ -583,4 +590,48 @@ pub fn routes() -> Scope {
                 .service(update_cluster),
         )
         .service(super::instance::routes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Upstream `ServiceForm` carries `ephemeral` and `ConsoleServiceController`
+    /// applies it on create, so the console form has to accept it.
+    #[test]
+    fn test_service_form_accepts_ephemeral_true() {
+        let json = r#"{"serviceName":"svc","ephemeral":true,"protectThreshold":0.5}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.ephemeral, Some(true));
+        assert_eq!(form.service_name, "svc");
+        assert_eq!(form.protect_threshold, Some(0.5));
+    }
+
+    #[test]
+    fn test_service_form_accepts_ephemeral_false() {
+        let json = r#"{"serviceName":"svc","ephemeral":false}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.ephemeral, Some(false));
+    }
+
+    /// An absent flag stays `None`; `create_service` maps it to `false`, which
+    /// matches upstream (a null `ServiceForm.ephemeral` defaults to false).
+    #[test]
+    fn test_service_form_ephemeral_absent_is_none() {
+        let json = r#"{"serviceName":"svc"}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.ephemeral, None);
+    }
+
+    /// The camelCase aliases still resolve, so adding the field cannot break a
+    /// real portal payload.
+    #[test]
+    fn test_service_form_camel_case_aliases_with_ephemeral() {
+        let json =
+            r#"{"serviceName":"svc","groupName":"G","protectThreshold":0.3,"ephemeral":true}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.group_name.as_deref(), Some("G"));
+        assert_eq!(form.protect_threshold, Some(0.3));
+        assert_eq!(form.ephemeral, Some(true));
+    }
 }

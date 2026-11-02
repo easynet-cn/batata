@@ -250,6 +250,11 @@ pub trait ConsoleDataSource: Send + Sync {
     ) -> anyhow::Result<Option<serde_json::Value>>;
 
     /// Create a service
+    ///
+    /// `ephemeral` mirrors upstream `ServiceForm.ephemeral`, which
+    /// `ConsoleServiceController.createService` propagates into
+    /// `ServiceMetadata`. Update intentionally omits it: upstream
+    /// `updateService` only applies threshold/metadata/selector.
     async fn service_create(
         &self,
         namespace_id: &str,
@@ -258,6 +263,7 @@ pub trait ConsoleDataSource: Send + Sync {
         protect_threshold: f32,
         metadata: &str,
         selector: &str,
+        ephemeral: bool,
     ) -> anyhow::Result<bool>;
 
     /// Update a service
