@@ -107,9 +107,9 @@ async fn test_permission_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
 
+    // May be empty: the successful unwrapped query is the assertion itself.
     let perms = client.permission_list(1, 10).await.unwrap();
-    // May be empty, just verify query succeeds
-    assert!(perms.total_count >= 0);
+    assert!(perms.page_items.len() <= 10);
 }
 
 #[tokio::test]

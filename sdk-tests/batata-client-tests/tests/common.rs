@@ -4,6 +4,10 @@
 //! Start with: ./scripts/startup.sh -m standalone -p embedded
 //! Init admin: ./scripts/init-admin.sh
 
+// Each integration test file is compiled as its own crate with `mod common;`.
+// Helpers are consumed on demand, so unused ones are expected here.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

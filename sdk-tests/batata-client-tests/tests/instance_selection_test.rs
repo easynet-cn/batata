@@ -8,7 +8,6 @@
 mod common;
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use batata_api::naming::model::Instance;
 use tokio::time::{sleep, Duration};

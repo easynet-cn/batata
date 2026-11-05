@@ -35,15 +35,20 @@ pub const CLIENT_WATCH_ID_PATTERN: &str = r"^[A-Za-z0-9._:-]{1,128}$";
 /// Upstream fingerprint token: `sha256-canonical-json-v1:<64 hex>`.
 pub const FINGERPRINT_PATTERN: &str = r"^sha256-canonical-json-v1:[0-9a-f]{64}$";
 
+/// Maximum number of watch items accepted in a single batch request.
 pub const MAX_WATCH_ITEMS: usize = 1000;
+/// Minimum long-poll timeout accepted from a client, in milliseconds.
 pub const MIN_TIMEOUT_MILLIS: i64 = 1000;
+/// Maximum long-poll timeout accepted from a client, in milliseconds.
 pub const MAX_TIMEOUT_MILLIS: i64 = 60000;
 
 /// A single watched discovery request, exactly the wire shape the RAD client sends.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWatchBatchItem {
+    /// Opaque id supplied by the client for this watched request.
     pub client_watch_id: String,
+    /// Discovery request whose projection this item watches.
     pub discovery_request: AgentDiscoveryRequest,
     /// The fingerprint the client last observed for this projection.
     pub materialized_fingerprint: String,
@@ -53,17 +58,23 @@ pub struct AgentWatchBatchItem {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDiscoveryRequest {
+    /// Namespace the request targets; `None` falls back to the default namespace.
     #[serde(default)]
     pub namespace_id: Option<String>,
+    /// Reference identifying the agent to discover.
     pub reference: AgentReference,
 }
 
+/// Reference identifying one agent by name, with optional version and label.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentReference {
+    /// Name of the agent to discover.
     pub agent_name: String,
+    /// Optional version (or version range) of the agent.
     #[serde(default)]
     pub version: Option<String>,
+    /// Optional label used to disambiguate agent versions.
     #[serde(default)]
     pub label: Option<String>,
 }
@@ -71,8 +82,11 @@ pub struct AgentReference {
 /// The validated complete watch request.
 #[derive(Debug, Clone)]
 pub struct AgentWatchBatchRequest {
+    /// Client-supplied generation number echoed back in the response.
     pub generation: i64,
+    /// Long-poll timeout in milliseconds.
     pub timeout_millis: i64,
+    /// Validated watch items carried by this request.
     pub watches: Vec<AgentWatchBatchItem>,
 }
 
@@ -80,13 +94,17 @@ pub struct AgentWatchBatchRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWatchBatchResponse {
+    /// Generation number echoed from the request.
     pub generation: i64,
+    /// Whether any watched projection changed.
     pub changed: bool,
+    /// Ids of the watch items whose projection changed; omitted when empty.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub changed_client_watch_ids: Vec<String>,
 }
 
 impl AgentWatchBatchResponse {
+    /// Build a response reporting no changes for the given generation.
     pub fn unchanged(generation: i64) -> Self {
         Self {
             generation,
@@ -95,6 +113,7 @@ impl AgentWatchBatchResponse {
         }
     }
 
+    /// Build a response reporting the changed client watch ids.
     pub fn with_changes(generation: i64, ids: Vec<String>) -> Self {
         Self {
             generation,
@@ -118,10 +137,12 @@ pub enum WatchError {
 }
 
 impl WatchError {
+    /// Construct a server-side failure error with the given message.
     pub fn server(message: impl Into<String>) -> Self {
         Self::Server(message.into())
     }
 
+    /// Construct a capacity-admission rejection with the given message.
     pub fn capacity(message: impl Into<String>) -> Self {
         Self::Capacity(message.into())
     }
@@ -227,12 +248,15 @@ fn valid_fingerprint(value: &str) -> bool {
     rest.len() == 64 && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Validation failure for a watch batch request.
 #[derive(Debug)]
 pub struct WatchValidationError {
+    /// Human-readable description of the rejected field or constraint.
     pub message: String,
 }
 
 impl WatchValidationError {
+    /// Return the validation failure message.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -374,18 +398,25 @@ fn append_string(out: &mut String, s: &str) {
 /// Status of one server-side projection, matching upstream `AgentProjectionStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentProjectionStatus {
+    /// The projection resolved successfully and its fingerprint is usable.
     Available,
+    /// No matching agent or version exists.
     NotFound,
+    /// Access to the projection could not be determined.
     AccessUncertain,
+    /// Conflicting discovery data prevented a projection.
     Conflict,
+    /// A transient upstream failure occurred; the projection should be retried.
     TransientFailure,
 }
 
 impl AgentProjectionStatus {
+    /// Whether this status represents a readable, available projection.
     pub fn is_available(self) -> bool {
         self == AgentProjectionStatus::Available
     }
 
+    /// Whether this status should be recomputed on the next refresh.
     pub fn requires_retry(self) -> bool {
         self == AgentProjectionStatus::TransientFailure
     }
@@ -394,15 +425,20 @@ impl AgentProjectionStatus {
 /// Immutable current projection state (without the business snapshot).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentProjectionState {
+    /// Availability status of the current projection.
     pub status: AgentProjectionStatus,
+    /// Fingerprint of the projection, present only when available.
     pub fingerprint: Option<String>,
 }
 
 /// Canonical projection key: protocol-neutral identity of one shared projection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentProjectionKey {
+    /// Canonical wire identity of the projection (canonical JSON frame).
     pub value: String,
+    /// Effective namespace id the projection belongs to.
     pub namespace_id: String,
+    /// Agent name the projection is keyed on.
     pub agent_name: String,
     /// The canonical discovery request this projection is keyed on.
     pub request: AgentDiscoveryRequest,
@@ -457,12 +493,15 @@ impl AgentProjectionKey {
 /// One applied projection update, fanned out to waiters.
 #[derive(Debug, Clone)]
 pub struct AgentProjectionUpdate {
+    /// Canonical key of the projection that changed.
     pub key: AgentProjectionKey,
+    /// Newly observed projection state.
     pub current: AgentProjectionState,
 }
 
 /// Listener invoked when a projection's fingerprint changes.
 pub trait AgentProjectionUpdateListener: Send + Sync {
+    /// Called when a projection's public observation changes.
     fn on_projection_update(&self, update: &AgentProjectionUpdate);
 }
 
@@ -487,6 +526,7 @@ impl Default for AgentProjectionRegistry {
 }
 
 impl AgentProjectionRegistry {
+    /// Create an empty projection registry.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(ProjectionRegistryInner::default()),
@@ -536,6 +576,7 @@ impl AgentProjectionRegistry {
         }
     }
 
+    /// Return the current state of one projection, if it is retained.
     pub fn get_state(&self, key: &AgentProjectionKey) -> Option<AgentProjectionState> {
         self.inner
             .lock()
@@ -569,10 +610,12 @@ impl AgentProjectionRegistry {
         })
     }
 
+    /// Return all currently retained projection keys.
     pub fn active_keys(&self) -> Vec<AgentProjectionKey> {
         self.inner.lock().unwrap().states.keys().cloned().collect()
     }
 
+    /// Return the number of retained projections.
     pub fn size(&self) -> usize {
         self.inner.lock().unwrap().states.len()
     }
@@ -585,13 +628,16 @@ impl AgentProjectionRegistry {
 /// Computes the current projection state for a canonical key.
 #[async_trait::async_trait]
 pub trait AgentProjector: Send + Sync {
+    /// Compute the current projection state for one canonical key.
     async fn project(&self, key: &AgentProjectionKey) -> AgentProjectionState;
 }
 
 /// Projector that resolves the discovery result the same way the `GET /` discover
 /// handler does, then fingerprints it.
 pub struct DiscoveryProjector {
+    /// A2A agent service used to resolve versions and agent data.
     pub a2a: Arc<dyn crate::service::traits::A2aAgentService>,
+    /// Optional endpoint service supplying instance addresses for the frame.
     pub endpoint: Option<Arc<crate::service::AiEndpointService>>,
 }
 
@@ -687,6 +733,7 @@ pub struct AgentProjectionService {
 }
 
 impl AgentProjectionService {
+    /// Create a projection service backed by the given projector.
     pub fn new(projector: Arc<dyn AgentProjector>) -> Self {
         Self {
             registry: AgentProjectionRegistry::new(),
@@ -702,14 +749,17 @@ impl AgentProjectionService {
         key
     }
 
+    /// Release one reference, returning true when the state was dropped.
     pub fn release(&self, key: &AgentProjectionKey) -> bool {
         self.registry.release(key)
     }
 
+    /// Return the current state of one projection, if retained.
     pub fn get_state(&self, key: &AgentProjectionKey) -> Option<AgentProjectionState> {
         self.registry.get_state(key)
     }
 
+    /// Register a listener notified on every public projection change.
     pub fn add_update_listener(&self, listener: Arc<dyn AgentProjectionUpdateListener>) {
         self.listeners.lock().unwrap().push(listener);
     }
@@ -743,6 +793,7 @@ impl AgentProjectionService {
         }
     }
 
+    /// Return the number of retained projections.
     pub fn size(&self) -> usize {
         self.registry.size()
     }
@@ -755,8 +806,11 @@ impl AgentProjectionService {
 /// Owner identity of one watch request.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentHttpWatchOwnerKey {
+    /// Client connection identity owning the watch request.
     pub client_id: String,
+    /// Authenticated identity associated with the client.
     pub identity: String,
+    /// Namespace id of the watched projections.
     pub namespace_id: String,
 }
 
@@ -774,6 +828,7 @@ pub struct AgentHttpWatchWaiter {
 }
 
 impl AgentHttpWatchWaiter {
+    /// Build a waiter from validated watch items and a response channel.
     pub fn new(
         owner_key: AgentHttpWatchOwnerKey,
         generation: i64,
@@ -802,22 +857,27 @@ impl AgentHttpWatchWaiter {
         }
     }
 
+    /// Return the owner identity of this waiter.
     pub fn owner_key(&self) -> &AgentHttpWatchOwnerKey {
         &self.owner_key
     }
 
+    /// Return the request generation number.
     pub fn generation(&self) -> i64 {
         self.generation
     }
 
+    /// Return the number of watched items.
     pub fn item_count(&self) -> usize {
         self.item_count
     }
 
+    /// Return the serialized request size in bytes.
     pub fn payload_bytes(&self) -> usize {
         self.payload_bytes
     }
 
+    /// Return the distinct projection keys this waiter observes.
     pub fn projection_keys(&self) -> Vec<AgentProjectionKey> {
         self.observations.keys().cloned().collect()
     }
@@ -923,8 +983,11 @@ pub enum WatchCapacityError {
     ActiveBytesPerNode,
 }
 
+/// Outcome of registering a waiter with the capacity-limited registry.
 pub struct Registration {
+    /// True when the request generation is older than the existing waiter.
     pub stale: bool,
+    /// Waiter that was replaced by this registration, if any.
     pub replaced: Option<Arc<AgentHttpWatchWaiter>>,
 }
 
@@ -947,6 +1010,7 @@ impl Default for AgentHttpWatchRegistry {
 }
 
 impl AgentHttpWatchRegistry {
+    /// Create an empty waiter registry.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(WatchRegistryInner {
@@ -958,6 +1022,7 @@ impl AgentHttpWatchRegistry {
         }
     }
 
+    /// Admit a waiter under the supplied capacity limits.
     pub fn register(
         &self,
         waiter: Arc<AgentHttpWatchWaiter>,
@@ -1006,6 +1071,7 @@ impl AgentHttpWatchRegistry {
         })
     }
 
+    /// Remove a waiter by id and return it if present.
     pub fn remove(&self, waiter_id: &str) -> Option<Arc<AgentHttpWatchWaiter>> {
         let mut guard = self.inner.lock().unwrap();
         let waiter = guard.waiters.get(waiter_id).cloned();
@@ -1015,6 +1081,7 @@ impl AgentHttpWatchRegistry {
         waiter
     }
 
+    /// Return all waiters observing the given projection key.
     pub fn find_by_projection(&self, key: &AgentProjectionKey) -> Vec<Arc<AgentHttpWatchWaiter>> {
         let guard = self.inner.lock().unwrap();
         guard
@@ -1028,6 +1095,7 @@ impl AgentHttpWatchRegistry {
             .unwrap_or_default()
     }
 
+    /// Remove every waiter, returning those that were registered.
     pub fn clear(&self) -> Vec<Arc<AgentHttpWatchWaiter>> {
         let mut guard = self.inner.lock().unwrap();
         let waiters: Vec<Arc<AgentHttpWatchWaiter>> = guard.waiters.values().cloned().collect();
@@ -1038,10 +1106,12 @@ impl AgentHttpWatchRegistry {
         waiters
     }
 
+    /// Return the number of registered waiters.
     pub fn size(&self) -> usize {
         self.inner.lock().unwrap().waiters.len()
     }
 
+    /// Return the total bytes held by active waiters.
     pub fn active_bytes(&self) -> u64 {
         self.inner.lock().unwrap().active_bytes
     }
@@ -1104,9 +1174,13 @@ fn waiter_id(waiter: &Arc<AgentHttpWatchWaiter>) -> String {
 /// Capacity limits for the HTTP watch transport.
 #[derive(Debug, Clone, Copy)]
 pub struct WatchCapacityConfig {
+    /// Maximum watched items allowed per client owner.
     pub max_items_per_client: usize,
+    /// Maximum concurrent waiters allowed on one node.
     pub max_waiters_per_node: usize,
+    /// Maximum total active request bytes allowed on one node.
     pub max_active_bytes_per_node: u64,
+    /// Maximum accepted size of a single watch request body, in bytes.
     pub max_request_bytes: u64,
 }
 
