@@ -182,7 +182,13 @@ async fn test_config_listener() {
     svc.publish_config(&data_id, GROUP, TENANT, "updated")
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Poll instead of a fixed sleep: delivery is asynchronous, and under a
+    // loaded machine (the SDK matrix runs six server combinations) a fixed
+    // window is both flaky when too short and wasted wall-clock when too long.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !received.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 
     assert!(
         received.load(Ordering::SeqCst),
@@ -233,7 +239,11 @@ async fn test_get_config_and_sign_listener() {
     svc.publish_config(&data_id, GROUP, TENANT, "v2")
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Poll instead of a fixed sleep — see test_config_listener.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while notify_count.load(Ordering::SeqCst) < 1 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 
     assert!(
         notify_count.load(Ordering::SeqCst) >= 1,

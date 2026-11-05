@@ -177,6 +177,7 @@ impl CacheData {
         // Mark inconsistent so the listen loop will re-check this config
         self.is_consistent_with_server
             .store(false, Ordering::Relaxed);
+        self.finish_initializing();
     }
 
     /// Add a change event listener.
@@ -185,6 +186,29 @@ impl CacheData {
         self.change_event_listeners.push(wrap);
         self.is_consistent_with_server
             .store(false, Ordering::Relaxed);
+        self.finish_initializing();
+    }
+
+    /// Mark the entry as past its initial sync.
+    ///
+    /// `is_initializing` gates whether a server push reaches the listeners:
+    /// the listen loop refreshes a pushed config with `notify =
+    /// !is_initializing`, so a push that arrives while the flag is still set
+    /// is fetched into the cache but never delivered. Because the refreshed
+    /// MD5 then matches the server, no further push ever comes — the
+    /// notification is lost permanently rather than just delayed.
+    ///
+    /// Upstream clears `isInitializing` at the end of the first listen cycle
+    /// (`ClientWorker` -> `setInitializing(false)`), which leaves that window
+    /// open; under load it is wide enough to drop real changes. Attaching a
+    /// listener only ever happens after the content has been fetched, so the
+    /// initial sync is already over at that point.
+    ///
+    /// This cannot cause a spurious first call: the listener is wrapped with
+    /// the current MD5, so `take_content_notifications()` skips it until the
+    /// content actually changes.
+    fn finish_initializing(&mut self) {
+        self.is_initializing = false;
     }
 
     /// Remove a specific listener by pointer equality.
@@ -417,6 +441,7 @@ pub fn compute_md5(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn test_compute_md5() {
@@ -511,6 +536,66 @@ mod tests {
         let removed = cache.remove_all_listeners();
         assert_eq!(removed, 2);
         assert!(!cache.has_listeners());
+    }
+
+    /// Attaching a listener ends the initial sync.
+    ///
+    /// Guards the fix for a lost-notification race: the listen loop refreshes a
+    /// pushed config with `notify = !is_initializing`, so a push arriving while
+    /// the flag is still set updates the cache without ever calling the
+    /// listener, and no further push follows. Reverting this makes the test
+    /// red.
+    #[test]
+    fn test_add_listener_finishes_initializing() {
+        let mut cache = CacheData::new("id", "group", "");
+        assert!(cache.is_initializing, "a fresh entry is still initializing");
+
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            |_info: ConfigResponse| {},
+        ));
+        cache.add_listener(listener);
+
+        assert!(
+            !cache.is_initializing,
+            "attaching a listener must end the initial sync, otherwise a server push landing in \
+             that window is fetched but never delivered"
+        );
+    }
+
+    /// Ending the initial sync must not manufacture a first call.
+    ///
+    /// The other half of the fix: the listener is wrapped with the current MD5,
+    /// so it stays silent until the content really changes.
+    #[test]
+    fn test_finished_initializing_does_not_fire_spuriously() {
+        let mut cache = CacheData::new("id", "group", "");
+        cache.update_content("initial");
+
+        let called = Arc::new(AtomicUsize::new(0));
+        let called_clone = called.clone();
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            move |_info: ConfigResponse| {
+                called_clone.fetch_add(1, Ordering::SeqCst);
+            },
+        ));
+        cache.add_listener(listener);
+
+        // Content unchanged since registration: nothing to deliver.
+        let pending = cache.take_content_notifications();
+        assert!(pending.is_empty(), "no notification before a real change");
+        for notification in pending {
+            notification.deliver();
+        }
+        assert_eq!(called.load(Ordering::SeqCst), 0);
+
+        // A real change is delivered exactly once.
+        cache.update_content("updated");
+        let pending = cache.take_content_notifications();
+        assert_eq!(pending.len(), 1, "a real change must notify the listener");
+        for notification in pending {
+            notification.deliver();
+        }
+        assert_eq!(called.load(Ordering::SeqCst), 1);
     }
 
     #[test]
