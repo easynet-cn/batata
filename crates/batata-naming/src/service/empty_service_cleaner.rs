@@ -82,10 +82,10 @@ impl EmptyServiceCleaner {
             // While the node is not UP the instance state is still being seeded (data
             // warmup / Distro snapshot load). Reaping now could drop services that are
             // about to receive their instances, so stay idle until ready.
-            if let Some(ref status) = self.status {
-                if !status.is_up() {
-                    continue;
-                }
+            if let Some(ref status) = self.status
+                && !status.is_up()
+            {
+                continue;
             }
 
             let removed = self.naming_service.clean_empty_services(self.expired_ms);

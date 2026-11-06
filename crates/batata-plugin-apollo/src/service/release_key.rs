@@ -97,6 +97,6 @@ mod tests {
         // `InstanceConfig.ReleaseKey` is varchar(64); gray merges concatenate
         // two keys with '+', so a single key must stay well under half that.
         let key = generate_release_key(&["some-long-app-id", "cluster", "namespace"]);
-        assert!(key.len() * 2 + 1 <= 64);
+        assert!(key.len() * 2 < 64);
     }
 }

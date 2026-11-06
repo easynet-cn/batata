@@ -438,7 +438,6 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             (body, vec![0u8; chunk_size], 0u64, true),
             move |(mut body, mut buf, mut offset, mut first)| {
                 let meta = meta.clone();
-                let vote_proto = vote_proto.clone();
                 async move {
                     if total_bytes == 0 {
                         if first {
@@ -482,7 +481,7 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
                         offset,
                         data: buf[..filled].to_vec(),
                         done,
-                        vote: Some(vote_proto.clone()),
+                        vote: Some(vote_proto),
                     };
                     first = false;
                     offset += filled as u64;

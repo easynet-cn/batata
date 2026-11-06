@@ -358,6 +358,82 @@ async fn draft_endpoint_creates_version() {
     store.clean(NAME).await;
 }
 
+/// The console editor posts upstream's `McpServerDraftForm`: the
+/// specifications are JSON strings in a form body, not a JSON registration
+/// object. A `web::Json` extractor used to answer this with
+/// 400 "Content type error", so the draft never got created.
+#[actix_web::test]
+async fn draft_endpoint_accepts_the_upstream_form_contract() {
+    let (store, svc) = setup().await;
+    svc.create_mcp_server(NS, &registration("1.0.0", "echo"))
+        .await
+        .expect("create server");
+
+    let app = build_app(store.store(), svc.clone()).await;
+
+    let server_spec = serde_json::json!({
+        "name": NAME,
+        "namespaceId": NS,
+        "frontProtocol": "http",
+        "description": "created from the console editor",
+        "remoteServerConfig": { "frontEndpointConfigList": [] },
+    })
+    .to_string();
+    let tool_spec = serde_json::json!({
+        "specificationType": "mcp",
+        "tools": [{
+            "name": "form-tool",
+            "description": "from the form",
+            "inputSchema": { "type": "object" },
+        }],
+    })
+    .to_string();
+    let body = serde_urlencoded::to_string([
+        ("namespaceId", NS),
+        ("mcpName", NAME),
+        ("version", "4.0.0"),
+        ("serverSpecification", server_spec.as_str()),
+        ("toolSpecification", tool_spec.as_str()),
+    ])
+    .expect("encode form");
+
+    let req = test::TestRequest::post()
+        .uri("/ai/mcp/draft?overwrite=false")
+        .insert_header(("content-type", "application/x-www-form-urlencoded"))
+        .set_payload(body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the upstream form contract must not be rejected as a content type error"
+    );
+    let created = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(
+        created.contains("4.0.0"),
+        "the form-level version must reach the service: {created}"
+    );
+    assert!(
+        created.contains("form-tool"),
+        "toolSpecification must be folded into the registration: {created}"
+    );
+
+    // The version is also visible through the read endpoint: this proves the
+    // form-level identity (namespaceId/mcpName) was folded, not just any
+    // registration accepted.
+    let req = test::TestRequest::get()
+        .uri("/ai/mcp/versions?mcpName=route-mcp")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let listed = String::from_utf8_lossy(&test::read_body(resp).await).to_string();
+    assert!(
+        listed.contains("4.0.0"),
+        "the draft should be listed: {listed}"
+    );
+
+    store.clean(NAME).await;
+}
+
 /// Create the server, then a draft version on top of it. The service requires
 /// the resource to exist before a draft can be added.
 async fn server_with_draft(svc: &McpServerOperationService, base: &str, draft: &str) {

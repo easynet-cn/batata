@@ -438,6 +438,19 @@ impl RolePersistence for EmbeddedApolloPersistence {
         Ok(())
     }
 
+    async fn list_role_users(&self, role_id: i64) -> anyhow::Result<Vec<String>> {
+        let store = self.store(CF_APOLLO_USER_ROLE);
+        let mut users: Vec<String> = store
+            .scan_all::<apollo_user_role::Model>()?
+            .into_iter()
+            .filter(|m| m.role_id == role_id)
+            .map(|m| m.user_id)
+            .collect();
+        users.sort();
+        users.dedup();
+        Ok(users)
+    }
+
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
         let ur_store = self.store(CF_APOLLO_USER_ROLE);
         let all_ur: Vec<apollo_user_role::Model> = ur_store.scan_all()?;

@@ -292,8 +292,10 @@ Goal: introduce the upstream layering before adding endpoints.
       form encoding, a malformed specification, the draft → submit → publish
       walk, force-publish proving the review gate is what separates it from
       publish, redraft, labels/status/scope, and the version endpoints.
-      Ordering matters: a draft version can only be added to a server that
-      already exists, so the tests create the server first.
+      The tests create the server first, but that is not a prerequisite:
+      upstream `McpLifecycleOperationService.createMcpServerDraft` inserts the
+      resource directory when `findMeta` returns null, and Batata now does the
+      same (see the 2026-11-06 note below).
 - [x] **Agent console `GET /runtime-endpoints`.** nacos pins this one: its
       `console-ui-next/src/api/__tests__/agent-console-source-contract.test.ts`
       asserts the next console exposes `getRuntimeEndpoints` against
@@ -1217,3 +1219,30 @@ routed but have no fetcher yet, so their items come back `INVALID` /
 fabricated success. Upstream's `SkillsShImportService` and
 `SkillWellKnownImportService` (~1.4k lines of archive/zip handling) are not
 ported.
+
+## 2026-11-06 e2e-driven contract round (MCP console)
+
+The `batata-ui` Playwright suite exercised the console MCP editor end to end and
+surfaced three real backend defects that route-level tests could not see:
+
+- **`POST`/`PUT /v3/console/ai/mcp/draft` required a JSON body.** Upstream
+  `McpServerDraftForm` is a form (`serverSpecification`, `toolSpecification`,
+  `resourceSpecification`, `endpointSpecification` are JSON *strings*), and the
+  UI posts `application/x-www-form-urlencoded`. The handlers now branch on the
+  content type and parse the form into `McpServerRegistration`; JSON callers
+  still work. Covered by `tests/mcp_console_routes.rs
+  ::draft_endpoint_accepts_the_upstream_form_contract` (mutant-checked).
+- **`createMcpServerDraft` refused a brand-new server.** Upstream
+  `McpLifecycleOperationService.createMcpServerDraft` calls
+  `buildInitialDraftResource` + `insertInitialResource` when `findMeta` is null;
+  Batata returned "MCP server ... not found". `create_mcp_server_draft` now
+  bootstraps the `ai_resource` row (no `latest`, no `editingVersion` until the
+  version row exists) and the in-memory index.
+- **`GET /v3/console/ai/mcp` could not read a draft-only server.** It resolved
+  the version solely through the published `latest` label. It now falls back to
+  `editingVersion` then `reviewingVersion`, so the detail page opened right
+  after `POST /draft` renders the working version.
+
+Both service changes are covered by `tests/mcp_persistence.rs
+::mcp_first_draft_creates_the_resource`, which was red under two independent
+mutants (bootstrap removed, fallback removed).

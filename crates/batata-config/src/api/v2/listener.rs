@@ -186,7 +186,8 @@ pub async fn config_listener(
     // and re-check the generation. If the generation advanced, re-check config
     // immediately (no second wait) to recover the missed wakeup. Otherwise wait
     // once, then re-check and return.
-    let result = loop {
+
+    loop {
         let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
         if !changed_configs.is_empty() {
             info!(count = changed_configs.len(), "Config changes detected");
@@ -228,6 +229,5 @@ pub async fn config_listener(
             "Config listener timeout, no changes"
         );
         break Result::<HashMap<String, String>>::http_success(HashMap::<String, String>::new());
-    };
-    result
+    }
 }

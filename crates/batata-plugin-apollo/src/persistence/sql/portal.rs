@@ -436,6 +436,17 @@ impl RolePersistence for SqlApolloPersistence {
         Ok(())
     }
 
+    async fn list_role_users(&self, role_id: i64) -> anyhow::Result<Vec<String>> {
+        let links = apollo_user_role::Entity::find()
+            .filter(apollo_user_role::Column::RoleId.eq(role_id))
+            .all(&self.db)
+            .await?;
+        let mut users: Vec<String> = links.into_iter().map(|l| l.user_id).collect();
+        users.sort();
+        users.dedup();
+        Ok(users)
+    }
+
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
         let db = &self.db;
         let user_roles = apollo_user_role::Entity::find()

@@ -26,6 +26,8 @@ pub fn routes() -> Scope {
         .service(tracing_api::routes())
         .service(control::routes())
         .service(plugin::routes())
-        // AI resource importer (console mirror of the admin endpoints)
-        .service(web::scope("/ai").service(ai_import::console_routes()))
+        // AI resource importer (console mirror of the admin endpoints).
+        // Fully-qualified scope on purpose: a bare `/ai` scope would shadow
+        // the sibling `/ai/a2a`, `/ai/mcp`, ... scopes registered by the server.
+        .service(ai_import::console_routes())
 }

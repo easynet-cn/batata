@@ -10,11 +10,7 @@
 //! `crate::internal`, `crate::catalog` (for ui_services), and `crate::acl`
 //! (for acl_authorize).
 
-use std::sync::Arc;
-
 use actix_web::{HttpRequest, HttpResponse, Scope, get, post, put, web};
-
-use batata_common::ClusterManager;
 
 use crate::acl::{AclAuthorizationCheck, AclService};
 use crate::catalog::ConsulCatalogService;
@@ -50,21 +46,19 @@ async fn ui_services(
 #[get("/ui/nodes")]
 async fn ui_nodes(
     req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
+    catalog: web::Data<ConsulCatalogService>,
     health_service: web::Data<crate::health::ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<dyn ClusterManager>>,
     query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::internal::ui_nodes(
         req,
-        naming_store,
+        catalog,
         health_service,
         acl_service,
         dc_config,
-        member_manager,
         query,
         index_provider,
     )
@@ -74,7 +68,7 @@ async fn ui_nodes(
 #[get("/ui/node/{node}")]
 async fn ui_node_info(
     req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
+    catalog: web::Data<ConsulCatalogService>,
     health_service: web::Data<crate::health::ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -83,7 +77,7 @@ async fn ui_node_info(
 ) -> HttpResponse {
     crate::internal::ui_node_info(
         req,
-        naming_store,
+        catalog,
         health_service,
         acl_service,
         dc_config,
@@ -108,6 +102,7 @@ async fn ui_exported_services(
 #[get("/ui/catalog-overview")]
 async fn ui_catalog_overview(
     req: HttpRequest,
+    catalog: web::Data<ConsulCatalogService>,
     naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
@@ -117,6 +112,7 @@ async fn ui_catalog_overview(
 ) -> HttpResponse {
     crate::internal::ui_catalog_overview(
         req,
+        catalog,
         naming_store,
         health_service,
         acl_service,

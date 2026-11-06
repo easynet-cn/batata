@@ -798,8 +798,8 @@ async fn update_metadata(
         notify_subscribers(
             naming_service.get_ref(),
             &cm,
-            &namespace_id,
-            &group_name,
+            namespace_id,
+            group_name,
             &form.service_name,
         )
         .await;
@@ -912,8 +912,8 @@ async fn partial_update_instance(
             notify_subscribers(
                 naming_service.get_ref(),
                 &cm,
-                &namespace_id,
-                &group_name,
+                namespace_id,
+                group_name,
                 &form.service_name,
             )
             .await;
@@ -1095,8 +1095,8 @@ async fn delete_metadata_batch(
         notify_subscribers(
             naming_service.get_ref(),
             &cm,
-            &namespace_id,
-            &group_name,
+            namespace_id,
+            group_name,
             &params.service_name,
         )
         .await;

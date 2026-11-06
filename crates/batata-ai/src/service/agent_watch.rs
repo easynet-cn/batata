@@ -164,7 +164,7 @@ pub fn parse_watch_request(
         return Err(invalid("`generation` must be greater than or equal to 0."));
     }
     let timeout_millis = timeout_millis.ok_or_else(|| invalid("`timeoutMillis` is required"))?;
-    if timeout_millis < MIN_TIMEOUT_MILLIS || timeout_millis > MAX_TIMEOUT_MILLIS {
+    if !(MIN_TIMEOUT_MILLIS..=MAX_TIMEOUT_MILLIS).contains(&timeout_millis) {
         return Err(invalid("`timeoutMillis` must be between 1000 and 60000."));
     }
     let watches: Vec<AgentWatchBatchItem> = serde_json::from_str(watches_json)
@@ -1035,13 +1035,13 @@ impl AgentHttpWatchRegistry {
         let existing_id = guard.owner_index.get(&owner).cloned();
         let existing = existing_id.and_then(|id| guard.waiters.get(&id).cloned());
 
-        if let Some(existing) = &existing {
-            if waiter.generation() < existing.generation() {
-                return Ok(Registration {
-                    stale: true,
-                    replaced: None,
-                });
-            }
+        if let Some(existing) = &existing
+            && waiter.generation() < existing.generation()
+        {
+            return Ok(Registration {
+                stale: true,
+                replaced: None,
+            });
         }
         let existing_items = existing.as_ref().map(|e| e.item_count()).unwrap_or(0);
         if waiter.item_count() > existing_items && existing_items >= max_items_per_client {
@@ -1235,16 +1235,16 @@ impl AgentHttpWatchService {
             service: self.registry.clone(),
         });
         self.projection.add_update_listener(listener);
-        if let Some(rx) = subscribe_agent_changes() {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                let projection = self.projection.clone();
-                handle.spawn(async move {
-                    let mut rx = rx;
-                    while let Ok((ns, name)) = rx.recv().await {
-                        projection.on_agent_changed(&ns, &name).await;
-                    }
-                });
-            }
+        if let Some(rx) = subscribe_agent_changes()
+            && let Ok(handle) = tokio::runtime::Handle::try_current()
+        {
+            let projection = self.projection.clone();
+            handle.spawn(async move {
+                let mut rx = rx;
+                while let Ok((ns, name)) = rx.recv().await {
+                    projection.on_agent_changed(&ns, &name).await;
+                }
+            });
         }
     }
 

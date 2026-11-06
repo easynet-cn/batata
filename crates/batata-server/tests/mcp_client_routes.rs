@@ -258,7 +258,7 @@ async fn release_creates_server_and_returns_id() {
         &app,
         test::TestRequest::post()
             .uri("/v3/client/ai/mcp")
-            .set_json(&registration("2.0.0", "calc"))
+            .set_json(registration("2.0.0", "calc"))
             .to_request(),
     )
     .await;
@@ -281,7 +281,7 @@ async fn release_draft_returns_detail() {
         &app,
         test::TestRequest::post()
             .uri("/v3/client/ai/mcp?createDraft=true")
-            .set_json(&registration("3.0.0", "draft-tool"))
+            .set_json(registration("3.0.0", "draft-tool"))
             .to_request(),
     )
     .await;

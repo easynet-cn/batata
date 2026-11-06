@@ -545,7 +545,7 @@ async fn admin_user_tokens_crud() {
 // ===== Server config endpoints =====
 
 #[actix_web::test]
-async fn server_portal_db_config_returns_empty() {
+async fn server_portal_db_config_returns_a_bare_list() {
     let p = common::make_embedded_persistence().await;
     let app = test::init_service(
         App::new()
@@ -563,11 +563,32 @@ async fn server_portal_db_config_returns_empty() {
     .await;
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.is_object());
+    assert!(body.is_array(), "upstream returns List<ServerConfig>");
+
+    // Success path: an upsert is visible on the very same GET endpoint.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/server/portal-db/config")
+            .set_json(serde_json::json!({ "key": "k1", "value": "v1" }))
+            .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success());
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/server/portal-db/config")
+            .to_request(),
+    )
+    .await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["key"], "k1");
 }
 
 #[actix_web::test]
-async fn server_portal_db_config_find_all_returns_empty() {
+async fn server_portal_db_config_find_all_returns_a_bare_list() {
     let p = common::make_embedded_persistence().await;
     let app = test::init_service(
         App::new()
@@ -576,21 +597,21 @@ async fn server_portal_db_config_find_all_returns_empty() {
     )
     .await;
 
-    let resp = test::call_service(
-        &app,
-        test::TestRequest::get()
-            .uri("/openapi/v1/server/portal-db/config/find-all")
-            .to_request(),
-    )
-    .await;
-    assert!(resp.status().is_success());
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["content"], serde_json::json!([]));
-    assert_eq!(body["total"], 0);
+    // Both the upstream spelling and batata's older alias must agree.
+    for uri in [
+        "/openapi/v1/server/portal-db/config/find-all",
+        "/openapi/v1/server/portal-db/config/find-all-config",
+    ] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert!(resp.status().is_success(), "GET {uri}");
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array(), "GET {uri} returns List<ServerConfig>");
+        assert!(body.as_array().unwrap().is_empty());
+    }
 }
 
 #[actix_web::test]
-async fn server_env_config_db_config_returns_empty() {
+async fn server_env_config_db_config_returns_a_bare_list() {
     let p = common::make_embedded_persistence().await;
     let app = test::init_service(
         App::new()
@@ -608,11 +629,30 @@ async fn server_env_config_db_config_returns_empty() {
     .await;
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body.is_object());
+    assert!(body.is_array(), "upstream returns List<ServerConfig>");
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/openapi/v1/server/envs/DEV/config-db/config")
+            .set_json(serde_json::json!({ "key": "env-k", "value": "env-v" }))
+            .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success());
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/openapi/v1/server/envs/DEV/config-db/config")
+            .to_request(),
+    )
+    .await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body[0]["key"], "env-k");
 }
 
 #[actix_web::test]
-async fn server_env_config_db_config_find_all_returns_empty() {
+async fn server_env_config_db_config_find_all_returns_a_bare_list() {
     let p = common::make_embedded_persistence().await;
     let app = test::init_service(
         App::new()
@@ -621,16 +661,16 @@ async fn server_env_config_db_config_find_all_returns_empty() {
     )
     .await;
 
-    let resp = test::call_service(
-        &app,
-        test::TestRequest::get()
-            .uri("/openapi/v1/server/envs/DEV/config-db/config/find-all")
-            .to_request(),
-    )
-    .await;
-    assert!(resp.status().is_success());
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["content"], serde_json::json!([]));
+    for uri in [
+        "/openapi/v1/server/envs/DEV/config-db/config/find-all",
+        "/openapi/v1/server/envs/DEV/config-db/config/find-all-config",
+    ] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert!(resp.status().is_success(), "GET {uri}");
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array(), "GET {uri} returns List<ServerConfig>");
+        assert!(body.as_array().unwrap().is_empty());
+    }
 }
 
 // ===== Config supplementary endpoints =====

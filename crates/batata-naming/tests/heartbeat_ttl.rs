@@ -82,10 +82,11 @@ fn registry() -> Arc<InstanceCheckRegistry> {
 }
 
 fn config_1s() -> Arc<HealthCheckConfig> {
-    let mut c = HealthCheckConfig::default();
-    c.heartbeat_interval_secs = 1;
-    c.health_check_enabled = true;
-    Arc::new(c)
+    Arc::new(HealthCheckConfig {
+        heartbeat_interval_secs: 1,
+        health_check_enabled: true,
+        ..Default::default()
+    })
 }
 
 fn chain() -> Arc<HealthCheckInterceptorChain> {
@@ -99,9 +100,9 @@ fn chain() -> Arc<HealthCheckInterceptorChain> {
 /// The checkers loop forever, so the tests drive them for one or two intervals
 /// and then stop. `settle` is generous relative to the 1s interval while the
 /// timeouts under test are 0, so nothing here races the clock.
-async fn drive_for<T: Send + Sync + 'static>(checker: Arc<T>, settle: u64)
+async fn drive_for<T>(checker: Arc<T>, settle: u64)
 where
-    T: CheckerLoop,
+    T: CheckerLoop + 'static,
 {
     let handle = tokio::spawn(async move { checker.start().await });
     tokio::time::sleep(Duration::from_millis(settle)).await;

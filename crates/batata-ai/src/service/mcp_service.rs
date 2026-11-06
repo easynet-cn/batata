@@ -218,6 +218,78 @@ impl McpServerOperationService {
         }
     }
 
+    /// Initialize the `ai_resource` row for a server whose first version is a
+    /// draft.
+    ///
+    /// Mirrors upstream `McpLifecycleOperationService.buildInitialDraftResource`:
+    /// `createMcpServerDraft` inserts the resource when `findMeta` returns
+    /// null, with no published `latest` and no `editingVersion`. Without this,
+    /// `POST /draft` fails for a brand-new server and the console editor can
+    /// never create one.
+    async fn create_initial_draft_resource(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<AiResourceInfo> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let now_db = now.naive_utc().to_string();
+        let version_info = ResourceVersionInfo::default();
+
+        self.persistence
+            .ai_resource_insert(&AiResourceInfo {
+                id: 0,
+                name: registration.name.clone(),
+                resource_type: resource_type::MCP.to_string(),
+                description: Some(registration.description.clone()),
+                status: Some(meta_status::ENABLE.to_string()),
+                namespace_id: namespace.to_string(),
+                biz_tags: None,
+                ext: Some(Self::ext_json(&id)?),
+                from: MCP_DEFAULT_FROM.to_string(),
+                version_info: Some(serde_json::to_string(&version_info)?),
+                meta_version: 1,
+                scope: scope::PRIVATE.to_string(),
+                owner: String::new(),
+                download_count: 0,
+                gmt_create: Some(now_db.clone()),
+                gmt_modified: Some(now_db),
+            })
+            .await?;
+
+        // Re-read so the CAS in `save_version_info` uses the persisted
+        // meta_version rather than the value we proposed on insert.
+        let resource = self
+            .persistence
+            .ai_resource_find(namespace, &registration.name, resource_type::MCP)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP server '{}' was not persisted in namespace '{}'",
+                    registration.name,
+                    namespace
+                )
+            })?;
+
+        // The in-memory index backs the synchronous list API; a draft-only
+        // server has no published version yet.
+        self.index.upsert(McpServerIndexData {
+            id,
+            name: registration.name.clone(),
+            namespace: namespace.to_string(),
+            protocol: "mcp".to_string(),
+            description: registration.description.clone(),
+            latest_published_version: String::new(),
+            version_count: 1,
+            create_time: now.timestamp_millis(),
+            modify_time: now.timestamp_millis(),
+            scope: scope::PRIVATE.to_string(),
+            owner: String::new(),
+        });
+
+        Ok(resource)
+    }
+
     /// Resolve (id, name) from the caller-supplied id or name.
     async fn resolve_server(
         &self,
@@ -372,13 +444,19 @@ impl McpServerOperationService {
             .await?;
 
         let resource_version = Self::parse_resource_version(&resource);
-        let latest = resource_version
+        // A server whose first version is a draft has no published `latest`
+        // label yet. The plain detail endpoint must still resolve its working
+        // version, otherwise `GET /mcp` reports "not found" for the server
+        // that was just created through `POST /draft`.
+        let default_version = resource_version
             .latest_version()
+            .or(resource_version.editing_version.as_ref())
+            .or(resource_version.reviewing_version.as_ref())
             .cloned()
             .unwrap_or_default();
         let target_version = version
             .filter(|v| !v.is_empty())
-            .unwrap_or(&latest)
+            .unwrap_or(&default_version)
             .to_string();
 
         let stored = match self
@@ -867,17 +945,19 @@ impl McpServerOperationService {
         let name = &registration.name;
         let version = &registration.version;
 
-        let resource = self
+        // Upstream creates the resource directory on the first draft, so a
+        // brand-new server can be created directly through `POST /draft`.
+        let resource = match self
             .persistence
             .ai_resource_find(namespace, name, resource_type::MCP)
             .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "MCP server '{}' not found in namespace '{}'",
-                    name,
-                    namespace
-                )
-            })?;
+        {
+            Some(resource) => resource,
+            None => {
+                self.create_initial_draft_resource(namespace, registration)
+                    .await?
+            }
+        };
 
         let mut resource_version = Self::parse_resource_version(&resource);
         if let Some(ref editing) = resource_version.editing_version {

@@ -710,10 +710,10 @@ fn to_candidate(entry: &McpRegistryEntry) -> AiResourceImportCandidateItem {
         if let Some(protocol) = registry_protocol(server) {
             metadata.insert("protocol".to_string(), protocol.to_string());
         }
-        if let Some(url) = server.repository.as_ref().map(|each| each.url.as_str()) {
-            if !url.is_empty() {
-                metadata.insert("repository".to_string(), url.to_string());
-            }
+        if let Some(url) = server.repository.as_ref().map(|each| each.url.as_str())
+            && !url.is_empty()
+        {
+            metadata.insert("repository".to_string(), url.to_string());
         }
     }
     AiResourceImportCandidateItem {
@@ -1149,9 +1149,9 @@ async fn validate(
         let mut validation_item = match fetch_artifact(&source, &namespace, limit, item).await {
             Ok(artifact) => match validate_artifact(&svc, &namespace, &artifact).await {
                 Ok(validation_item) => validation_item,
-                Err(message) => invalid_item(&item, &message),
+                Err(message) => invalid_item(item, &message),
             },
-            Err(message) => invalid_item(&item, &message),
+            Err(message) => invalid_item(item, &message),
         };
         // Upstream keeps `overwriteExisting` out of the per-item verdict; a
         // conflict is still a conflict, the caller decides at execute time.
@@ -1313,14 +1313,18 @@ fn failed_item(
 // Route registration
 // ============================================================================
 
-/// Register the import endpoints under a `/import` scope.
+/// Register the import endpoints under `prefix`.
 ///
 /// `api_type` is the only thing that separates the two mounts: upstream has
 /// `AiResourceImportAdminController` (`ApiType.ADMIN_API`) and
 /// `ConsoleAiResourceImportController` (`ApiType.CONSOLE_API`) over the same
-/// four paths.
-fn routes_with(api_type: ApiType) -> Scope {
-    web::scope("/import")
+/// four paths. `prefix` differs because the admin mount already sits under a
+/// shared `/ai` scope, while the console mount must be a fully-qualified scope:
+/// a bare `web::scope("/ai")` registered before the sibling `/ai/a2a`,
+/// `/ai/mcp`, ... scopes would swallow every one of them (actix does not fall
+/// back to sibling services once a scope matches).
+fn routes_with(api_type: ApiType, prefix: &'static str) -> Scope {
+    web::scope(prefix)
         .route(
             "/sources",
             web::get().to(
@@ -1365,12 +1369,15 @@ fn routes_with(api_type: ApiType) -> Scope {
         )
 }
 
-/// Admin mount: `/v3/admin/ai/import`.
+/// Admin mount: nested under `/v3/admin/ai`, hence the `/import` prefix.
 pub fn admin_routes() -> Scope {
-    routes_with(ApiType::AdminApi)
+    routes_with(ApiType::AdminApi, "/import")
 }
 
-/// Console mount: `/v3/console/ai/import`.
+/// Console mount: `/v3/console/ai/import` as one fully-qualified scope.
+///
+/// Callers must register this directly under `/v3/console`; wrapping it in
+/// another `web::scope("/ai")` reintroduces the sibling-shadowing bug.
 pub fn console_routes() -> Scope {
-    routes_with(ApiType::ConsoleApi)
+    routes_with(ApiType::ConsoleApi, "/ai/import")
 }

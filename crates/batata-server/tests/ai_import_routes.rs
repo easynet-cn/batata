@@ -157,8 +157,7 @@ async fn build_app(
                 web::scope("/v3/admin/ai").service(batata_console::v3::ai_import::admin_routes()),
             )
             .service(
-                web::scope("/v3/console/ai")
-                    .service(batata_console::v3::ai_import::console_routes()),
+                web::scope("/v3/console").service(batata_console::v3::ai_import::console_routes()),
             ),
     )
     .await

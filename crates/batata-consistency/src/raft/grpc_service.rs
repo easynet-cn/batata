@@ -224,7 +224,7 @@ impl RaftService for RaftGrpcService {
                 meta = chunk.meta.clone();
             }
             if vote.is_none() {
-                vote = super::proto_convert::from_proto_vote(chunk.vote.clone());
+                vote = super::proto_convert::from_proto_vote(chunk.vote);
             }
 
             file.write_all(&chunk.data).await.map_err(|e| {

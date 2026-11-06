@@ -216,6 +216,26 @@ pub struct ImportFailItem {
     pub reason: String,
 }
 
+/// One source config selected for a clone operation.
+///
+/// Upstream `SameNamespaceCloneConfigBean` carries `cfgId`, `dataId` and
+/// `group`. batata's embedded backend has no integer config ids (it reports
+/// `id: 0`), so `dataId`/`group` are the authoritative identity and must be
+/// passed all the way down to the datasource for a natural-key fallback.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneConfigInfo {
+    /// The integer id (0 when the backend does not expose one).
+    #[serde(default)]
+    pub cfg_id: i64,
+    /// The config data id.
+    #[serde(default)]
+    pub data_id: String,
+    /// The config group.
+    #[serde(default)]
+    pub group: String,
+}
+
 /// Import conflict resolution policy
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SameConfigPolicy {

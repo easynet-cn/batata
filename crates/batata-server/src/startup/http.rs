@@ -165,6 +165,12 @@ pub fn console_server(
                         .service(console_prompt::routes())
                         .service(console_pipeline::routes())
                         .service(batata_copilot::copilot_console_routes())
+                        // Keep this bare `/ai` scope LAST. actix does not fall
+                        // back to sibling services once a scope matches, so a
+                        // `/ai` scope registered before `/ai/a2a`, `/ai/mcp`,
+                        // ... swallows all of them (404). The console importer
+                        // is now a fully-qualified `/ai/import` scope for the
+                        // same reason.
                         .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
                 )
                 .configure(batata_console::configure_v2_console_routes),

@@ -852,7 +852,7 @@ async fn get_release_history_by_release_id(
             let filtered: Vec<_> = all
                 .into_iter()
                 .filter(|h| h.release_id == release_id)
-                .filter(|h| operation.map_or(true, |op| h.operation == op))
+                .filter(|h| operation.is_none_or(|op| h.operation == op))
                 .collect();
             let total = filtered.len();
             let content: Vec<_> = filtered.into_iter().skip(page * size).take(size).collect();
@@ -892,7 +892,7 @@ async fn get_release_history_by_previous_release_id(
             let filtered: Vec<_> = all
                 .into_iter()
                 .filter(|h| h.previous_release_id == previous_release_id)
-                .filter(|h| operation.map_or(true, |op| h.operation == op))
+                .filter(|h| operation.is_none_or(|op| h.operation == op))
                 .collect();
             let total = filtered.len();
             let content: Vec<_> = filtered.into_iter().skip(page * size).take(size).collect();

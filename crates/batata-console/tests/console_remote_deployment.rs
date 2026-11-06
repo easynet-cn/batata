@@ -87,10 +87,10 @@ async fn wait_for_http(base: &str, path: &str, timeout: Duration) -> bool {
     let url = format!("{base}{path}");
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if let Ok(resp) = reqwest::get(&url).await {
-            if resp.status().is_success() {
-                return true;
-            }
+        if let Ok(resp) = reqwest::get(&url).await
+            && resp.status().is_success()
+        {
+            return true;
         }
         if tokio::time::Instant::now() >= deadline {
             return false;
@@ -181,7 +181,7 @@ async fn console_remote_deployment_proxies_to_core() {
                 core_store.display()
             ),
         ])
-        .stdout(std::fs::File::create(root.join("/tmp/it-core.log")).unwrap())
+        .stdout(std::fs::File::create("/tmp/it-core.log").unwrap())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn core");
@@ -225,7 +225,7 @@ async fn console_remote_deployment_proxies_to_core() {
                 console_store.display()
             ),
         ])
-        .stdout(std::fs::File::create(root.join("/tmp/it-console-remote.log")).unwrap())
+        .stdout(std::fs::File::create("/tmp/it-console-remote.log").unwrap())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn console-remote");
@@ -567,7 +567,7 @@ async fn console_remote_deployment_bootstraps_first_admin() {
                 core_store.display()
             ),
         ])
-        .stdout(std::fs::File::create(root.join("/tmp/it-boot-core.log")).unwrap())
+        .stdout(std::fs::File::create("/tmp/it-boot-core.log").unwrap())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn core");
@@ -606,7 +606,7 @@ async fn console_remote_deployment_bootstraps_first_admin() {
                 console_store.display()
             ),
         ])
-        .stdout(std::fs::File::create(root.join("/tmp/it-boot-console.log")).unwrap())
+        .stdout(std::fs::File::create("/tmp/it-boot-console.log").unwrap())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn console-remote");

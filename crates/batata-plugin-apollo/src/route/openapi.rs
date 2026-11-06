@@ -1,16 +1,19 @@
 use crate::api::dto::{
     AppDTO, AppNamespaceDTO, ClusterDTO, CommitDTO, ConfigExportDTO, ConfigImportDTO,
-    ErrorResponse, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO,
+    ErrorResponse, GrayReleaseRuleDTO, ItemChangeSets, ItemDTO, NamespaceDTO, RoleDTO,
+    ServerConfigDTO,
 };
+use crate::auth::role::{build_cluster_role_name, build_cluster_target_id};
 use crate::persistence::shared::StoredRelease;
 use crate::persistence::traits::{
-    ApolloPersistenceService, NamespacePersistence, ReleasePersistence,
+    ApolloPersistenceService, NamespacePersistence, ReleasePersistence, RolePersistence,
+    UserPersistence,
 };
 use crate::service::{
     AccessKeyService, AppNamespaceService, AppService, AuditService, ClusterService, CommitService,
     ConsumerService, ConsumerTokenService, FavoriteService, GrayReleaseRuleService,
-    InstanceService, ItemService, ItemSetService, NamespaceService, ReleaseService, SearchService,
-    UserTokenService,
+    InstanceService, ItemService, ItemSetService, NamespaceService, ReleaseService, RoleService,
+    SearchService, ServerConfigService, UserTokenService,
 };
 use actix_web::{HttpResponse, Responder, web};
 use chrono::Utc;
@@ -1931,12 +1934,85 @@ async fn openapi_assign_consumer_role(
 }
 
 // ===== User token endpoints =====
+
+/// Builds the upstream `OpenUserTokenInfo` / `OpenCreateUserTokenResponse`
+/// shape. The sea-orm model must never be serialized directly: it contains the
+/// `token_hash`, which would hand out a credential-derived secret to readers.
+fn user_token_view(
+    model: &crate::entity::apollo_user_token::Model,
+    token_value: Option<&str>,
+) -> Value {
+    let revoked = model.is_deleted
+        || model
+            .revoked_at
+            .is_some_and(|t| t.and_utc().timestamp() != 0);
+    let mut view = serde_json::json!({
+        "id": model.id,
+        "userId": model.user_id,
+        "name": model.name,
+        "tokenPrefix": model.token_prefix,
+        "status": if revoked { "REVOKED" } else { "ACTIVE" },
+        "operations": [],
+        "appIds": [],
+        "envs": [],
+        "namespaces": [],
+        "rateLimit": model.rate_limit,
+        "expires": model.expires.format("%Y-%m-%dT%H:%M:%S+00:00").to_string(),
+        "dataChangeCreatedTime": model
+            .data_change_created_time
+            .format("%Y-%m-%dT%H:%M:%S+00:00")
+            .to_string(),
+    });
+    if let Some(token) = token_value {
+        view["tokenValue"] = Value::String(token.to_string());
+        // Legacy alias kept so older clients/tests keep working.
+        view["token"] = Value::String(token.to_string());
+    }
+    view
+}
+
+/// Upstream `UserTokenCreateRequest.name` plus the optional `expires` field.
+/// `description` is accepted as a legacy alias for batata's older clients.
+fn user_token_request(body: &Value) -> (String, Option<chrono::DateTime<chrono::Utc>>) {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| body.get("description").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let expires = body
+        .get("expires")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| {
+            use chrono::{NaiveDate, TimeZone};
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+                return Some(dt.with_timezone(&chrono::Utc));
+            }
+            NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(23, 59, 59))
+                .map(|naive| chrono::Utc.from_utc_datetime(&naive))
+        });
+    (name, expires)
+}
+
+fn user_token_created(token: &str, model: &crate::entity::apollo_user_token::Model) -> Value {
+    let mut body = user_token_view(model, Some(token));
+    body["model"] = user_token_view(model, None);
+    body
+}
+
 async fn openapi_list_user_tokens(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
 ) -> impl Responder {
     let service = UserTokenService::new(data.get_ref().clone());
     match service.list("apollo").await {
-        Ok(tokens) => HttpResponse::Ok().json(tokens),
+        Ok(tokens) => HttpResponse::Ok().json(
+            tokens
+                .iter()
+                .map(|t| user_token_view(t, None))
+                .collect::<Vec<_>>(),
+        ),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -1948,16 +2024,10 @@ async fn openapi_create_user_token(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
     body: web::Json<Value>,
 ) -> impl Responder {
-    let description = body
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let (name, expires) = user_token_request(&body);
     let service = UserTokenService::new(data.get_ref().clone());
-    match service.create("apollo", description, "apollo", None).await {
-        Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
-            "token": token,
-            "model": model,
-        })),
+    match service.create("apollo", &name, "apollo", expires).await {
+        Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -1986,12 +2056,24 @@ async fn openapi_rotate_user_token(
 ) -> impl Responder {
     let id = path.into_inner();
     let service = UserTokenService::new(data.get_ref().clone());
+    // Upstream keeps the token name when rotating; read it before the old row
+    // is soft-deleted so the replacement stays identifiable in the list.
+    let name = match service.list("apollo").await {
+        Ok(tokens) => tokens
+            .into_iter()
+            .find(|t| t.id == id)
+            .map(|t| t.name)
+            .unwrap_or_else(|| "rotated".to_string()),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
+    };
     match service.revoke(id).await {
-        Ok(_) => match service.create("apollo", "rotated", "apollo", None).await {
-            Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
-                "token": token,
-                "model": model,
-            })),
+        Ok(_) => match service.create("apollo", &name, "apollo", None).await {
+            Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
             Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
                 status: 400,
                 message: e.to_string(),
@@ -2033,7 +2115,12 @@ async fn openapi_list_admin_user_tokens(
 ) -> impl Responder {
     let service = UserTokenService::new(data.get_ref().clone());
     match service.list("apollo").await {
-        Ok(tokens) => HttpResponse::Ok().json(tokens),
+        Ok(tokens) => HttpResponse::Ok().json(
+            tokens
+                .iter()
+                .map(|t| user_token_view(t, None))
+                .collect::<Vec<_>>(),
+        ),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),
@@ -2049,16 +2136,10 @@ async fn openapi_create_admin_user_token(
         .get("userId")
         .and_then(|v| v.as_str())
         .unwrap_or("apollo");
-    let description = body
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let (name, expires) = user_token_request(&body);
     let service = UserTokenService::new(data.get_ref().clone());
-    match service.create(user_id, description, "apollo", None).await {
-        Ok((token, model)) => HttpResponse::Ok().json(serde_json::json!({
-            "token": token,
-            "model": model,
-        })),
+    match service.create(user_id, &name, "apollo", expires).await {
+        Ok((token, model)) => HttpResponse::Ok().json(user_token_created(&token, &model)),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,
             message: e.to_string(),
@@ -2097,30 +2178,73 @@ async fn openapi_delete_admin_user_token(
 }
 
 // ===== Server config endpoints =====
-async fn openapi_server_portal_db_config(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({}))
+// Upstream `ServerConfigController` (portal openapi): GET/POST/DELETE on
+// `/server/{portal-db,envs/{env}/config-db}/config` plus
+// `.../config/find-all-config`, which returns a bare `List<ServerConfig>`.
+// batata is single-tenant so the `env`/`cluster` selectors are accepted but do
+// not scope the stored rows.
+
+/// Query for `DELETE /server/.../config`.
+#[derive(Debug, Deserialize)]
+struct OpenServerConfigDeleteQuery {
+    key: String,
+    #[allow(dead_code)]
+    cluster: Option<String>,
+    operator: Option<String>,
 }
 
-async fn openapi_server_env_config_db_config(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<String>,
+async fn openapi_server_config_list(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({}))
+    let service = ServerConfigService::new(data.get_ref().clone());
+    match service.list().await {
+        Ok(list) => HttpResponse::Ok().json(list),
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: e.to_string(),
+        }),
+    }
 }
 
-async fn openapi_server_portal_db_config_find_all(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+async fn openapi_server_config_upsert(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    body: web::Json<ServerConfigDTO>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({ "content": [], "total": 0 }))
+    let mut dto = body.into_inner();
+    // `@Valid ServerConfig` rejects blank key/value; keep the modal open on
+    // invalid input instead of silently storing an empty row.
+    if dto.key.trim().is_empty() || dto.value.trim().is_empty() {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "ServerConfig key and value can not be empty".to_string(),
+        });
+    }
+    if dto.data_change_created_by.is_none() {
+        dto.data_change_created_by = Some("apollo".to_string());
+    }
+    let service = ServerConfigService::new(data.get_ref().clone());
+    match service.create_or_update(dto).await {
+        Ok(config) => HttpResponse::Ok().json(config),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
 }
 
-async fn openapi_server_env_config_db_config_find_all(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<String>,
+async fn openapi_server_config_delete(
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<OpenServerConfigDeleteQuery>,
 ) -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({ "content": [], "total": 0 }))
+    let operator = query.operator.as_deref().unwrap_or("apollo");
+    let service = ServerConfigService::new(data.get_ref().clone());
+    match service.delete(&query.key, operator).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
 }
 
 // PMISC-019: GET /openapi/v1/favorites - favorites list
@@ -2764,6 +2888,14 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(openapi_cluster_roles_post))
             .route(web::delete().to(openapi_cluster_roles_delete)),
     )
+    // Upstream `PermissionController` spells the cluster role path `ns_roles`
+    // (the `roles` spelling above is batata's SDK-compatible alias).
+    .service(
+        web::resource("/openapi/v1/apps/{app_id}/envs/{env}/clusters/{cluster_name}/ns_roles/{role_type}").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_cluster_roles_get))
+            .route(web::post().to(openapi_cluster_roles_post))
+            .route(web::delete().to(openapi_cluster_roles_delete)),
+    )
     // system roles
     .service(
         web::resource("/openapi/v1/system/roles/create-application").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
@@ -2853,11 +2985,14 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(openapi_user_token_capabilities)),
     )
     .service(
+        // Upstream `UserTokenService.js` uses POST; PUT is kept as an alias.
         web::resource("/openapi/v1/user-tokens/{id}/revoke").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_revoke_user_token))
             .route(web::put().to(openapi_revoke_user_token)),
     )
     .service(
         web::resource("/openapi/v1/user-tokens/{id}/rotate").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::post().to(openapi_rotate_user_token))
             .route(web::put().to(openapi_rotate_user_token)),
     )
     .service(
@@ -2880,19 +3015,32 @@ pub fn configure_openapi_routes(cfg: &mut web::ServiceConfig) {
     // ===== Server config endpoints =====
     .service(
         web::resource("/openapi/v1/server/portal-db/config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
-            .route(web::get().to(openapi_server_portal_db_config)),
+            .route(web::get().to(openapi_server_config_list))
+            .route(web::post().to(openapi_server_config_upsert))
+            .route(web::delete().to(openapi_server_config_delete)),
     )
     .service(
+        web::resource("/openapi/v1/server/portal-db/config/find-all-config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_config_list)),
+    )
+    .service(
+        // batata's earlier spelling — retained so existing clients do not 404.
         web::resource("/openapi/v1/server/portal-db/config/find-all").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
-            .route(web::get().to(openapi_server_portal_db_config_find_all)),
+            .route(web::get().to(openapi_server_config_list)),
     )
     .service(
         web::resource("/openapi/v1/server/envs/{env}/config-db/config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
-            .route(web::get().to(openapi_server_env_config_db_config)),
+            .route(web::get().to(openapi_server_config_list))
+            .route(web::post().to(openapi_server_config_upsert))
+            .route(web::delete().to(openapi_server_config_delete)),
+    )
+    .service(
+        web::resource("/openapi/v1/server/envs/{env}/config-db/config/find-all-config").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
+            .route(web::get().to(openapi_server_config_list)),
     )
     .service(
         web::resource("/openapi/v1/server/envs/{env}/config-db/config/find-all").wrap(crate::middleware::auth::OpenApiAuthMiddleware::new())
-            .route(web::get().to(openapi_server_env_config_db_config_find_all)),
+            .route(web::get().to(openapi_server_config_list)),
     );
 }
 
@@ -4037,10 +4185,8 @@ async fn openapi_namespace_usage(
         .unwrap_or_default();
     let mut used_by = Vec::new();
     for ns in all_ns {
-        if ns.namespace_name == namespace_name && !ns.is_deleted {
-            if !used_by.contains(&ns.app_id) {
-                used_by.push(ns.app_id.clone());
-            }
+        if ns.namespace_name == namespace_name && !ns.is_deleted && !used_by.contains(&ns.app_id) {
+            used_by.push(ns.app_id.clone());
         }
     }
     HttpResponse::Ok().json(serde_json::json!({
@@ -4268,34 +4414,152 @@ async fn openapi_namespace_roles_env_delete(
     HttpResponse::Ok().finish()
 }
 
+/// Resolves the upstream cluster role name (`{roleType}+{appId}+{env}+{cluster}`)
+/// to a stored role id. When `create` is set, a missing role is created lazily,
+/// matching `RolePermissionService.assignRoleToUsers`.
+async fn cluster_role_id(
+    data: &web::Data<Arc<dyn ApolloPersistenceService>>,
+    app_id: &str,
+    env: &str,
+    cluster_name: &str,
+    role_type: &str,
+    create: bool,
+) -> anyhow::Result<Option<i64>> {
+    let role_name = build_cluster_role_name(app_id, env, cluster_name, role_type);
+    if let Some(role) = RolePersistence::get_role_by_name(data.get_ref(), &role_name).await? {
+        return Ok(Some(role.id));
+    }
+    if !create {
+        return Ok(None);
+    }
+    let service = RoleService::new(data.get_ref().clone());
+    let role = service
+        .create(RoleDTO {
+            id: None,
+            role_name,
+            // Upstream encodes the role type in the name; batata's integer
+            // column carries no extra semantics for portal roles.
+            role_type: 0,
+            target_id: build_cluster_target_id(app_id, env, cluster_name),
+            data_change_created_by: Some("apollo".to_string()),
+            data_change_created_time: None,
+        })
+        .await?;
+    Ok(role.id)
+}
+
+fn cluster_role_error(e: anyhow::Error) -> HttpResponse {
+    HttpResponse::InternalServerError().json(ErrorResponse {
+        status: 500,
+        message: e.to_string(),
+    })
+}
+
 async fn openapi_cluster_roles_get(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
     path: web::Path<(String, String, String, String)>,
 ) -> impl Responder {
-    let (_app_id, _env, _cluster_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, env, cluster_name, role_type) = path.into_inner();
+    let role_id =
+        match cluster_role_id(&data, &app_id, &env, &cluster_name, &role_type, false).await {
+            Ok(id) => id,
+            Err(e) => return cluster_role_error(e),
+        };
+    let Some(role_id) = role_id else {
+        return HttpResponse::Ok().json(Vec::<Value>::new());
+    };
+    let service = RoleService::new(data.get_ref().clone());
+    match service.list_role_users(role_id).await {
+        Ok(users) => HttpResponse::Ok().json(
+            users
+                .into_iter()
+                .map(|user_id| {
+                    serde_json::json!({
+                        "userId": user_id,
+                        "name": user_id,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Err(e) => cluster_role_error(e),
+    }
 }
 
 async fn openapi_cluster_roles_post(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
     path: web::Path<(String, String, String, String)>,
-    _body: web::Json<Value>,
+    body: web::Json<Value>,
 ) -> impl Responder {
-    let (_app_id, _env, _cluster_name, role_type) = path.into_inner();
-    HttpResponse::Ok().json(serde_json::json!({
-        "roleName": role_type.to_uppercase(),
-        "users": [],
-    }))
+    let (app_id, env, cluster_name, role_type) = path.into_inner();
+    // Upstream sends the user id as a raw JSON string body; accept an object
+    // form too so SDK clients can pass `{ userId }`.
+    let user = body
+        .as_str()
+        .or_else(|| body.get("userId").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if user.is_empty() {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "user can not be empty".to_string(),
+        });
+    }
+    let role_id = match cluster_role_id(&data, &app_id, &env, &cluster_name, &role_type, true).await
+    {
+        Ok(id) => id,
+        Err(e) => return cluster_role_error(e),
+    };
+    let Some(role_id) = role_id else {
+        return HttpResponse::InternalServerError().json(ErrorResponse {
+            status: 500,
+            message: "cluster role was not created".to_string(),
+        });
+    };
+    let service = RoleService::new(data.get_ref().clone());
+    match service.assign_role_to_user(&user, role_id, "apollo").await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
 }
 
 async fn openapi_cluster_roles_delete(
-    _data: web::Data<Arc<dyn ApolloPersistenceService>>,
-    _path: web::Path<(String, String, String, String)>,
+    data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    path: web::Path<(String, String, String, String)>,
+    query: web::Query<Value>,
 ) -> impl Responder {
-    HttpResponse::Ok().finish()
+    let (app_id, env, cluster_name, role_type) = path.into_inner();
+    let user = query
+        .get("user")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if user.is_empty() {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "user can not be empty".to_string(),
+        });
+    }
+    let role_id =
+        match cluster_role_id(&data, &app_id, &env, &cluster_name, &role_type, false).await {
+            Ok(id) => id,
+            Err(e) => return cluster_role_error(e),
+        };
+    let Some(role_id) = role_id else {
+        return HttpResponse::Ok().finish();
+    };
+    let service = RoleService::new(data.get_ref().clone());
+    match service.remove_role_from_user(&user, role_id).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::NotFound().json(ErrorResponse {
+            status: 404,
+            message: e.to_string(),
+        }),
+    }
 }
 
 /// System roles: create-application.
@@ -4367,8 +4631,10 @@ async fn openapi_list_users(data: web::Data<Arc<dyn ApolloPersistenceService>>) 
     // be empty, so we synthesize the admin entry directly.
     let mut users = vec![serde_json::json!({
         "username": "apollo",
+        "name": "Apollo",
         "email": "apollo@localhost",
         "realName": "Apollo",
+        "enabled": true,
         "roles": ["ROLE_ADMIN"],
     })];
     if let Ok(persisted) = data.list_users().await {
@@ -4378,8 +4644,10 @@ async fn openapi_list_users(data: web::Data<Arc<dyn ApolloPersistenceService>>) 
             }
             users.push(serde_json::json!({
                 "username": u.username,
+                "name": u.username,
                 "email": u.email,
                 "realName": u.username,
+                "enabled": u.enabled,
                 "roles": [],
             }));
         }
@@ -4387,13 +4655,35 @@ async fn openapi_list_users(data: web::Data<Arc<dyn ApolloPersistenceService>>) 
     HttpResponse::Ok().json(users)
 }
 
-/// PMISC-012 — create a user.
+/// Upstream `UserController.createOrUpdateUser(OpenUserDTO, Boolean isCreate,
+/// String operator)`: the same POST endpoint creates or updates depending on
+/// the `isCreate` request parameter.
+#[derive(Debug, Deserialize)]
+struct CreateUserQuery {
+    #[serde(default, rename = "isCreate")]
+    is_create: bool,
+}
+
+/// PMISC-012 — create (or update) a user.
 async fn openapi_create_user(
     data: web::Data<Arc<dyn ApolloPersistenceService>>,
+    query: web::Query<CreateUserQuery>,
     body: web::Json<crate::api::dto::UserDTO>,
 ) -> impl Responder {
     let dto = body.into_inner();
-    match data.create_user(dto).await {
+    if dto.username.trim().is_empty() || dto.password.trim().is_empty() {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            status: 400,
+            message: "Username and password can not be empty".to_string(),
+        });
+    }
+    let username = dto.username.clone();
+    let result = if query.is_create {
+        data.create_user(dto).await
+    } else {
+        data.update_user(&username, dto).await
+    };
+    match result {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "status": "ok" })),
         Err(e) => HttpResponse::BadRequest().json(ErrorResponse {
             status: 400,

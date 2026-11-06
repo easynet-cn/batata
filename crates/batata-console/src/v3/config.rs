@@ -25,7 +25,7 @@ use batata_api::config::ConfigListenerInfo;
 use batata_common::IdentityContext;
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType,
-    console::api_model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
+    console::api_model::{CloneConfigInfo, ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
     error, is_valid,
     model::{self, AppState, constants::DEFAULT_NAMESPACE_ID},
     secured,
@@ -937,6 +937,10 @@ async fn find_listener_by_ip(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConsoleCloneParam {
+    /// Source namespace. Upstream `ConsoleConfigController` uses `namespaceId`
+    /// and defaults it to the target namespace when blank.
+    #[serde(default, alias = "srcNamespaceId")]
+    pub namespace_id: Option<String>,
     #[serde(alias = "targetNamespaceId")]
     pub target_namespace_id: String,
     #[serde(default = "default_clone_policy")]
@@ -949,24 +953,12 @@ fn default_clone_policy() -> String {
     "ABORT".to_string()
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CloneConfigBean {
-    pub cfg_id: i64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub data_id: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub group: String,
-}
-
 #[post("clone")]
 async fn clone_config(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<ConsoleCloneParam>,
-    body: web::Json<Vec<CloneConfigBean>>,
+    body: web::Json<Vec<CloneConfigInfo>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -986,10 +978,19 @@ async fn clone_config(
         );
     }
 
-    let mut namespace_id = params.target_namespace_id.trim().to_string();
-    if namespace_id.is_empty() {
-        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    let mut target_namespace_id = params.target_namespace_id.trim().to_string();
+    if target_namespace_id.is_empty() {
+        target_namespace_id = DEFAULT_NAMESPACE_ID.to_string();
     }
+    // Upstream defaults the source namespace to the target namespace when the
+    // caller omits `namespaceId`.
+    let src_namespace_id = params
+        .namespace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&target_namespace_id)
+        .to_string();
 
     let src_user = params.src_user.clone().unwrap_or_else(|| {
         req.extensions()
@@ -1003,11 +1004,16 @@ async fn clone_config(
         .unwrap_or_default()
         .to_owned();
 
-    let ids: Vec<i64> = clone_beans.iter().map(|c| c.cfg_id).collect();
-
     match data
         .console_datasource
-        .config_clone(&ids, &namespace_id, &params.policy, &src_user, &src_ip)
+        .config_clone(
+            &clone_beans,
+            &src_namespace_id,
+            &target_namespace_id,
+            &params.policy,
+            &src_user,
+            &src_ip,
+        )
         .await
     {
         Ok(import_result) => model::common::Result::<ImportResult>::http_success(import_result),

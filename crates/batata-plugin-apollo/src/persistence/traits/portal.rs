@@ -265,6 +265,13 @@ pub trait RolePersistence {
     async fn remove_role_from_user(&self, user_id: &str, role_id: i64) -> anyhow::Result<()>;
     /// Returns the requested value.
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>>;
+    /// Lists the ids of the users holding a role.
+    ///
+    /// Upstream `RolePermissionService.queryUsersWithRole(roleName)` resolves
+    /// the role first and then walks `apollo_user_role`. batata keeps the same
+    /// two-step lookup but accepts the resolved role id, so callers do not have
+    /// to re-resolve the role name for every read.
+    async fn list_role_users(&self, role_id: i64) -> anyhow::Result<Vec<String>>;
 }
 
 #[async_trait]
@@ -639,6 +646,9 @@ impl<T: ApolloPersistenceService + ?Sized> RolePersistence for Arc<T> {
     }
     async fn list_user_roles(&self, user_id: &str) -> anyhow::Result<Vec<apollo_role::Model>> {
         RolePersistence::list_user_roles(&**self, user_id).await
+    }
+    async fn list_role_users(&self, role_id: i64) -> anyhow::Result<Vec<String>> {
+        RolePersistence::list_role_users(&**self, role_id).await
     }
 }
 

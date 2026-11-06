@@ -154,6 +154,20 @@ pub fn build_cluster_target_id(app_id: &str, env: &str, cluster_name: &str) -> S
     join(&[Some(app_id), Some(env), Some(cluster_name)])
 }
 
+/// Builds a cluster-scoped namespace role name.
+///
+/// Upstream `RoleUtils.buildClusterRoleName` —
+/// `{roleType}+{appId}+{env}+{clusterName}`. The order differs from the target
+/// id on purpose: upstream puts the role type first here.
+pub fn build_cluster_role_name(
+    app_id: &str,
+    env: &str,
+    cluster_name: &str,
+    role_type: &str,
+) -> String {
+    join(&[Some(role_type), Some(app_id), Some(env), Some(cluster_name)])
+}
+
 /// Extracts the application id from an application master role name.
 ///
 /// Upstream `RoleUtils.extractAppIdFromMasterRoleName`. Returns `None` when the

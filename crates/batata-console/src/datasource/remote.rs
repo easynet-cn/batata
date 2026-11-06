@@ -19,7 +19,7 @@ use batata_api::model::Page;
 use batata_api::naming::Instance;
 use batata_maintainer_client::{MaintainerClient, MaintainerClientConfig};
 use batata_server_common::console::api_model::{
-    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    CloneConfigInfo, ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
@@ -691,7 +691,8 @@ impl ConsoleDataSource for RemoteDataSource {
 
     async fn config_clone(
         &self,
-        _ids: &[i64],
+        _sources: &[CloneConfigInfo],
+        _src_namespace_id: &str,
         _target_namespace_id: &str,
         _policy: &str,
         _src_user: &str,
@@ -1282,7 +1283,7 @@ mod tests {
         assert_eq!(dst.fail_access_cnt, src.fail_access_cnt);
         // Volatile / server-trust fields are normalized by the console mapping.
         assert!(dst.extend_info.is_empty());
-        assert_eq!(dst.grpc_report_enabled, true);
+        assert!(dst.grpc_report_enabled);
     }
 
     #[test]

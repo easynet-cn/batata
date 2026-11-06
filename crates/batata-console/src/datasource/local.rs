@@ -14,7 +14,7 @@ use batata_api::naming::{Instance, NamingServiceProvider, ServiceMetadata};
 use batata_config::model::config::ConfigAllInfo;
 use batata_config::model::export::NacosExportItem;
 use batata_server_common::console::api_model::{
-    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    CloneConfigInfo, ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportFailItem, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
@@ -375,16 +375,75 @@ impl ConsoleDataSource for LocalDataSource {
 
     async fn config_clone(
         &self,
-        ids: &[i64],
+        sources: &[CloneConfigInfo],
+        src_namespace_id: &str,
         target_namespace_id: &str,
-        _policy: &str,
+        policy: &str,
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<ImportResult> {
-        let source_configs = self.persistence.config_find_by_ids(ids).await?;
-
+        let policy = policy
+            .parse::<SameConfigPolicy>()
+            .unwrap_or(SameConfigPolicy::Abort);
         let mut result = ImportResult::default();
-        for config in source_configs {
+
+        // SQL backends resolve configs by integer id. The embedded backend
+        // returns `id: 0` on reads and an empty list from `config_find_by_ids`,
+        // so those configs must be resolved by their natural key instead.
+        let ids: Vec<i64> = sources
+            .iter()
+            .map(|s| s.cfg_id)
+            .filter(|id| *id > 0)
+            .collect();
+        let by_ids = if ids.is_empty() {
+            Vec::new()
+        } else {
+            self.persistence.config_find_by_ids(&ids).await?
+        };
+
+        for bean in sources {
+            let source = match by_ids.iter().find(|c| c.id == bean.cfg_id).cloned() {
+                Some(config) => Some(config),
+                None if !bean.data_id.is_empty() => {
+                    self.persistence
+                        .config_find_one(&bean.data_id, &bean.group, src_namespace_id)
+                        .await?
+                }
+                None => None,
+            };
+            let Some(config) = source else {
+                result.fail_count += 1;
+                result.fail_data.push(ImportFailItem {
+                    data_id: bean.data_id.clone(),
+                    group: bean.group.clone(),
+                    reason: "Source config not found".to_string(),
+                });
+                continue;
+            };
+
+            // Upstream `ConfigCloneService` honours ABORT/SKIP/OVERWRITE.
+            let existing = self
+                .persistence
+                .config_find_one(&config.data_id, &config.group, target_namespace_id)
+                .await?;
+            if existing.is_some() {
+                match policy {
+                    SameConfigPolicy::Abort => {
+                        result.fail_data.push(ImportFailItem {
+                            data_id: config.data_id.clone(),
+                            group: config.group.clone(),
+                            reason: "Config already exists".to_string(),
+                        });
+                        return Ok(result);
+                    }
+                    SameConfigPolicy::Skip => {
+                        result.skip_count += 1;
+                        continue;
+                    }
+                    SameConfigPolicy::Overwrite => {}
+                }
+            }
+
             match self
                 .persistence
                 .config_create_or_update(
@@ -407,7 +466,14 @@ impl ConsoleDataSource for LocalDataSource {
                 .await
             {
                 Ok(_) => result.success_count += 1,
-                Err(_) => result.fail_count += 1,
+                Err(e) => {
+                    result.fail_count += 1;
+                    result.fail_data.push(ImportFailItem {
+                        data_id: config.data_id.clone(),
+                        group: config.group.clone(),
+                        reason: e.to_string(),
+                    });
+                }
             }
         }
         Ok(result)

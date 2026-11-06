@@ -335,7 +335,7 @@ async fn install_hands_restored_instances_to_the_naming_hook() {
         .put_cf(
             &cf,
             b"public@@DEFAULT_GROUP@@svc-a@@1.1.1.1#80#DEFAULT",
-            &bincode::serialize(&stored).unwrap(),
+            bincode::serialize(&stored).unwrap(),
         )
         .unwrap();
     let body = source

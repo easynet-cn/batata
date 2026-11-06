@@ -100,6 +100,16 @@ impl RoleService {
         Ok(models.iter().map(|m| self.model_to_dto(m)).collect())
     }
 
+    /// Lists the ids of the users holding a role.
+    ///
+    /// Upstream `RolePermissionService.queryUsersWithRole`; the returned ids are
+    /// the `apollo_user_role.user_id` values, which may reference users that do
+    /// not exist in batata's local user directory (portal users are managed by
+    /// an external identity provider in some deployments).
+    pub async fn list_role_users(&self, role_id: i64) -> Result<Vec<String>, anyhow::Error> {
+        self.persistence.list_role_users(role_id).await
+    }
+
     fn model_to_dto(&self, model: &apollo_role::Model) -> RoleDTO {
         RoleDTO {
             id: Some(model.id),

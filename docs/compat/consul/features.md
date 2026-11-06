@@ -260,6 +260,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-INT-014 | POST `/v1/internal/acl/authorize` | | 🟢 | | internal ACL authorize |
 | F-CON-INT-015 | GET `/v1/internal/rpc-methods` | | 🟢 | | list advertised RPC methods |
 
+**Node identity (2026-11-06 e2e-driven contract round).** Upstream `agent/ui_endpoint.go:UINodes` serves `F-CON-INT-002` from the catalog node dump (`Internal.NodeDump`), not from Serf members; `F-CON-INT-003` and `F-CON-INT-005` are UI projections of the same catalog. batata used to derive node names from member IPs (`node-{ip}`), so cluster members sharing a loopback address collapsed into duplicate `node-127-0-0-1` entries while `/v1/catalog/nodes` exposed canonical names such as `c1`/`c2`/`c3` — node deep links and the UI search therefore could not resolve. All three UI handlers now use `ConsulCatalogService::get_nodes()` / `node_dump()` as the single source of node names, ids and addresses, and group services/checks by that same canonical key. Regression: `route::tests::test_http_internal_ui_nodes_use_canonical_catalog_names` (mutant-checked). "Route registered" is not the same as "handler implements the upstream contract" — this round fixed handler semantics, not route coverage.
+
 ## 14. Filter expressions (`F-CON-FILT-`)
 
 > Consul's bexpr filter expression syntax on read endpoints.

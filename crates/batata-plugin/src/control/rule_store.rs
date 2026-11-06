@@ -219,10 +219,10 @@ impl FileRuleStore {
         let content = serde_json::to_string_pretty(&data)?;
         let path = std::path::Path::new(&self.file_path);
 
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         // Write to a sibling temp file and rename it into place: a crash

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
+use serde::Deserialize;
 
 use super::ai_trace::{self, get_username, trace_write};
 use batata_common::McpServerService;
@@ -710,6 +711,127 @@ async fn search_servers(
     }
 }
 
+/// Upstream `McpServerDraftForm`: the console posts the specifications as
+/// JSON strings inside a form body (Spring binds the form without
+/// `@RequestBody`), so a `web::Json` extractor rejects the real client with a
+/// 400 "Content type error". Accept a bare JSON registration as well: batata's
+/// own route tests and SDK clients post one directly.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpDraftForm {
+    #[serde(default)]
+    namespace_id: Option<String>,
+    #[serde(default)]
+    mcp_name: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    server_specification: Option<String>,
+    #[serde(default)]
+    tool_specification: Option<String>,
+    #[serde(default)]
+    resource_specification: Option<String>,
+    #[serde(default)]
+    endpoint_specification: Option<String>,
+}
+
+/// Fold a specification JSON value into a list, accepting both the wrapped
+/// upstream shapes (`{"tools": [...]}`, `{"resources": [...]}`) and a bare
+/// array, which is what older batata clients send.
+fn spec_entries<T: serde::de::DeserializeOwned>(json: &str, key: &str) -> Result<Vec<T>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Invalid {key}Specification: {e}"))?;
+    let entries = value.get(key).cloned().unwrap_or(value);
+    serde_json::from_value(entries).map_err(|e| format!("Invalid {key}Specification: {e}"))
+}
+
+impl McpDraftForm {
+    fn into_registration(self) -> Result<McpServerRegistration, String> {
+        let server_json = self
+            .server_specification
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "{}".to_string());
+        let mut reg: McpServerRegistration = serde_json::from_str(&server_json)
+            .map_err(|e| format!("Invalid serverSpecification: {e}"))?;
+
+        // Upstream `McpRequestUtil.parseMcpServerBasicInfo` takes the identity
+        // from the form-level fields even when the specification repeats it.
+        if let Some(name) = self.mcp_name.as_deref()
+            && !name.is_empty()
+        {
+            reg.name = name.to_string();
+        }
+        if let Some(ns) = self.namespace_id.as_deref()
+            && !ns.is_empty()
+        {
+            reg.namespace = ns.to_string();
+        }
+        if let Some(version) = self.version.as_deref()
+            && !version.is_empty()
+        {
+            reg.version = version.to_string();
+        }
+        if let Some(tools) = self.tool_specification.as_deref()
+            && !tools.trim().is_empty()
+        {
+            reg.tools = spec_entries(tools, "tools")?;
+        }
+        if let Some(resources) = self.resource_specification.as_deref()
+            && !resources.trim().is_empty()
+        {
+            reg.resources = spec_entries(resources, "resources")?;
+        }
+        if let Some(endpoint) = self.endpoint_specification.as_deref()
+            && !endpoint.trim().is_empty()
+        {
+            let spec: serde_json::Value = serde_json::from_str(endpoint)
+                .map_err(|e| format!("Invalid endpointSpecification: {e}"))?;
+            if let Some(data) = spec.get("data").and_then(|d| d.as_object()) {
+                let address = data.get("address").and_then(|v| v.as_str());
+                let port = data.get("port").and_then(|v| v.as_u64()).or_else(|| {
+                    data.get("port")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<u64>().ok())
+                });
+                if let (Some(address), Some(port)) = (address, port) {
+                    reg.endpoint = format!("{address}:{port}");
+                }
+            } else if !reg.endpoint.is_empty() {
+                // A bare endpoint object is already represented by the server
+                // specification; nothing to fold in.
+            }
+        }
+        Ok(reg)
+    }
+}
+
+/// Read a draft registration from either a form body or a JSON body.
+fn parse_draft_registration(
+    content_type: &str,
+    body: &[u8],
+) -> Result<McpServerRegistration, String> {
+    let body = body.trim_ascii();
+    if body.is_empty() {
+        return Err("a server specification is required".to_string());
+    }
+    if content_type.contains("json") || body.first() == Some(&b'{') {
+        return serde_json::from_slice(body)
+            .map_err(|e| format!("Invalid server specification: {e}"));
+    }
+    let form: McpDraftForm =
+        serde_urlencoded::from_bytes(body).map_err(|e| format!("Invalid form body: {e}"))?;
+    form.into_registration()
+}
+
+fn request_content_type(req: &HttpRequest) -> String {
+    use actix_web::http::header::CONTENT_TYPE;
+    req.headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
 /// Create a draft version of an MCP server
 /// POST /v3/console/ai/mcp/draft
 #[post("/draft")]
@@ -718,7 +840,7 @@ async fn create_draft(
     data: web::Data<AppState>,
     svc: web::Data<Arc<dyn McpServerService>>,
     params: web::Query<McpDraftCreateQuery>,
-    body: web::Json<McpServerRegistration>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -729,7 +851,10 @@ async fn create_draft(
     );
 
     let q = params.into_inner();
-    let reg = body.into_inner();
+    let reg = match parse_draft_registration(&request_content_type(&req), &body) {
+        Ok(reg) => reg,
+        Err(message) => return bad_request(&message),
+    };
     let namespace = if reg.namespace.is_empty() {
         "public"
     } else {
@@ -752,7 +877,7 @@ async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     svc: web::Data<Arc<dyn McpServerService>>,
-    body: web::Json<McpServerRegistration>,
+    body: web::Bytes,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -762,7 +887,10 @@ async fn update_draft(
             .build()
     );
 
-    let reg = body.into_inner();
+    let reg = match parse_draft_registration(&request_content_type(&req), &body) {
+        Ok(reg) => reg,
+        Err(message) => return bad_request(&message),
+    };
     let namespace = if reg.namespace.is_empty() {
         "public"
     } else {

@@ -1026,10 +1026,10 @@ impl A2aServerOperationService {
 
         // An already-published version is returned unchanged (upstream: status
         // != DRAFT -> return current).
-        if let Ok(existing) = self.version_row(namespace, name, version).await {
-            if existing.status != version_status::DRAFT {
-                return Ok(existing);
-            }
+        if let Ok(existing) = self.version_row(namespace, name, version).await
+            && existing.status != version_status::DRAFT
+        {
+            return Ok(existing);
         }
 
         let first_version = self

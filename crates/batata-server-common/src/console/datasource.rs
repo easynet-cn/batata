@@ -9,7 +9,7 @@ use batata_api::naming::model::Instance;
 use batata_common::ClusterManager;
 
 use super::api_model::{
-    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    CloneConfigInfo, ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
 };
 use super::model::{ClusterHealthResponse, Member, Namespace, SelfMemberResponse};
@@ -177,11 +177,16 @@ pub trait ConsoleDataSource: Send + Sync {
         src_user: &str,
     ) -> anyhow::Result<()>;
 
-    /// Clone configs to another namespace
+    /// Clone configs from `src_namespace_id` into `target_namespace_id`.
+    ///
+    /// `sources` carries the full upstream clone bean (id + dataId + group):
+    /// embedded backends report `id: 0`, so an id-only lookup silently clones
+    /// nothing. `policy` is the upstream ABORT/SKIP/OVERWRITE conflict policy.
     #[allow(clippy::too_many_arguments)]
     async fn config_clone(
         &self,
-        ids: &[i64],
+        sources: &[CloneConfigInfo],
+        src_namespace_id: &str,
         target_namespace_id: &str,
         policy: &str,
         src_user: &str,

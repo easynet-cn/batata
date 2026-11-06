@@ -3,8 +3,7 @@
 //! Provides handlers for `/v1/internal/*` endpoints used by the Consul UI
 //! and internal operations (federation, VIP, ACL authorize).
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::{Deserialize, Serialize};
@@ -188,74 +187,86 @@ pub struct UICatalogOverviewQueryParams {
 // UI Handlers
 // ============================================================================
 
-/// Build a UINode from real data in the store.
-fn build_node_from_store(
-    dc_config: &ConsulDatacenterConfig,
-    naming_store: &ConsulNamingStore,
+/// Build the canonical UI node dump shared by `/ui/nodes` and
+/// `/ui/node/{node}`.
+///
+/// Node names, ids and addresses come from `ConsulCatalogService::get_nodes()`,
+/// which is also the source for `/v1/catalog/nodes`. Deriving names from
+/// member IPs here used to make every cluster member sharing a loopback
+/// address collapse into a single `node-127-0-0-1`, and produced names the
+/// catalog never heard of. Services and checks are grouped by that same
+/// canonical node so the two endpoints cannot disagree about node identity.
+fn build_ui_nodes(
+    catalog: &ConsulCatalogService,
     health_service: &ConsulHealthService,
-    _index: u64,
-) -> UINode {
-    let ip = batata_api::local_ip();
-
-    let mut tagged = HashMap::new();
-    tagged.insert("lan".to_string(), ip.clone());
-    tagged.insert("lan_ipv4".to_string(), ip.clone());
-    tagged.insert("wan".to_string(), ip.clone());
-    tagged.insert("wan_ipv4".to_string(), ip.clone());
-
-    let mut meta = HashMap::new();
-    meta.insert("consul-network-segment".to_string(), "".to_string());
-    meta.insert("consul-version".to_string(), dc_config.full_version());
-
-    let mut services = Vec::new();
-    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let svc = crate::model::AgentService::from(&reg);
-            services.push(svc);
-        }
-    }
-
-    // Only checks owned by this node belong on this node's UI entry. The
-    // registry also holds check configs replicated from the other cluster
-    // members, and stamping them with the local node name (as this used to
-    // do) both duplicated them and misattributed them.
+    dc_config: &ConsulDatacenterConfig,
+) -> Vec<UINode> {
     let all_checks = health_service.get_all_checks_sync();
-    let mut checks = Vec::new();
-    for mut check in all_checks {
-        if check.node != dc_config.node_name {
-            continue;
-        }
-        if check.definition.is_none() {
-            check.definition = Some(crate::model::HealthCheckDefinition::default());
-        }
-        checks.push(check);
-    }
 
-    UINode {
-        id: dc_config.node_id.clone(),
-        node: dc_config.node_name.clone(),
-        address: ip,
-        tagged_addresses: tagged,
-        meta,
-        services,
-        checks,
-    }
+    catalog
+        .node_dump()
+        .into_iter()
+        .map(|(node, services)| {
+            let address = node.address.clone();
+            let mut tagged = node.tagged_addresses.clone().unwrap_or_default();
+            for key in ["lan", "lan_ipv4", "wan", "wan_ipv4"] {
+                tagged
+                    .entry(key.to_string())
+                    .or_insert_with(|| address.clone());
+            }
+
+            let mut meta = node.meta.clone().unwrap_or_default();
+            meta.entry("consul-network-segment".to_string())
+                .or_insert_with(String::new);
+            meta.entry("consul-version".to_string())
+                .or_insert_with(|| dc_config.full_version());
+
+            // Only checks owned by this node belong on this node's UI entry.
+            // The registry also holds check configs replicated from the other
+            // cluster members, so match on the check's node name first and
+            // fall back to the services assigned to this node.
+            let service_ids: HashSet<&str> = services.iter().map(|s| s.id.as_str()).collect();
+            let checks: Vec<_> = all_checks
+                .iter()
+                .filter(|check| {
+                    check.node == node.node
+                        || (!check.service_id.is_empty()
+                            && service_ids.contains(check.service_id.as_str()))
+                })
+                .cloned()
+                .map(|mut check| {
+                    if check.definition.is_none() {
+                        check.definition = Some(crate::model::HealthCheckDefinition::default());
+                    }
+                    check
+                })
+                .collect();
+
+            UINode {
+                id: node.id,
+                node: node.node,
+                address,
+                tagged_addresses: tagged,
+                meta,
+                services,
+                checks,
+            }
+        })
+        .collect()
 }
 
 /// GET /v1/internal/ui/nodes - List nodes for UI
 ///
-/// Returns all cluster members as UINode entries using ClusterManager.
-/// Each member generates a node with its address, services, and checks.
-/// In standalone mode `ClusterManager` reports only the local node, so the
-/// result degrades gracefully to a single-entry list.
-#[allow(clippy::too_many_arguments)]
+/// Upstream Consul serves this endpoint from the catalog node dump
+/// (`agent/ui_endpoint.go:UINodes` -> `Internal.NodeDump`), not from Serf
+/// members. Returning catalog nodes keeps the UI list consistent with
+/// `/v1/catalog/nodes` even when several cluster members share one IP.
 pub async fn ui_nodes(
     req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
+    catalog: web::Data<ConsulCatalogService>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<dyn batata_common::ClusterManager>>,
     _query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -265,90 +276,19 @@ pub async fn ui_nodes(
     }
 
     let index = index_provider.current_index(ConsulTable::Catalog);
-    let local_ip = batata_api::local_ip();
-    let members = member_manager.all_members_extended();
-
-    let mut nodes = Vec::with_capacity(members.len());
-    for member in &members {
-        let is_local =
-            member.ip == local_ip || member.address.starts_with(&format!("{}:", local_ip));
-        if is_local {
-            // For the local node, include real services and checks
-            let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
-            nodes.push(node);
-        } else {
-            // For remote nodes, build node entry and find services registered
-            // from that node's IP. In cluster mode, all registrations are
-            // replicated via Raft, so the local NamingStore has all data.
-            let node_ip = &member.ip;
-            let node_name = format!("node-{}", node_ip.replace('.', "-"));
-
-            let mut tagged = HashMap::new();
-            tagged.insert("lan".to_string(), node_ip.clone());
-            tagged.insert("lan_ipv4".to_string(), node_ip.clone());
-            tagged.insert("wan".to_string(), node_ip.clone());
-            tagged.insert("wan_ipv4".to_string(), node_ip.clone());
-
-            let mut meta = HashMap::new();
-            meta.insert("consul-network-segment".to_string(), "".to_string());
-            meta.insert("consul-version".to_string(), dc_config.full_version());
-
-            // Generate a deterministic UUID-like ID from the member address
-            let addr_digits: String = node_ip
-                .replace('.', "")
-                .chars()
-                .chain(std::iter::repeat('0'))
-                .take(12)
-                .collect();
-            let node_id = format!("00000000-0000-0000-0000-{}", addr_digits);
-
-            // Find services registered from this node's IP address
-            let mut services = Vec::new();
-            for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-                if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data)
-                    && reg.effective_address() == *node_ip
-                {
-                    let svc = crate::model::AgentService::from(&reg);
-                    services.push(svc);
-                }
-            }
-
-            // Get health checks for services on this node
-            let all_checks = health_service.get_all_checks_sync();
-            let checks: Vec<_> = all_checks
-                .into_iter()
-                .filter(|c| {
-                    // Include node-level checks and checks for services on this node
-                    c.service_id.is_empty() || services.iter().any(|s| s.id == c.service_id)
-                })
-                .collect();
-
-            nodes.push(UINode {
-                id: node_id,
-                node: node_name,
-                address: node_ip.clone(),
-                tagged_addresses: tagged,
-                meta,
-                services,
-                checks,
-            });
-        }
-    }
-
-    // If no members found (shouldn't happen), fall back to local node
-    if nodes.is_empty() {
-        let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
-        nodes.push(node);
-    }
-
+    let nodes = build_ui_nodes(&catalog, &health_service, &dc_config);
     let meta = ConsulResponseMeta::new(index);
     consul_ok(&meta).json(nodes)
 }
 
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
+///
+/// Resolves against the same canonical catalog node names as `/ui/nodes` and
+/// `/v1/catalog/nodes`. An address or node id is accepted as an alias so
+/// older deep links keep working.
 pub async fn ui_node_info(
     req: HttpRequest,
-    naming_store: web::Data<ConsulNamingStore>,
+    catalog: web::Data<ConsulCatalogService>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -363,21 +303,10 @@ pub async fn ui_node_info(
     let node_name = path.into_inner();
     let index = index_provider.current_index(ConsulTable::Catalog);
 
-    // In single-node mode, return the local node for any valid query.
-    // Match by: configured node name, local IP, or any registered service address.
-    let local_ip = batata_api::local_ip();
-    let is_local = node_name == dc_config.node_name
-        || node_name == local_ip
-        || naming_store
-            .scan_ns(crate::namespace::DEFAULT_NAMESPACE)
-            .iter()
-            .any(|(_, data)| {
-                serde_json::from_slice::<AgentServiceRegistration>(data)
-                    .map(|r| r.effective_address() == node_name)
-                    .unwrap_or(false)
-            });
-    if is_local {
-        let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
+    if let Some(node) = build_ui_nodes(&catalog, &health_service, &dc_config)
+        .into_iter()
+        .find(|node| node.node == node_name || node.address == node_name || node.id == node_name)
+    {
         let meta = ConsulResponseMeta::new(index);
         return consul_ok(&meta).json(node);
     }
@@ -406,6 +335,7 @@ pub async fn ui_exported_services(
 /// GET /v1/internal/ui/catalog-overview - Get catalog overview for UI
 pub async fn ui_catalog_overview(
     req: HttpRequest,
+    catalog: web::Data<ConsulCatalogService>,
     naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
@@ -421,7 +351,11 @@ pub async fn ui_catalog_overview(
     let service_names = naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
     let service_count = service_names.len();
 
-    let mut node_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Count the same canonical nodes the catalog and the UI node list expose.
+    // Deriving node names from service addresses here made cluster members on
+    // the same IP collapse into one `node-127-0-0-1`.
+    let node_count = catalog.get_nodes("").len();
+
     let mut total_checks: i64 = 0;
     let mut passing_checks: i64 = 0;
     let mut warning_checks: i64 = 0;
@@ -432,10 +366,6 @@ pub async fn ui_catalog_overview(
             naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
         for entry_bytes in &entries {
             if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(entry_bytes) {
-                let ip = reg.effective_address();
-                let node_name = format!("node-{}", ip.replace('.', "-"));
-                node_set.insert(node_name);
-
                 let service_id = reg.service_id();
                 let checks = health_service.get_service_checks(&service_id).await;
                 for check in &checks {
@@ -453,8 +383,8 @@ pub async fn ui_catalog_overview(
 
     let summary = CatalogSummary {
         nodes: CatalogCountSummary {
-            total: node_set.len() as i64,
-            passing: node_set.len() as i64,
+            total: node_count as i64,
+            passing: node_count as i64,
             warning: 0,
             critical: 0,
         },

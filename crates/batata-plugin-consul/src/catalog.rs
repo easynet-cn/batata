@@ -862,6 +862,47 @@ impl ConsulCatalogService {
         nodes.into_values().collect()
     }
 
+    /// Canonical node dump: one entry per catalog node with the services
+    /// registered on it, ordered by node name.
+    ///
+    /// Upstream Consul serves `/v1/internal/ui/nodes` from the catalog node
+    /// dump (`agent/ui_endpoint.go:UINodes` -> `Internal.NodeDump`), not from
+    /// Serf members. This keeps the UI node identity identical to
+    /// `/v1/catalog/nodes`: names come from `get_nodes()` and services are
+    /// grouped with the exact same `node_of()` rule used to build it.
+    pub fn node_dump(&self) -> Vec<(CatalogNode, Vec<AgentService>)> {
+        let mut nodes = self.get_nodes("");
+        nodes.sort_by(|a, b| a.node.cmp(&b.node));
+
+        let mut services_by_node: HashMap<String, Vec<AgentService>> = nodes
+            .iter()
+            .map(|node| (node.node.clone(), Vec::new()))
+            .collect();
+
+        for ns in self.naming_store.all_namespaces() {
+            for service_name in self.naming_store.service_names(&ns) {
+                for entry_bytes in self.naming_store.get_service_entries(&ns, &service_name) {
+                    let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                        &entry_bytes,
+                    ) else {
+                        continue;
+                    };
+                    if let Some(services) = services_by_node.get_mut(&node_of(&reg)) {
+                        services.push(AgentService::from(&reg));
+                    }
+                }
+            }
+        }
+
+        nodes
+            .into_iter()
+            .map(|node| {
+                let services = services_by_node.remove(&node.node).unwrap_or_default();
+                (node, services)
+            })
+            .collect()
+    }
+
     /// Get node details with services.
     ///
     /// Searches across all namespaces (nodes are global in Consul).

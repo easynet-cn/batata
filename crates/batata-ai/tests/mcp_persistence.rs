@@ -22,6 +22,8 @@ const NS: &str = "public";
 const NAME: &str = "probe-mcp";
 /// Separate server name so the two tests in this file can run concurrently.
 const LIFECYCLE_NAME: &str = "probe-mcp-lifecycle";
+/// Dedicated name for the "first version is a draft" test.
+const FIRST_DRAFT_NAME: &str = "probe-mcp-first-draft";
 
 fn registration(version: &str, tool: &str) -> McpServerRegistration {
     McpServerRegistration {
@@ -514,4 +516,46 @@ async fn mcp_server_round_trip() {
         "server must be gone"
     );
     println!("ok: delete server");
+}
+
+/// Upstream `createMcpServerDraft` initializes the resource when the first
+/// version is a draft; the console editor relies on that to create a brand-new
+/// server through `POST /draft`.
+#[tokio::test]
+async fn mcp_first_draft_creates_the_resource() {
+    let store = TestStore::open().await;
+    let index = Arc::new(McpServerIndex::new());
+    let svc = McpServerOperationService::new(store.store(), index);
+    store.clean(FIRST_DRAFT_NAME).await;
+
+    let mut reg = registration("1.0.0", "draft-tool");
+    reg.name = FIRST_DRAFT_NAME.to_string();
+
+    // No `create_mcp_server` call on purpose: this is the first version.
+    let draft = svc
+        .create_mcp_server_draft(NS, &reg, false)
+        .await
+        .expect("first draft must create the resource");
+    assert_eq!(draft.summary.status, "draft");
+    assert_eq!(draft.editing_version.as_deref(), Some("1.0.0"));
+    assert_eq!(draft.mcp_name, FIRST_DRAFT_NAME);
+
+    // `GET /mcp` without a version resolves the working draft even though no
+    // published `latest` exists yet.
+    let server = svc
+        .get_mcp_server_detail(NS, None, Some(FIRST_DRAFT_NAME), None, None)
+        .await
+        .expect("get detail")
+        .expect("draft-only server must be readable");
+    assert_eq!(server.version, "1.0.0");
+    assert_eq!(server.tools.len(), 1);
+
+    // The list API is index-backed, so the new resource must be indexed too.
+    let page = svc
+        .list_mcp_servers(NS, Some(FIRST_DRAFT_NAME), "accurate", 1, 10, None)
+        .await;
+    assert_eq!(
+        page.total_count, 1,
+        "draft-only server must appear in the list"
+    );
 }

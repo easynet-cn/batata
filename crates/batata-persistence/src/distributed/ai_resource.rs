@@ -319,7 +319,9 @@ impl DistributedPersistService {
         }
 
         Ok(data
-            .chunks_exact(std::mem::size_of::<i64>())
+            .as_chunks::<{ std::mem::size_of::<i64>() }>()
+            .0
+            .iter()
             .map(|chunk| {
                 let mut bytes = [0u8; std::mem::size_of::<i64>()];
                 bytes.copy_from_slice(chunk);

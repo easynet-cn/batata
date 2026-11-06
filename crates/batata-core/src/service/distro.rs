@@ -754,12 +754,12 @@ impl DistroProtocol {
     /// Mirrors upstream `NacosExecuteTaskExecuteEngine`, which dispatches to
     /// `ThreadUtils.getSuitableThreadCount(1)` workers (smallest power of two
     /// >= core count) and routes a task by its distro key, so one key is always
-    /// serialised onto one worker while distinct keys sync in parallel.
-    /// batata drained every ready task on a single serial loop, which meant a
-    /// newly registered key waited for the RPC round-trip of every older key
-    /// queued in the same tick before it was even sent — under a registration
-    /// burst that pushed a fresh key's broadcast hundreds of milliseconds past
-    /// its scheduled time.
+    /// > serialised onto one worker while distinct keys sync in parallel.
+    /// > batata drained every ready task on a single serial loop, which meant a
+    /// > newly registered key waited for the RPC round-trip of every older key
+    /// > queued in the same tick before it was even sent — under a registration
+    /// > burst that pushed a fresh key's broadcast hundreds of milliseconds past
+    /// > its scheduled time.
     fn sync_worker_count() -> usize {
         let cores = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -808,7 +808,7 @@ impl DistroProtocol {
         {
             // Send sync request
             let result =
-                Self::send_sync_data(&client_manager, &task.target_address, data.clone()).await;
+                Self::send_sync_data(client_manager, &task.target_address, data.clone()).await;
 
             if result.is_ok() {
                 counters.sync_success.fetch_add(1, Ordering::Relaxed);

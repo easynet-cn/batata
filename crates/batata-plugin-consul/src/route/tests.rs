@@ -2060,6 +2060,109 @@ async fn test_http_internal_ui_nodes() {
     assert!(body.is_array());
 }
 
+/// `/v1/internal/ui/nodes` and `/v1/catalog/nodes` must agree on node names.
+///
+/// Upstream serves the UI endpoint from the catalog node dump, not from Serf
+/// members. Both registrations below share the loopback address: deriving the
+/// node name from the member IP used to emit `node-127-0-0-1` twice and made
+/// the UI node list disagree with the catalog (and with node deep links).
+#[actix_web::test]
+async fn test_http_internal_ui_nodes_use_canonical_catalog_names() {
+    let app = create_test_app().await;
+
+    for (node_name, service) in [
+        ("ui-canon-a", "ui-canon-svc-a"),
+        ("ui-canon-b", "ui-canon-svc-b"),
+    ] {
+        let reg = serde_json::json!({
+            "Node": node_name,
+            "Address": "127.0.0.1",
+            "Service": {
+                "Service": service,
+                "ID": format!("{service}-1"),
+                "Port": 9100
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    let req = test::TestRequest::get()
+        .uri("/v1/catalog/nodes")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let catalog_body: serde_json::Value = test::read_body_json(resp).await;
+    let mut catalog_names: Vec<String> = catalog_body
+        .as_array()
+        .expect("catalog nodes must be an array")
+        .iter()
+        .map(|n| n["Node"].as_str().unwrap_or_default().to_string())
+        .collect();
+    catalog_names.sort();
+
+    let req = test::TestRequest::get()
+        .uri("/v1/internal/ui/nodes")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let ui_body: serde_json::Value = test::read_body_json(resp).await;
+    let mut ui_names: Vec<String> = ui_body
+        .as_array()
+        .expect("UI nodes must be an array")
+        .iter()
+        .map(|n| n["Node"].as_str().unwrap_or_default().to_string())
+        .collect();
+    ui_names.sort();
+
+    assert!(
+        catalog_names.contains(&"ui-canon-a".to_string()),
+        "registration with an explicit node must reach the catalog: {catalog_names:?}"
+    );
+    assert!(
+        catalog_names.contains(&"ui-canon-b".to_string()),
+        "registration with an explicit node must reach the catalog: {catalog_names:?}"
+    );
+    assert_eq!(
+        ui_names, catalog_names,
+        "UI nodes must use the canonical catalog node names"
+    );
+    assert_eq!(
+        ui_names
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        ui_names.len(),
+        "UI nodes must not contain duplicate node names: {ui_names:?}"
+    );
+    assert!(
+        !ui_names.iter().any(|n| n.starts_with("node-")),
+        "UI nodes must not be derived from member IPs: {ui_names:?}"
+    );
+
+    // Node deep links are opened with the catalog node name.
+    let req = test::TestRequest::get()
+        .uri("/v1/internal/ui/node/ui-canon-b")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200, "canonical node deep link must resolve");
+    let node: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(node["Node"], "ui-canon-b");
+
+    // The dashboard overview counts the same canonical nodes.
+    let req = test::TestRequest::get()
+        .uri("/v1/internal/ui/catalog-overview")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let overview: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(overview["Nodes"]["Total"], catalog_names.len() as i64);
+}
+
 #[actix_web::test]
 async fn test_http_internal_ui_node_info() {
     let app = create_test_app().await;
