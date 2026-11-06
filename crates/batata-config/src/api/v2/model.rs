@@ -100,13 +100,13 @@ pub struct ConfigPublishParam {
     #[serde(default)]
     pub tag: Option<String>,
     /// Application name (optional)
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: Option<String>,
     /// Source user (optional)
-    #[serde(default, alias = "srcUser")]
+    #[serde(default)]
     pub src_user: Option<String>,
     /// Config tags (comma-separated, optional)
-    #[serde(default, alias = "configTags")]
+    #[serde(default)]
     pub config_tags: Option<String>,
     /// Description (optional)
     #[serde(default)]

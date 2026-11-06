@@ -71,10 +71,8 @@ impl From<batata_persistence::NamespaceInfo> for Namespace {
 pub struct NamespaceForm {
     /// The namespace ID to create.
     pub namespace_id: String,
-    #[serde(alias = "namespaceName")]
     /// The display name of the namespace.
     pub namespace_name: String,
-    #[serde(alias = "namespaceDesc")]
     /// The description of the namespace.
     pub namespace_desc: String,
 }

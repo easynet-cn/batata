@@ -12,13 +12,14 @@ use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppSt
 use super::metrics::METRICS;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// Query parameters for the Prometheus-style metrics query endpoint.
 pub struct PrometheusQueryParams {
     /// Optional namespace label filter.
     #[serde(default)]
     pub namespace: Option<String>,
     /// Optional service name label filter.
-    #[serde(default, alias = "serviceName")]
+    #[serde(default)]
     pub service_name: Option<String>,
     /// Optional metric name prefix filter.
     #[serde(default)]

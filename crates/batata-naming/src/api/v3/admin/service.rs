@@ -26,19 +26,19 @@ use batata_api::naming::NamingServiceProvider;
 struct ServiceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName", alias = "groupNameParam")]
+    #[serde(default, alias = "groupNameParam")]
     group_name: Option<String>,
-    #[serde(default, alias = "serviceName", alias = "serviceNameParam")]
+    #[serde(default, alias = "serviceNameParam")]
     service_name: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     page_size: u64,
     /// When true, return ServiceDetailInfo (with metadata, protectThreshold, etc.)
-    #[serde(default, alias = "withInstances")]
+    #[serde(default)]
     with_instances: bool,
     /// When true, exclude services that have no instances
-    #[serde(default, alias = "ignoreEmptyService", alias = "hasIpCount")]
+    #[serde(default, alias = "hasIpCount")]
     ignore_empty_service: bool,
 }
 
@@ -53,9 +53,8 @@ impl ServiceListQuery {
 struct ServiceDetailQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
 }
 
@@ -70,13 +69,12 @@ impl ServiceDetailQuery {
 struct ServiceForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     #[serde(default)]
     ephemeral: Option<bool>,
-    #[serde(default, alias = "protectThreshold")]
+    #[serde(default)]
     protect_threshold: Option<f32>,
     #[serde(default)]
     metadata: Option<String>,
@@ -673,13 +671,12 @@ async fn delete_service(
 struct SubscriberQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     page_size: u64,
 }
 
@@ -775,17 +772,13 @@ async fn get_selector_types(req: HttpRequest, data: web::Data<AppState>) -> impl
 struct UpdateClusterForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(alias = "checkPort")]
     check_port: Option<i32>,
-    #[serde(alias = "useInstancePort4Check")]
     use_instance_port4_check: Option<bool>,
-    #[serde(default, alias = "healthChecker")]
+    #[serde(default)]
     health_checker: Option<ClusterHealthCheckerForm>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
@@ -885,4 +878,50 @@ pub fn routes() -> actix_web::Scope {
         .service(get_subscribers)
         .service(get_selector_types)
         .service(update_service_cluster)
+}
+
+/// Nacos v3 forms use camelCase (Jackson default). A container-level
+/// `rename_all` is the single source of truth; `alias` is reserved for the
+/// legacy v1/v2 spellings that the upstream param extractors still accept.
+#[cfg(test)]
+mod serde_naming_contract {
+    use super::*;
+
+    #[test]
+    fn service_list_query_accepts_camel_case_primary_names() {
+        let query: ServiceListQuery = serde_json::from_str(
+            r#"{"namespaceId":"ns-1","groupName":"g-1","serviceName":"svc-1","pageNo":3,"pageSize":25,"withInstances":true,"ignoreEmptyService":true}"#,
+        )
+        .unwrap();
+        assert_eq!(query.namespace_id.as_deref(), Some("ns-1"));
+        assert_eq!(query.group_name.as_deref(), Some("g-1"));
+        assert_eq!(query.service_name.as_deref(), Some("svc-1"));
+        assert_eq!(query.page_no, 3);
+        assert_eq!(query.page_size, 25);
+        assert!(query.with_instances);
+        assert!(query.ignore_empty_service);
+    }
+
+    #[test]
+    fn service_list_query_keeps_upstream_legacy_aliases() {
+        // NacosDefaultHttpParamExtractor still falls back to `serviceNameParam`,
+        // `groupNameParam` and `clusters`; v1 catalog used `hasIpCount`.
+        let query: ServiceListQuery = serde_json::from_str(
+            r#"{"groupNameParam":"g-legacy","serviceNameParam":"svc-legacy","hasIpCount":true}"#,
+        )
+        .unwrap();
+        assert_eq!(query.group_name.as_deref(), Some("g-legacy"));
+        assert_eq!(query.service_name.as_deref(), Some("svc-legacy"));
+        assert!(query.ignore_empty_service);
+    }
+
+    #[test]
+    fn service_form_accepts_camel_case() {
+        let form: ServiceForm = serde_json::from_str(
+            r#"{"namespaceId":"ns","groupName":"g","serviceName":"svc","protectThreshold":0.7}"#,
+        )
+        .unwrap();
+        assert_eq!(form.service_name, "svc");
+        assert_eq!(form.protect_threshold, Some(0.7));
+    }
 }

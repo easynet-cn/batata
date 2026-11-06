@@ -431,7 +431,6 @@ pub struct AgentDetailQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// Agent name
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -444,15 +443,12 @@ pub struct AgentListQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// Agent name
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Search type: "accurate" or "blur"
     pub search: Option<String>,
     /// Page number (1-indexed)
-    #[serde(alias = "pageNo")]
     pub page_no: Option<u32>,
     /// Page size
-    #[serde(alias = "pageSize")]
     pub page_size: Option<u32>,
 }
 
@@ -463,7 +459,6 @@ pub struct AgentDeleteQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// Agent name
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -476,7 +471,6 @@ pub struct AgentVersionListQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// Agent name
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
 }
 

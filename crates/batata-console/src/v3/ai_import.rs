@@ -81,11 +81,11 @@ struct AiResourceImportSourceInfo {
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Carried on the wire by the SDK; only the source call consumes it.
 struct AiResourceImportSearchRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "resourceType")]
+    #[serde(default)]
     resource_type: Option<String>,
-    #[serde(default, alias = "sourceId")]
+    #[serde(default)]
     source_id: Option<String>,
     #[serde(default)]
     query: Option<String>,
@@ -136,15 +136,15 @@ struct AiResourceImportItem {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiResourceImportValidateRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "resourceType")]
+    #[serde(default)]
     resource_type: Option<String>,
-    #[serde(default, alias = "sourceId")]
+    #[serde(default)]
     source_id: Option<String>,
-    #[serde(default, alias = "selectedItems")]
+    #[serde(default)]
     selected_items: Option<String>,
-    #[serde(default, alias = "overwriteExisting")]
+    #[serde(default)]
     overwrite_existing: bool,
     #[serde(default)]
     options: Option<String>,
@@ -183,19 +183,19 @@ struct AiResourceImportValidationItem {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiResourceImportExecuteRequest {
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "resourceType")]
+    #[serde(default)]
     resource_type: Option<String>,
-    #[serde(default, alias = "sourceId")]
+    #[serde(default)]
     source_id: Option<String>,
-    #[serde(default, alias = "selectedItems")]
+    #[serde(default)]
     selected_items: Option<String>,
-    #[serde(default, alias = "validationToken")]
+    #[serde(default)]
     validation_token: Option<String>,
-    #[serde(default, alias = "overwriteExisting")]
+    #[serde(default)]
     overwrite_existing: bool,
-    #[serde(default, alias = "skipInvalid")]
+    #[serde(default)]
     skip_invalid: bool,
     #[serde(default)]
     options: Option<String>,

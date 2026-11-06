@@ -40,18 +40,14 @@ use batata_server_common::console::api_model::ImportResult;
 struct SearchPageParam {
     #[serde(flatten)]
     config_form: ConfigForm,
-    #[serde(alias = "pageNo")]
     pub page_no: u64,
-    #[serde(alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteParam {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(alias = "groupName")]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
@@ -374,30 +370,28 @@ async fn find_beta_one(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaPublishForm {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
     pub content: String,
-    #[serde(default, alias = "betaIps")]
+    #[serde(default)]
     pub beta_ips: String,
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: String,
     #[serde(default)]
     #[allow(dead_code)]
     pub r#type: String,
-    #[serde(default, alias = "encryptedDataKey")]
+    #[serde(default)]
     pub encrypted_data_key: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaQueryParam {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
@@ -814,11 +808,9 @@ async fn batch_delete(
 struct SearchDetailParam {
     #[serde(flatten)]
     config_form: ConfigForm,
-    #[serde(alias = "pageNo")]
     pub page_no: u64,
-    #[serde(alias = "pageSize")]
     pub page_size: u64,
-    #[serde(default, alias = "configDetail")]
+    #[serde(default)]
     pub config_detail: String,
     #[serde(default = "default_search_type")]
     #[allow(dead_code)]
@@ -941,11 +933,10 @@ struct ConsoleCloneParam {
     /// and defaults it to the target namespace when blank.
     #[serde(default, alias = "srcNamespaceId")]
     pub namespace_id: Option<String>,
-    #[serde(alias = "targetNamespaceId")]
     pub target_namespace_id: String,
     #[serde(default = "default_clone_policy")]
     pub policy: String,
-    #[serde(default, alias = "srcUser")]
+    #[serde(default)]
     pub src_user: Option<String>,
 }
 

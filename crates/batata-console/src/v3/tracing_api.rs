@@ -16,10 +16,10 @@ use batata_server_common::model::response::Result;
 /// Query parameters for listing distributed traces.
 pub struct TraceListQuery {
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
     /// Optional service name filter.
     #[serde(default)]
@@ -28,16 +28,16 @@ pub struct TraceListQuery {
     #[serde(default)]
     pub operation: Option<String>,
     /// Optional trace ID filter.
-    #[serde(default, alias = "traceId")]
+    #[serde(default)]
     pub trace_id: Option<String>,
     /// Optional minimum duration filter in milliseconds.
-    #[serde(default, alias = "minDurationMs")]
+    #[serde(default)]
     pub min_duration_ms: Option<u64>,
     /// Optional start time filter.
-    #[serde(default, alias = "startTime")]
+    #[serde(default)]
     pub start_time: Option<String>,
     /// Optional end time filter.
-    #[serde(default, alias = "endTime")]
+    #[serde(default)]
     pub end_time: Option<String>,
 }
 

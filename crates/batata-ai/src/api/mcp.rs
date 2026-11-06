@@ -171,7 +171,7 @@ struct McpLabelsQuery {
     #[serde(default)]
     namespace_id: Option<String>,
     /// Server name.
-    #[serde(default, alias = "mcpName")]
+    #[serde(default)]
     mcp_name: Option<String>,
     /// Label name -> version, as JSON.
     #[serde(default)]
@@ -187,20 +187,20 @@ struct McpAdminForm {
     #[serde(default)]
     namespace_id: Option<String>,
     /// Server name, used when `serverSpecification` carries none.
-    #[serde(default, alias = "mcpName")]
+    #[serde(default)]
     mcp_name: Option<String>,
     /// Server specification, as JSON.
-    #[serde(default, alias = "serverSpecification")]
+    #[serde(default)]
     server_specification: Option<String>,
     /// Tool specification, as JSON.
-    #[serde(default, alias = "toolSpecification")]
+    #[serde(default)]
     tool_specification: Option<String>,
     /// Resource specification, as JSON. `McpServerDraftForm` carries it;
     /// `McpDetailForm` does not.
-    #[serde(default, alias = "resourceSpecification")]
+    #[serde(default)]
     resource_specification: Option<String>,
     /// Endpoint specification, as JSON.
-    #[serde(default, alias = "endpointSpecification")]
+    #[serde(default)]
     endpoint_specification: Option<String>,
     /// Version to create.
     #[serde(default)]

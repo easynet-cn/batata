@@ -18,19 +18,19 @@ use batata_server_common::{
 struct ServiceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName", alias = "groupNameParam")]
+    #[serde(default, alias = "groupNameParam")]
     group_name: Option<String>,
-    #[serde(default, alias = "serviceName", alias = "serviceNameParam")]
+    #[serde(default, alias = "serviceNameParam")]
     service_name: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     page_size: u64,
-    #[serde(default, alias = "hasIpCount", alias = "ignoreEmptyService")]
+    #[serde(default, alias = "ignoreEmptyService")]
     has_ip_count: Option<bool>,
     /// Accepted for Nacos compatibility; full withInstances support requires datasource changes.
     #[allow(dead_code)]
-    #[serde(default, alias = "withInstances")]
+    #[serde(default)]
     with_instances: bool,
 }
 
@@ -57,9 +57,8 @@ impl ServiceListQuery {
 struct ServiceDetailQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
 }
 
@@ -86,16 +85,15 @@ impl ServiceDetailQuery {
 struct ServiceForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     /// Service-level ephemeral flag, matching upstream `ServiceForm.ephemeral`.
     /// Upstream only applies it on create (`ConsoleServiceController.createService`);
     /// `updateService` ignores it, so the update handler does not read it.
     #[serde(default)]
     ephemeral: Option<bool>,
-    #[serde(default, alias = "protectThreshold")]
+    #[serde(default)]
     protect_threshold: Option<f32>,
     #[serde(default)]
     metadata: Option<serde_json::Value>,
@@ -126,13 +124,12 @@ impl ServiceForm {
 struct SubscriberQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     page_size: u64,
 }
 
@@ -160,19 +157,17 @@ impl SubscriberQuery {
 struct UpdateClusterForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(default, alias = "healthChecker")]
+    #[serde(default)]
     health_checker: Option<serde_json::Value>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
-    #[serde(default, alias = "checkPort")]
+    #[serde(default)]
     check_port: Option<i32>,
-    #[serde(default, alias = "useInstancePort4Check")]
+    #[serde(default)]
     use_instance_port4_check: Option<bool>,
 }
 

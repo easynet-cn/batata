@@ -14,7 +14,7 @@ use crate::{
 pub struct RaftOpsParam {
     /// `command` field.
     pub command: String,
-    #[serde(default, alias = "groupId")]
+    #[serde(default)]
     /// `group_id` field.
     pub group_id: Option<String>,
     #[serde(default)]
@@ -26,10 +26,8 @@ pub struct RaftOpsParam {
 #[serde(rename_all = "camelCase")]
 /// `LogUpdateParam` struct.
 pub struct LogUpdateParam {
-    #[serde(alias = "logName")]
     /// `log_name` field.
     pub log_name: String,
-    #[serde(alias = "logLevel")]
     /// `log_level` field.
     pub log_level: String,
 }

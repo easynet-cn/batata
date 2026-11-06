@@ -931,3 +931,74 @@ pub struct SystemInfoDTO {
     /// The git commit id of the build.
     pub git_commit_id: String,
 }
+
+/// Apollo uses Gson with `FieldNamingPolicy.IDENTITY`, so the wire key is the
+/// Java field name verbatim. Note that boolean fields keep their `is` prefix
+/// (`isPublic`), unlike Jackson bean properties.
+#[cfg(test)]
+mod serde_naming_contract {
+    use super::*;
+
+    fn app() -> AppDTO {
+        AppDTO {
+            app_id: "app-1".to_string(),
+            name: "demo".to_string(),
+            org_id: "org-1".to_string(),
+            org_name: "org".to_string(),
+            owner_name: "alice".to_string(),
+            owner_email: "alice@example.com".to_string(),
+            data_change_created_by: None,
+            data_change_last_modified_by: None,
+            data_change_created_time: None,
+            data_change_last_time: None,
+        }
+    }
+
+    #[test]
+    fn apollo_dtos_emit_camel_case_keys() {
+        let value = serde_json::to_value(app()).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.get("appId").and_then(|v| v.as_str()), Some("app-1"));
+        assert_eq!(object.get("orgId").and_then(|v| v.as_str()), Some("org-1"));
+        assert_eq!(
+            object.get("ownerEmail").and_then(|v| v.as_str()),
+            Some("alice@example.com")
+        );
+        assert!(!object.contains_key("app_id"));
+
+        let namespace = NamespaceDTO {
+            app_id: "app-1".to_string(),
+            cluster_name: "default".to_string(),
+            namespace_name: "application".to_string(),
+            format: None,
+            is_public: Some(true),
+            comment: None,
+            data_change_created_by: None,
+            data_change_last_modified_by: None,
+            data_change_created_time: None,
+            data_change_last_time: None,
+        };
+        let value = serde_json::to_value(namespace).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.get("clusterName").and_then(|v| v.as_str()),
+            Some("default")
+        );
+        assert_eq!(
+            object.get("namespaceName").and_then(|v| v.as_str()),
+            Some("application")
+        );
+        assert_eq!(object.get("isPublic").and_then(|v| v.as_bool()), Some(true));
+        assert!(!object.contains_key("public"));
+    }
+
+    #[test]
+    fn apollo_dtos_accept_camel_case_input() {
+        let parsed: AppDTO = serde_json::from_str(
+            r#"{"appId":"app-1","name":"demo","orgId":"org-1","orgName":"org","ownerName":"alice","ownerEmail":"a@b.c"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.app_id, "app-1");
+        assert_eq!(parsed.owner_email, "a@b.c");
+    }
+}

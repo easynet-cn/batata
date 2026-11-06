@@ -129,7 +129,7 @@ pub struct ConfigAllInfo {
     #[serde(default)]
     /// Config schema (e.g. for form-based editing).
     pub schema: String,
-    #[serde(alias = "configTags", default)]
+    #[serde(default)]
     /// Config tags.
     pub config_tags: String,
     #[serde(default)]
@@ -407,7 +407,7 @@ pub struct ServiceDetail {
     #[serde(default)]
     /// Namespace ID.
     pub namespace_id: String,
-    #[serde(alias = "groupName", default)]
+    #[serde(default)]
     /// Group name.
     pub group_name: String,
     #[serde(alias = "name", default)]

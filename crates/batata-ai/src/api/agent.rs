@@ -25,12 +25,11 @@ use crate::service::traits::A2aAgentService;
 
 /// Query and body parameters shared by the agent version endpoints.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentVersionForm {
     /// Namespace ID (defaults to the public namespace).
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name.
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Version the action applies to.
     pub version: Option<String>,
@@ -40,32 +39,27 @@ pub struct AgentVersionForm {
 
 /// Query parameters for the list endpoint.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentListForm {
     /// Namespace ID (defaults to the public namespace).
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Optional name filter.
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// `accurate` or fuzzy.
-    #[serde(alias = "searchType")]
     pub search_type: Option<String>,
     /// Page number (1-based).
-    #[serde(alias = "pageNo")]
     pub page_no: Option<u32>,
     /// Page size.
-    #[serde(alias = "pageSize")]
     pub page_size: Option<u32>,
 }
 
 /// Query parameters for `GET /runtime-endpoints`.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentRuntimeEndpointForm {
     /// Namespace ID (defaults to the public namespace).
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name.
-    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Target version.
     pub version: Option<String>,
@@ -76,9 +70,9 @@ pub struct AgentRuntimeEndpointForm {
 
 /// Query parameters for `POST /draft`.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentDraftForm {
     /// Namespace ID (defaults to the public namespace).
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Replace the draft currently being edited.
     pub overwrite: Option<bool>,

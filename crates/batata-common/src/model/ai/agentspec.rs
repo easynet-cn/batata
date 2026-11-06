@@ -263,7 +263,6 @@ pub struct AgentSpecForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: Option<String>,
     /// The `version` field.
@@ -277,15 +276,14 @@ pub struct AgentSpecListForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: Option<String>,
     /// The `search` field.
     pub search: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     /// The `page_no` field.
     pub page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     /// The `page_size` field.
     pub page_size: u64,
 }
@@ -300,16 +298,12 @@ pub struct AgentSpecDraftCreateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: Option<String>,
-    #[serde(alias = "basedOnVersion")]
     /// The `based_on_version` field.
     pub based_on_version: Option<String>,
-    #[serde(alias = "targetVersion")]
     /// The `target_version` field.
     pub target_version: Option<String>,
-    #[serde(alias = "agentSpecCard")]
     /// The `agent_spec_card` field.
     pub agent_spec_card: Option<String>,
 }
@@ -325,15 +319,14 @@ pub struct AgentSpecUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(default, alias = "agentSpecName")]
+    #[serde(default)]
     /// The `agent_spec_name` field.
     pub agent_spec_name: Option<String>,
     /// The `version` field.
     pub version: Option<String>,
-    #[serde(alias = "agentSpecCard")]
     /// The `agent_spec_card` field.
     pub agent_spec_card: Option<String>,
-    #[serde(default, alias = "setAsLatest")]
+    #[serde(default)]
     /// The `set_as_latest` field.
     pub set_as_latest: bool,
 }
@@ -345,7 +338,6 @@ pub struct AgentSpecSubmitForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
     /// The `version` field.
@@ -359,7 +351,6 @@ pub struct AgentSpecPublishForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
     /// The `version` field.
@@ -373,7 +364,6 @@ pub struct AgentSpecLabelsUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
     /// The `labels` field.
@@ -387,10 +377,8 @@ pub struct AgentSpecBizTagsUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
-    #[serde(alias = "bizTags")]
     /// The `biz_tags` field.
     pub biz_tags: String,
 }
@@ -402,7 +390,6 @@ pub struct AgentSpecOnlineForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
     /// The `scope` field.
@@ -418,7 +405,6 @@ pub struct AgentSpecScopeForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "agentSpecName")]
     /// The `agent_spec_name` field.
     pub agent_spec_name: String,
     /// The `scope` field.
@@ -449,10 +435,10 @@ pub struct AgentSpecSearchForm {
     pub namespace_id: String,
     /// The `keyword` field.
     pub keyword: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     /// The `page_no` field.
     pub page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     /// The `page_size` field.
     pub page_size: u64,
 }

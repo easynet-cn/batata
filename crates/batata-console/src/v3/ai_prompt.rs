@@ -37,7 +37,7 @@ fn normalize_namespace(ns: &str) -> &str {
 /// Query for listing prompts.
 pub struct PromptListQuery {
     /// Optional prompt key filter.
-    #[serde(default, alias = "promptKey")]
+    #[serde(default)]
     pub prompt_key: Option<String>,
     /// Namespace identifier.
     #[serde(default)]
@@ -46,13 +46,13 @@ pub struct PromptListQuery {
     #[serde(default)]
     pub search: Option<String>,
     /// Comma-separated biz tags filter.
-    #[serde(default, alias = "bizTags")]
+    #[serde(default)]
     pub biz_tags: Option<String>,
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -61,7 +61,6 @@ pub struct PromptListQuery {
 /// Query identifying one prompt.
 pub struct PromptKeyQuery {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Namespace identifier.
     #[serde(default)]
@@ -73,7 +72,6 @@ pub struct PromptKeyQuery {
 /// Query for one version, addressed by version or by label.
 pub struct PromptVersionQuery {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Version in `major.minor.patch` format.
     #[serde(default)]
@@ -91,16 +89,15 @@ pub struct PromptVersionQuery {
 /// Query for the version history.
 pub struct PromptVersionsQuery {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Namespace identifier.
     #[serde(default)]
     pub namespace_id: String,
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -109,7 +106,6 @@ pub struct PromptVersionsQuery {
 /// Form for creating a draft.
 pub struct PromptDraftCreateForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Prompt template content.
     #[serde(default)]
@@ -118,16 +114,16 @@ pub struct PromptDraftCreateForm {
     #[serde(default)]
     pub variables: Option<String>,
     /// Optional commit message.
-    #[serde(default, alias = "commitMsg")]
+    #[serde(default)]
     pub commit_msg: Option<String>,
     /// Optional description.
     #[serde(default)]
     pub description: Option<String>,
     /// Comma-separated biz tags.
-    #[serde(default, alias = "bizTags")]
+    #[serde(default)]
     pub biz_tags: Option<String>,
     /// Version to create; defaults to `0.0.1` when absent.
-    #[serde(default, alias = "targetVersion")]
+    #[serde(default)]
     pub target_version: Option<String>,
     /// Namespace identifier.
     #[serde(default)]
@@ -139,7 +135,6 @@ pub struct PromptDraftCreateForm {
 /// Form for updating the draft.
 pub struct PromptDraftUpdateForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Prompt template content.
     #[serde(default)]
@@ -148,7 +143,7 @@ pub struct PromptDraftUpdateForm {
     #[serde(default)]
     pub variables: Option<String>,
     /// Optional commit message.
-    #[serde(default, alias = "commitMsg")]
+    #[serde(default)]
     pub commit_msg: Option<String>,
     /// Namespace identifier.
     #[serde(default)]
@@ -161,7 +156,6 @@ pub struct PromptDraftUpdateForm {
 /// it submits the draft, which is how upstream's submit behaves.
 pub struct PromptSubmitForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Version to submit; the draft when absent.
     #[serde(default)]
@@ -176,7 +170,6 @@ pub struct PromptSubmitForm {
 /// Form for an action on one version.
 pub struct PromptVersionActionForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Target version.
     #[serde(default)]
@@ -191,7 +184,6 @@ pub struct PromptVersionActionForm {
 /// Form for replacing the label routing. `labels` carries a JSON object.
 pub struct PromptLabelsForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// JSON object mapping each label to a version.
     #[serde(default)]
@@ -206,7 +198,6 @@ pub struct PromptLabelsForm {
 /// Form for updating the description.
 pub struct PromptDescriptionForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// New description.
     #[serde(default)]
@@ -221,10 +212,9 @@ pub struct PromptDescriptionForm {
 /// Form for updating the biz tags.
 pub struct PromptBizTagsForm {
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Comma-separated biz tags.
-    #[serde(default, alias = "bizTags")]
+    #[serde(default)]
     pub biz_tags: Option<String>,
     /// Namespace identifier.
     #[serde(default)]

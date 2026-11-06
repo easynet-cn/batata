@@ -15,16 +15,12 @@ pub struct CapacityRequest {
     pub group: Option<String>,
     /// The `quota` value.
     pub quota: Option<i32>,
-    #[serde(alias = "maxSize")]
     /// The `max_size` value.
     pub max_size: Option<i32>,
-    #[serde(alias = "maxAggrCount")]
     /// The `max_aggr_count` value.
     pub max_aggr_count: Option<i32>,
-    #[serde(alias = "maxAggrSize")]
     /// The `max_aggr_size` value.
     pub max_aggr_size: Option<i32>,
-    #[serde(alias = "maxHistoryCount")]
     /// The `max_history_count` value.
     pub max_history_count: Option<i32>,
 }

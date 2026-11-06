@@ -22,13 +22,12 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 struct InstanceRegisterForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
     #[serde(default)]
     weight: Option<f64>,
@@ -55,13 +54,12 @@ impl InstanceRegisterForm {
 struct InstanceDeregisterQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
     #[serde(default)]
     ephemeral: Option<bool>,
@@ -80,13 +78,12 @@ impl InstanceDeregisterQuery {
 struct InstanceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     #[serde(default)]
     clusters: Option<String>,
-    #[serde(default, alias = "healthyOnly")]
+    #[serde(default)]
     healthy_only: Option<bool>,
 }
 

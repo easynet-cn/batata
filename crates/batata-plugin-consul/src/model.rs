@@ -3088,3 +3088,45 @@ mod tests {
         assert_eq!(validated.initial_status(), "passing");
     }
 }
+
+/// Consul is a separate wire protocol: `encoding/json` emits the capital-first
+/// Go field name verbatim, and case-tolerance aliases are decode-only extras.
+/// The Java-facing camelCase rule must never leak into these DTOs.
+#[cfg(test)]
+mod serde_naming_contract {
+    use super::*;
+
+    #[test]
+    fn consul_registration_emits_pascal_case_keys() {
+        let registration = AgentServiceRegistration {
+            id: Some("svc-1".to_string()),
+            name: "svc".to_string(),
+            enable_tag_override: Some(true),
+            tagged_addresses: Some(serde_json::json!({"lan": "127.0.0.1"})),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&registration).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.get("ID").and_then(|v| v.as_str()), Some("svc-1"));
+        assert_eq!(object.get("Name").and_then(|v| v.as_str()), Some("svc"));
+        assert_eq!(
+            object.get("EnableTagOverride").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(object.contains_key("TaggedAddresses"));
+        assert!(!object.contains_key("enableTagOverride"));
+        assert!(!object.contains_key("taggedAddresses"));
+    }
+
+    #[test]
+    fn consul_registration_accepts_case_tolerance_aliases() {
+        let parsed: AgentServiceRegistration = serde_json::from_str(
+            r#"{"Id":"svc-1","name":"svc","enableTagOverride":true,"taggedAddresses":{"lan":"127.0.0.1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.id.as_deref(), Some("svc-1"));
+        assert_eq!(parsed.name, "svc");
+        assert_eq!(parsed.enable_tag_override, Some(true));
+        assert!(parsed.tagged_addresses.is_some());
+    }
+}

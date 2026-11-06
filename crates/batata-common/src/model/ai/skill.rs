@@ -290,7 +290,6 @@ pub struct SkillForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: Option<String>,
     /// The `version` field.
@@ -304,18 +303,16 @@ pub struct SkillListForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: Option<String>,
     /// The `search` field.
     pub search: Option<String>,
-    #[serde(alias = "orderBy")]
     /// The `order_by` field.
     pub order_by: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     /// The `page_no` field.
     pub page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     /// The `page_size` field.
     pub page_size: u64,
 }
@@ -332,16 +329,12 @@ pub struct SkillDraftCreateForm {
     /// The `namespace_id` field.
     pub namespace_id: String,
     /// Skill name — optional when creating new skill (can be in skillCard JSON)
-    #[serde(alias = "skillName")]
     pub skill_name: Option<String>,
     /// If forking from an existing version
-    #[serde(alias = "basedOnVersion")]
     pub based_on_version: Option<String>,
     /// Target version for the draft
-    #[serde(alias = "targetVersion")]
     pub target_version: Option<String>,
     /// Full skill content as JSON string (required for new skill, optional for fork)
-    #[serde(alias = "skillCard")]
     pub skill_card: Option<String>,
 }
 
@@ -356,15 +349,14 @@ pub struct SkillUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(default, alias = "skillName")]
+    #[serde(default)]
     /// The `skill_name` field.
     pub skill_name: Option<String>,
     /// The `version` field.
     pub version: Option<String>,
     /// Full skill content as JSON string
-    #[serde(alias = "skillCard")]
     pub skill_card: Option<String>,
-    #[serde(default, alias = "setAsLatest")]
+    #[serde(default)]
     /// The `set_as_latest` field.
     pub set_as_latest: bool,
 }
@@ -376,7 +368,6 @@ pub struct SkillSubmitForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// The `version` field.
@@ -390,7 +381,6 @@ pub struct SkillPublishForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// The `version` field.
@@ -404,7 +394,6 @@ pub struct SkillLabelsUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// Labels as JSON string: {"latest": "0.0.1", "stable": "0.0.0"}
@@ -418,11 +407,9 @@ pub struct SkillBizTagsUpdateForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// Biz tags as JSON array string
-    #[serde(alias = "bizTags")]
     pub biz_tags: String,
 }
 
@@ -433,7 +420,6 @@ pub struct SkillOnlineForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// "skill" for global online/offline, otherwise version-level
@@ -449,7 +435,6 @@ pub struct SkillScopeForm {
     #[serde(default)]
     /// The `namespace_id` field.
     pub namespace_id: String,
-    #[serde(alias = "skillName")]
     /// The `skill_name` field.
     pub skill_name: String,
     /// "PUBLIC" or "PRIVATE"
@@ -465,10 +450,10 @@ pub struct SkillSearchForm {
     pub namespace_id: String,
     /// The `keyword` field.
     pub keyword: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     /// The `page_no` field.
     pub page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     /// The `page_size` field.
     pub page_size: u64,
 }

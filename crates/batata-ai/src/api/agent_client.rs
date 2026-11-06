@@ -287,10 +287,11 @@ fn parse_watch_form(
         Ok((generation, timeout_millis, watches))
     } else {
         #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct RawWatchForm {
             #[serde(default)]
             generation: Option<String>,
-            #[serde(default, alias = "timeoutMillis")]
+            #[serde(default)]
             timeout_millis: Option<String>,
             #[serde(default)]
             watches: Option<String>,
@@ -751,10 +752,10 @@ async fn heartbeat(req: HttpRequest, data: web::Data<AppState>) -> impl Responde
 /// version. The agent card is the request body, exactly like the admin
 /// `create_draft` route.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AgentPublishQuery {
-    #[serde(alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(alias = "autoSubmit", default)]
+    #[serde(default)]
     auto_submit: Option<bool>,
 }
 

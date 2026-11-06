@@ -131,12 +131,10 @@ pub struct ExportRequest {
     pub namespace_id: String,
     /// The group to export (optional).
     pub group: Option<String>,
-    #[serde(alias = "dataIds")]
     /// Comma-separated data IDs to export (optional).
     pub data_ids: Option<String>,
     /// Comma-separated config IDs to export (optional).
     pub ids: Option<String>,
-    #[serde(alias = "appName")]
     /// Filter by application name (optional).
     pub app_name: Option<String>,
 }

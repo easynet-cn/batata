@@ -17,10 +17,8 @@ use batata_persistence::entity;
 #[serde(default, rename_all = "camelCase")]
 /// `ConfigForm` data model.
 pub struct ConfigForm {
-    #[serde(alias = "dataId")]
     /// The `data_id` value.
     pub data_id: String,
-    #[serde(alias = "groupName")]
     /// The `group_name` value.
     pub group_name: String,
     /// The `namespace_id` value.
@@ -29,28 +27,20 @@ pub struct ConfigForm {
     pub content: String,
     /// The `tag` value.
     pub tag: Option<String>,
-    #[serde(alias = "appName")]
     /// The `app_name` value.
     pub app_name: String,
-    #[serde(alias = "srcUser")]
     /// The `src_user` value.
     pub src_user: Option<String>,
-    #[serde(alias = "configTags")]
     /// The `config_tags` value.
     pub config_tags: String,
-    #[serde(alias = "encryptedDataKey")]
     /// The `encrypted_data_key` value.
     pub encrypted_data_key: Option<String>,
-    #[serde(alias = "grayName")]
     /// The `gray_name` value.
     pub gray_name: Option<String>,
-    #[serde(alias = "grayRuleExp")]
     /// The `gray_rule_exp` value.
     pub gray_rule_exp: Option<String>,
-    #[serde(alias = "grayVersion")]
     /// The `gray_version` value.
     pub gray_version: Option<String>,
-    #[serde(alias = "grayPriority")]
     /// The `gray_priority` value.
     pub gray_priority: Option<i32>,
     /// The `desc` value.

@@ -1197,10 +1197,9 @@ pub struct InstanceBeatParam {
     #[serde(default)]
     /// The `namespace_id` value.
     pub namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     /// The `group_name` value.
     pub group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     /// The `service_name` value.
     pub service_name: String,
     #[serde(default)]
@@ -1212,7 +1211,7 @@ pub struct InstanceBeatParam {
     #[serde(default)]
     /// The `port` value.
     pub port: Option<i32>,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     /// The `cluster_name` value.
     pub cluster_name: Option<String>,
 }

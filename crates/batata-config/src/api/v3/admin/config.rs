@@ -38,9 +38,7 @@ use crate::{
 struct SearchPageParam {
     #[serde(flatten)]
     config_form: ConfigForm,
-    #[serde(alias = "pageNo")]
     pub page_no: u64,
-    #[serde(alias = "pageSize")]
     pub page_size: u64,
 }
 
@@ -49,13 +47,13 @@ struct SearchPageParam {
 struct ListConfigParam {
     #[serde(flatten)]
     config_form: ConfigForm,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
-    #[serde(default = "default_page_size_small", alias = "pageSize")]
+    #[serde(default = "default_page_size_small")]
     pub page_size: u64,
     #[serde(default = "default_search")]
     pub _search: String,
-    #[serde(default, alias = "configDetail")]
+    #[serde(default)]
     pub config_detail: String,
 }
 
@@ -999,9 +997,8 @@ async fn import_with_persistence(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaQueryParam {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
@@ -1011,17 +1008,17 @@ struct BetaQueryParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaListParam {
-    #[serde(default, alias = "pageNo")]
+    #[serde(default)]
     pub page_no: u64,
-    #[serde(default, alias = "pageSize")]
+    #[serde(default)]
     pub page_size: u64,
-    #[serde(default, alias = "dataId")]
+    #[serde(default)]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: String,
 }
 
@@ -1029,26 +1026,25 @@ struct BetaListParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaPublishForm {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
     pub content: String,
-    #[serde(default, alias = "betaIps")]
+    #[serde(default)]
     pub beta_ips: String,
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: String,
-    #[serde(default, alias = "srcUser")]
+    #[serde(default)]
     pub src_user: String,
-    #[serde(default, alias = "configTags")]
+    #[serde(default)]
     pub config_tags: String,
     #[serde(default)]
     pub desc: String,
     #[serde(default)]
     pub r#type: String,
-    #[serde(default, alias = "encryptedDataKey")]
+    #[serde(default)]
     pub encrypted_data_key: String,
 }
 
@@ -1461,14 +1457,13 @@ async fn stop_beta_config(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GrayPublishForm {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
     pub content: String,
-    #[serde(default, alias = "betaIps")]
+    #[serde(default)]
     pub beta_ips: String,
     #[serde(default)]
     pub tag: String,
@@ -1476,13 +1471,13 @@ struct GrayPublishForm {
     #[serde(default)]
     pub percentage: Option<u8>,
     /// CIDR ranges for IP-range gray release (comma-separated, e.g. "10.0.0.0/8,172.16.0.0/12")
-    #[serde(default, alias = "ipRange")]
+    #[serde(default)]
     pub ip_range: String,
-    #[serde(default, alias = "appName")]
+    #[serde(default)]
     pub app_name: String,
-    #[serde(default, alias = "srcUser")]
+    #[serde(default)]
     pub src_user: String,
-    #[serde(default, alias = "encryptedDataKey")]
+    #[serde(default)]
     pub encrypted_data_key: String,
 }
 
@@ -1732,13 +1727,12 @@ async fn stop_gray_config(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GrayDeleteParam {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
-    #[serde(default, alias = "grayName")]
+    #[serde(default)]
     pub gray_name: String,
 }
 
@@ -1810,13 +1804,12 @@ async fn batch_delete_config(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MetadataForm {
-    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
-    #[serde(default, alias = "configTags")]
+    #[serde(default)]
     pub config_tags: String,
     #[serde(default)]
     pub desc: String,
@@ -1882,7 +1875,7 @@ struct CloneParam {
     pub namespace_id: String,
     #[serde(default = "default_clone_policy")]
     pub policy: String,
-    #[serde(default, alias = "srcUser")]
+    #[serde(default)]
     pub src_user: Option<String>,
 }
 

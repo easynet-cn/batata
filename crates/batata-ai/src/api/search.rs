@@ -32,21 +32,22 @@ fn normalize_namespace(ns: &str) -> &str {
 
 /// Query parameters of the client search endpoint.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceSearchForm {
     /// Namespace to search in; empty means `public`.
-    #[serde(default, alias = "namespaceId")]
+    #[serde(default)]
     pub namespace_id: String,
     /// Search text.
     #[serde(default)]
     pub query: String,
     /// Resource types to restrict to; empty means all.
-    #[serde(default, alias = "resourceTypes")]
+    #[serde(default)]
     pub resource_types: Vec<String>,
     /// 1-based page number.
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size; 0 means the default.
-    #[serde(default, alias = "pageSize")]
+    #[serde(default)]
     pub page_size: u64,
 }
 

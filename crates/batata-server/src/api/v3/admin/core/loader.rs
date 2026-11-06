@@ -62,23 +62,19 @@ struct ConnectionInfo {
 #[serde(rename_all = "camelCase")]
 struct ReloadCurrentParam {
     count: Option<usize>,
-    #[serde(alias = "redirectAddress")]
     redirect_address: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SmartReloadParam {
-    #[serde(alias = "loaderFactor")]
     loader_factor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReloadClientParam {
-    #[serde(alias = "connectionId")]
     connection_id: Option<String>,
-    #[serde(alias = "redirectAddress")]
     redirect_address: Option<String>,
 }
 

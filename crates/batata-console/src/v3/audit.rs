@@ -18,13 +18,13 @@ use batata_server_common::{
 /// Query parameters for listing audit log entries.
 pub struct AuditListQuery {
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
     /// Optional operation type filter (e.g. `CREATE`, `UPDATE`, `DELETE`).
-    #[serde(default, alias = "operationType")]
+    #[serde(default)]
     pub operation_type: Option<String>,
     /// Optional operator (user) filter.
     #[serde(default)]
@@ -33,10 +33,10 @@ pub struct AuditListQuery {
     #[serde(default)]
     pub resource: Option<String>,
     /// Optional start time filter (datetime string or epoch millis).
-    #[serde(default, alias = "startTime")]
+    #[serde(default)]
     pub start_time: Option<String>,
     /// Optional end time filter (datetime string or epoch millis).
-    #[serde(default, alias = "endTime")]
+    #[serde(default)]
     pub end_time: Option<String>,
 }
 

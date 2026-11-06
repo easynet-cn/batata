@@ -93,19 +93,17 @@ pub struct Checkpoint {
 #[serde(rename_all = "camelCase")]
 pub struct PipelineListForm {
     /// Required: resource type (e.g., "skill", "agentspec")
-    #[serde(alias = "resourceType")]
     pub resource_type: String,
-    #[serde(alias = "resourceName")]
     /// The `resource_name` field.
     pub resource_name: Option<String>,
     /// The `namespace_id` field.
     pub namespace_id: Option<String>,
     /// The `version` field.
     pub version: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     /// The `page_no` field.
     pub page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     /// The `page_size` field.
     pub page_size: u64,
 }
@@ -123,7 +121,6 @@ fn default_page_size() -> u64 {
 #[serde(rename_all = "camelCase")]
 pub struct PipelineDetailForm {
     /// Required: pipeline execution ID.
-    #[serde(alias = "pipelineId")]
     pub pipeline_id: String,
 }
 

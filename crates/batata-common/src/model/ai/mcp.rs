@@ -338,30 +338,24 @@ pub struct McpServerQuery {
     pub namespace: Option<String>,
 
     /// Filter by name pattern (supports wildcards)
-    #[serde(alias = "namePattern")]
     pub name_pattern: Option<String>,
 
     /// Filter by tags (any match)
     pub tags: Option<Vec<String>>,
 
     /// Filter by server type
-    #[serde(alias = "serverType")]
     pub server_type: Option<McpServerType>,
 
     /// Filter by health status
-    #[serde(alias = "healthStatus")]
     pub health_status: Option<HealthStatus>,
 
     /// Filter by capability
-    #[serde(alias = "hasTools")]
     pub has_tools: Option<bool>,
 
     /// Filter by capability
-    #[serde(alias = "hasResources")]
     pub has_resources: Option<bool>,
 
     /// Filter by capability
-    #[serde(alias = "hasPrompts")]
     pub has_prompts: Option<bool>,
 
     /// Page number (1-indexed)
@@ -369,7 +363,7 @@ pub struct McpServerQuery {
     pub page: u32,
 
     /// Page size
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u32,
 }
 
@@ -435,10 +429,8 @@ pub struct McpDetailQuery {
     /// Namespace ID (defaults to "public")
     pub namespace_id: Option<String>,
     /// MCP server ID
-    #[serde(alias = "mcpId")]
     pub mcp_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -446,12 +438,11 @@ pub struct McpDetailQuery {
 
 /// Query params for listing the versions of one MCP server
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpVersionsQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Filter by version status: `draft`, `reviewing`, `reviewed`, `online`
     /// or `offline`.
@@ -460,18 +451,16 @@ pub struct McpVersionsQuery {
     /// anything else is a client error rather than an empty page.
     pub status: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(alias = "pageNo")]
     pub page_no: Option<u64>,
     /// Page size (defaults to 20)
-    #[serde(alias = "pageSize")]
     pub page_size: Option<u64>,
 }
 
 /// Query params for creating a draft version
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpDraftCreateQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Overwrite the draft if one already exists
     pub overwrite: Option<bool>,
@@ -486,12 +475,11 @@ pub struct McpLabelsRequest {
 
 /// Query params for enabling or disabling a server
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpStatusQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Upstream's `McpServerStatusForm.enabled`, and the parameter the
     /// maintainer client actually sends.
@@ -502,28 +490,25 @@ pub struct McpStatusQuery {
 
 /// Query params for keyword search over the MCP search index
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpSearchQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Free-text query
     pub query: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(alias = "pageNo")]
     pub page_no: Option<u64>,
     /// Page size (defaults to 20, capped at 100 like upstream)
-    #[serde(alias = "pageSize")]
     pub page_size: Option<u64>,
 }
 
 /// Query params for changing the visibility scope
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpScopeQuery {
     /// Namespace ID (defaults to "public")
-    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// `PUBLIC` or `PRIVATE`
     pub scope: Option<String>,
@@ -536,15 +521,12 @@ pub struct McpListQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Search type: "accurate" or "blur"
     pub search: Option<String>,
     /// Page number (1-indexed)
-    #[serde(alias = "pageNo")]
     pub page_no: Option<u32>,
     /// Page size
-    #[serde(alias = "pageSize")]
     pub page_size: Option<u32>,
 }
 
@@ -555,10 +537,8 @@ pub struct McpDeleteQuery {
     /// Namespace ID
     pub namespace_id: Option<String>,
     /// MCP server ID
-    #[serde(alias = "mcpId")]
     pub mcp_id: Option<String>,
     /// MCP server name
-    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -1277,5 +1257,66 @@ mod tests {
         assert!(json.contains("\"encryptData\":null"));
         let parsed: McpResourceSpecification = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.resources.len(), 1);
+    }
+}
+
+/// Query DTOs used to accept camelCase only through per-field aliases while
+/// still emitting snake_case. The unified rule declares `rename_all` once on
+/// the container, so both directions are camelCase.
+#[cfg(test)]
+mod serde_naming_contract {
+    use super::*;
+
+    #[test]
+    fn mcp_queries_emit_camel_case_keys() {
+        let query = McpVersionsQuery {
+            namespace_id: Some("ns-1".to_string()),
+            mcp_name: Some("server-1".to_string()),
+            status: None,
+            page_no: Some(3),
+            page_size: Some(25),
+        };
+        let value = serde_json::to_value(&query).unwrap();
+        let object = value.as_object().unwrap();
+        assert!(object.contains_key("namespaceId"));
+        assert!(object.contains_key("mcpName"));
+        assert!(object.contains_key("pageNo"));
+        assert!(object.contains_key("pageSize"));
+        assert!(!object.contains_key("namespace_id"));
+        assert!(!object.contains_key("page_no"));
+    }
+
+    #[test]
+    fn mcp_queries_accept_only_camel_case_input() {
+        let query: McpVersionsQuery = serde_json::from_str(
+            r#"{"namespaceId":"ns","mcpName":"svc","pageNo":2,"pageSize":10}"#,
+        )
+        .unwrap();
+        assert_eq!(query.namespace_id.as_deref(), Some("ns"));
+        assert_eq!(query.mcp_name.as_deref(), Some("svc"));
+        assert_eq!(query.page_no, Some(2));
+        assert_eq!(query.page_size, Some(10));
+
+        // snake_case spellings are no longer accepted; serde ignores unknown
+        // fields, so every field stays at its default.
+        let legacy: McpVersionsQuery = serde_json::from_str(
+            r#"{"namespace_id":"ns","mcp_name":"svc","page_no":2,"page_size":10}"#,
+        )
+        .unwrap();
+        assert!(legacy.namespace_id.is_none());
+        assert!(legacy.mcp_name.is_none());
+        assert!(legacy.page_no.is_none());
+        assert!(legacy.page_size.is_none());
+    }
+
+    #[test]
+    fn mcp_detail_query_still_accepts_camel_case() {
+        let query: McpDetailQuery = serde_json::from_str(
+            r#"{"namespaceId":"ns","mcpId":"id-1","mcpName":"svc","version":"1"}"#,
+        )
+        .unwrap();
+        assert_eq!(query.namespace_id.as_deref(), Some("ns"));
+        assert_eq!(query.mcp_id.as_deref(), Some("id-1"));
+        assert_eq!(query.mcp_name.as_deref(), Some("svc"));
     }
 }

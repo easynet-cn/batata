@@ -21,13 +21,12 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 struct InstanceHealthParam {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
     healthy: bool,
 }

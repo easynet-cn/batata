@@ -22,17 +22,16 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 struct InstanceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     page_size: u64,
-    #[serde(default, alias = "healthyOnly")]
+    #[serde(default)]
     healthy_only: Option<bool>,
 }
 
@@ -59,13 +58,12 @@ impl InstanceListQuery {
 struct InstanceUpdateForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
     #[serde(default = "default_weight")]
     weight: f64,

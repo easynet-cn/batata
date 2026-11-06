@@ -41,7 +41,7 @@ fn normalize_namespace(ns: &str) -> &str {
 /// Query for listing agents.
 pub struct AgentListQuery {
     /// Optional agent name filter.
-    #[serde(default, alias = "agentName")]
+    #[serde(default)]
     pub agent_name: Option<String>,
     /// Namespace identifier.
     #[serde(default)]
@@ -50,10 +50,10 @@ pub struct AgentListQuery {
     #[serde(default)]
     pub search: Option<String>,
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u32,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u32,
 }
 
@@ -62,7 +62,6 @@ pub struct AgentListQuery {
 /// Query identifying one agent.
 pub struct AgentKeyQuery {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Namespace identifier.
     #[serde(default)]
@@ -74,7 +73,6 @@ pub struct AgentKeyQuery {
 /// Query for one agent version.
 pub struct AgentVersionQuery {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Version in `major.minor.patch` format.
     #[serde(default)]
@@ -89,7 +87,6 @@ pub struct AgentVersionQuery {
 /// Form for an action on one agent version.
 pub struct AgentVersionActionForm {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Target version.
     #[serde(default)]
@@ -104,7 +101,6 @@ pub struct AgentVersionActionForm {
 /// Form for reading one version's runtime endpoints.
 pub struct AgentRuntimeEndpointForm {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Target version.
     #[serde(default)]
@@ -126,19 +122,18 @@ pub struct AgentRuntimeEndpointForm {
 /// silently dropped.
 pub struct AgentDraftCreateForm {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// Version to create.
     #[serde(default)]
     pub version: String,
     /// Optional display name.
-    #[serde(default, alias = "displayName")]
+    #[serde(default)]
     pub display_name: Option<String>,
     /// Optional description.
     #[serde(default)]
     pub description: Option<String>,
     /// Optional icon URL.
-    #[serde(default, alias = "iconUrl")]
+    #[serde(default)]
     pub icon_url: Option<String>,
     /// Optional provider name.
     #[serde(default)]
@@ -147,7 +142,7 @@ pub struct AgentDraftCreateForm {
     #[serde(default)]
     pub extensions: Option<String>,
     /// Accepted but not stored: `AgentCard` has no such field.
-    #[serde(default, alias = "callInterfaces")]
+    #[serde(default)]
     pub call_interfaces: Option<String>,
     /// Namespace identifier.
     #[serde(default)]
@@ -159,7 +154,6 @@ pub struct AgentDraftCreateForm {
 /// Form for replacing the label routing.
 pub struct AgentLabelsForm {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// JSON object mapping each label to a version.
     #[serde(default)]
@@ -174,7 +168,6 @@ pub struct AgentLabelsForm {
 /// Form for changing the visibility scope.
 pub struct AgentScopeForm {
     /// Agent name (identifier).
-    #[serde(alias = "agentName")]
     pub agent_name: String,
     /// `PUBLIC` or `PRIVATE`.
     #[serde(default)]

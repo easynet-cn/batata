@@ -16,7 +16,7 @@ use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppSt
 /// Query parameters for listing CMDB entities.
 pub struct EntityListQuery {
     /// Optional entity type filter (e.g. `Service`, `Instance`).
-    #[serde(default, alias = "entityType")]
+    #[serde(default)]
     pub entity_type: Option<String>,
 }
 

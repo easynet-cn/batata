@@ -26,16 +26,16 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AgentForm {
-    #[serde(default, alias = "agentCard")]
+    #[serde(default)]
     /// `agent_card` field.
     pub agent_card: Option<String>,
-    #[serde(default, alias = "agentName")]
+    #[serde(default)]
     /// `agent_name` field.
     pub agent_name: Option<String>,
     #[serde(default)]
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
-    #[serde(default, alias = "registrationType")]
+    #[serde(default)]
     /// `registration_type` field.
     pub registration_type: Option<String>,
     #[serde(default)]
@@ -335,10 +335,8 @@ async fn list_versions(
 pub struct AgentEndpointQuery {
     /// `namespace_id` field.
     pub namespace_id: Option<String>,
-    #[serde(alias = "agentName")]
     /// `agent_name` field.
     pub agent_name: String,
-    #[serde(alias = "endpointUrl")]
     /// `endpoint_url` field.
     pub endpoint_url: Option<String>,
 }

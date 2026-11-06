@@ -31,12 +31,9 @@ struct GetParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateFormData {
-    #[serde(alias = "customNamespaceId")]
     custom_namespace_id: Option<String>,
     namespace_id: Option<String>,
-    #[serde(alias = "namespaceName")]
     namespace_name: String,
-    #[serde(alias = "namespaceDesc")]
     namespace_desc: Option<String>,
 }
 
@@ -44,9 +41,7 @@ struct CreateFormData {
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
     namespace_id: String,
-    #[serde(alias = "namespaceName")]
     namespace_name: String,
-    #[serde(alias = "namespaceDesc")]
     namespace_desc: Option<String>,
 }
 

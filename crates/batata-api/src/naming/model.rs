@@ -314,7 +314,7 @@ pub struct Service {
     pub metadata: HashMap<String, String>,
     /// Protection threshold (0.0 to 1.0). When healthy ratio drops below this,
     /// all instances (including unhealthy) are returned to prevent cascading failure.
-    #[serde(default, alias = "protectThreshold")]
+    #[serde(default)]
     pub protect_threshold: f32,
 }
 
@@ -692,7 +692,7 @@ pub struct NamingFuzzyWatchRequest {
     pub service_name_pattern: String,
     /// The `group_name_pattern` field.
     pub group_name_pattern: String,
-    #[serde(default, alias = "groupKeyPattern")]
+    #[serde(default)]
     /// The `group_key_pattern` field.
     pub group_key_pattern: String,
     #[serde(default, alias = "receivedGroupKeys")]
@@ -1190,16 +1190,12 @@ pub struct HeartbeatForm {
 pub struct CreateClusterForm {
     /// The `namespace_id` field.
     pub namespace_id: Option<String>,
-    #[serde(alias = "groupName")]
     /// The `group_name` field.
     pub group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     /// The `service_name` field.
     pub service_name: String,
-    #[serde(alias = "clusterName")]
     /// The `cluster_name` field.
     pub cluster_name: String,
-    #[serde(alias = "healthChecker")]
     /// The `health_checker` field.
     pub health_checker: Option<HealthCheckerConfigForm>,
     /// The `metadata` field.
@@ -1213,17 +1209,14 @@ pub struct HealthCheckerConfigForm {
     #[serde(default = "default_health_check_type")]
     /// The `type` field.
     pub r#type: String,
-    #[serde(alias = "checkPort")]
     /// The `check_port` field.
     pub check_port: Option<i32>,
-    #[serde(alias = "useInstancePort")]
     /// The `use_instance_port` field.
     pub use_instance_port: Option<bool>,
     /// The `path` field.
     pub path: Option<String>,
     /// The `headers` field.
     pub headers: Option<String>,
-    #[serde(alias = "expectedCode")]
     /// The `expected_code` field.
     pub expected_code: Option<String>,
 }

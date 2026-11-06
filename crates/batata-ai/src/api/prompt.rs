@@ -28,7 +28,6 @@ pub struct PromptPublishForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Prompt version in `major.minor.patch` format.
     pub version: String,
@@ -36,12 +35,10 @@ pub struct PromptPublishForm {
     #[serde(default)]
     pub template: String,
     /// Optional commit message.
-    #[serde(alias = "commitMsg")]
     pub commit_msg: Option<String>,
     /// Optional description.
     pub description: Option<String>,
     /// Comma-separated biz tags
-    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
     /// JSON array of PromptVariable
     pub variables: Option<String>,
@@ -55,7 +52,6 @@ pub struct PromptQueryForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Optional specific version to fetch.
     pub version: Option<String>,
@@ -73,18 +69,16 @@ pub struct PromptListForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Optional prompt key filter.
-    #[serde(alias = "promptKey")]
     pub prompt_key: Option<String>,
     /// Optional free-text search keyword.
     pub search: Option<String>,
     /// Optional comma-separated biz tags filter.
-    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -96,13 +90,12 @@ pub struct PromptHistoryForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Page number (1-based).
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size.
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -114,7 +107,6 @@ pub struct PromptLabelBindForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Label to bind.
     pub label: String,
@@ -130,7 +122,6 @@ pub struct PromptLabelForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Label to unbind.
     pub label: String,
@@ -144,12 +135,10 @@ pub struct PromptMetadataForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Optional new description.
     pub description: Option<String>,
     /// Comma-separated biz tags
-    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
 }
 
@@ -744,7 +733,6 @@ pub struct PromptVersionActionForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Target version.
     pub version: String,
@@ -758,7 +746,6 @@ pub struct PromptDraftCreateForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Version to create; defaults to `0.0.1` when absent.
     #[serde(default)]
@@ -769,7 +756,6 @@ pub struct PromptDraftCreateForm {
     /// Optional description.
     pub description: Option<String>,
     /// Optional commit message.
-    #[serde(alias = "commitMsg")]
     pub commit_msg: Option<String>,
     /// JSON array of PromptVariable.
     pub variables: Option<String>,
@@ -783,13 +769,11 @@ pub struct PromptDraftUpdateForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Prompt template content.
     #[serde(default)]
     pub template: String,
     /// Optional commit message.
-    #[serde(alias = "commitMsg")]
     pub commit_msg: Option<String>,
     /// JSON array of PromptVariable.
     pub variables: Option<String>,
@@ -803,7 +787,6 @@ pub struct PromptDraftForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
 }
 
@@ -815,7 +798,6 @@ pub struct PromptLabelsForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// JSON object mapping each label to a version.
     pub labels: Option<String>,
@@ -829,7 +811,6 @@ pub struct PromptDescriptionForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// New description.
     pub description: String,
@@ -843,10 +824,8 @@ pub struct PromptBizTagsForm {
     #[serde(default)]
     pub namespace_id: String,
     /// Prompt key (identifier).
-    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     /// Comma-separated biz tags.
-    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
 }
 

@@ -24,15 +24,14 @@ use batata_api::naming::NamingServiceProvider;
 struct CatalogInstancesQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default, alias = "clusterName")]
+    #[serde(default)]
     cluster_name: Option<String>,
-    #[serde(default = "default_page_no", alias = "pageNo")]
+    #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size_small", alias = "pageSize")]
+    #[serde(default = "default_page_size_small")]
     page_size: u64,
 }
 

@@ -20,13 +20,11 @@ use batata_api::naming::NamingServiceProvider;
 struct UpdateClusterForm {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
-    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(default, alias = "healthChecker")]
+    #[serde(default)]
     health_checker: Option<HealthCheckerForm>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
@@ -42,9 +40,9 @@ struct HealthCheckerForm {
     path: Option<String>,
     #[serde(default)]
     headers: Option<String>,
-    #[serde(default, alias = "checkPort")]
+    #[serde(default)]
     check_port: Option<i32>,
-    #[serde(default, alias = "useInstancePort")]
+    #[serde(default)]
     use_instance_port: Option<bool>,
 }
 

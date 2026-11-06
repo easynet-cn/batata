@@ -18,9 +18,9 @@ use crate::api::config_model::ConfigListenerInfo;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListenerQuery {
-    #[serde(default, alias = "dataId")]
+    #[serde(default)]
     data_id: Option<String>,
-    #[serde(default, alias = "groupName")]
+    #[serde(default)]
     group_name: Option<String>,
     #[serde(default)]
     namespace_id: Option<String>,
