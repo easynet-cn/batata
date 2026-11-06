@@ -53,10 +53,8 @@ pub struct SnapshotMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peers: Option<Vec<String>>,
     /// Full Raft configuration (voters, non-voters, learners).
-    #[serde(rename = "Configuration")]
     pub configuration: serde_json::Value,
     /// Raft log index of the configuration change that produced this set.
-    #[serde(rename = "ConfigurationIndex")]
     pub configuration_index: u64,
     /// Size of the state payload in bytes (used by Consul for progress).
     pub size: i64,

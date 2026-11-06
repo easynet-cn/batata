@@ -47,10 +47,11 @@ pub struct ImportedService {
 
 /// Wire envelope returned by `/v1/imported-services`.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct ImportedServicesResponse {
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     _partition: String,
-    #[serde(rename = "ImportedServices", default)]
+    #[serde(default)]
     imported_services: Vec<ImportedService>,
 }
 

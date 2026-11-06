@@ -11,8 +11,8 @@ use crate::model::{QueryMeta, WriteOptions};
 
 /// Request body for `AssignServiceVirtualIP`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AssignServiceManualVIPsRequest {
-    #[serde(rename = "Service")]
     /// The service name to assign VIPs to.
     pub service: String,
     #[serde(rename = "ManualVIPs")]
@@ -22,36 +22,37 @@ pub struct AssignServiceManualVIPsRequest {
 
 /// Response body.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AssignServiceManualVIPsResponse {
     #[serde(rename = "Found", default)]
     /// Whether the service was found.
     pub service_found: bool,
-    #[serde(rename = "UnassignedFrom", default)]
+    #[serde(default)]
     /// Peered services whose VIPs were unassigned.
     pub unassigned_from: Vec<PeeredServiceName>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents a `PeeredServiceName`.
 pub struct PeeredServiceName {
-    #[serde(rename = "ServiceName")]
     /// The compound service name.
     pub service_name: CompoundServiceName,
-    #[serde(rename = "Peer", default)]
+    #[serde(default)]
     /// The peer name.
     pub peer: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents a `CompoundServiceName`.
 pub struct CompoundServiceName {
-    #[serde(rename = "Name")]
     /// The service name.
     pub name: String,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the service.
     pub namespace: String,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the service.
     pub partition: String,
 }

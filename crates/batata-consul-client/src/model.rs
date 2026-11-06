@@ -69,32 +69,26 @@ pub struct WriteMeta {
 
 /// A KV pair from the Consul KV store
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct KVPair {
-    #[serde(rename = "Key")]
     /// The key of the KV pair.
     pub key: String,
-    #[serde(rename = "CreateIndex")]
     /// The index at which the pair was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The index at which the pair was last modified.
     pub modify_index: u64,
-    #[serde(rename = "LockIndex")]
     /// The index of the lock held on this pair, if any.
     pub lock_index: u64,
-    #[serde(rename = "Flags")]
     /// User-defined flags attached to the pair.
     pub flags: u64,
     /// Base64-encoded value
-    #[serde(rename = "Value")]
     pub value: Option<String>,
-    #[serde(rename = "Session")]
     /// The session ID holding the lock, if any.
     pub session: Option<String>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the pair (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the pair (Enterprise).
     pub partition: Option<String>,
 }
@@ -118,93 +112,89 @@ impl KVPair {
 
 /// A service registered with the local agent
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentService {
     #[serde(rename = "ID")]
     /// The service ID; defaults to the service name.
     pub id: String,
-    #[serde(rename = "Service")]
     /// The service name.
     pub service: String,
-    #[serde(rename = "Tags", default)]
+    #[serde(default)]
     /// Tags attached to the service.
     pub tags: Option<Vec<String>>,
-    #[serde(rename = "Meta", default)]
+    #[serde(default)]
     /// Arbitrary key/value metadata.
     pub meta: Option<HashMap<String, String>>,
-    #[serde(rename = "Port")]
     /// The port the service listens on.
     pub port: u16,
-    #[serde(rename = "Address")]
     /// The address of the service.
     pub address: String,
-    #[serde(rename = "Weights", default)]
+    #[serde(default)]
     /// The weight of the service.
     pub weights: Option<AgentWeights>,
-    #[serde(rename = "EnableTagOverride")]
     /// Whether tag updates from the catalog override local tags.
     pub enable_tag_override: bool,
-    #[serde(rename = "ContentHash", default)]
+    #[serde(default)]
     /// The hash of the service content.
     pub content_hash: Option<String>,
-    #[serde(rename = "Datacenter", default)]
+    #[serde(default)]
     /// The datacenter of the service.
     pub datacenter: Option<String>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the service (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the service (Enterprise).
     pub partition: Option<String>,
 }
 
 /// Represents a `None`.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentWeights {
-    #[serde(rename = "Passing")]
     /// The weight used when the service check is passing.
     pub passing: i32,
-    #[serde(rename = "Warning")]
     /// The weight used when the service check is warning.
     pub warning: i32,
 }
 
 /// Service registration payload
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentServiceRegistration {
     #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
     /// The optional service ID; defaults to the service name.
     pub id: Option<String>,
-    #[serde(rename = "Name")]
     /// The service name.
     pub name: String,
-    #[serde(rename = "Tags", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Tags attached to the service.
     pub tags: Option<Vec<String>>,
-    #[serde(rename = "Port", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The port the service listens on.
     pub port: Option<u16>,
-    #[serde(rename = "Address", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The address of the service.
     pub address: Option<String>,
-    #[serde(rename = "Meta", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Arbitrary key/value metadata.
     pub meta: Option<HashMap<String, String>>,
-    #[serde(rename = "EnableTagOverride", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Whether tag updates from the catalog override local tags.
     pub enable_tag_override: Option<bool>,
-    #[serde(rename = "Check", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// A single health check for the service.
     pub check: Option<AgentServiceCheck>,
-    #[serde(rename = "Checks", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Multiple health checks for the service.
     pub checks: Option<Vec<AgentServiceCheck>>,
-    #[serde(rename = "Weights", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The weight of the service.
     pub weights: Option<AgentWeights>,
-    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The namespace of the service (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The admin partition of the service (Enterprise).
     pub partition: Option<String>,
 }
@@ -258,82 +248,66 @@ pub struct AgentServiceCheck {
 
 /// A check registered with the agent
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentCheck {
-    #[serde(rename = "Node")]
     /// The node the check runs on.
     pub node: String,
     #[serde(rename = "CheckID")]
     /// The check ID.
     pub check_id: String,
-    #[serde(rename = "Name")]
     /// The check name.
     pub name: String,
-    #[serde(rename = "Status")]
     /// The check status: passing, warning or critical.
     pub status: String,
-    #[serde(rename = "Notes")]
     /// Human-readable notes about the check.
     pub notes: String,
-    #[serde(rename = "Output")]
     /// The output of the last check run.
     pub output: String,
     #[serde(rename = "ServiceID")]
     /// The ID of the associated service, if any.
     pub service_id: String,
-    #[serde(rename = "ServiceName")]
     /// The name of the associated service, if any.
     pub service_name: String,
     #[serde(rename = "Type", default)]
     /// The check type.
     pub check_type: Option<String>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the check (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the check (Enterprise).
     pub partition: Option<String>,
-    #[serde(rename = "CreateIndex")]
     /// The index at which the check was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The index at which the check was last modified.
     pub modify_index: u64,
 }
 
 /// A member of the Consul cluster (serf)
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentMember {
-    #[serde(rename = "Name")]
     /// The name of the member node.
     pub name: String,
-    #[serde(rename = "Addr")]
     /// The address of the member node.
     pub addr: String,
-    #[serde(rename = "Port")]
     /// The port of the member node.
     pub port: u16,
-    #[serde(rename = "Tags", default)]
+    #[serde(default)]
     /// Tags describing the member.
     pub tags: Option<HashMap<String, String>>,
-    #[serde(rename = "Status")]
     /// The serf status of the member.
     pub status: i32,
-    #[serde(rename = "ProtocolMin")]
     /// The minimum supported protocol version.
     pub protocol_min: u8,
-    #[serde(rename = "ProtocolMax")]
     /// The maximum supported protocol version.
     pub protocol_max: u8,
-    #[serde(rename = "ProtocolCur")]
     /// The currently used protocol version.
     pub protocol_cur: u8,
-    #[serde(rename = "DelegateMin")]
     /// The minimum delegate protocol version.
     pub delegate_min: u8,
-    #[serde(rename = "DelegateMax")]
     /// The maximum delegate protocol version.
     pub delegate_max: u8,
-    #[serde(rename = "DelegateCur")]
     /// The current delegate protocol version.
     pub delegate_cur: u8,
 }
@@ -390,11 +364,11 @@ pub struct AgentCheckRegistration {
 
 /// TTL check update payload
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentCheckUpdate {
-    #[serde(rename = "Status")]
     /// The new check status.
     pub status: String,
-    #[serde(rename = "Output", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The output to attach to the check.
     pub output: Option<String>,
 }
@@ -403,61 +377,52 @@ pub struct AgentCheckUpdate {
 
 /// A health check entry
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct HealthCheck {
-    #[serde(rename = "Node")]
     /// The node the check runs on.
     pub node: String,
     #[serde(rename = "CheckID")]
     /// The check ID.
     pub check_id: String,
-    #[serde(rename = "Name")]
     /// The check name.
     pub name: String,
-    #[serde(rename = "Status")]
     /// The check status: passing, warning or critical.
     pub status: String,
-    #[serde(rename = "Notes")]
     /// Human-readable notes about the check.
     pub notes: String,
-    #[serde(rename = "Output")]
     /// The output of the last check run.
     pub output: String,
     #[serde(rename = "ServiceID")]
     /// The ID of the associated service, if any.
     pub service_id: String,
-    #[serde(rename = "ServiceName")]
     /// The name of the associated service, if any.
     pub service_name: String,
-    #[serde(rename = "ServiceTags", default)]
+    #[serde(default)]
     /// Tags of the associated service.
     pub service_tags: Option<Vec<String>>,
     #[serde(rename = "Type", default)]
     /// The check type.
     pub check_type: Option<String>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the check (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the check (Enterprise).
     pub partition: Option<String>,
-    #[serde(rename = "CreateIndex")]
     /// The index at which the check was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The index at which the check was last modified.
     pub modify_index: u64,
 }
 
 /// A service entry with node and health checks (from /v1/health/service)
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ServiceEntry {
-    #[serde(rename = "Node")]
     /// The node hosting the service.
     pub node: Node,
-    #[serde(rename = "Service")]
     /// The service registered on the node.
     pub service: AgentService,
-    #[serde(rename = "Checks")]
     /// Health checks associated with the node/service.
     pub checks: Vec<HealthCheck>,
 }
@@ -466,145 +431,136 @@ pub struct ServiceEntry {
 
 /// Node info
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct Node {
     #[serde(rename = "ID", default)]
     /// The node ID.
     pub id: Option<String>,
-    #[serde(rename = "Node")]
     /// The node name.
     pub node: String,
-    #[serde(rename = "Address")]
     /// The node address.
     pub address: String,
-    #[serde(rename = "Datacenter", default)]
+    #[serde(default)]
     /// The datacenter of the node.
     pub datacenter: Option<String>,
-    #[serde(rename = "TaggedAddresses", default)]
+    #[serde(default)]
     /// Addresses tagged by type (LAN, WAN, etc.).
     pub tagged_addresses: Option<HashMap<String, String>>,
-    #[serde(rename = "Meta", default)]
+    #[serde(default)]
     /// Arbitrary key/value metadata.
     pub meta: Option<HashMap<String, String>>,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the node was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the node was last modified.
     pub modify_index: u64,
 }
 
 /// A service from the catalog
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CatalogService {
     #[serde(rename = "ID", default)]
     /// The node ID.
     pub id: Option<String>,
-    #[serde(rename = "Node")]
     /// The node hosting the service.
     pub node: String,
-    #[serde(rename = "Address")]
     /// The node address.
     pub address: String,
-    #[serde(rename = "Datacenter", default)]
+    #[serde(default)]
     /// The datacenter of the node.
     pub datacenter: Option<String>,
-    #[serde(rename = "TaggedAddresses", default)]
+    #[serde(default)]
     /// Addresses tagged by type (LAN, WAN, etc.).
     pub tagged_addresses: Option<HashMap<String, String>>,
-    #[serde(rename = "NodeMeta", default)]
+    #[serde(default)]
     /// Arbitrary key/value metadata for the node.
     pub node_meta: Option<HashMap<String, String>>,
     #[serde(rename = "ServiceID")]
     /// The service ID.
     pub service_id: String,
-    #[serde(rename = "ServiceName")]
     /// The service name.
     pub service_name: String,
-    #[serde(rename = "ServiceAddress")]
     /// The address of the service.
     pub service_address: String,
-    #[serde(rename = "ServiceTags", default)]
+    #[serde(default)]
     /// Tags attached to the service.
     pub service_tags: Option<Vec<String>>,
-    #[serde(rename = "ServiceMeta", default)]
+    #[serde(default)]
     /// Arbitrary key/value metadata for the service.
     pub service_meta: Option<HashMap<String, String>>,
-    #[serde(rename = "ServicePort")]
     /// The port the service listens on.
     pub service_port: u16,
-    #[serde(rename = "ServiceWeights", default)]
+    #[serde(default)]
     /// The weight of the service.
     pub service_weights: Option<AgentWeights>,
-    #[serde(rename = "ServiceEnableTagOverride")]
     /// Whether tag override is enabled for the service.
     pub service_enable_tag_override: bool,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the service (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the service (Enterprise).
     pub partition: Option<String>,
-    #[serde(rename = "CreateIndex")]
     /// The index at which the entry was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The index at which the entry was last modified.
     pub modify_index: u64,
 }
 
 /// Catalog node with its services
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CatalogNode {
-    #[serde(rename = "Node")]
     /// The node.
     pub node: Option<Node>,
-    #[serde(rename = "Services", default)]
+    #[serde(default)]
     /// Services registered on the node, keyed by service ID.
     pub services: Option<HashMap<String, AgentService>>,
 }
 
 /// Catalog registration payload
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CatalogRegistration {
     #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
     /// The node ID.
     pub id: Option<String>,
-    #[serde(rename = "Node")]
     /// The node name.
     pub node: String,
-    #[serde(rename = "Address")]
     /// The node address.
     pub address: String,
-    #[serde(rename = "Datacenter", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The datacenter to register in.
     pub datacenter: Option<String>,
-    #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Addresses tagged by type (LAN, WAN, etc.).
     pub tagged_addresses: Option<HashMap<String, String>>,
-    #[serde(rename = "NodeMeta", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Arbitrary key/value metadata for the node.
     pub node_meta: Option<HashMap<String, String>>,
-    #[serde(rename = "Service", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The service to register.
     pub service: Option<AgentService>,
-    #[serde(rename = "Check", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// A single health check to register.
     pub check: Option<HealthCheck>,
-    #[serde(rename = "Checks", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Multiple health checks to register.
     pub checks: Option<Vec<HealthCheck>>,
 }
 
 /// Catalog deregistration payload
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CatalogDeregistration {
-    #[serde(rename = "Node")]
     /// The node name.
     pub node: String,
-    #[serde(rename = "Address", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The node address.
     pub address: Option<String>,
-    #[serde(rename = "Datacenter", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The datacenter to deregister from.
     pub datacenter: Option<String>,
     #[serde(rename = "ServiceID", skip_serializing_if = "Option::is_none")]
@@ -613,10 +569,10 @@ pub struct CatalogDeregistration {
     #[serde(rename = "CheckID", skip_serializing_if = "Option::is_none")]
     /// The check ID to deregister.
     pub check_id: Option<String>,
-    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The namespace of the entry (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The admin partition of the entry (Enterprise).
     pub partition: Option<String>,
 }
@@ -625,55 +581,57 @@ pub struct CatalogDeregistration {
 
 /// A session entry
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct SessionEntry {
     #[serde(rename = "ID", default)]
     /// The session ID.
     pub id: Option<String>,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The human-readable session name.
     pub name: Option<String>,
-    #[serde(rename = "Node", default)]
+    #[serde(default)]
     /// The node the session is bound to.
     pub node: Option<String>,
-    #[serde(rename = "LockDelay", default)]
+    #[serde(default)]
     /// The lock delay applied when a session is invalidated.
     pub lock_delay: Option<u64>,
-    #[serde(rename = "Behavior", default)]
+    #[serde(default)]
     /// The invalidation behavior: `release` or `delete`.
     pub behavior: Option<String>,
     #[serde(rename = "TTL", default)]
     /// The session TTL (e.g. "30s").
     pub ttl: Option<String>,
-    #[serde(rename = "Checks", default)]
+    #[serde(default)]
     /// Health checks associated with the session.
     pub checks: Option<Vec<String>>,
-    #[serde(rename = "NodeChecks", default)]
+    #[serde(default)]
     /// Node-level checks associated with the session.
     pub node_checks: Option<Vec<String>>,
-    #[serde(rename = "ServiceChecks", default)]
+    #[serde(default)]
     /// Service-level checks associated with the session.
     pub service_checks: Option<Vec<ServiceCheck>>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the session (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default)]
+    #[serde(default)]
     /// The admin partition of the session (Enterprise).
     pub partition: Option<String>,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the session was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the session was last modified.
     pub modify_index: u64,
 }
 
 /// Represents a `None`.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ServiceCheck {
     #[serde(rename = "ID")]
     /// The check ID.
     pub id: String,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The namespace of the check (Enterprise).
     pub namespace: Option<String>,
 }
@@ -682,29 +640,29 @@ pub struct ServiceCheck {
 
 /// A user event
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct UserEvent {
     #[serde(rename = "ID", default)]
     /// The event ID.
     pub id: Option<String>,
-    #[serde(rename = "Name")]
     /// The event name.
     pub name: String,
-    #[serde(rename = "Payload", default)]
+    #[serde(default)]
     /// The base64-encoded event payload.
     pub payload: Option<String>,
-    #[serde(rename = "NodeFilter", default)]
+    #[serde(default)]
     /// The node filter applied when firing the event.
     pub node_filter: Option<String>,
-    #[serde(rename = "ServiceFilter", default)]
+    #[serde(default)]
     /// The service filter applied when firing the event.
     pub service_filter: Option<String>,
-    #[serde(rename = "TagFilter", default)]
+    #[serde(default)]
     /// The tag filter applied when firing the event.
     pub tag_filter: Option<String>,
-    #[serde(rename = "Version", default)]
+    #[serde(default)]
     /// The event version.
     pub version: u32,
-    #[serde(rename = "LTime", default)]
+    #[serde(default)]
     /// The Lamport time of the event.
     pub l_time: u64,
 }
@@ -859,22 +817,24 @@ pub struct ACLTokenListEntry {
 
 /// Link to a policy in a token
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLTokenPolicyLink {
     #[serde(rename = "ID", default)]
     /// The policy ID.
     pub id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The policy name.
     pub name: String,
 }
 
 /// Link to a role in a token
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLTokenRoleLink {
     #[serde(rename = "ID", default)]
     /// The role ID.
     pub id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The role name.
     pub name: String,
 }
@@ -882,11 +842,12 @@ pub struct ACLTokenRoleLink {
 /// Generic ACL link used by Namespace/Partition ACL defaults.
 /// Matches Consul's `api.ACLLink`.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLLink {
     #[serde(rename = "ID", default)]
     /// The linked object ID.
     pub id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The linked object name.
     pub name: String,
 }
@@ -895,23 +856,24 @@ pub struct ACLLink {
 ///
 /// Matches Consul's `api.ACLEntry`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLEntry {
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the entry was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the entry was last modified.
     pub modify_index: u64,
     #[serde(rename = "ID", default)]
     /// The ACL entry ID.
     pub id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The ACL entry name.
     pub name: String,
     /// Legacy type: "client" or "management".
     #[serde(rename = "Type", default)]
     pub acl_type: String,
-    #[serde(rename = "Rules", default)]
+    #[serde(default)]
     /// The legacy ACL rules in HCL format.
     pub rules: String,
 }
@@ -940,11 +902,10 @@ pub struct ACLServiceIdentity {
 
 /// Node identity for ACL
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLNodeIdentity {
-    #[serde(rename = "NodeName")]
     /// The name of the node the identity applies to.
     pub node_name: String,
-    #[serde(rename = "Datacenter")]
     /// The datacenter the identity is valid in.
     pub datacenter: String,
 }
@@ -973,25 +934,25 @@ pub struct ACLTemplatedPolicy {
 
 /// Variables for templated policies
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLTemplatedPolicyVariables {
-    #[serde(rename = "Name")]
     /// The name variable used when rendering the template.
     pub name: String,
 }
 
 /// Templated policy response from server
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLTemplatedPolicyResponse {
-    #[serde(rename = "TemplateName")]
     /// The name of the policy template.
     pub template_name: String,
-    #[serde(rename = "Schema", default)]
+    #[serde(default)]
     /// The JSON schema describing the template variables.
     pub schema: String,
-    #[serde(rename = "Template", default)]
+    #[serde(default)]
     /// The raw policy template.
     pub template: String,
-    #[serde(rename = "Description", default)]
+    #[serde(default)]
     /// A human-readable description of the template.
     pub description: String,
 }
@@ -1231,86 +1192,79 @@ pub struct ACLAuthMethodListEntry {
 
 /// ACL Binding Rule
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLBindingRule {
     #[serde(rename = "ID", default)]
     /// The binding rule ID.
     pub id: String,
-    #[serde(rename = "Description", default)]
+    #[serde(default)]
     /// A human-readable description of the rule.
     pub description: String,
-    #[serde(rename = "AuthMethod")]
     /// The auth method this rule applies to.
     pub auth_method: String,
-    #[serde(rename = "Selector", default)]
+    #[serde(default)]
     /// The selector expression used to match logins.
     pub selector: String,
-    #[serde(rename = "BindType")]
     /// What to bind: `service`, `role` or `templated-policy`.
     pub bind_type: String,
-    #[serde(rename = "BindName")]
     /// The name of the role or policy to bind.
     pub bind_name: String,
-    #[serde(rename = "BindVars", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Variables used when rendering a templated policy.
     pub bind_vars: Option<ACLTemplatedPolicyVariables>,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the rule was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the rule was last modified.
     pub modify_index: u64,
-    #[serde(rename = "Namespace", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The namespace of the rule (Enterprise).
     pub namespace: Option<String>,
-    #[serde(rename = "Partition", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The admin partition of the rule (Enterprise).
     pub partition: Option<String>,
 }
 
 /// ACL Login parameters
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLLoginParams {
-    #[serde(rename = "AuthMethod")]
     /// The auth method to log in with.
     pub auth_method: String,
-    #[serde(rename = "BearerToken")]
     /// The bearer token presented to the auth method.
     pub bearer_token: String,
-    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Additional metadata passed to the auth method.
     pub meta: Option<HashMap<String, String>>,
 }
 
 /// ACL OIDC Auth URL parameters
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLOIDCAuthURLParams {
-    #[serde(rename = "AuthMethod")]
     /// The OIDC auth method to use.
     pub auth_method: String,
     #[serde(rename = "RedirectURI")]
     /// The URI to redirect to after authentication.
     pub redirect_uri: String,
-    #[serde(rename = "ClientNonce")]
     /// A client-generated nonce used to bind the callback.
     pub client_nonce: String,
-    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Additional metadata passed to the auth method.
     pub meta: Option<HashMap<String, String>>,
 }
 
 /// ACL OIDC Callback parameters
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ACLOIDCCallbackParams {
-    #[serde(rename = "AuthMethod")]
     /// The OIDC auth method to complete.
     pub auth_method: String,
-    #[serde(rename = "State")]
     /// The state parameter returned by the OIDC provider.
     pub state: String,
-    #[serde(rename = "Code")]
     /// The authorization code returned by the OIDC provider.
     pub code: String,
-    #[serde(rename = "ClientNonce")]
     /// The nonce originally supplied when generating the auth URL.
     pub client_nonce: String,
 }
@@ -1510,10 +1464,10 @@ pub struct AutopilotConfiguration {
     #[serde(default)]
     /// The node meta tag containing the desired Consul version.
     pub upgrade_version_tag: String,
-    #[serde(default, rename = "CreateIndex")]
+    #[serde(default)]
     /// The index at which the configuration was created.
     pub create_index: u64,
-    #[serde(default, rename = "ModifyIndex")]
+    #[serde(default)]
     /// The index at which the configuration was last modified.
     pub modify_index: u64,
 }
@@ -1700,40 +1654,40 @@ pub struct IntentionCheck {
 /// Wire-compatible with Consul Go SDK's `api.TxnOp`, which supports KV,
 /// Node, Service, and Check operations in a single atomic transaction.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnOp {
     #[serde(rename = "KV", default, skip_serializing_if = "Option::is_none")]
     /// A KV operation.
     pub kv: Option<TxnKVOp>,
-    #[serde(rename = "Node", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// A node operation.
     pub node: Option<TxnNodeOp>,
-    #[serde(rename = "Service", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// A service operation.
     pub service: Option<TxnServiceOp>,
-    #[serde(rename = "Check", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// A check operation.
     pub check: Option<TxnCheckOp>,
 }
 
 /// A KV operation within a transaction
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnKVOp {
-    #[serde(rename = "Verb")]
     /// The operation to perform (e.g. `set`, `get`, `delete`).
     pub verb: String,
-    #[serde(rename = "Key")]
     /// The KV key the operation targets.
     pub key: String,
-    #[serde(rename = "Value", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The base64-encoded value to write.
     pub value: Option<String>,
-    #[serde(rename = "Flags", default)]
+    #[serde(default)]
     /// User-defined flags attached to the pair.
     pub flags: u64,
-    #[serde(rename = "Index", default)]
+    #[serde(default)]
     /// The modify index used for check-and-set operations.
     pub index: u64,
-    #[serde(rename = "Session", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The session used to lock the pair.
     pub session: Option<String>,
 }
@@ -1742,11 +1696,10 @@ pub struct TxnKVOp {
 ///
 /// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnNodeOp {
-    #[serde(rename = "Verb")]
     /// The operation to perform (e.g. `set`, `get`, `delete`).
     pub verb: String,
-    #[serde(rename = "Node")]
     /// The node the operation targets.
     pub node: TxnNode,
 }
@@ -1792,14 +1745,12 @@ pub struct TxnNode {
 ///
 /// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnServiceOp {
-    #[serde(rename = "Verb")]
     /// The operation to perform (e.g. `set`, `get`, `delete`).
     pub verb: String,
     /// Node on which the service runs.
-    #[serde(rename = "Node")]
     pub node: String,
-    #[serde(rename = "Service")]
     /// The service the operation targets.
     pub service: TxnService,
 }
@@ -1807,29 +1758,30 @@ pub struct TxnServiceOp {
 /// Service entry used in Txn Service operations. Matches Consul
 /// `api.AgentService` minus agent-only fields.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnService {
     #[serde(rename = "ID", default)]
     /// The service ID; defaults to the service name.
     pub id: String,
-    #[serde(rename = "Service", default)]
+    #[serde(default)]
     /// The service name.
     pub service: String,
-    #[serde(rename = "Tags", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Tags attached to the service.
     pub tags: Option<Vec<String>>,
-    #[serde(rename = "Address", default)]
+    #[serde(default)]
     /// The address of the service.
     pub address: String,
-    #[serde(rename = "Port", default)]
+    #[serde(default)]
     /// The port the service listens on.
     pub port: u16,
-    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Arbitrary key/value metadata.
     pub meta: Option<std::collections::HashMap<String, String>>,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the service was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the service was last modified.
     pub modify_index: u64,
 }
@@ -1838,57 +1790,58 @@ pub struct TxnService {
 ///
 /// Valid verbs: "set", "cas", "get", "delete", "delete-cas".
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnCheckOp {
-    #[serde(rename = "Verb")]
     /// The operation to perform (e.g. `set`, `get`, `delete`).
     pub verb: String,
-    #[serde(rename = "Check")]
     /// The check the operation targets.
     pub check: TxnCheck,
 }
 
 /// Health check entry used in Txn Check operations.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnCheck {
-    #[serde(rename = "Node", default)]
+    #[serde(default)]
     /// The node the check runs on.
     pub node: String,
     #[serde(rename = "CheckID", default)]
     /// The check ID.
     pub check_id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The check name.
     pub name: String,
-    #[serde(rename = "Status", default)]
+    #[serde(default)]
     /// The check status: passing, warning or critical.
     pub status: String,
-    #[serde(rename = "Notes", default)]
+    #[serde(default)]
     /// Human-readable notes about the check.
     pub notes: String,
-    #[serde(rename = "Output", default)]
+    #[serde(default)]
     /// The output of the last check run.
     pub output: String,
     #[serde(rename = "ServiceID", default)]
     /// The ID of the associated service, if any.
     pub service_id: String,
-    #[serde(rename = "ServiceName", default)]
+    #[serde(default)]
     /// The name of the associated service, if any.
     pub service_name: String,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the check was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the check was last modified.
     pub modify_index: u64,
 }
 
 /// Response from a transaction execution
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnResponse {
-    #[serde(rename = "Results", default)]
+    #[serde(default)]
     /// The results of the successfully applied operations.
     pub results: Vec<TxnResult>,
-    #[serde(rename = "Errors", default)]
+    #[serde(default)]
     /// The errors reported for failed operations.
     pub errors: Vec<TxnError>,
 }
@@ -1896,28 +1849,30 @@ pub struct TxnResponse {
 /// A single result entry from a transaction. Exactly one of the fields
 /// will be populated per original op.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnResult {
     #[serde(rename = "KV", default, skip_serializing_if = "Option::is_none")]
     /// The KV pair returned by the operation.
     pub kv: Option<KVPair>,
-    #[serde(rename = "Node", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The node returned by the operation.
     pub node: Option<TxnNode>,
-    #[serde(rename = "Service", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The service returned by the operation.
     pub service: Option<TxnService>,
-    #[serde(rename = "Check", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The check returned by the operation.
     pub check: Option<TxnCheck>,
 }
 
 /// A single error entry from a transaction
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnError {
-    #[serde(rename = "OpIndex", default)]
+    #[serde(default)]
     /// The index of the operation that failed.
     pub op_index: u64,
-    #[serde(rename = "What", default)]
+    #[serde(default)]
     /// A description of the failure.
     pub what: String,
 }
@@ -1926,51 +1881,51 @@ pub struct TxnError {
 
 /// WAN coordinate information for a datacenter
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct DatacenterCoordinate {
-    #[serde(rename = "Datacenter")]
     /// The datacenter name.
     pub datacenter: String,
     #[serde(rename = "AreaID", default)]
     /// The network area ID.
     pub area_id: String,
-    #[serde(rename = "Coordinates", default)]
+    #[serde(default)]
     /// The node coordinates within this datacenter.
     pub coordinates: Vec<NodeCoordinate>,
 }
 
 /// LAN coordinate information for a node
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct NodeCoordinate {
-    #[serde(rename = "Node")]
     /// The node name.
     pub node: String,
-    #[serde(rename = "Segment", default)]
+    #[serde(default)]
     /// The network segment of the node.
     pub segment: String,
-    #[serde(rename = "Coord")]
     /// The network coordinate of the node.
     pub coord: Coordinate,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the coordinate was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the coordinate was last modified.
     pub modify_index: u64,
 }
 
 /// Network coordinate vector
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct Coordinate {
-    #[serde(rename = "Vec", default)]
+    #[serde(default)]
     /// The coordinate vector.
     pub vec: Vec<f64>,
-    #[serde(rename = "Error", default)]
+    #[serde(default)]
     /// The estimated error of the coordinate.
     pub error: f64,
-    #[serde(rename = "Adjustment", default)]
+    #[serde(default)]
     /// The adjustment applied to the coordinate.
     pub adjustment: f64,
-    #[serde(rename = "Height", default)]
+    #[serde(default)]
     /// The height of the coordinate.
     pub height: f64,
 }
@@ -1979,57 +1934,60 @@ pub struct Coordinate {
 
 /// A prepared query definition
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQuery {
     #[serde(rename = "ID", default)]
     /// The prepared query ID.
     pub id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The prepared query name.
     pub name: String,
-    #[serde(rename = "Token", default, skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     /// The ACL token used when executing the query.
     pub token: String,
-    #[serde(rename = "Service", default)]
+    #[serde(default)]
     /// The service targeting configuration.
     pub service: QueryService,
     #[serde(rename = "DNS", default)]
     /// The DNS settings for the query.
     pub dns: QueryDNS,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The index at which the query was created.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The index at which the query was last modified.
     pub modify_index: u64,
 }
 
 /// Service targeting configuration for a prepared query
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct QueryService {
-    #[serde(rename = "Service", default)]
+    #[serde(default)]
     /// The service the query targets.
     pub service: String,
-    #[serde(rename = "Near", default)]
+    #[serde(default)]
     /// The node used to sort results by network distance.
     pub near: String,
-    #[serde(rename = "Tags", default)]
+    #[serde(default)]
     /// Tags used to filter the service instances.
     pub tags: Vec<String>,
-    #[serde(rename = "OnlyPassing", default)]
+    #[serde(default)]
     /// Whether only passing instances are returned.
     pub only_passing: bool,
-    #[serde(rename = "Failover", default)]
+    #[serde(default)]
     /// The failover configuration for the query.
     pub failover: QueryFailover,
 }
 
 /// Failover configuration for a prepared query
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct QueryFailover {
-    #[serde(rename = "NearestN", default)]
+    #[serde(default)]
     /// The number of nearest instances to return during failover.
     pub nearest_n: i32,
-    #[serde(rename = "Datacenters", default)]
+    #[serde(default)]
     /// The datacenters to fail over to, in order.
     pub datacenters: Vec<String>,
 }
@@ -2044,20 +2002,21 @@ pub struct QueryDNS {
 
 /// Response from executing a prepared query
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryExecuteResponse {
-    #[serde(rename = "Service", default)]
+    #[serde(default)]
     /// The service that was queried.
     pub service: String,
-    #[serde(rename = "Nodes", default)]
+    #[serde(default)]
     /// The healthy instances returned by the query.
     pub nodes: Vec<ServiceEntry>,
     #[serde(rename = "DNS", default)]
     /// The DNS settings used for the query.
     pub dns: QueryDNS,
-    #[serde(rename = "Datacenter", default)]
+    #[serde(default)]
     /// The datacenter that served the query.
     pub datacenter: String,
-    #[serde(rename = "Failovers", default)]
+    #[serde(default)]
     /// The number of failovers performed to serve the query.
     pub failovers: i32,
 }
@@ -2073,3 +2032,100 @@ pub const HEALTH_WARNING: &str = "warning";
 pub const HEALTH_CRITICAL: &str = "critical";
 /// The node or service is in maintenance mode.
 pub const HEALTH_MAINTENANCE: &str = "maintenance";
+
+/// Consul's Go `encoding/json` emits capital-first field names verbatim.
+/// The wire rule is declared once per DTO; only Go acronym spellings such as
+/// `ID`, `HTTP` and `TTL` remain explicit field-level overrides.
+#[cfg(test)]
+mod consul_pascal_case_contract {
+    use super::*;
+
+    #[test]
+    fn container_rule_emits_pascal_case_keys() {
+        let pair = KVPair {
+            key: "app/config".to_string(),
+            create_index: 7,
+            modify_index: 9,
+            lock_index: 0,
+            flags: 42,
+            value: None,
+            session: None,
+            namespace: None,
+            partition: None,
+        };
+        let value = serde_json::to_value(&pair).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.get("Key").and_then(|v| v.as_str()),
+            Some("app/config")
+        );
+        assert_eq!(object.get("CreateIndex").and_then(|v| v.as_u64()), Some(7));
+        assert_eq!(object.get("ModifyIndex").and_then(|v| v.as_u64()), Some(9));
+        assert_eq!(object.get("Flags").and_then(|v| v.as_u64()), Some(42));
+        assert!(!object.contains_key("key"));
+        assert!(!object.contains_key("create_index"));
+        assert!(!object.contains_key("createIndex"));
+    }
+
+    #[test]
+    fn container_rule_requires_pascal_case_input() {
+        let parsed: AgentService = serde_json::from_str(
+            r#"{"ID":"svc-1","Service":"svc","Port":8080,"Address":"127.0.0.1","EnableTagOverride":true}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.id, "svc-1");
+        assert_eq!(parsed.service, "svc");
+        assert!(parsed.enable_tag_override);
+
+        let snake_case = serde_json::from_str::<AgentService>(
+            r#"{"id":"svc-1","service":"svc","port":8080,"address":"127.0.0.1","enable_tag_override":true}"#,
+        );
+        assert!(snake_case.is_err(), "snake_case input must not be accepted");
+    }
+
+    #[test]
+    fn go_acronym_overrides_survive_the_container_rule() {
+        let service = AgentService {
+            id: "svc-1".to_string(),
+            service: "svc".to_string(),
+            port: 8080,
+            address: "127.0.0.1".to_string(),
+            enable_tag_override: true,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&service).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.get("ID").and_then(|v| v.as_str()), Some("svc-1"));
+        assert!(!object.contains_key("Id"));
+        assert!(!object.contains_key("id"));
+        assert_eq!(
+            object.get("EnableTagOverride").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn mixed_dto_keeps_its_explicit_renames() {
+        // This DTO was deliberately left alone: not every field carries a
+        // rename, so a container rule would change the remaining wire keys.
+        let check = AgentServiceCheck {
+            check_id: Some("chk-1".to_string()),
+            http: Some("http://127.0.0.1/health".to_string()),
+            ttl: Some("10s".to_string()),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&check).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.get("CheckID").and_then(|v| v.as_str()),
+            Some("chk-1")
+        );
+        assert_eq!(
+            object.get("HTTP").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1/health")
+        );
+        assert_eq!(object.get("TTL").and_then(|v| v.as_str()), Some("10s"));
+        assert!(!object.contains_key("check_id"));
+        assert!(!object.contains_key("Http"));
+    }
+}

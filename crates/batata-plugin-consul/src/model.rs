@@ -410,69 +410,70 @@ pub mod consul_u64 {
 /// Service registration request
 /// PUT /v1/agent/service/register
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentServiceRegistration {
     /// Service ID (optional, defaults to Name if not provided)
     #[serde(rename = "ID", alias = "Id", default)]
     pub id: Option<String>,
 
     /// Service name (required for top-level, defaults to empty for SidecarService)
-    #[serde(rename = "Name", alias = "name", default)]
+    #[serde(alias = "name", default)]
     pub name: String,
 
     /// Service tags for filtering and metadata
-    #[serde(rename = "Tags", alias = "tags", default)]
+    #[serde(alias = "tags", default)]
     pub tags: Option<Vec<String>>,
 
     /// Service address (optional, uses agent address if not provided)
-    #[serde(rename = "Address", alias = "address", default)]
+    #[serde(alias = "address", default)]
     pub address: Option<String>,
 
     /// Service port
-    #[serde(rename = "Port", alias = "port", default)]
+    #[serde(alias = "port", default)]
     pub port: Option<u16>,
 
     /// Service metadata key-value pairs
-    #[serde(rename = "Meta", alias = "meta", default)]
+    #[serde(alias = "meta", default)]
     pub meta: Option<HashMap<String, String>>,
 
     /// Enable tag override from external sources
-    #[serde(rename = "EnableTagOverride", alias = "enableTagOverride", default)]
+    #[serde(alias = "enableTagOverride", default)]
     pub enable_tag_override: Option<bool>,
 
     /// Service weights for load balancing
-    #[serde(rename = "Weights", alias = "weights", default)]
+    #[serde(alias = "weights", default)]
     pub weights: Option<Weights>,
 
     /// Service kind (e.g., "connect-proxy", "mesh-gateway")
-    #[serde(rename = "Kind", alias = "kind", default)]
+    #[serde(alias = "kind", default)]
     pub kind: Option<String>,
 
     /// Proxy configuration for connect-proxy services
-    #[serde(rename = "Proxy", alias = "proxy", default)]
+    #[serde(alias = "proxy", default)]
     pub proxy: Option<serde_json::Value>,
 
     /// Connect configuration for mesh-enabled services
-    #[serde(rename = "Connect", alias = "connect", default)]
+    #[serde(alias = "connect", default)]
     pub connect: Option<serde_json::Value>,
 
     /// Tagged addresses for the service
-    #[serde(rename = "TaggedAddresses", alias = "taggedAddresses", default)]
+    #[serde(alias = "taggedAddresses", default)]
     pub tagged_addresses: Option<serde_json::Value>,
 
     /// Single health check definition
-    #[serde(rename = "Check", alias = "check", default)]
+    #[serde(alias = "check", default)]
     pub check: Option<AgentServiceCheck>,
 
     /// Multiple health check definitions
-    #[serde(rename = "Checks", alias = "checks", default)]
+    #[serde(alias = "checks", default)]
     pub checks: Option<Vec<AgentServiceCheck>>,
 
     /// Namespace (Consul Enterprise, maps to Batata namespace)
-    #[serde(rename = "Namespace", alias = "namespace", default)]
+    #[serde(alias = "namespace", default)]
     pub namespace: Option<String>,
 
     /// Unix socket path for the service
-    #[serde(rename = "SocketPath", alias = "socket_path", default)]
+    #[serde(alias = "socket_path", default)]
     pub socket_path: Option<String>,
 }
 
@@ -745,13 +746,14 @@ impl ValidatedCheck {
 
 /// Service weights for load balancing
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct Weights {
     /// Weight when service is passing health checks
-    #[serde(rename = "Passing", default = "default_passing_weight")]
+    #[serde(default = "default_passing_weight")]
     pub passing: i32,
 
     /// Weight when service has warning health checks
-    #[serde(rename = "Warning", default = "default_warning_weight")]
+    #[serde(default = "default_warning_weight")]
     pub warning: i32,
 }
 
@@ -1104,25 +1106,22 @@ pub struct AgentServiceWithChecks {
 
 /// Agent health check representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentCheck {
     /// Check ID
     #[serde(rename = "CheckID")]
     pub check_id: String,
 
     /// Check name
-    #[serde(rename = "Name")]
     pub name: String,
 
     /// Check status (passing, warning, critical)
-    #[serde(rename = "Status")]
     pub status: String,
 
     /// Check notes
-    #[serde(rename = "Notes")]
     pub notes: String,
 
     /// Check output
-    #[serde(rename = "Output")]
     pub output: String,
 
     /// Associated service ID
@@ -1130,7 +1129,6 @@ pub struct AgentCheck {
     pub service_id: String,
 
     /// Associated service name
-    #[serde(rename = "ServiceName")]
     pub service_name: String,
 
     /// Check type
@@ -1223,29 +1221,25 @@ impl ConsulErrorBody for actix_web::HttpResponseBuilder {
 
 /// Node information in health check response (matches Consul API Node struct)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Node {
     #[serde(rename = "ID")]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: String,
-    #[serde(rename = "Address")]
     /// The `address` field.
     pub address: String,
-    #[serde(rename = "Datacenter")]
     /// The `datacenter` field.
     pub datacenter: String,
-    #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `tagged_addresses` field.
     pub tagged_addresses: Option<HashMap<String, String>>,
-    #[serde(rename = "Meta", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `meta` field.
     pub meta: Option<HashMap<String, String>>,
-    #[serde(rename = "CreateIndex")]
     /// The `create_index` field.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The `modify_index` field.
     pub modify_index: u64,
 }
@@ -1453,11 +1447,12 @@ impl CheckRegistration {
 
 /// Health check status update
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CheckStatusUpdate {
-    #[serde(rename = "Status", default)]
+    #[serde(default)]
     /// The `status` field.
     pub status: Option<String>,
-    #[serde(rename = "Output", default)]
+    #[serde(default)]
     /// The `output` field.
     pub output: Option<String>,
 }
@@ -1644,8 +1639,8 @@ fn parse_go_duration(s: &str) -> Result<u64, String> {
 
 /// Health check information in responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct HealthCheck {
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: String,
 
@@ -1653,19 +1648,15 @@ pub struct HealthCheck {
     /// The `check_id` field.
     pub check_id: String,
 
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
 
-    #[serde(rename = "Status")]
     /// The `status` field.
     pub status: String,
 
-    #[serde(rename = "Notes")]
     /// The `notes` field.
     pub notes: String,
 
-    #[serde(rename = "Output")]
     /// The `output` field.
     pub output: String,
 
@@ -1673,11 +1664,9 @@ pub struct HealthCheck {
     /// The `service_id` field.
     pub service_id: String,
 
-    #[serde(rename = "ServiceName")]
     /// The `service_name` field.
     pub service_name: String,
 
-    #[serde(rename = "ServiceTags")]
     /// The `service_tags` field.
     pub service_tags: Vec<String>,
 
@@ -1685,27 +1674,24 @@ pub struct HealthCheck {
     /// The `check_type` field.
     pub check_type: String,
 
-    #[serde(rename = "ExposedPort")]
     /// The `exposed_port` field.
     pub exposed_port: i32,
 
-    #[serde(rename = "Interval", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `interval` field.
     pub interval: Option<String>,
 
-    #[serde(rename = "Timeout", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `timeout` field.
     pub timeout: Option<String>,
 
-    #[serde(rename = "Definition", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `definition` field.
     pub definition: Option<HealthCheckDefinition>,
 
-    #[serde(rename = "CreateIndex")]
     /// The `create_index` field.
     pub create_index: u64,
 
-    #[serde(rename = "ModifyIndex")]
     /// The `modify_index` field.
     pub modify_index: u64,
 }
@@ -1772,16 +1758,14 @@ impl crate::filter::Filterable for HealthCheck {
 
 /// Service health entry (response for /v1/health/service/:service)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct ServiceHealth {
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: Node,
 
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: AgentService,
 
-    #[serde(rename = "Checks")]
     /// The `checks` field.
     pub checks: Vec<HealthCheck>,
 }
@@ -1903,23 +1887,20 @@ impl From<&AgentServiceRegistration> for AgentService {
 
 /// Agent self response - GET /v1/agent/self
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentSelf {
-    #[serde(rename = "Config")]
     /// The `config` field.
     pub config: AgentConfig,
-    #[serde(rename = "DebugConfig", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `debug_config` field.
     pub debug_config: Option<serde_json::Value>,
-    #[serde(rename = "Coord", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `coord` field.
     pub coord: Option<Coordinate>,
-    #[serde(rename = "Member")]
     /// The `member` field.
     pub member: AgentMember,
-    #[serde(rename = "Meta")]
     /// The `meta` field.
     pub meta: HashMap<String, String>,
-    #[serde(rename = "Stats")]
     /// The `stats` field.
     pub stats: AgentStats,
     #[serde(rename = "xDS", skip_serializing_if = "Option::is_none")]
@@ -1929,47 +1910,39 @@ pub struct AgentSelf {
 
 /// Agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentConfig {
-    #[serde(rename = "Datacenter")]
     /// The `datacenter` field.
     pub datacenter: String,
-    #[serde(rename = "NodeName")]
     /// The `node_name` field.
     pub node_name: String,
     #[serde(rename = "NodeID")]
     /// The `node_id` field.
     pub node_id: String,
-    #[serde(rename = "Server")]
     /// The `server` field.
     pub server: bool,
-    #[serde(rename = "Revision")]
     /// The `revision` field.
     pub revision: String,
-    #[serde(rename = "Version")]
     /// The `version` field.
     pub version: String,
-    #[serde(rename = "PrimaryDatacenter")]
     /// The `primary_datacenter` field.
     pub primary_datacenter: String,
 
     /// Whether node is in maintenance mode
-    #[serde(rename = "MaintenanceMode", default)]
+    #[serde(default)]
     pub maintenance_mode: bool,
 }
 
 /// Network coordinate
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Coordinate {
-    #[serde(rename = "Adjustment")]
     /// The `adjustment` field.
     pub adjustment: f64,
-    #[serde(rename = "Error")]
     /// The `error` field.
     pub error: f64,
-    #[serde(rename = "Height")]
     /// The `height` field.
     pub height: f64,
-    #[serde(rename = "Vec")]
     /// The `vec` field.
     pub vec: Vec<f64>,
 }
@@ -1997,38 +1970,28 @@ pub struct AgentStats {
 
 /// Cluster member information - GET /v1/agent/members
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentMember {
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
-    #[serde(rename = "Addr")]
     /// The `addr` field.
     pub addr: String,
-    #[serde(rename = "Port")]
     /// The `port` field.
     pub port: u16,
-    #[serde(rename = "Tags")]
     /// The `tags` field.
     pub tags: HashMap<String, String>,
-    #[serde(rename = "Status")]
     /// The `status` field.
     pub status: i32,
-    #[serde(rename = "ProtocolMin")]
     /// The `protocol_min` field.
     pub protocol_min: u8,
-    #[serde(rename = "ProtocolMax")]
     /// The `protocol_max` field.
     pub protocol_max: u8,
-    #[serde(rename = "ProtocolCur")]
     /// The `protocol_cur` field.
     pub protocol_cur: u8,
-    #[serde(rename = "DelegateMin")]
     /// The `delegate_min` field.
     pub delegate_min: u8,
-    #[serde(rename = "DelegateMax")]
     /// The `delegate_max` field.
     pub delegate_max: u8,
-    #[serde(rename = "DelegateCur")]
     /// The `delegate_cur` field.
     pub delegate_cur: u8,
 }
@@ -2053,39 +2016,35 @@ impl Default for AgentMember {
 
 /// Agent host info - GET /v1/agent/host
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentHostInfo {
-    #[serde(rename = "Memory")]
     /// The `memory` field.
     pub memory: HostMemory,
     #[serde(rename = "CPU")]
     /// The `cpu` field.
     pub cpu: Vec<HostCPU>,
-    #[serde(rename = "Disk")]
     /// The `disk` field.
     pub disk: HostDisk,
-    #[serde(rename = "Host")]
     /// The `host` field.
     pub host: HostInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents `HostMemory`.
 pub struct HostMemory {
-    #[serde(rename = "Total")]
     /// The `total` field.
     pub total: u64,
-    #[serde(rename = "Available")]
     /// The `available` field.
     pub available: u64,
-    #[serde(rename = "Used")]
     /// The `used` field.
     pub used: u64,
-    #[serde(rename = "UsedPercent")]
     /// The `used_percent` field.
     pub used_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents `HostCPU`.
 pub struct HostCPU {
     #[serde(rename = "CPU")]
@@ -2094,10 +2053,8 @@ pub struct HostCPU {
     #[serde(rename = "VendorID")]
     /// The `vendor_id` field.
     pub vendor_id: String,
-    #[serde(rename = "Family")]
     /// The `family` field.
     pub family: String,
-    #[serde(rename = "Model")]
     /// The `model` field.
     pub model: String,
     #[serde(rename = "PhysicalID")]
@@ -2106,70 +2063,57 @@ pub struct HostCPU {
     #[serde(rename = "CoreID")]
     /// The `core_id` field.
     pub core_id: String,
-    #[serde(rename = "Cores")]
     /// The `cores` field.
     pub cores: i32,
-    #[serde(rename = "Mhz")]
     /// The `mhz` field.
     pub mhz: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents `HostDisk`.
 pub struct HostDisk {
-    #[serde(rename = "Path")]
     /// The `path` field.
     pub path: String,
-    #[serde(rename = "Total")]
     /// The `total` field.
     pub total: u64,
-    #[serde(rename = "Free")]
     /// The `free` field.
     pub free: u64,
-    #[serde(rename = "Used")]
     /// The `used` field.
     pub used: u64,
-    #[serde(rename = "UsedPercent")]
     /// The `used_percent` field.
     pub used_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 /// Represents `HostInfo`.
 pub struct HostInfo {
-    #[serde(rename = "Hostname")]
     /// The `hostname` field.
     pub hostname: String,
     #[serde(rename = "OS")]
     /// The `os` field.
     pub os: String,
-    #[serde(rename = "Platform")]
     /// The `platform` field.
     pub platform: String,
-    #[serde(rename = "PlatformVersion")]
     /// The `platform_version` field.
     pub platform_version: String,
-    #[serde(rename = "KernelVersion")]
     /// The `kernel_version` field.
     pub kernel_version: String,
 }
 
 /// Agent version - GET /v1/agent/version
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AgentVersion {
-    #[serde(rename = "Version")]
     /// The `version` field.
     pub version: String,
-    #[serde(rename = "Revision")]
     /// The `revision` field.
     pub revision: String,
-    #[serde(rename = "Prerelease")]
     /// The `prerelease` field.
     pub prerelease: String,
-    #[serde(rename = "HumanVersion")]
     /// The `human_version` field.
     pub human_version: String,
-    #[serde(rename = "BuildDate")]
     /// The `build_date` field.
     pub build_date: String,
     #[serde(rename = "FIPS")]
@@ -2197,78 +2141,75 @@ pub struct AgentMaintenanceRequest {
 /// Used in `Session.ServiceChecks` and `SessionCreateRequest.ServiceChecks`.
 /// The Go SDK sends `[{ID: "check-id", Namespace: ""}]` — an array of objects.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct SessionServiceCheck {
     #[serde(rename = "ID")]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Namespace", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The `namespace` field.
     pub namespace: Option<String>,
 }
 
 /// Session info - for Session API
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Session {
     #[serde(rename = "ID")]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: String,
-    #[serde(rename = "LockDelay")]
     /// The `lock_delay` field.
     pub lock_delay: u64,
-    #[serde(rename = "Behavior")]
     /// The `behavior` field.
     pub behavior: String,
     #[serde(rename = "TTL")]
     /// The `ttl` field.
     pub ttl: String,
     /// Deprecated: use NodeChecks/ServiceChecks. Kept for backward compatibility.
-    #[serde(rename = "Checks", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub checks: Option<Vec<String>>,
-    #[serde(rename = "NodeChecks", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `node_checks` field.
     pub node_checks: Option<Vec<String>>,
-    #[serde(rename = "ServiceChecks", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `service_checks` field.
     pub service_checks: Option<Vec<SessionServiceCheck>>,
-    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `namespace` field.
     pub namespace: Option<String>,
-    #[serde(rename = "CreateIndex")]
     /// The `create_index` field.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
     /// The `modify_index` field.
     pub modify_index: u64,
 }
 
 /// Session create request
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct SessionCreateRequest {
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The `name` field.
     pub name: Option<String>,
-    #[serde(rename = "Node", default)]
+    #[serde(default)]
     /// The `node` field.
     pub node: Option<String>,
-    #[serde(rename = "LockDelay", default)]
+    #[serde(default)]
     /// The `lock_delay` field.
     pub lock_delay: Option<String>,
-    #[serde(rename = "Behavior", default)]
+    #[serde(default)]
     /// The `behavior` field.
     pub behavior: Option<String>,
     #[serde(rename = "TTL", default)]
     /// The `ttl` field.
     pub ttl: Option<String>,
-    #[serde(rename = "NodeChecks", default)]
+    #[serde(default)]
     /// The `node_checks` field.
     pub node_checks: Option<Vec<String>>,
-    #[serde(rename = "ServiceChecks", default)]
+    #[serde(default)]
     /// The `service_checks` field.
     pub service_checks: Option<Vec<SessionServiceCheck>>,
 }
@@ -2301,26 +2242,21 @@ pub struct AgentMembersParams {
 
 /// User event - for Event API
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct UserEvent {
     #[serde(rename = "ID")]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
-    #[serde(rename = "Payload")]
     /// The `payload` field.
     pub payload: Option<String>,
-    #[serde(rename = "NodeFilter")]
     /// The `node_filter` field.
     pub node_filter: String,
-    #[serde(rename = "ServiceFilter")]
     /// The `service_filter` field.
     pub service_filter: String,
-    #[serde(rename = "TagFilter")]
     /// The `tag_filter` field.
     pub tag_filter: String,
-    #[serde(rename = "Version")]
     /// The `version` field.
     pub version: u64,
     #[serde(rename = "LTime")]
@@ -2372,69 +2308,69 @@ pub struct EventListParams {
 
 /// Prepared query definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQuery {
     #[serde(rename = "ID")]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
-    #[serde(rename = "Session", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `session` field.
     pub session: Option<String>,
-    #[serde(rename = "Token", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `token` field.
     pub token: Option<String>,
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: PreparedQueryService,
     #[serde(rename = "DNS", skip_serializing_if = "Option::is_none")]
     /// The `dns` field.
     pub dns: Option<PreparedQueryDNS>,
-    #[serde(rename = "Template", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `template` field.
     pub template: Option<PreparedQueryTemplate>,
-    #[serde(rename = "CreateIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `create_index` field.
     pub create_index: Option<u64>,
-    #[serde(rename = "ModifyIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `modify_index` field.
     pub modify_index: Option<u64>,
 }
 
 /// Prepared query service definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryService {
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: String,
-    #[serde(rename = "Failover", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `failover` field.
     pub failover: Option<PreparedQueryFailover>,
-    #[serde(rename = "OnlyPassing", default)]
+    #[serde(default)]
     /// The `only_passing` field.
     pub only_passing: bool,
-    #[serde(rename = "Near", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `near` field.
     pub near: Option<String>,
-    #[serde(rename = "Tags", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `tags` field.
     pub tags: Option<Vec<String>>,
-    #[serde(rename = "NodeMeta", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `node_meta` field.
     pub node_meta: Option<HashMap<String, String>>,
-    #[serde(rename = "ServiceMeta", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `service_meta` field.
     pub service_meta: Option<HashMap<String, String>>,
 }
 
 /// Prepared query failover configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryFailover {
-    #[serde(rename = "NearestN", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `nearest_n` field.
     pub nearest_n: Option<i32>,
-    #[serde(rename = "Datacenters", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `datacenters` field.
     pub datacenters: Option<Vec<String>>,
 }
@@ -2449,37 +2385,38 @@ pub struct PreparedQueryDNS {
 
 /// Prepared query template options
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryTemplate {
     #[serde(rename = "Type")]
     /// The `template_type` field.
     pub template_type: String,
-    #[serde(rename = "Regexp", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `regexp` field.
     pub regexp: Option<String>,
-    #[serde(rename = "RemoveEmptyTags", default)]
+    #[serde(default)]
     /// The `remove_empty_tags` field.
     pub remove_empty_tags: bool,
 }
 
 /// Prepared query create request
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryCreateRequest {
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The `name` field.
     pub name: Option<String>,
-    #[serde(rename = "Session", default)]
+    #[serde(default)]
     /// The `session` field.
     pub session: Option<String>,
-    #[serde(rename = "Token", default)]
+    #[serde(default)]
     /// The `token` field.
     pub token: Option<String>,
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: PreparedQueryService,
     #[serde(rename = "DNS", default)]
     /// The `dns` field.
     pub dns: Option<PreparedQueryDNS>,
-    #[serde(rename = "Template", default)]
+    #[serde(default)]
     /// The `template` field.
     pub template: Option<PreparedQueryTemplate>,
 }
@@ -2494,28 +2431,25 @@ pub struct PreparedQueryCreateResponse {
 
 /// Prepared query execute result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryExecuteResult {
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: String,
-    #[serde(rename = "Nodes")]
     /// The `nodes` field.
     pub nodes: Vec<ServiceHealth>,
     #[serde(rename = "DNS")]
     /// The `dns` field.
     pub dns: PreparedQueryDNS,
-    #[serde(rename = "Datacenter")]
     /// The `datacenter` field.
     pub datacenter: String,
-    #[serde(rename = "Failovers")]
     /// The `failovers` field.
     pub failovers: i32,
 }
 
 /// Prepared query explain result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PreparedQueryExplainResult {
-    #[serde(rename = "Query")]
     /// The `query` field.
     pub query: PreparedQuery,
 }
@@ -2539,64 +2473,64 @@ pub struct PreparedQueryParams {
 
 /// ACL Auth Method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AuthMethod {
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
     #[serde(rename = "Type")]
     /// The `method_type` field.
     pub method_type: String,
-    #[serde(rename = "DisplayName", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `display_name` field.
     pub display_name: Option<String>,
-    #[serde(rename = "Description", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `description` field.
     pub description: Option<String>,
     #[serde(rename = "MaxTokenTTL", skip_serializing_if = "Option::is_none")]
     /// The `max_token_ttl` field.
     pub max_token_ttl: Option<String>,
-    #[serde(rename = "TokenLocality", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `token_locality` field.
     pub token_locality: Option<String>,
-    #[serde(rename = "Config", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `config` field.
     pub config: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "CreateIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `create_index` field.
     pub create_index: Option<u64>,
-    #[serde(rename = "ModifyIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `modify_index` field.
     pub modify_index: Option<u64>,
-    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `namespace` field.
     pub namespace: Option<String>,
 }
 
 /// Auth Method create/update request
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct AuthMethodRequest {
-    #[serde(rename = "Name")]
     /// The `name` field.
     pub name: String,
     #[serde(rename = "Type")]
     /// The `method_type` field.
     pub method_type: String,
-    #[serde(rename = "DisplayName", default)]
+    #[serde(default)]
     /// The `display_name` field.
     pub display_name: Option<String>,
-    #[serde(rename = "Description", default)]
+    #[serde(default)]
     /// The `description` field.
     pub description: Option<String>,
     #[serde(rename = "MaxTokenTTL", default)]
     /// The `max_token_ttl` field.
     pub max_token_ttl: Option<String>,
-    #[serde(rename = "TokenLocality", default)]
+    #[serde(default)]
     /// The `token_locality` field.
     pub token_locality: Option<String>,
-    #[serde(rename = "Config", default)]
+    #[serde(default)]
     /// The `config` field.
     pub config: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "Namespace", default)]
+    #[serde(default)]
     /// The `namespace` field.
     pub namespace: Option<String>,
 }
@@ -2608,89 +2542,74 @@ pub struct AuthMethodRequest {
 /// Consul-style metrics response
 /// GET /v1/agent/metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct MetricsResponse {
     /// Timestamp of metrics collection
-    #[serde(rename = "Timestamp")]
     pub timestamp: String,
     /// Gauge metrics (point-in-time values)
-    #[serde(rename = "Gauges")]
     pub gauges: Vec<GaugeMetric>,
     /// Counter metrics (cumulative values)
-    #[serde(rename = "Counters")]
     pub counters: Vec<CounterMetric>,
     /// Sample metrics (histogram/distribution)
-    #[serde(rename = "Samples")]
     pub samples: Vec<SampleMetric>,
     /// Point metrics (timestamped values)
-    #[serde(rename = "Points", default)]
+    #[serde(default)]
     pub points: Vec<PointMetric>,
 }
 
 /// Gauge metric - represents a point-in-time value
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct GaugeMetric {
     /// Metric name
-    #[serde(rename = "Name")]
     pub name: String,
     /// Current value
-    #[serde(rename = "Value")]
     pub value: f64,
     /// Labels/tags for the metric
-    #[serde(rename = "Labels")]
     pub labels: HashMap<String, String>,
 }
 
 /// Counter metric - represents a cumulative value
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct CounterMetric {
     /// Metric name
-    #[serde(rename = "Name")]
     pub name: String,
     /// Cumulative count
-    #[serde(rename = "Count")]
     pub count: i64,
     /// Total sum of values
-    #[serde(rename = "Sum")]
     pub sum: f64,
     /// Labels/tags for the metric
-    #[serde(rename = "Labels")]
     pub labels: HashMap<String, String>,
 }
 
 /// Sample metric - represents a distribution/histogram
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct SampleMetric {
     /// Metric name
-    #[serde(rename = "Name")]
     pub name: String,
     /// Number of samples
-    #[serde(rename = "Count")]
     pub count: i64,
     /// Mean value
-    #[serde(rename = "Mean")]
     pub mean: f64,
     /// Minimum value
-    #[serde(rename = "Min")]
     pub min: f64,
     /// Maximum value
-    #[serde(rename = "Max")]
     pub max: f64,
     /// Standard deviation
-    #[serde(rename = "Stddev")]
     pub stddev: f64,
     /// Labels/tags for the metric
-    #[serde(rename = "Labels")]
     pub labels: HashMap<String, String>,
 }
 
 /// Point metric - timestamped value
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct PointMetric {
     /// Metric name
-    #[serde(rename = "Name")]
     pub name: String,
     /// Metric points with timestamps
-    #[serde(rename = "Points")]
     pub points: Vec<(i64, f64)>, // (timestamp, value)
 }
 
@@ -3128,5 +3047,41 @@ mod serde_naming_contract {
         assert_eq!(parsed.name, "svc");
         assert_eq!(parsed.enable_tag_override, Some(true));
         assert!(parsed.tagged_addresses.is_some());
+    }
+
+    #[test]
+    fn collapsed_registration_keeps_the_go_acronym_override() {
+        let registration = AgentServiceRegistration {
+            id: Some("svc-1".to_string()),
+            name: "svc".to_string(),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&registration).unwrap();
+        let object = value.as_object().unwrap();
+        // `ID` differs from serde's PascalCase of `id` (`Id`), so it must stay
+        // an explicit field rename even though the container has a rule.
+        assert_eq!(object.get("ID").and_then(|v| v.as_str()), Some("svc-1"));
+        assert!(!object.contains_key("Id"));
+        assert!(!object.contains_key("id"));
+        // The collapsed fields now get their keys from the container rule.
+        assert_eq!(object.get("Name").and_then(|v| v.as_str()), Some("svc"));
+        assert!(!object.contains_key("name"));
+    }
+
+    #[test]
+    fn collapsed_weights_round_trip_through_the_container_rule() {
+        let weights = Weights {
+            passing: 10,
+            warning: 1,
+        };
+        let value = serde_json::to_value(&weights).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object.get("Passing").and_then(|v| v.as_i64()), Some(10));
+        assert_eq!(object.get("Warning").and_then(|v| v.as_i64()), Some(1));
+        assert!(!object.contains_key("passing"));
+        assert!(!object.contains_key("warning"));
+
+        let parsed: Weights = serde_json::from_str(r#"{"Passing":5,"Warning":2}"#).unwrap();
+        assert_eq!((parsed.passing, parsed.warning), (5, 2));
     }
 }

@@ -363,7 +363,6 @@ pub struct DiscoveryTarget {
     pub partition: String,
     /// The `datacenter` field.
     pub datacenter: String,
-    #[serde(rename = "MeshGateway")]
     /// The `mesh_gateway` field.
     pub mesh_gateway: MeshGatewayConfig,
     /// The `subset` field.

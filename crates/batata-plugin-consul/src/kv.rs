@@ -29,32 +29,28 @@ use crate::model::ConsulErrorBody;
 
 /// Consul KV Pair
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct KVPair {
-    #[serde(rename = "Key")]
     /// The `key` field.
     pub key: String,
 
-    #[serde(rename = "CreateIndex")]
     /// The `create_index` field.
     pub create_index: u64,
 
-    #[serde(rename = "ModifyIndex")]
     /// The `modify_index` field.
     pub modify_index: u64,
 
-    #[serde(rename = "LockIndex")]
     /// The `lock_index` field.
     pub lock_index: u64,
 
-    #[serde(rename = "Flags")]
     /// The `flags` field.
     pub flags: u64,
 
-    #[serde(rename = "Value", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `value` field.
     pub value: Option<String>, // Base64 encoded
 
-    #[serde(rename = "Session", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `session` field.
     pub session: Option<String>,
 }
@@ -164,67 +160,67 @@ pub struct KVQueryParams {
 /// Consul's `/v1/txn` supports KV, Node, Service, and Check operations
 /// in a single atomic transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnOp {
     #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
     /// The `kv` field.
     pub kv: Option<KVTxnOp>,
 
-    #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `node` field.
     pub node: Option<NodeTxnOp>,
 
-    #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `service` field.
     pub service: Option<ServiceTxnOp>,
 
-    #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `check` field.
     pub check: Option<CheckTxnOp>,
 }
 
 /// KV transaction operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct KVTxnOp {
-    #[serde(rename = "Verb")]
     /// The `verb` field.
     pub verb: String, // "set", "get", "delete", "cas", "delete-cas", "delete-tree"
 
-    #[serde(rename = "Key")]
     /// The `key` field.
     pub key: String,
 
-    #[serde(rename = "Value", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `value` field.
     pub value: Option<String>, // Base64 encoded
 
-    #[serde(rename = "Flags", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `flags` field.
     pub flags: Option<u64>,
 
-    #[serde(rename = "Index", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `index` field.
     pub index: Option<u64>,
 }
 
 /// Transaction result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnResult {
-    #[serde(rename = "Results", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `results` field.
     pub results: Option<Vec<TxnResultItem>>,
 
-    #[serde(rename = "Errors", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// The `errors` field.
     pub errors: Option<Vec<TxnError>>,
 }
 
 /// Node transaction operation (Consul-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct NodeTxnOp {
-    #[serde(rename = "Verb")]
     /// The `verb` field.
     pub verb: String,
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: NodeTxnEntry,
 }
@@ -268,118 +264,117 @@ pub struct NodeTxnEntry {
 
 /// Service transaction operation (Consul-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct ServiceTxnOp {
-    #[serde(rename = "Verb")]
     /// The `verb` field.
     pub verb: String,
-    #[serde(rename = "Node")]
     /// The `node` field.
     pub node: String,
-    #[serde(rename = "Service")]
     /// The `service` field.
     pub service: ServiceTxnEntry,
 }
 
 /// Service entry used in transactions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct ServiceTxnEntry {
     #[serde(rename = "ID", default)]
     /// The `id` field.
     pub id: String,
-    #[serde(rename = "Service", default)]
+    #[serde(default)]
     /// The `service` field.
     pub service: String,
-    #[serde(rename = "Tags", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The `tags` field.
     pub tags: Option<Vec<String>>,
-    #[serde(rename = "Address", default)]
+    #[serde(default)]
     /// The `address` field.
     pub address: String,
-    #[serde(rename = "Port", default)]
+    #[serde(default)]
     /// The `port` field.
     pub port: u16,
-    #[serde(rename = "Meta", default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The `meta` field.
     pub meta: Option<std::collections::HashMap<String, String>>,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The `create_index` field.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The `modify_index` field.
     pub modify_index: u64,
 }
 
 /// Check transaction operation (Consul-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct CheckTxnOp {
-    #[serde(rename = "Verb")]
     /// The `verb` field.
     pub verb: String,
-    #[serde(rename = "Check")]
     /// The `check` field.
     pub check: CheckTxnEntry,
 }
 
 /// Check entry used in transactions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct CheckTxnEntry {
-    #[serde(rename = "Node", default)]
+    #[serde(default)]
     /// The `node` field.
     pub node: String,
     #[serde(rename = "CheckID", default)]
     /// The `check_id` field.
     pub check_id: String,
-    #[serde(rename = "Name", default)]
+    #[serde(default)]
     /// The `name` field.
     pub name: String,
-    #[serde(rename = "Status", default)]
+    #[serde(default)]
     /// The `status` field.
     pub status: String,
-    #[serde(rename = "Notes", default)]
+    #[serde(default)]
     /// The `notes` field.
     pub notes: String,
-    #[serde(rename = "Output", default)]
+    #[serde(default)]
     /// The `output` field.
     pub output: String,
     #[serde(rename = "ServiceID", default)]
     /// The `service_id` field.
     pub service_id: String,
-    #[serde(rename = "ServiceName", default)]
+    #[serde(default)]
     /// The `service_name` field.
     pub service_name: String,
-    #[serde(rename = "CreateIndex", default)]
+    #[serde(default)]
     /// The `create_index` field.
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex", default)]
+    #[serde(default)]
     /// The `modify_index` field.
     pub modify_index: u64,
 }
 
 /// Transaction result item (one of the fields is populated per op).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnResultItem {
     #[serde(rename = "KV", skip_serializing_if = "Option::is_none", default)]
     /// The `kv` field.
     pub kv: Option<KVPair>,
-    #[serde(rename = "Node", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `node` field.
     pub node: Option<NodeTxnEntry>,
-    #[serde(rename = "Service", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `service` field.
     pub service: Option<ServiceTxnEntry>,
-    #[serde(rename = "Check", skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     /// The `check` field.
     pub check: Option<CheckTxnEntry>,
 }
 
 /// Transaction error
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TxnError {
-    #[serde(rename = "OpIndex")]
     /// The `op_index` field.
     pub op_index: u32,
 
-    #[serde(rename = "What")]
     /// The `what` field.
     pub what: String,
 }

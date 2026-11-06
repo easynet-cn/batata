@@ -101,7 +101,7 @@ pub struct ExposePath {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MeshConfigEntry {
-    #[serde(rename = "Kind", default = "default_mesh_kind")]
+    #[serde(default = "default_mesh_kind")]
     /// The config entry kind (`mesh`).
     pub kind: String,
     /// The name of the mesh config entry.
@@ -201,7 +201,7 @@ pub struct PeeringMeshConfig {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ExportedServicesConfigEntry {
-    #[serde(rename = "Kind", default = "default_exports_kind")]
+    #[serde(default = "default_exports_kind")]
     /// The config entry kind (`exported-services`).
     pub kind: String,
     /// Always equals the partition name in Enterprise; "default" in OSS.
@@ -262,7 +262,7 @@ pub struct ServiceConsumer {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `IngressGatewayConfigEntry`.
 pub struct IngressGatewayConfigEntry {
-    #[serde(rename = "Kind", default = "default_ingress_kind")]
+    #[serde(default = "default_ingress_kind")]
     /// The config entry kind (`ingress-gateway`).
     pub kind: String,
     /// The name of the ingress gateway.
@@ -394,7 +394,7 @@ pub struct IngressServiceConfig {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `TerminatingGatewayConfigEntry`.
 pub struct TerminatingGatewayConfigEntry {
-    #[serde(rename = "Kind", default = "default_terminating_kind")]
+    #[serde(default = "default_terminating_kind")]
     /// The config entry kind (`terminating-gateway`).
     pub kind: String,
     /// The name of the terminating gateway.
@@ -452,7 +452,7 @@ pub struct LinkedService {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `SamenessGroupConfigEntry`.
 pub struct SamenessGroupConfigEntry {
-    #[serde(rename = "Kind", default = "default_sg_kind")]
+    #[serde(default = "default_sg_kind")]
     /// The config entry kind (`sameness-group`).
     pub kind: String,
     /// The name of the sameness group.
@@ -502,7 +502,7 @@ pub struct SamenessGroupMember {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `JWTProviderConfigEntry`.
 pub struct JWTProviderConfigEntry {
-    #[serde(rename = "Kind", default = "default_jwt_kind")]
+    #[serde(default = "default_jwt_kind")]
     /// The config entry kind (`jwt-provider`).
     pub kind: String,
     /// The name of the JWT provider.
@@ -550,7 +550,7 @@ fn default_jwt_kind() -> String {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `ServiceIntentionsConfigEntry`.
 pub struct ServiceIntentionsConfigEntry {
-    #[serde(rename = "Kind", default = "default_intentions_kind")]
+    #[serde(default = "default_intentions_kind")]
     /// The config entry kind (`service-intentions`).
     pub kind: String,
     /// The name of the destination service.
@@ -627,7 +627,7 @@ pub struct IntentionSource {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `ServiceDefaultsConfigEntry`.
 pub struct ServiceDefaultsConfigEntry {
-    #[serde(rename = "Kind", default = "default_svc_defaults_kind")]
+    #[serde(default = "default_svc_defaults_kind")]
     /// The config entry kind (`service-defaults`).
     pub kind: String,
     /// The name of the service.
@@ -695,7 +695,7 @@ fn default_svc_defaults_kind() -> String {
 #[serde(rename_all = "PascalCase")]
 /// Represents a `ProxyDefaultsConfigEntry`.
 pub struct ProxyDefaultsConfigEntry {
-    #[serde(rename = "Kind", default = "default_proxy_defaults_kind")]
+    #[serde(default = "default_proxy_defaults_kind")]
     /// The config entry kind (`proxy-defaults`).
     pub kind: String,
     /// Must be "global".
@@ -737,4 +737,36 @@ fn default_proxy_defaults_kind() -> String {
 }
 fn default_proxy_defaults_name() -> String {
     "global".to_string()
+}
+
+#[cfg(test)]
+mod consul_container_rule_contract {
+    use super::*;
+
+    #[test]
+    fn no_op_renames_are_supplied_by_the_container_rule() {
+        // `kind` used to carry a redundant `rename = "Kind"` on top of an
+        // already-PascalCase container. Removing it must not change the key.
+        let expected_kind = default_mesh_kind();
+        // The derived `Default` leaves `kind` empty; the serde default only
+        // applies during deserialization, so set it explicitly here.
+        let entry = MeshConfigEntry {
+            kind: expected_kind.clone(),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&entry).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.get("Kind").and_then(|v| v.as_str()),
+            Some(expected_kind.as_str())
+        );
+        assert_eq!(object.get("Name").and_then(|v| v.as_str()), Some(""));
+        assert!(!object.contains_key("kind"));
+        assert!(!object.contains_key("name"));
+
+        let parsed: MeshConfigEntry =
+            serde_json::from_str(r#"{"Kind":"mesh","Name":"default"}"#).unwrap();
+        assert_eq!(parsed.kind, "mesh");
+        assert_eq!(parsed.name, "default");
+    }
 }
