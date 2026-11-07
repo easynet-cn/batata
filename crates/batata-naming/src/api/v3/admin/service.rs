@@ -75,7 +75,7 @@ struct ServiceForm {
     #[serde(default)]
     ephemeral: Option<bool>,
     #[serde(default)]
-    protect_threshold: Option<f32>,
+    protect_threshold: Option<f64>,
     #[serde(default)]
     metadata: Option<String>,
     #[serde(default)]
@@ -111,7 +111,7 @@ struct ServiceDetailResponse {
     cluster_map: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<HashMap<String, String>>,
-    protect_threshold: f32,
+    protect_threshold: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     selector: Option<SelectorResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]

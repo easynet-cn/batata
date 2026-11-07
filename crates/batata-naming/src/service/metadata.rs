@@ -35,7 +35,7 @@ impl NamingService {
         namespace: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
     ) {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata

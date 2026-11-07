@@ -320,7 +320,7 @@ pub struct ServiceCreateParam {
     pub service_name: String,
     /// Protection threshold (optional, 0.0-1.0)
     #[serde(default)]
-    pub protect_threshold: Option<f32>,
+    pub protect_threshold: Option<f64>,
     /// Service metadata as JSON string (optional)
     #[serde(default)]
     pub metadata: Option<String>,
@@ -382,7 +382,7 @@ pub struct ServiceUpdateParam {
     pub service_name: String,
     /// Protection threshold (optional, 0.0-1.0)
     #[serde(default)]
-    pub protect_threshold: Option<f32>,
+    pub protect_threshold: Option<f64>,
     /// Service metadata as JSON string (optional)
     #[serde(default)]
     pub metadata: Option<String>,
@@ -470,7 +470,7 @@ pub struct ServiceDetailResponse {
     /// The `service_name` value.
     pub service_name: String,
     /// The `protect_threshold` value.
-    pub protect_threshold: f32,
+    pub protect_threshold: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// The `metadata` value.
     pub metadata: Option<std::collections::HashMap<String, String>>,

@@ -298,7 +298,7 @@ pub trait NamingServiceProvider: Send + Sync {
         namespace: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
     );
 
     /// The `update_service_selector` method.

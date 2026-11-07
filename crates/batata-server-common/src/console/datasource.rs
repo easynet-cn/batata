@@ -265,7 +265,7 @@ pub trait ConsoleDataSource: Send + Sync {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
         metadata: &str,
         selector: &str,
         ephemeral: bool,
@@ -277,7 +277,7 @@ pub trait ConsoleDataSource: Send + Sync {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: Option<f32>,
+        protect_threshold: Option<f64>,
         metadata: Option<&str>,
         selector: Option<&str>,
     ) -> anyhow::Result<bool>;
@@ -314,6 +314,15 @@ pub trait ConsoleDataSource: Send + Sync {
     /// Update an instance
     #[allow(clippy::too_many_arguments)]
     async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        instance: Instance,
+    ) -> anyhow::Result<bool>;
+
+    /// Deregister an instance (`DELETE /v3/console/ns/instance`).
+    async fn instance_delete(
         &self,
         namespace_id: &str,
         group_name: &str,
@@ -410,6 +419,8 @@ pub trait ConsoleDataSource: Send + Sync {
         cluster_name: &str,
         health_checker_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
+        check_port: Option<i32>,
+        use_instance_port_for_check: Option<bool>,
     ) -> anyhow::Result<bool>;
 
     // ============== Helper Methods ==============

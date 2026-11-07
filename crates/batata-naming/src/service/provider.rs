@@ -294,7 +294,7 @@ impl NamingServiceProvider for NamingService {
         namespace: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
     ) {
         self.update_service_protect_threshold(
             namespace,

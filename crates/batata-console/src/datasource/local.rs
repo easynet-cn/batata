@@ -754,7 +754,7 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
         metadata: &str,
         selector: &str,
         ephemeral: bool,
@@ -803,7 +803,7 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: Option<f32>,
+        protect_threshold: Option<f64>,
         metadata: Option<&str>,
         selector: Option<&str>,
     ) -> anyhow::Result<bool> {
@@ -939,6 +939,22 @@ impl ConsoleDataSource for LocalDataSource {
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
         naming.register_instance(namespace_id, group_name, service_name, instance);
+        Ok(true)
+    }
+
+    async fn instance_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        instance: Instance,
+    ) -> anyhow::Result<bool> {
+        let naming = self
+            .naming_service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
+
+        naming.deregister_instance(namespace_id, group_name, service_name, &instance);
         Ok(true)
     }
 
@@ -1172,6 +1188,8 @@ impl ConsoleDataSource for LocalDataSource {
         cluster_name: &str,
         health_checker_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
+        check_port: Option<i32>,
+        use_instance_port_for_check: Option<bool>,
     ) -> anyhow::Result<bool> {
         let naming = self
             .naming_service
@@ -1179,14 +1197,17 @@ impl ConsoleDataSource for LocalDataSource {
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
         if let Some(checker_type) = health_checker_type {
+            // Upstream `UpdateClusterForm` forwards both `checkPort` and
+            // `useInstancePort4Check`; default to the Nacos values (80 / true)
+            // when the console client omits them.
             naming.update_cluster_health_check(
                 namespace_id,
                 group_name,
                 service_name,
                 cluster_name,
                 checker_type,
-                80,
-                true,
+                check_port.unwrap_or(80),
+                use_instance_port_for_check.unwrap_or(true),
             );
         }
 

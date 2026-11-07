@@ -124,6 +124,20 @@ fn parse_time_string(s: &str) -> Option<i64> {
         .or_else(|| s.parse::<i64>().ok())
 }
 
+/// Parse an inclusive end-time filter.
+///
+/// Console date presets send second-precision strings (`YYYY-MM-DD HH:mm:ss`).
+/// A strict `modified_time > end` comparison would then drop every record
+/// written during that final second — including the config the user just
+/// published before opening the audit page. Treat a second-precision end as
+/// the end of that second; explicit millisecond values pass through unchanged.
+fn parse_end_time_string(s: &str) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|ndt| ndt.and_utc().timestamp_millis() + 999)
+        .or_else(|| s.parse::<i64>().ok())
+}
+
 /// GET /v3/console/audit/logs
 ///
 /// List audit log entries with pagination and optional filters.
@@ -147,7 +161,7 @@ pub async fn list_audit_logs(
 
     let src_user = query.operator.as_deref().filter(|s| !s.is_empty());
     let start_time = query.start_time.as_deref().and_then(parse_time_string);
-    let end_time = query.end_time.as_deref().and_then(parse_time_string);
+    let end_time = query.end_time.as_deref().and_then(parse_end_time_string);
 
     match data
         .console_datasource
@@ -318,4 +332,28 @@ pub fn routes() -> Scope {
         .service(get_audit_stats)
         .service(list_audit_logs)
         .service(get_audit_log)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_end_time_string, parse_time_string};
+
+    #[test]
+    fn end_time_includes_records_written_in_the_same_second() {
+        let strict_end = parse_time_string("2026-11-07 01:57:08").unwrap();
+        let inclusive_end = parse_end_time_string("2026-11-07 01:57:08").unwrap();
+        // Simulate a config published 334ms into the final second of the range.
+        let written_at = strict_end + 334;
+        assert!(written_at > strict_end, "strict end would drop the record");
+        assert!(
+            written_at <= inclusive_end,
+            "inclusive end must keep the record"
+        );
+        assert_eq!(inclusive_end, strict_end + 999);
+    }
+
+    #[test]
+    fn end_time_passes_explicit_millis_through() {
+        assert_eq!(parse_end_time_string("1794016628334"), Some(1794016628334));
+    }
 }

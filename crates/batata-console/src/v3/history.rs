@@ -20,8 +20,8 @@ use batata_server_common::{
 };
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 struct FindOneParam {
     data_id: String,
     group_name: String,
@@ -561,4 +561,39 @@ pub fn routes() -> Scope {
         .service(diff)
         .service(rollback)
         .service(advanced_search)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FindOneParam;
+
+    #[test]
+    fn find_one_accepts_only_nid() {
+        // Upstream `GET /v3/console/cs/history` only requires `nid`; the other
+        // three fields are optional filters. Without the container `default`
+        // this query fails to deserialize and the detail page gets a 400.
+        let param: FindOneParam = serde_json::from_str(r#"{"nid":42}"#).unwrap();
+        assert_eq!(param.nid, 42);
+        assert_eq!(param.data_id, "");
+        assert_eq!(param.group_name, "");
+        assert_eq!(param.namespace_id, "");
+    }
+
+    #[test]
+    fn find_one_accepts_empty_query() {
+        let param: FindOneParam = serde_json::from_str("{}").unwrap();
+        assert_eq!(param.nid, 0);
+    }
+
+    #[test]
+    fn find_one_uses_camel_case_keys() {
+        let param: FindOneParam = serde_json::from_str(
+            r#"{"dataId":"app.yml","groupName":"DEFAULT_GROUP","namespaceId":"public","nid":7}"#,
+        )
+        .unwrap();
+        assert_eq!(param.data_id, "app.yml");
+        assert_eq!(param.group_name, "DEFAULT_GROUP");
+        assert_eq!(param.namespace_id, "public");
+        assert_eq!(param.nid, 7);
+    }
 }

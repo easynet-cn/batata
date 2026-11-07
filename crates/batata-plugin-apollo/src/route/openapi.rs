@@ -1025,16 +1025,56 @@ async fn list_branches(
 ) -> impl Responder {
     let (_env, app_id, cluster_name, namespace_name) = path.into_inner();
     let service = GrayReleaseRuleService::new(data.get_ref().clone());
-    match service
+    let mut rules = match service
         .list_by_namespace(&app_id, &cluster_name, &namespace_name)
         .await
     {
-        Ok(rules) => HttpResponse::Ok().json(rules),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            status: 500,
-            message: e.to_string(),
-        }),
+        Ok(rules) => rules,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                status: 500,
+                message: e.to_string(),
+            });
+        }
+    };
+
+    // Upstream `NamespaceBranchController.findBranch` reports the branch as
+    // soon as the child cluster/namespace exists; the gray release rule row is
+    // only written on the first PUT .../rules. Without this fallback a freshly
+    // created branch is invisible to the portal's gray-release tab.
+    if rules.is_empty() {
+        let branch_service = crate::service::namespace_branch_service::NamespaceBranchService::new(
+            data.get_ref().clone(),
+        );
+        match branch_service
+            .find_branch(&app_id, &cluster_name, &namespace_name)
+            .await
+        {
+            Ok(Some((branch_cluster, _))) => rules.push(GrayReleaseRuleDTO {
+                id: None,
+                app_id: app_id.clone(),
+                cluster_name: cluster_name.clone(),
+                namespace_name: namespace_name.clone(),
+                branch_name: branch_cluster.name,
+                rules: None,
+                release_id: 0,
+                branch_status: None,
+                priority: None,
+                data_change_created_by: None,
+                data_change_last_modified_by: None,
+                data_change_created_time: None,
+            }),
+            Ok(None) => {}
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ErrorResponse {
+                    status: 500,
+                    message: e.to_string(),
+                });
+            }
+        }
     }
+
+    HttpResponse::Ok().json(rules)
 }
 
 async fn create_branch(
@@ -1230,10 +1270,11 @@ async fn get_branch_rule(
         .await
     {
         Ok(Some(rule)) => HttpResponse::Ok().json(rule),
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
-            status: 404,
-            message: "Branch not found".to_string(),
-        }),
+        // Upstream `getBranchGrayRules` answers 200 with an empty body when no
+        // rule has been written yet; the adminservice mirror returns JSON null.
+        // A 404 here made the portal's gray-release tab abort right after a
+        // branch was created (the rule row only appears on the first PUT).
+        Ok(None) => HttpResponse::Ok().json(serde_json::Value::Null),
         Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
             status: 500,
             message: e.to_string(),

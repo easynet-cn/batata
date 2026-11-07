@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use actix_web::{HttpRequest, Responder, Scope, get, put, web};
+use actix_web::{HttpRequest, Responder, Scope, delete, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use batata_api::naming::model::Instance;
@@ -86,6 +86,51 @@ fn default_true() -> bool {
 }
 
 impl InstanceUpdateForm {
+    fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+
+    fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_GROUP)
+    }
+
+    fn cluster_name_or_default(&self) -> &str {
+        self.cluster_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_CLUSTER)
+    }
+}
+
+/// Query parameters for `DELETE /ns/instance`.
+///
+/// Mirrors upstream `ConsoleInstanceController#removeInstance(InstanceForm)`:
+/// the console deregister call carries its parameters in the query string.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceDeleteQuery {
+    #[serde(default)]
+    namespace_id: Option<String>,
+    #[serde(default)]
+    group_name: Option<String>,
+    service_name: String,
+    ip: String,
+    port: i32,
+    #[serde(default)]
+    cluster_name: Option<String>,
+    #[serde(default)]
+    ephemeral: bool,
+}
+
+impl InstanceDeleteQuery {
     fn namespace_id_or_default(&self) -> &str {
         self.namespace_id
             .as_deref()
@@ -243,9 +288,77 @@ async fn update_instance(
     Result::<String>::http_success("ok".to_string())
 }
 
+/// DELETE /ns/instance
+#[delete("")]
+async fn delete_instance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    query: web::Query<InstanceDeleteQuery>,
+) -> impl Responder {
+    let namespace_id = query.namespace_id_or_default();
+    let group_name = query.group_name_or_default();
+    let cluster_name = query.cluster_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, query.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    if query.service_name.is_empty() || query.ip.is_empty() || query.port <= 0 {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+            String::new(),
+        );
+    }
+
+    let instance = Instance {
+        instance_id: batata_api::naming::model::default_instance_id(
+            &query.ip,
+            query.port,
+            cluster_name,
+            group_name,
+            &query.service_name,
+        ),
+        ip: query.ip.clone(),
+        port: query.port,
+        weight: 1.0,
+        healthy: true,
+        enabled: true,
+        ephemeral: query.ephemeral,
+        cluster_name: cluster_name.to_string(),
+        service_name: query.service_name.clone(),
+        metadata: HashMap::new(),
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .instance_delete(namespace_id, group_name, &query.service_name, instance)
+        .await
+    {
+        return Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
+    }
+
+    Result::<String>::http_success("ok".to_string())
+}
+
 /// Register the instance management routes under `/instance`.
 pub fn routes() -> Scope {
     web::scope("/instance")
         .service(list_instances)
         .service(update_instance)
+        .service(delete_instance)
 }

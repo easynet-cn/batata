@@ -712,8 +712,9 @@ impl ConfigPersistence for EmbeddedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
-        // Build prefix for history entries matching data_id/group/namespace
-        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        // Build prefix for history entries matching data_id/group/namespace.
+        // Empty leading segments fall back to a scan-all prefix.
+        let prefix = RocksStateMachine::config_history_prefix(namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
         let mut all_items: Vec<batata_consistency::raft::state_machine::StoredConfigHistory> =

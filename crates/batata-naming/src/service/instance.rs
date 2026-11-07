@@ -394,7 +394,7 @@ impl NamingService {
         }
 
         let healthy_ratio = if total > 0 {
-            healthy_count as f32 / total as f32
+            healthy_count as f64 / total as f64
         } else {
             1.0
         };
@@ -438,7 +438,7 @@ impl NamingService {
             all_ips: has_any_instances,
             reach_protection_threshold: protection_triggered,
             metadata: service_meta_map,
-            protect_threshold,
+            protect_threshold: protect_threshold as f32,
         }
     }
 
@@ -488,7 +488,7 @@ impl NamingService {
         let has_any = total > 0;
 
         let healthy_ratio = if total > 0 {
-            healthy_count as f32 / total as f32
+            healthy_count as f64 / total as f64
         } else {
             1.0
         };
@@ -531,14 +531,14 @@ impl NamingService {
             all_ips: has_any,
             reach_protection_threshold: protection_triggered,
             metadata: service_meta_map,
-            protect_threshold,
+            protect_threshold: protect_threshold as f32,
         };
 
         let protection_info = super::ProtectionInfo {
-            threshold: protect_threshold,
+            threshold: protect_threshold as f32,
             total_instances: total,
             healthy_instances: healthy_count,
-            healthy_ratio,
+            healthy_ratio: healthy_ratio as f32,
             triggered: protection_triggered,
         };
 

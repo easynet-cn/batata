@@ -1231,7 +1231,7 @@ fn default_health_check_type() -> String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ServiceMetadata {
     /// Protection threshold (0.0 to 1.0)
-    pub protect_threshold: f32,
+    pub protect_threshold: f64,
     /// Service metadata key-value pairs
     pub metadata: HashMap<String, String>,
     /// Service selector type (e.g., "none", "label")
@@ -1358,6 +1358,24 @@ impl Default for ClusterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_service_metadata_protect_threshold_wire_value() {
+        // Upstream stores this as a Java `float`, but Jackson renders 0.7F as
+        // "0.7". serde_json on an f32 would emit 0.699999988079071, which the
+        // console renders as a long decimal and breaks exact-value assertions.
+        // Keep f64 so the wire value matches upstream.
+        let metadata = ServiceMetadata {
+            protect_threshold: 0.7,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&metadata).unwrap();
+        assert_eq!(value["protect_threshold"], serde_json::json!(0.7_f64));
+        assert_eq!(
+            serde_json::to_string(&value["protect_threshold"]).unwrap(),
+            "0.7"
+        );
+    }
 
     #[test]
     fn test_instance_default() {

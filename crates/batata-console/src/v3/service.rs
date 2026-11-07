@@ -94,7 +94,7 @@ struct ServiceForm {
     #[serde(default)]
     ephemeral: Option<bool>,
     #[serde(default)]
-    protect_threshold: Option<f32>,
+    protect_threshold: Option<f64>,
     #[serde(default)]
     metadata: Option<serde_json::Value>,
     #[serde(default)]
@@ -557,6 +557,8 @@ async fn update_cluster(
             &form.cluster_name,
             Some(health_checker_type.as_str()),
             form.metadata.clone(),
+            form.check_port,
+            form.use_instance_port4_check,
         )
         .await
     {
@@ -628,5 +630,30 @@ mod tests {
         assert_eq!(form.group_name.as_deref(), Some("G"));
         assert_eq!(form.protect_threshold, Some(0.3));
         assert_eq!(form.ephemeral, Some(true));
+    }
+
+    #[test]
+    fn test_service_form_protect_threshold_keeps_exact_wire_value() {
+        let json = r#"{"serviceName":"svc","protectThreshold":0.7}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        let threshold = form.protect_threshold.unwrap();
+        // An f32 would serialize as 0.699999988079071 and the detail page
+        // would not show the "0.7" the user just saved.
+        assert_eq!(serde_json::to_string(&threshold).unwrap(), "0.7");
+    }
+
+    #[test]
+    fn test_update_cluster_form_uses_upstream_field_names() {
+        // Upstream `UpdateClusterForm` calls these `checkPort` and
+        // `useInstancePort4Check`. Sending `healthyCheckPort` /
+        // `useInstancePortForCheck` instead leaves them `None`, so the
+        // cluster health-check port never changes.
+        let json = r#"{"serviceName":"svc","clusterName":"DEFAULT","checkPort":8081,"useInstancePort4Check":true,"healthChecker":{"type":"HTTP"}}"#;
+        let form: UpdateClusterForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.check_port, Some(8081));
+        assert_eq!(form.use_instance_port4_check, Some(true));
+        assert!(form.health_checker.is_some());
+        assert_eq!(form.namespace_id_or_default(), DEFAULT_NAMESPACE_ID);
+        assert_eq!(form.group_name_or_default(), DEFAULT_GROUP);
     }
 }

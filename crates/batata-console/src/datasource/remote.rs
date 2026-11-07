@@ -833,7 +833,7 @@ impl ConsoleDataSource for RemoteDataSource {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
         metadata: &str,
         selector: &str,
         ephemeral: bool,
@@ -857,7 +857,7 @@ impl ConsoleDataSource for RemoteDataSource {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: Option<f32>,
+        protect_threshold: Option<f64>,
         metadata: Option<&str>,
         selector: Option<&str>,
     ) -> anyhow::Result<bool> {
@@ -946,6 +946,31 @@ impl ConsoleDataSource for RemoteDataSource {
                 instance.enabled,
                 &metadata_str,
             )
+            .await?;
+        Ok(true)
+    }
+
+    async fn instance_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        instance: Instance,
+    ) -> anyhow::Result<bool> {
+        let remote_instance = batata_maintainer_client::model::Instance {
+            instance_id: instance.instance_id,
+            ip: instance.ip,
+            port: instance.port,
+            weight: instance.weight,
+            healthy: instance.healthy,
+            enabled: instance.enabled,
+            ephemeral: instance.ephemeral,
+            cluster_name: instance.cluster_name,
+            service_name: instance.service_name,
+            metadata: instance.metadata,
+        };
+        self.client
+            .instance_deregister(namespace_id, group_name, service_name, &remote_instance)
             .await?;
         Ok(true)
     }
@@ -1100,6 +1125,8 @@ impl ConsoleDataSource for RemoteDataSource {
         _cluster_name: &str,
         _health_checker_type: Option<&str>,
         _metadata: Option<HashMap<String, String>>,
+        _check_port: Option<i32>,
+        _use_instance_port_for_check: Option<bool>,
     ) -> anyhow::Result<bool> {
         // In remote mode, cluster updates would go through the admin API
         Err(anyhow::anyhow!(

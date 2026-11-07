@@ -11,6 +11,7 @@ use moka::sync::Cache;
 use batata_consistency::raft::node::RaftNode;
 use batata_consistency::raft::reader::RocksDbReader;
 use batata_consistency::raft::request::{RaftRequest, RaftResponse};
+use batata_consistency::raft::state_machine::RocksStateMachine;
 
 use crate::model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
@@ -485,7 +486,7 @@ impl ConfigPersistence for DistributedPersistService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
-        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let prefix = RocksStateMachine::config_history_prefix(namespace_id, group, data_id);
         let (items, total) = self.reader.search_config_history_with_filters(
             &prefix, op_type, src_user, start_time, end_time, page_no, page_size,
         )?;

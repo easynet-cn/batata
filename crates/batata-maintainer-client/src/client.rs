@@ -1969,7 +1969,7 @@ impl MaintainerClient {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
         metadata: &str,
         selector: &str,
         ephemeral: bool,
@@ -1980,7 +1980,7 @@ impl MaintainerClient {
             namespace_id: &'a str,
             group_name: &'a str,
             service_name: &'a str,
-            protect_threshold: f32,
+            protect_threshold: f64,
             #[serde(skip_serializing_if = "str::is_empty")]
             metadata: &'a str,
             #[serde(skip_serializing_if = "str::is_empty")]
@@ -2033,7 +2033,7 @@ impl MaintainerClient {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        protect_threshold: f32,
+        protect_threshold: f64,
         metadata: &str,
         selector: &str,
     ) -> anyhow::Result<String> {
@@ -2043,7 +2043,7 @@ impl MaintainerClient {
             namespace_id: &'a str,
             group_name: &'a str,
             service_name: &'a str,
-            protect_threshold: f32,
+            protect_threshold: f64,
             #[serde(skip_serializing_if = "str::is_empty")]
             metadata: &'a str,
             #[serde(skip_serializing_if = "str::is_empty")]
