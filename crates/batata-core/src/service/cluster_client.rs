@@ -253,7 +253,7 @@ impl ClusterClientManager {
 
     /// Calculate the cluster gRPC port from the main port
     fn calculate_grpc_port(main_port: u16) -> u16 {
-        main_port + 1001 // Cluster gRPC port offset
+        main_port.saturating_add(1001) // Cluster gRPC port offset
     }
 
     /// Get gRPC address from member address
@@ -664,6 +664,11 @@ mod tests {
     fn test_calculate_grpc_port() {
         assert_eq!(ClusterClientManager::calculate_grpc_port(8848), 9849);
         assert_eq!(ClusterClientManager::calculate_grpc_port(8849), 9850);
+        // A high main port must not wrap to a low gRPC port.
+        assert_eq!(
+            ClusterClientManager::calculate_grpc_port(u16::MAX),
+            u16::MAX
+        );
     }
 
     #[test]

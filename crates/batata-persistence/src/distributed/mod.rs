@@ -265,6 +265,8 @@ impl ConfigPersistence for DistributedPersistService {
                     publish_type: Some("formal".to_string()),
                     ext_info: Some(ext_info),
                 }),
+                // Capture the clock at propose time; apply() must be deterministic.
+                now_ms: chrono::Utc::now().timestamp_millis(),
             },
         ));
 
@@ -315,6 +317,7 @@ impl ConfigPersistence for DistributedPersistService {
             group: group.to_string(),
             tenant: namespace_id.to_string(),
             history,
+            now_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         self.raft_write(request).await?;
@@ -360,6 +363,7 @@ impl ConfigPersistence for DistributedPersistService {
                 src_user: Some(src_user.to_string()),
                 src_ip: Some(src_ip.to_string()),
                 cas_md5: cas_md5.map(|s| s.to_string()),
+                now_ms: chrono::Utc::now().timestamp_millis(),
             },
         ));
         self.raft_write(request).await?;

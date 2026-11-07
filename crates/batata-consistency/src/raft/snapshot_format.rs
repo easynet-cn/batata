@@ -48,6 +48,15 @@ const TAG_END: u8 = 3;
 /// Buffer size used when streaming a snapshot in or out.
 pub const IO_BUFFER_SIZE: usize = 64 * 1024;
 
+/// Hard ceiling for one length-prefixed field in a snapshot record.
+///
+/// The length prefix is an untrusted `u32` from a peer (or a corrupted file).
+/// `vec![0u8; len]` / `resize(len, 0)` would otherwise try to allocate up to
+/// 4 GiB before `read_exact` discovers the file is short. `RESTORE_BATCH_BYTES`
+/// bounds the *batch*, not a single record, so an explicit per-record cap is
+/// needed here as well.
+pub const MAX_SNAPSHOT_RECORD_LEN: usize = 64 * 1024 * 1024;
+
 /// Smallest possible snapshot: magic, version, end tag and checksum.
 const MIN_SNAPSHOT_SIZE: u64 = (SNAPSHOT_MAGIC.len() + 4 + 1 + CHECKSUM_SIZE) as u64;
 
@@ -130,6 +139,10 @@ impl<W: AsyncWrite + Unpin> SnapshotWriter<W> {
 pub struct SnapshotReader<R> {
     inner: R,
     hasher: DefaultHasher,
+    /// Total file size (including the trailing checksum), when known.
+    total_len: Option<u64>,
+    /// Bytes hashed/consumed so far.
+    consumed: u64,
 }
 
 impl<R: AsyncRead + Unpin> SnapshotReader<R> {
@@ -138,7 +151,16 @@ impl<R: AsyncRead + Unpin> SnapshotReader<R> {
         Self {
             inner,
             hasher: DefaultHasher::new(),
+            total_len: None,
+            consumed: 0,
         }
+    }
+
+    /// Supply the on-disk size so length prefixes can be checked against the
+    /// bytes that are actually available (minus the trailing checksum).
+    pub fn with_total_len(mut self, total_len: u64) -> Self {
+        self.total_len = Some(total_len);
+        self
     }
 
     /// Read a byte, feeding it to the checksum. `Ok(None)` means clean EOF.
@@ -149,6 +171,7 @@ impl<R: AsyncRead + Unpin> SnapshotReader<R> {
             return Ok(None);
         }
         self.hasher.write(&byte);
+        self.consumed += 1;
         Ok(Some(byte[0]))
     }
 
@@ -156,7 +179,32 @@ impl<R: AsyncRead + Unpin> SnapshotReader<R> {
     async fn read_hashed(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.inner.read_exact(buf).await?;
         self.hasher.write(buf);
+        self.consumed += buf.len() as u64;
         Ok(())
+    }
+
+    /// Decode a `u32` length prefix, rejecting values that would allocate an
+    /// unreasonable buffer or that exceed the remaining file bytes.
+    async fn read_len_prefix(&mut self) -> io::Result<usize> {
+        let mut raw = [0u8; 4];
+        self.read_hashed(&mut raw).await?;
+        let len = u32::from_le_bytes(raw) as usize;
+        if len > MAX_SNAPSHOT_RECORD_LEN {
+            return Err(invalid(format!(
+                "snapshot record length {len} exceeds the {MAX_SNAPSHOT_RECORD_LEN}-byte limit"
+            )));
+        }
+        if let Some(total) = self.total_len {
+            let available = total
+                .saturating_sub(CHECKSUM_SIZE as u64)
+                .saturating_sub(self.consumed);
+            if (len as u64) > available {
+                return Err(invalid(format!(
+                    "snapshot record length {len} exceeds the {available} remaining bytes"
+                )));
+            }
+        }
+        Ok(len)
     }
 
     /// Validate the magic header and format version.
@@ -197,9 +245,7 @@ impl<R: AsyncRead + Unpin> SnapshotReader<R> {
 
         match tag {
             TAG_CF => {
-                let mut len = [0u8; 4];
-                self.read_hashed(&mut len).await?;
-                let len = u32::from_le_bytes(len) as usize;
+                let len = self.read_len_prefix().await?;
                 let mut name = vec![0u8; len];
                 self.read_hashed(&mut name).await?;
                 *cf = String::from_utf8(name)
@@ -207,16 +253,12 @@ impl<R: AsyncRead + Unpin> SnapshotReader<R> {
                 Ok(Some(RecordKind::ColumnFamily))
             }
             TAG_ENTRY => {
-                let mut len = [0u8; 4];
-                self.read_hashed(&mut len).await?;
-                let len = u32::from_le_bytes(len) as usize;
+                let len = self.read_len_prefix().await?;
                 key.clear();
                 key.resize(len, 0);
                 self.read_hashed(key).await?;
 
-                let mut len = [0u8; 4];
-                self.read_hashed(&mut len).await?;
-                let len = u32::from_le_bytes(len) as usize;
+                let len = self.read_len_prefix().await?;
                 value.clear();
                 value.resize(len, 0);
                 self.read_hashed(value).await?;
@@ -289,6 +331,87 @@ pub async fn verify_file(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// Build a header followed by one TAG_CF record with a forged length.
+    fn header_with_cf_len(len: u32) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(SNAPSHOT_MAGIC);
+        body.extend_from_slice(&SNAPSHOT_VERSION.to_le_bytes());
+        body.push(TAG_CF);
+        body.extend_from_slice(&len.to_le_bytes());
+        body.extend_from_slice(&[0u8; CHECKSUM_SIZE]);
+        body
+    }
+
+    #[tokio::test]
+    async fn record_len_above_hard_cap_is_rejected_before_allocating() {
+        let body = header_with_cf_len((MAX_SNAPSHOT_RECORD_LEN + 1) as u32);
+        // No total_len: only the hard cap can reject this.
+        let mut reader = SnapshotReader::new(Cursor::new(body));
+        reader.read_header().await.unwrap();
+        let err = reader
+            .next_record(&mut String::new(), &mut Vec::new(), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("exceeds the"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn record_len_beyond_remaining_file_bytes_is_rejected() {
+        // 1 MiB is below the hard cap but cannot fit in this file.
+        let body = header_with_cf_len(1024 * 1024);
+        let mut reader =
+            SnapshotReader::new(Cursor::new(body.clone())).with_total_len(body.len() as u64);
+        reader.read_header().await.unwrap();
+        let err = reader
+            .next_record(&mut String::new(), &mut Vec::new(), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("remaining bytes"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn valid_len_prefix_still_decodes() {
+        let mut body = Vec::new();
+        {
+            let mut writer = SnapshotWriter::new(&mut body);
+            writer.write_header().await.unwrap();
+            writer.start_column_family("cf_config").await.unwrap();
+            writer.write_entry(b"k", b"v").await.unwrap();
+            writer.finish().await.unwrap();
+        }
+        let mut reader =
+            SnapshotReader::new(Cursor::new(body.clone())).with_total_len(body.len() as u64);
+        reader.read_header().await.unwrap();
+        let mut cf = String::new();
+        let mut key = Vec::new();
+        let mut value = Vec::new();
+        assert_eq!(
+            reader
+                .next_record(&mut cf, &mut key, &mut value)
+                .await
+                .unwrap(),
+            Some(RecordKind::ColumnFamily)
+        );
+        assert_eq!(cf, "cf_config");
+        assert_eq!(
+            reader
+                .next_record(&mut cf, &mut key, &mut value)
+                .await
+                .unwrap(),
+            Some(RecordKind::Entry)
+        );
+        assert_eq!(key, b"k");
+        assert_eq!(value, b"v");
+        assert_eq!(
+            reader
+                .next_record(&mut cf, &mut key, &mut value)
+                .await
+                .unwrap(),
+            Some(RecordKind::End)
+        );
+        reader.verify_checksum().await.unwrap();
+    }
 
     #[tokio::test]
     async fn writer_and_reader_round_trip() {

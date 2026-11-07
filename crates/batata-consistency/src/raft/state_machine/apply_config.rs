@@ -25,7 +25,9 @@ impl RocksStateMachine {
     /// run concurrently), and a duplicated id makes
     /// `config_history_find_by_id` return whichever entry comes first in key
     /// order — i.e. the detail of a *different* data_id. The log index is
-    /// strictly monotonic and identical on every node.
+    /// strictly monotonic and identical on every node. `now_ms` is likewise the
+    /// leader's clock captured at propose time: apply() must never call
+    /// `Utc::now()` or the replicas would persist byte-different state.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_config_publish_batched(
         &self,
@@ -47,21 +49,26 @@ impl RocksStateMachine {
         encrypted_data_key: Option<String>,
         cas_md5: Option<&str>,
         history: Option<ConfigHistoryInfo>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
-        let now = chrono::Utc::now().timestamp_millis();
 
         // Single read: fetch existing StoredConfig for CAS check, created_time
         // preservation, and op_type determination (Insert vs Update).
         let existing_stored: Option<StoredConfig> =
             match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-                Ok(Some(bytes)) => bincode::deserialize(&bytes).ok(),
+                Ok(Some(bytes)) => match bincode::deserialize(&bytes) {
+                    Ok(stored) => Some(stored),
+                    Err(e) => {
+                        return RaftResponse::failure(format!("decode existing config: {}", e));
+                    }
+                },
                 Ok(None) => None,
                 Err(e) => {
-                    if cas_md5.is_some() {
-                        return RaftResponse::failure(format!("CAS check failed: {}", e));
-                    }
-                    None
+                    // A read failure must never be treated as "config absent":
+                    // that would bypass CAS, mark the write as an Insert and
+                    // reset created_time on an existing config.
+                    return RaftResponse::failure(format!("read existing config failed: {}", e));
                 }
             };
 
@@ -93,7 +100,7 @@ impl RocksStateMachine {
         let created_time = existing_stored
             .as_ref()
             .map(|c| c.created_time)
-            .unwrap_or(now);
+            .unwrap_or(now_ms);
 
         let stored = StoredConfig {
             data_id: data_id.to_string(),
@@ -112,7 +119,7 @@ impl RocksStateMachine {
             src_user: src_user.clone(),
             src_ip: src_ip.clone(),
             created_time,
-            modified_time: now,
+            modified_time: now_ms,
         };
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -146,8 +153,8 @@ impl RocksStateMachine {
                 gray_name: String::new(),
                 ext_info: hi.ext_info.unwrap_or_default(),
                 encrypted_data_key: encrypted_data_key.clone().unwrap_or_default(),
-                created_time: now,
-                modified_time: now,
+                created_time: now_ms,
+                modified_time: now_ms,
             };
             let history_encoded = match bincode::serialize(&history) {
                 Ok(b) => b,
@@ -180,9 +187,9 @@ impl RocksStateMachine {
         tenant: &str,
         history: Option<Box<ConfigDeleteHistoryInfo>>,
         history_id: i64,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
-        let now = chrono::Utc::now().timestamp_millis();
 
         let mut batch = rocksdb::WriteBatch::default();
         batch.delete_cf(self.cf_config(), key.as_bytes());
@@ -204,8 +211,8 @@ impl RocksStateMachine {
                 gray_name: String::new(),
                 ext_info: hi.ext_info,
                 encrypted_data_key: hi.encrypted_data_key,
-                created_time: now,
-                modified_time: now,
+                created_time: now_ms,
+                modified_time: now_ms,
             };
             let encoded = match bincode::serialize(&history) {
                 Ok(b) => b,
@@ -241,9 +248,9 @@ impl RocksStateMachine {
         src_user: Option<String>,
         src_ip: Option<String>,
         cas_md5: Option<String>,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::config_gray_key(data_id, group, tenant, gray_name);
-        let now = chrono::Utc::now().timestamp_millis();
         let md5_val = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
         // CAS check: if cas_md5 provided, verify current gray MD5 matches
@@ -286,8 +293,8 @@ impl RocksStateMachine {
             encrypted_data_key: encrypted_data_key.unwrap_or_default(),
             src_user: src_user.unwrap_or_default(),
             src_ip: src_ip.unwrap_or_default(),
-            created_time: now,
-            modified_time: now,
+            created_time: now_ms,
+            modified_time: now_ms,
         };
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -452,6 +459,7 @@ impl RocksStateMachine {
         group: &str,
         tenant: &str,
         tag: &str,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
 
@@ -463,7 +471,7 @@ impl RocksStateMachine {
             _ => return RaftResponse::failure("Config not found for tag update"),
         };
         stored.config_tags = Some(tag.to_string());
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
+        stored.modified_time = now_ms;
 
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,
@@ -490,6 +498,7 @@ impl RocksStateMachine {
         group: &str,
         tenant: &str,
         _tag: &str,
+        now_ms: i64,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
 
@@ -501,7 +510,7 @@ impl RocksStateMachine {
             _ => return RaftResponse::failure("Config not found for tag delete"),
         };
         stored.config_tags = Some(String::new());
-        stored.modified_time = chrono::Utc::now().timestamp_millis();
+        stored.modified_time = now_ms;
 
         let encoded = match bincode::serialize(&stored) {
             Ok(b) => b,

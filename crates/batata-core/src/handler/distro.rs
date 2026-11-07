@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use crate::{
     model::Connection,
-    service::distro::{DistroData, DistroDataType, DistroProtocol},
+    service::distro::{
+        DistroData, DistroDataType, DistroProtocol, custom_type_name, distro_content_to_string,
+    },
 };
 use tonic::Status;
 use tracing::warn;
@@ -40,11 +42,7 @@ impl PayloadHandler for DistroDataSyncHandler {
                 DistroDataType::NamingInstance
             }
             batata_server_api::distro::DistroDataType::Custom => {
-                let type_name = request
-                    .distro_data
-                    .custom_type_name
-                    .clone()
-                    .unwrap_or_else(|| "CUSTOM".to_string());
+                let type_name = custom_type_name(request.distro_data.custom_type_name.clone());
                 DistroDataType::Custom(type_name)
             }
         };
@@ -107,10 +105,7 @@ impl PayloadHandler for DistroDataBatchSyncHandler {
                         DistroDataType::NamingInstance
                     }
                     batata_server_api::distro::DistroDataType::Custom => {
-                        let type_name = item
-                            .custom_type_name
-                            .clone()
-                            .unwrap_or_else(|| "CUSTOM".to_string());
+                        let type_name = custom_type_name(item.custom_type_name.clone());
                         DistroDataType::Custom(type_name)
                     }
                 };
@@ -159,10 +154,7 @@ impl PayloadHandler for DistroDataVerifyHandler {
                 DistroDataType::NamingInstance
             }
             batata_server_api::distro::DistroDataType::Custom => {
-                let type_name = request
-                    .custom_type_name
-                    .clone()
-                    .unwrap_or_else(|| "CUSTOM".to_string());
+                let type_name = custom_type_name(request.custom_type_name.clone());
                 DistroDataType::Custom(type_name)
             }
         };
@@ -224,10 +216,7 @@ impl PayloadHandler for DistroDataSnapshotHandler {
                 DistroDataType::NamingInstance
             }
             batata_server_api::distro::DistroDataType::Custom => {
-                let type_name = request
-                    .custom_type_name
-                    .clone()
-                    .unwrap_or_else(|| "CUSTOM".to_string());
+                let type_name = custom_type_name(request.custom_type_name.clone());
                 DistroDataType::Custom(type_name)
             }
         };
@@ -238,27 +227,30 @@ impl PayloadHandler for DistroDataSnapshotHandler {
         // Convert to API format
         let api_snapshot: Vec<batata_server_api::distro::DistroDataItem> = snapshot
             .into_iter()
-            .map(|d| {
-                let (api_data_type, custom_name) = match &d.data_type {
-                    DistroDataType::NamingInstance => (
-                        batata_server_api::distro::DistroDataType::NamingInstance,
-                        None,
-                    ),
-                    DistroDataType::Custom(name) => (
-                        batata_server_api::distro::DistroDataType::Custom,
-                        Some(name.clone()),
-                    ),
-                };
-                batata_server_api::distro::DistroDataItem {
-                    data_type: api_data_type,
-                    custom_type_name: custom_name,
-                    key: d.key,
-                    content: String::from_utf8(d.content).unwrap_or_default(),
-                    version: d.version,
-                    source: d.source,
-                }
-            })
-            .collect();
+            .map(
+                |d| -> Result<batata_server_api::distro::DistroDataItem, String> {
+                    let (api_data_type, custom_name) = match &d.data_type {
+                        DistroDataType::NamingInstance => (
+                            batata_server_api::distro::DistroDataType::NamingInstance,
+                            None,
+                        ),
+                        DistroDataType::Custom(name) => (
+                            batata_server_api::distro::DistroDataType::Custom,
+                            Some(name.clone()),
+                        ),
+                    };
+                    Ok(batata_server_api::distro::DistroDataItem {
+                        data_type: api_data_type,
+                        custom_type_name: custom_name,
+                        content: distro_content_to_string(d.content, &d.key)?,
+                        key: d.key,
+                        version: d.version,
+                        source: d.source,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Status::internal)?;
 
         let mut response = DistroDataSnapshotResponse::new();
         response.request_id(request_id);

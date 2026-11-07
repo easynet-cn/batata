@@ -86,6 +86,12 @@ pub struct ConfigPublishPayload {
     /// Optional config history metadata to insert atomically with the publish.
     #[serde(default)]
     pub history: Option<ConfigHistoryInfo>,
+    /// Leader wall clock at propose time, in milliseconds since epoch.
+    ///
+    /// apply() must never read the local clock: every replica must persist
+    /// byte-identical state for the same log entry.
+    #[serde(default)]
+    pub now_ms: i64,
 }
 
 /// Payload for `RaftRequest::ConfigGrayPublish`.
@@ -113,6 +119,9 @@ pub struct ConfigGrayPublishPayload {
     pub src_ip: Option<String>,
     /// Optional expected MD5 for a compare-and-swap publish.
     pub cas_md5: Option<String>,
+    /// Leader wall clock at propose time, in milliseconds since epoch.
+    #[serde(default)]
+    pub now_ms: i64,
 }
 
 /// Payload for `RaftRequest::ConfigHistoryInsert`.
@@ -234,6 +243,9 @@ pub enum RaftRequest {
         /// Boxed so the ConfigRemove variant stays compact (history info is ~170B).
         #[serde(default)]
         history: Option<Box<ConfigDeleteHistoryInfo>>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        #[serde(default)]
+        now_ms: i64,
     },
 
     // ==================== Namespace Operations ====================
@@ -381,6 +393,9 @@ pub enum RaftRequest {
         tag_src_ip: Option<String>,
         /// Optional source user that updated the tags.
         tag_src_user: Option<String>,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        #[serde(default)]
+        now_ms: i64,
     },
 
     /// Delete config tags
@@ -393,6 +408,9 @@ pub enum RaftRequest {
         tenant: String,
         /// Tag value to delete.
         tag: String,
+        /// Leader wall clock at propose time, in milliseconds since epoch.
+        #[serde(default)]
+        now_ms: i64,
     },
 
     // ==================== Service/Instance Operations (for persistent instances) ====================
@@ -742,6 +760,7 @@ mod tests {
             encrypted_data_key: None,
             cas_md5: None,
             history: None,
+            now_ms: 1_700_000_000_000,
         }));
 
         let serialized = serde_json::to_string(&req).unwrap();

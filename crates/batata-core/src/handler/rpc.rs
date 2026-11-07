@@ -23,6 +23,21 @@ use batata_api::grpc::{Metadata, Payload, bi_request_stream_server::BiRequestStr
 use batata_api::remote::model::{ConnectionSetupRequest, ResponseCode};
 
 use batata_api::model::APPNAME;
+
+/// Truncate a string to at most `max_bytes` on a valid UTF-8 boundary.
+///
+/// Diagnostics used to slice `&body[..body.len().min(200)]`, which panics when
+/// byte 200 falls inside a multibyte character (e.g. Chinese request bodies).
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
 use batata_api::remote::RequestTrait;
 
 /// Default timeout for bi-stream send operations (5 seconds).
@@ -563,7 +578,7 @@ impl batata_api::grpc::request_server::Request for GrpcRequestService {
                     "[FUZZY-DIAG] Received unary request: type={}, connection={}, body={}",
                     message_type,
                     connection.meta_info.connection_id,
-                    &body[..body.len().min(200)]
+                    truncate_utf8(&body, 200)
                 );
             }
 
@@ -1411,5 +1426,27 @@ mod unary_active_time_tests {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         assert!(ejected, "an unresponsive connection must be ejected");
+    }
+}
+
+#[cfg(test)]
+mod utf8_preview_tests {
+    use super::truncate_utf8;
+
+    #[test]
+    fn truncate_utf8_never_splits_multibyte_characters() {
+        let body = "中".repeat(100); // 300 bytes, every character is 3 bytes
+        let preview = truncate_utf8(&body, 200);
+        assert!(preview.len() <= 200);
+        assert!(body.starts_with(preview));
+        assert_eq!(preview.chars().count(), 66);
+        // Panic-free: this is exactly the byte offset the old slice used.
+        assert_eq!(preview, &body[..preview.len()]);
+    }
+
+    #[test]
+    fn truncate_utf8_keeps_short_ascii_unchanged() {
+        assert_eq!(truncate_utf8("abc", 200), "abc");
+        assert_eq!(truncate_utf8("abcdef", 3), "abc");
     }
 }

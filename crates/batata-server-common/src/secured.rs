@@ -19,6 +19,57 @@ pub use batata_common::AuthPermission;
 pub use batata_common::IdentityContext;
 pub use batata_common::RequestToken;
 
+/// Sentinel placed into an RBAC [`Resource`] when the query string cannot be
+/// decoded. It is deliberately not a legal namespace/group/name so the derived
+/// permission string can never match an ordinary rule.
+pub const INVALID_QUERY_RESOURCE_SEGMENT: &str = "\u{0}malformed-query";
+
+/// Detect a `%` that is not followed by two hex digits.
+///
+/// actix's urlencoded decoder leaves such sequences *literal* rather than
+/// failing, so different layers can disagree about what the parameter value
+/// is. For RBAC resource parsing that ambiguity must be a hard failure.
+fn has_invalid_percent_escape(query: &str) -> bool {
+    let bytes = query.as_bytes();
+    for (i, byte) in bytes.iter().enumerate() {
+        if *byte == b'%'
+            && !bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn parse_query_string(query: &str) -> Option<HashMap<String, String>> {
+    if has_invalid_percent_escape(query) {
+        tracing::warn!("Malformed percent escape in RBAC query string");
+        return None;
+    }
+    match web::Query::<HashMap<String, String>>::from_query(query) {
+        Ok(query) => Some(query.into_inner()),
+        Err(e) => {
+            tracing::warn!("Malformed query string in RBAC resource parse: {e}");
+            None
+        }
+    }
+}
+
+fn parse_query_params(req: &HttpRequest) -> Option<HashMap<String, String>> {
+    parse_query_string(req.query_string())
+}
+
+/// Whether `resource` was built from an undecodable query string. The
+/// `secured!` macro rejects such requests instead of evaluating a permission
+/// derived from empty segments.
+pub fn resource_from_invalid_query(resource: &Resource) -> bool {
+    resource.namespace_id == INVALID_QUERY_RESOURCE_SEGMENT
+        || resource.group == INVALID_QUERY_RESOURCE_SEGMENT
+        || resource.name == INVALID_QUERY_RESOURCE_SEGMENT
+}
+
 /// Security context carrying the information required for API access control.
 #[derive(Debug, Clone)]
 pub struct Secured<'a> {
@@ -319,6 +370,16 @@ macro_rules! secured {
                                 (&__secured).into()
                             };
 
+                        // A query string we could not decode must not be turned
+                        // into a wildcard resource by join_resource().
+                        if $crate::secured::resource_from_invalid_query(&__resource) {
+                            return $crate::model::response::ErrorResult::http_response_forbidden(
+                                actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                                "authorization failed!.",
+                                __secured.req.path(),
+                            );
+                        }
+
                         let __permission = $crate::secured::AuthPermission {
                             resource: $crate::join_resource(&__resource),
                             action: __secured.action.as_str().to_string(),
@@ -380,10 +441,9 @@ impl ConfigHttpResourceParser {
 
     /// Performs the `get_namespace_id` operation.
     pub fn get_namespace_id(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params
             .get(NAMESPACE_ID)
@@ -394,10 +454,9 @@ impl ConfigHttpResourceParser {
 
     /// Performs the `get_group` operation.
     pub fn get_group(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params
             .get(GROUP_NAME)
@@ -408,10 +467,9 @@ impl ConfigHttpResourceParser {
 
     /// Performs the `get_resource_name` operation.
     pub fn get_resource_name(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params.get(DATA_ID).cloned().unwrap_or_default()
     }
@@ -450,10 +508,9 @@ impl NamingHttpResourceParser {
 
     /// Performs the `get_namespace_id` operation.
     pub fn get_namespace_id(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params
             .get(NAMESPACE_ID)
@@ -464,10 +521,9 @@ impl NamingHttpResourceParser {
 
     /// Performs the `get_group` operation.
     pub fn get_group(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params
             .get(GROUP_NAME)
@@ -478,10 +534,9 @@ impl NamingHttpResourceParser {
 
     /// Performs the `get_resource_name` operation.
     pub fn get_resource_name(req: &HttpRequest) -> String {
-        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
-            .ok()
-            .map(|q| q.into_inner())
-            .unwrap_or_default();
+        let Some(params) = parse_query_params(req) else {
+            return INVALID_QUERY_RESOURCE_SEGMENT.to_string();
+        };
 
         params.get(SERVICE_NAME).cloned().unwrap_or_default()
     }
@@ -532,6 +587,76 @@ pub fn join_resource(resource: &Resource) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::test::TestRequest;
+
+    #[test]
+    fn malformed_query_is_not_silently_turned_into_a_wildcard_resource() {
+        // `%ZZ` is an invalid percent escape. The old unwrap_or_default()
+        // produced "" for every segment, which join_resource() expands to the
+        // broad `public:*:config/*`.
+        let req = TestRequest::with_uri("/v3/admin/cs/config?namespaceId=%ZZ&dataId=a.yml")
+            .to_http_request();
+        assert_eq!(
+            ConfigHttpResourceParser::get_namespace_id(&req),
+            INVALID_QUERY_RESOURCE_SEGMENT
+        );
+        assert_eq!(
+            ConfigHttpResourceParser::get_resource_name(&req),
+            INVALID_QUERY_RESOURCE_SEGMENT
+        );
+        assert_eq!(
+            NamingHttpResourceParser::get_group(&req),
+            INVALID_QUERY_RESOURCE_SEGMENT
+        );
+        let resource = Resource {
+            namespace_id: ConfigHttpResourceParser::get_namespace_id(&req),
+            group: ConfigHttpResourceParser::get_group(&req),
+            name: ConfigHttpResourceParser::get_resource_name(&req),
+            r#type: "config".to_string(),
+            properties: HashMap::new(),
+        };
+        assert!(resource_from_invalid_query(&resource));
+        assert_ne!(join_resource(&resource), "public:*:config/*");
+    }
+
+    #[test]
+    fn valid_percent_encoded_query_is_accepted() {
+        assert!(!has_invalid_percent_escape(
+            "namespaceId=ns%201&dataId=a.yml"
+        ));
+        let req = TestRequest::with_uri("/v3/admin/cs/config?namespaceId=ns%201&dataId=a.yml")
+            .to_http_request();
+        assert_eq!(ConfigHttpResourceParser::get_namespace_id(&req), "ns 1");
+        assert_eq!(ConfigHttpResourceParser::get_resource_name(&req), "a.yml");
+    }
+
+    #[test]
+    fn valid_query_with_absent_optional_params_stays_empty() {
+        let req = TestRequest::with_uri("/v3/admin/cs/config?dataId=a.yml").to_http_request();
+        assert_eq!(ConfigHttpResourceParser::get_namespace_id(&req), "");
+        assert_eq!(ConfigHttpResourceParser::get_group(&req), "");
+        assert_eq!(ConfigHttpResourceParser::get_resource_name(&req), "a.yml");
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "");
+        assert_eq!(NamingHttpResourceParser::get_resource_name(&req), "");
+    }
+
+    #[test]
+    fn valid_query_is_parsed_normally() {
+        let req = TestRequest::with_uri(
+            "/v3/admin/ns/service?namespaceId=ns1&groupName=grp&serviceName=svc",
+        )
+        .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "ns1");
+        assert_eq!(NamingHttpResourceParser::get_group(&req), "grp");
+        assert_eq!(NamingHttpResourceParser::get_resource_name(&req), "svc");
+        assert!(!resource_from_invalid_query(&Resource {
+            namespace_id: "ns1".to_string(),
+            group: "grp".to_string(),
+            name: "svc".to_string(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        }));
+    }
 
     #[test]
     fn test_join_resource_specified_type() {

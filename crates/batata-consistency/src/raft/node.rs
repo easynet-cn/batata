@@ -22,6 +22,23 @@ use super::state_machine::RocksStateMachine;
 use super::types::{NodeId, RaftMetrics, TypeConfig};
 use crate::RaftPluginHandler;
 
+/// Resolve the index to report after a write forwarded to the leader.
+///
+/// The follower must only answer once its own state machine has applied the
+/// entry. Reporting `leader_log_index` when `wait_for_applied` failed would
+/// claim a read-after-write guarantee the node cannot honour, and would hide a
+/// stalled replication stream behind a successful response.
+fn forwarded_write_applied_index(
+    wait_result: Result<(), Box<dyn std::error::Error + Send + Sync>>,
+    local_applied: Option<u64>,
+    leader_log_index: u64,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    wait_result?;
+    local_applied.ok_or_else(|| {
+        format!("follower has no last_applied index after waiting for {leader_log_index}").into()
+    })
+}
+
 /// Cached gRPC channel for leader write-forwarding.
 /// Reuses the same HTTP/2 connection across requests to avoid per-write connect overhead.
 /// Channel is cheap to clone (Arc internally) so we store it rather than the client.
@@ -466,17 +483,24 @@ impl RaftNode {
                         .await
                     {
                         Ok((resp, leader_log_index)) => {
-                            // Wait for local state machine to catch up to the
-                            // leader's committed index before returning, ensuring
+                            // Wait for the local state machine to catch up to
+                            // the leader's committed index before returning, so
                             // subsequent local reads see the written data.
-                            if leader_log_index > 0
-                                && let Err(e) = self
-                                    .wait_for_applied(leader_log_index, Duration::from_secs(5))
+                            let wait_result = if leader_log_index > 0 {
+                                self.wait_for_applied(leader_log_index, Duration::from_secs(5))
                                     .await
-                            {
-                                tracing::warn!("Follower wait-for-applied timed out: {}", e);
-                            }
-                            let idx = self.last_applied_index().unwrap_or(leader_log_index);
+                            } else {
+                                Ok(())
+                            };
+                            let idx = forwarded_write_applied_index(
+                                wait_result,
+                                self.last_applied_index(),
+                                leader_log_index,
+                            )
+                            .map_err(|e| {
+                                tracing::error!("Follower wait-for-applied failed: {}", e);
+                                e
+                            })?;
                             return Ok((resp, idx));
                         }
                         Err(forward_err) => {
@@ -986,5 +1010,24 @@ mod tests {
 
         assert!(builder.node_id.is_some());
         assert!(builder.addr.is_some());
+    }
+
+    #[test]
+    fn forwarded_write_reports_local_applied_index() {
+        let idx = forwarded_write_applied_index(Ok(()), Some(12), 12).unwrap();
+        assert_eq!(idx, 12);
+    }
+
+    #[test]
+    fn forwarded_write_does_not_claim_leader_index_when_wait_timed_out() {
+        let err: Box<dyn std::error::Error + Send + Sync> = "timed out".into();
+        // Removing the `wait_result?` guard would return 12 here.
+        assert!(forwarded_write_applied_index(Err(err), Some(3), 12).is_err());
+    }
+
+    #[test]
+    fn forwarded_write_does_not_invent_an_index_when_metrics_are_missing() {
+        let err = forwarded_write_applied_index(Ok(()), None, 12).unwrap_err();
+        assert!(err.to_string().contains("no last_applied index"), "{err}");
     }
 }

@@ -416,20 +416,20 @@ impl RocksStateMachine {
             .map_err(|e| sm_error(e, ErrorVerb::Read))?;
 
         // An empty body is a valid snapshot: a node with no state at all.
-        if file
+        let total_len = file
             .metadata()
             .await
             .map_err(|e| sm_error(e, ErrorVerb::Read))?
-            .len()
-            == 0
-        {
+            .len();
+        if total_len == 0 {
             return Ok(RestoreStats::default());
         }
 
         let mut reader = SnapshotReader::new(BufReader::with_capacity(
             snapshot_format::IO_BUFFER_SIZE,
             file,
-        ));
+        ))
+        .with_total_len(total_len);
         reader
             .read_header()
             .await
@@ -947,6 +947,7 @@ impl RocksStateMachine {
                     encrypted_data_key,
                     cas_md5,
                     history,
+                    now_ms,
                 } = *payload;
                 self.apply_config_publish_batched(
                     &data_id,
@@ -967,6 +968,7 @@ impl RocksStateMachine {
                     encrypted_data_key,
                     cas_md5.as_deref(),
                     history,
+                    now_ms,
                 )
             }
 
@@ -975,12 +977,14 @@ impl RocksStateMachine {
                 group,
                 tenant,
                 history,
+                now_ms,
             } => self.apply_config_remove_batched(
                 &data_id,
                 &group,
                 &tenant,
                 history,
                 log_index as i64,
+                now_ms,
             ),
 
             RaftRequest::ConfigGrayPublish(payload) => {
@@ -996,6 +1000,7 @@ impl RocksStateMachine {
                     src_user,
                     src_ip,
                     cas_md5,
+                    now_ms,
                 } = *payload;
                 self.apply_config_gray_publish(
                     &data_id,
@@ -1009,6 +1014,7 @@ impl RocksStateMachine {
                     src_user,
                     src_ip,
                     cas_md5,
+                    now_ms,
                 )
             }
 
@@ -1123,15 +1129,17 @@ impl RocksStateMachine {
                 group,
                 tenant,
                 tag,
+                now_ms,
                 ..
-            } => self.apply_config_tags_update(&data_id, &group, &tenant, &tag),
+            } => self.apply_config_tags_update(&data_id, &group, &tenant, &tag, now_ms),
 
             RaftRequest::ConfigTagsDelete {
                 data_id,
                 group,
                 tenant,
                 tag,
-            } => self.apply_config_tags_delete(&data_id, &group, &tenant, &tag),
+                now_ms,
+            } => self.apply_config_tags_delete(&data_id, &group, &tenant, &tag, now_ms),
 
             RaftRequest::PersistentInstanceRegister(payload) => {
                 let crate::raft::request::PersistentInstanceRegisterPayload {
@@ -2180,6 +2188,131 @@ mod tests {
     /// wall clock, and two replicas applying the same entry must see the
     /// same value.
     const TEST_NOW_MS: i64 = 1_700_000_000_000;
+
+    /// Publish the same config entry on two independent replicas and compare
+    /// the raw RocksDB bytes. A local `Utc::now()` in apply() would make the
+    /// config and its history row differ from node to node.
+    #[tokio::test]
+    async fn config_publish_is_replica_independent() {
+        use crate::raft::request::ConfigHistoryInfo;
+
+        let a_dir = tempfile::tempdir().expect("tempdir");
+        let b_dir = tempfile::tempdir().expect("tempdir");
+        let a = RocksStateMachine::new(a_dir.path())
+            .await
+            .expect("state machine a");
+        let b = RocksStateMachine::new(b_dir.path())
+            .await
+            .expect("state machine b");
+
+        let publish = |sm: &RocksStateMachine| {
+            sm.apply_config_publish_batched(
+                "app.properties",
+                "DEFAULT_GROUP",
+                "public",
+                "key=value",
+                "md5-test",
+                42,
+                Some("properties".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(ConfigHistoryInfo {
+                    op_type: String::new(),
+                    publish_type: Some("formal".to_string()),
+                    ext_info: None,
+                }),
+                TEST_NOW_MS,
+            )
+        };
+
+        let ra = publish(&a);
+        let rb = publish(&b);
+        assert!(ra.success && rb.success, "both replicas must publish");
+
+        let key = RocksStateMachine::config_key("app.properties", "DEFAULT_GROUP", "public");
+        let va =
+            a.db.get_cf(a.cf_config(), key.as_bytes())
+                .expect("read a")
+                .expect("config present on a");
+        let vb =
+            b.db.get_cf(b.cf_config(), key.as_bytes())
+                .expect("read b")
+                .expect("config present on b");
+        assert_eq!(va, vb, "replicas must store byte-identical config state");
+
+        let stored: StoredConfig = bincode::deserialize(&va).expect("decode config");
+        assert_eq!(stored.created_time, TEST_NOW_MS);
+        assert_eq!(stored.modified_time, TEST_NOW_MS);
+
+        let history_key =
+            RocksStateMachine::config_history_key("app.properties", "DEFAULT_GROUP", "public", 42);
+        let ha =
+            a.db.get_cf(a.cf_config_history(), history_key.as_bytes())
+                .expect("read history a")
+                .expect("history present on a");
+        let hb =
+            b.db.get_cf(b.cf_config_history(), history_key.as_bytes())
+                .expect("read history b")
+                .expect("history present on b");
+        assert_eq!(ha, hb, "replicas must store byte-identical history state");
+
+        let history: StoredConfigHistory = bincode::deserialize(&ha).expect("decode history");
+        assert_eq!(history.created_time, TEST_NOW_MS);
+        assert_eq!(history.modified_time, TEST_NOW_MS);
+    }
+
+    /// A corrupt persisted value must not be treated as "config absent":
+    /// otherwise CAS would be bypassed, op_type misreported as Insert and
+    /// created_time silently reset.
+    #[tokio::test]
+    async fn config_publish_rejects_corrupt_existing_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let key = RocksStateMachine::config_key("app.properties", "DEFAULT_GROUP", "public");
+        let corrupt = vec![0xff_u8; 16];
+        sm.db
+            .put_cf(sm.cf_config(), key.as_bytes(), &corrupt)
+            .expect("seed corrupt row");
+
+        let resp = sm.apply_config_publish_batched(
+            "app.properties",
+            "DEFAULT_GROUP",
+            "public",
+            "key=value",
+            "md5-test",
+            43,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            TEST_NOW_MS,
+        );
+        assert!(!resp.success, "corrupt row must abort the publish");
+        let after = sm
+            .db
+            .get_cf(sm.cf_config(), key.as_bytes())
+            .expect("read")
+            .expect("row still present");
+        assert_eq!(after, corrupt, "publish must not overwrite the row");
+    }
 
     #[test]
     fn test_key_generation() {

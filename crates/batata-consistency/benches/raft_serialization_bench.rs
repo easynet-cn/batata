@@ -34,6 +34,7 @@ fn config_publish_small() -> RaftRequest {
         encrypted_data_key: None,
         cas_md5: None,
         history: None,
+        now_ms: 1_700_000_000_000,
     }))
 }
 
@@ -60,6 +61,7 @@ fn config_publish_large() -> RaftRequest {
         encrypted_data_key: None,
         cas_md5: None,
         history: None,
+        now_ms: 1_700_000_000_000,
     }))
 }
 

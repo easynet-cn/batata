@@ -391,7 +391,13 @@ impl AddressServerMemberLookup {
             .config
             .get_string("address.server.domain")
             .unwrap_or_else(|_| "jmenv.tbsite.net".to_string());
-        let port = config.config.get_int("address.server.port").unwrap_or(8080) as u16;
+        // `config` stores integers as i64; a plain `as u16` would silently
+        // truncate e.g. 70000 to 4464 and build a URL to the wrong endpoint.
+        let port = match config.config.get_int("address.server.port") {
+            Ok(v) => u16::try_from(v)
+                .unwrap_or_else(|_| panic!("address.server.port must be in 0..=65535, got {v}")),
+            Err(_) => 8080, // key absent: use the upstream default
+        };
         let path = config
             .config
             .get_string("address.server.url")

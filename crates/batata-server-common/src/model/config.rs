@@ -41,6 +41,71 @@ pub struct Configuration {
     pub typed: typed_config::BatataTypedConfig,
 }
 
+/// Convert a typed `i64` port to `u16` without silently truncating it.
+///
+/// The config crate stores all integers as `i64`; a plain `as u16` would turn
+/// `70000` into `4464`. `Configuration::new()` validates every port up front,
+/// so this is unreachable in production. It remains a hard failure (rather than
+/// a guessed port) for `Configuration` values assembled directly, e.g. in tests.
+fn port_to_u16(value: i64, key: &str) -> u16 {
+    u16::try_from(value).unwrap_or_else(|_| panic!("invalid {key}: {value} is outside 0..=65535"))
+}
+
+/// Validate the ports that receive arithmetic offsets at runtime.
+///
+/// The main port has one subtraction (`raft = main - 1000`) and two additions
+/// applied, so a value that is too small or too large would either panic in
+/// debug builds or wrap in release builds and produce a bogus node address.
+/// Failing here makes a bad configuration an explicit startup error.
+fn validate_typed_config(typed: &typed_config::BatataTypedConfig) -> anyhow::Result<()> {
+    let raft_offset = i64::from(batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT);
+    let max_add = i64::from(SDK_GRPC_PORT_DEFAULT_OFFSET.max(CLUSTER_GRPC_PORT_DEFAULT_OFFSET));
+    let max_port = i64::from(u16::MAX);
+    let main = typed.server.main.port;
+
+    if !(1..=max_port).contains(&main) {
+        anyhow::bail!("batata.server.main.port must be in 1..=65535, got {main}");
+    }
+    if main <= raft_offset {
+        anyhow::bail!(
+            "batata.server.main.port ({main}) must be greater than the raft offset {raft_offset}"
+        );
+    }
+    if main + max_add > max_port {
+        anyhow::bail!(
+            "batata.server.main.port ({main}) leaves no room for the gRPC offsets (max {max_add})"
+        );
+    }
+
+    for (key, value) in [
+        ("batata.console.port", typed.console.port),
+        ("batata.mesh.xds.port", typed.mesh.xds.port),
+        (
+            "batata.mesh.xds.default.listener.port",
+            typed.mesh.xds.default.listener.port,
+        ),
+        ("batata.ai.mcp.registry.port", typed.ai.mcp.registry.port),
+    ] {
+        if !(0..=max_port).contains(&value) {
+            anyhow::bail!("{key} must be in 0..=65535, got {value}");
+        }
+    }
+    Ok(())
+}
+
+/// Deserialize and validate the `batata` section.
+///
+/// A deserialization error used to be swallowed by `unwrap_or_default()`, which
+/// silently replaced a malformed configuration with struct defaults (wrong
+/// ports, auth flags and timeouts) and started the server anyway.
+fn load_typed_config(config: &Config) -> anyhow::Result<typed_config::BatataTypedConfig> {
+    let typed = config
+        .get::<typed_config::BatataTypedConfig>("batata")
+        .map_err(|e| anyhow::anyhow!("Invalid `batata` configuration: {e}"))?;
+    validate_typed_config(&typed)?;
+    Ok(typed)
+}
+
 /// Extract `--dotted.key=value` property overrides from command-line arguments.
 ///
 /// Any argument matching `--<key>=<value>` where `<key>` contains a `.` is treated
@@ -171,9 +236,7 @@ impl Configuration {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build configuration: {e}"))?;
 
-        let typed = app_config
-            .get::<typed_config::BatataTypedConfig>("batata")
-            .unwrap_or_default();
+        let typed = load_typed_config(&app_config)?;
 
         Ok(Configuration {
             config: app_config,
@@ -243,7 +306,7 @@ impl Configuration {
 
     /// Performs the `server_main_port` operation.
     pub fn server_main_port(&self) -> u16 {
-        self.typed.server.main.port as u16
+        port_to_u16(self.typed.server.main.port, "batata.server.main.port")
     }
 
     /// Performs the `server_context_path` operation.
@@ -257,17 +320,23 @@ impl Configuration {
 
     /// Performs the `sdk_server_port` operation.
     pub fn sdk_server_port(&self) -> u16 {
-        self.server_main_port() + SDK_GRPC_PORT_DEFAULT_OFFSET
+        // `validate_typed_config` proves main + offset <= u16::MAX; saturating
+        // keeps a directly-constructed Configuration from panicking or wrapping.
+        self.server_main_port()
+            .saturating_add(SDK_GRPC_PORT_DEFAULT_OFFSET)
     }
 
     /// Performs the `cluster_server_port` operation.
     pub fn cluster_server_port(&self) -> u16 {
-        self.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
+        self.server_main_port()
+            .saturating_add(CLUSTER_GRPC_PORT_DEFAULT_OFFSET)
     }
 
     /// Performs the `raft_port` operation.
     pub fn raft_port(&self) -> u16 {
-        self.server_main_port() - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
+        // `validate_typed_config` proves main > offset.
+        self.server_main_port()
+            .saturating_sub(batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT)
     }
 
     /// Read raw cluster member addresses from config or cluster.conf.
@@ -309,7 +378,7 @@ impl Configuration {
 
     /// Performs the `console_server_port` operation.
     pub fn console_server_port(&self) -> u16 {
-        self.typed.console.port as u16
+        port_to_u16(self.typed.console.port, "batata.console.port")
     }
 
     /// Performs the `console_server_context_path` operation.
@@ -1185,7 +1254,7 @@ impl Configuration {
 
     /// Get xDS server port (default: 15010)
     pub fn xds_server_port(&self) -> u16 {
-        self.typed.mesh.xds.port as u16
+        port_to_u16(self.typed.mesh.xds.port, "batata.mesh.xds.port")
     }
 
     /// Get xDS server ID
@@ -1216,7 +1285,10 @@ impl Configuration {
 
     /// Get default listener port for xDS generated listeners
     pub fn xds_default_listener_port(&self) -> u16 {
-        self.typed.mesh.xds.default.listener.port as u16
+        port_to_u16(
+            self.typed.mesh.xds.default.listener.port,
+            "batata.mesh.xds.default.listener.port",
+        )
     }
 
     /// Check if xDS TLS is enabled
@@ -1261,7 +1333,10 @@ impl Configuration {
 
     /// Get MCP Registry server port (default: 9080)
     pub fn mcp_registry_port(&self) -> u16 {
-        self.typed.ai.mcp.registry.port as u16
+        port_to_u16(
+            self.typed.ai.mcp.registry.port,
+            "batata.ai.mcp.registry.port",
+        )
     }
 
     // ========================================================================
@@ -3466,6 +3541,78 @@ batata.server.main.port: 8888
             cfg.raft_port(),
             8848 - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
         );
+    }
+
+    #[test]
+    fn test_port_to_u16_rejects_out_of_range_instead_of_truncating() {
+        assert_eq!(port_to_u16(8848, "test.key"), 8848);
+        assert_eq!(port_to_u16(0, "test.key"), 0);
+        // `70000 as u16` would silently produce 4464.
+        assert!(std::panic::catch_unwind(|| port_to_u16(70_000, "test.key")).is_err());
+        assert!(std::panic::catch_unwind(|| port_to_u16(-1, "test.key")).is_err());
+    }
+
+    #[test]
+    fn test_malformed_typed_config_is_an_error_not_defaults() {
+        let config = Config::builder()
+            .set_override("batata.server.main.port", "not-a-port")
+            .unwrap()
+            .build()
+            .unwrap();
+        let err = load_typed_config(&config).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid `batata` configuration"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_valid_partial_config_keeps_serde_defaults() {
+        let config = Config::builder()
+            .set_override("batata.server.main.port", 8848_i64)
+            .unwrap()
+            .build()
+            .unwrap();
+        let typed = load_typed_config(&config).unwrap();
+        assert_eq!(typed.server.main.port, 8848);
+        assert_eq!(typed.console.port, 8081);
+    }
+
+    #[test]
+    fn test_main_port_must_leave_room_for_grpc_offsets() {
+        // 65535 + 1001 overflows u16; 1000 - 1000 gives port 0.
+        for port in [65535_i64, 70_000, -1, 0, 1000] {
+            let config = Config::builder()
+                .set_override("batata.server.main.port", port)
+                .unwrap()
+                .build()
+                .unwrap();
+            let err = load_typed_config(&config).unwrap_err();
+            assert!(
+                err.to_string().contains("server.main.port"),
+                "{port}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_out_of_range_auxiliary_ports_are_rejected() {
+        for key in [
+            "batata.console.port",
+            "batata.mesh.xds.port",
+            "batata.mesh.xds.default.listener.port",
+            "batata.ai.mcp.registry.port",
+        ] {
+            let config = Config::builder()
+                .set_override("batata.server.main.port", 8848_i64)
+                .unwrap()
+                .set_override(key, 70_000_i64)
+                .unwrap()
+                .build()
+                .unwrap();
+            let err = load_typed_config(&config).unwrap_err();
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
     }
 
     // ========================================================================

@@ -281,39 +281,42 @@ impl RaftNetworkConnection {
     ///
     /// Serializes just the inner payload data using bincode (not the EntryPayload enum wrapper),
     /// matching the deserialization in grpc_service.rs which deserializes by payload_type.
-    fn to_proto_entry(entry: &openraft::Entry<TypeConfig>) -> ProtoEntry {
+    /// A serialization failure aborts the RPC: emitting an empty payload with
+    /// `payload_type=1/2` would make the follower reject the whole batch while
+    /// the leader has already committed it locally, stalling replication.
+    fn to_proto_entry(entry: &openraft::Entry<TypeConfig>) -> Result<ProtoEntry, String> {
         let (payload_type, payload) = match &entry.payload {
             openraft::EntryPayload::Blank => (0u32, Vec::new()),
-            openraft::EntryPayload::Normal(req) => {
-                let data = bincode::serialize(req).unwrap_or_else(|e| {
-                    error!(
-                        error = %e,
-                        log_id = ?entry.log_id,
-                        "Failed to serialize Raft Normal entry payload"
-                    );
-                    Vec::new()
-                });
-                (1, data)
-            }
+            openraft::EntryPayload::Normal(req) => serialize_entry_payload(1, req, &entry.log_id)?,
             openraft::EntryPayload::Membership(membership) => {
-                let data = bincode::serialize(membership).unwrap_or_else(|e| {
-                    error!(
-                        error = %e,
-                        log_id = ?entry.log_id,
-                        "Failed to serialize Raft Membership entry payload"
-                    );
-                    Vec::new()
-                });
-                (2, data)
+                serialize_entry_payload(2, membership, &entry.log_id)?
             }
         };
 
-        ProtoEntry {
+        Ok(ProtoEntry {
             log_id: Self::to_proto_log_id(Some(entry.log_id)),
             payload_type,
             payload,
-        }
+        })
     }
+}
+
+/// Serialize a non-blank Raft entry payload, propagating failures to the caller.
+fn serialize_entry_payload<T: serde::Serialize>(
+    payload_type: u32,
+    value: &T,
+    log_id: &openraft::LogId<NodeId>,
+) -> Result<(u32, Vec<u8>), String> {
+    bincode::serialize(value)
+        .map(|data| (payload_type, data))
+        .map_err(|e| {
+            error!(
+                error = %e,
+                log_id = ?log_id,
+                "Failed to serialize Raft entry payload"
+            );
+            format!("failed to serialize Raft entry payload {log_id:?}: {e}")
+        })
 }
 
 impl RaftNetworkConnection {
@@ -340,11 +343,23 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             .await
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
+        let entries = req
+            .entries
+            .iter()
+            .map(Self::to_proto_entry)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                RPCError::Network(NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e,
+                )))
+            })?;
+
         let proto_req = ProtoAppendEntriesRequest {
             term: req.vote.leader_id().term,
             leader_id: req.vote.leader_id().node_id,
             prev_log_id: Self::to_proto_log_id(req.prev_log_id),
-            entries: req.entries.iter().map(Self::to_proto_entry).collect(),
+            entries,
             leader_commit: Self::to_proto_log_id(req.leader_commit),
             vote: Some(Self::to_proto_vote(&req.vote)),
         };
@@ -510,8 +525,18 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             }
         };
 
+        // The follower always echoes an explicit vote. Falling back to our own
+        // vote here would hide a malformed/older response and could make the
+        // leader miss a step-down.
+        let response_vote = Self::from_proto_vote(response.vote).ok_or_else(|| {
+            StreamingError::Unreachable(Unreachable::new(&std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "InstallSnapshot response is missing vote",
+            )))
+        })?;
+
         Ok(SnapshotResponse {
-            vote: Self::from_proto_vote(response.vote).unwrap_or(vote),
+            vote: response_vote,
         })
     }
 
@@ -577,5 +602,38 @@ mod tests {
         assert_eq!(proto.term, 3);
         assert_eq!(proto.leader_id, 100);
         assert!(!proto.committed);
+    }
+
+    /// A serializer that always fails, to prove the error is propagated rather
+    /// than replaced by an empty payload.
+    struct FailingPayload;
+
+    impl serde::Serialize for FailingPayload {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("serialization failed"))
+        }
+    }
+
+    #[test]
+    fn test_entry_payload_serialization_failure_is_propagated() {
+        let log_id = openraft::LogId::new(openraft::CommittedLeaderId::new(5, 1), 42);
+        let err = serialize_entry_payload(1, &FailingPayload, &log_id).unwrap_err();
+        assert!(
+            err.contains("failed to serialize Raft entry payload"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_entry_payload_serializes_to_non_empty_bytes() {
+        let log_id = openraft::LogId::new(openraft::CommittedLeaderId::new(5, 1), 42);
+        let (payload_type, payload) =
+            serialize_entry_payload(1, &"config-publish", &log_id).unwrap();
+        assert_eq!(payload_type, 1);
+        assert!(!payload.is_empty());
+        assert_eq!(
+            bincode::deserialize::<String>(&payload).unwrap(),
+            "config-publish"
+        );
     }
 }

@@ -506,8 +506,13 @@ impl Member {
     }
 
     /// The `calculate_raft_port` method.
+    ///
+    /// Members can be built from arbitrary discovery data, so the offset is
+    /// subtracted saturating: a port below the offset yields `0` (an invalid
+    /// endpoint that will be rejected when dialed) instead of panicking in
+    /// debug builds or wrapping to a valid-but-wrong port in release builds.
     pub fn calculate_raft_port(&self) -> u16 {
-        self.port - Member::DEFAULT_RAFT_OFFSET_PORT
+        self.port.saturating_sub(Member::DEFAULT_RAFT_OFFSET_PORT)
     }
 
     /// Returns whether is healthy.
@@ -836,5 +841,18 @@ mod tests {
         assert!(json.contains("\"totalCount\":10"));
         assert!(json.contains("\"pageNumber\":1"));
         assert!(json.contains("\"pagesAvailable\":2"));
+    }
+
+    #[test]
+    fn test_calculate_raft_port_never_wraps_below_the_offset() {
+        assert_eq!(
+            Member::new("127.0.0.1".to_string(), 8848).calculate_raft_port(),
+            7848
+        );
+        // 900 - 1000 would panic in debug and wrap to 65436 in release.
+        assert_eq!(
+            Member::new("127.0.0.1".to_string(), 900).calculate_raft_port(),
+            0
+        );
     }
 }

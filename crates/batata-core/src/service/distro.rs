@@ -32,6 +32,34 @@ use batata_server_api::distro::{
 /// `nacos.core.protocol.distro.data.sync.batchSize`).
 pub const DISTRO_BATCH_SIZE: usize = 50;
 
+/// Wire-level fallback name for a `Custom` distro data type whose
+/// `custom_type_name` was omitted by an older peer.
+///
+/// All decode paths must use the SAME value: bucketing is keyed by the custom
+/// type name, so "" on one side and "CUSTOM" on the other routes the same
+/// payload into two different buckets.
+pub const DEFAULT_CUSTOM_TYPE_NAME: &str = "CUSTOM";
+
+/// Decode an optional `custom_type_name` from the wire into a bucket name.
+/// Both senders and receivers must use this single helper.
+pub fn custom_type_name(name: Option<String>) -> String {
+    name.unwrap_or_else(|| DEFAULT_CUSTOM_TYPE_NAME.to_string())
+}
+
+/// Decode a distro payload into the `String` required by the wire format.
+///
+/// Built-in producers always use `serde_json::to_vec` (guaranteed UTF-8), but
+/// `DistroData.content` is `Vec<u8>` and plugins may supply arbitrary bytes.
+/// Substituting `""` for invalid UTF-8 would broadcast an empty config or
+/// instance to every peer during the unconditional `sync_round` broadcast, so
+/// refuse the item and let the caller surface the error.
+pub fn distro_content_to_string(content: Vec<u8>, key: &str) -> Result<String, String> {
+    String::from_utf8(content).map_err(|e| {
+        error!(key = %key, "Refusing distro payload with non-UTF-8 content");
+        format!("distro payload for key {key:?} is not valid UTF-8: {e}")
+    })
+}
+
 use super::cluster_client::ClusterClientManager;
 use super::datacenter::DatacenterManager;
 
@@ -1221,7 +1249,7 @@ impl DistroProtocol {
                                         }
                                         batata_server_api::distro::DistroDataType::Custom => {
                                             DistroDataType::Custom(
-                                                item.custom_type_name.clone().unwrap_or_default(),
+                                                custom_type_name(item.custom_type_name.clone()),
                                             )
                                         }
                                     };
@@ -1324,7 +1352,7 @@ impl DistroProtocol {
     ) -> Result<(), String> {
         let api_items: Vec<DistroDataItem> = items
             .into_iter()
-            .map(|d| {
+            .map(|d| -> Result<DistroDataItem, String> {
                 let (api_data_type, custom_type_name) = match &d.data_type {
                     DistroDataType::NamingInstance => (
                         batata_server_api::distro::DistroDataType::NamingInstance,
@@ -1335,16 +1363,16 @@ impl DistroProtocol {
                         Some(name.clone()),
                     ),
                 };
-                DistroDataItem {
+                Ok(DistroDataItem {
                     data_type: api_data_type,
                     custom_type_name,
+                    content: distro_content_to_string(d.content, &d.key)?,
                     key: d.key,
-                    content: String::from_utf8(d.content).unwrap_or_default(),
                     version: d.version,
                     source: d.source,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let count = api_items.len();
         let request = DistroDataBatchSyncRequest::with_items(api_items);
@@ -1405,8 +1433,8 @@ impl DistroProtocol {
         let data_item = DistroDataItem {
             data_type: api_data_type,
             custom_type_name,
+            content: distro_content_to_string(data.content.clone(), &data.key)?,
             key: data.key.clone(),
-            content: String::from_utf8(data.content.clone()).unwrap_or_default(),
             version: data.version,
             source: data.source.clone(),
         };
@@ -1565,6 +1593,29 @@ mod tests {
             DistroDataType::Custom("test".to_string()).to_string(),
             "custom_test"
         );
+    }
+
+    #[test]
+    fn test_distro_content_decodes_utf8() {
+        let content = distro_content_to_string(b"{\"a\":1}".to_vec(), "service-key").unwrap();
+        assert_eq!(content, "{\"a\":1}");
+    }
+
+    #[test]
+    fn test_distro_content_rejects_non_utf8_instead_of_empty_string() {
+        // unwrap_or_default() would silently broadcast "" to every peer.
+        let err = distro_content_to_string(vec![0xff, 0xfe], "service-key").unwrap_err();
+        assert!(err.contains("service-key"), "{err}");
+        assert!(err.contains("UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn test_custom_type_fallback_is_shared_constant() {
+        // Sender and receiver must bucket a missing custom name identically;
+        // unwrap_or_default() on one side used to produce "" instead of "CUSTOM".
+        assert_eq!(custom_type_name(None), "CUSTOM");
+        assert_eq!(DEFAULT_CUSTOM_TYPE_NAME, "CUSTOM");
+        assert_eq!(custom_type_name(Some("metrics".to_string())), "metrics");
     }
 
     #[test]

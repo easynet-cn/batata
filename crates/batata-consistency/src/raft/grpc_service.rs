@@ -16,7 +16,7 @@ use batata_server_api::raft::{
     GetMetricsRequest, GetMetricsResponse, InstallSnapshotRequest as ProtoInstallSnapshotRequest,
     InstallSnapshotResponse as ProtoInstallSnapshotResponse, LogId as ProtoLogId,
     RaftNodeInfo as ProtoRaftNodeInfo, TriggerElectionRequest, TriggerElectionResponse,
-    VoteRequest as ProtoVoteRequest, VoteResponse as ProtoVoteResponse,
+    Vote as ProtoVote, VoteRequest as ProtoVoteRequest, VoteResponse as ProtoVoteResponse,
     raft_management_service_server::RaftManagementService, raft_service_server::RaftService,
 };
 
@@ -46,8 +46,11 @@ impl RaftGrpcService {
 
     /// Convert proto Entry to openraft Entry using bincode deserialization.
     fn from_proto_entry(entry: ProtoEntry) -> anyhow::Result<openraft::Entry<TypeConfig>> {
+        // Every entry produced by this codebase carries a log_id. Fabricating
+        // LogId(0, 0) for a missing one would let openraft append the entry at
+        // an index that disagrees with the leader and corrupt the follower log.
         let log_id = super::proto_convert::from_proto_log_id(entry.log_id)
-            .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
+            .ok_or_else(|| anyhow::anyhow!("AppendEntries entry is missing log_id"))?;
 
         let payload = match entry.payload_type {
             0 => openraft::EntryPayload::Blank,
@@ -60,11 +63,21 @@ impl RaftGrpcService {
                     bincode::deserialize(&entry.payload)?;
                 openraft::EntryPayload::Membership(membership)
             }
-            _ => openraft::EntryPayload::Blank,
+            other => anyhow::bail!("unknown Raft entry payload_type {other} for {log_id:?}"),
         };
 
         Ok(openraft::Entry { log_id, payload })
     }
+}
+
+/// Require an explicit vote on incoming Raft RPCs.
+///
+/// Reconstructing a vote from `term`/`leader_id` drops the `committed` flag and
+/// can make a node misinterpret a step-down under mixed-version or malformed
+/// traffic, so a missing vote is a protocol error instead.
+fn required_vote(vote: Option<ProtoVote>, rpc: &str) -> Result<openraft::Vote<NodeId>, Status> {
+    super::proto_convert::from_proto_vote(vote)
+        .ok_or_else(|| Status::invalid_argument(format!("{rpc} request is missing vote")))
 }
 
 #[tonic::async_trait]
@@ -96,8 +109,7 @@ impl RaftService for RaftGrpcService {
         })?;
 
         // Construct openraft request
-        let vote = super::proto_convert::from_proto_vote(req.vote)
-            .unwrap_or_else(|| openraft::Vote::new(req.term, req.leader_id));
+        let vote = required_vote(req.vote, "AppendEntries")?;
 
         let append_req = openraft::raft::AppendEntriesRequest {
             vote,
@@ -155,8 +167,7 @@ impl RaftService for RaftGrpcService {
             req.term, req.candidate_id
         );
 
-        let vote = super::proto_convert::from_proto_vote(req.vote)
-            .unwrap_or_else(|| openraft::Vote::new(req.term, req.candidate_id));
+        let vote = required_vote(req.vote, "Vote")?;
 
         let vote_req = openraft::raft::VoteRequest {
             vote,
@@ -507,6 +518,72 @@ impl RaftManagementService for RaftManagementGrpcService {
                     message: format!("Failed to trigger election: {}", e),
                 }))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proto_entry(payload_type: u32, payload: Vec<u8>, with_log_id: bool) -> ProtoEntry {
+        ProtoEntry {
+            log_id: with_log_id.then_some(ProtoLogId { term: 3, index: 7 }),
+            payload_type,
+            payload,
+        }
+    }
+
+    #[test]
+    fn entry_without_log_id_is_rejected_instead_of_fabricated() {
+        let err = RaftGrpcService::from_proto_entry(proto_entry(0, Vec::new(), false))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing log_id"), "{err}");
+    }
+
+    #[test]
+    fn unknown_payload_type_is_rejected_instead_of_blanked() {
+        let err = RaftGrpcService::from_proto_entry(proto_entry(99, vec![1, 2, 3], true))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown Raft entry payload_type 99"), "{err}");
+    }
+
+    #[test]
+    fn blank_entry_with_log_id_is_accepted() {
+        let entry = RaftGrpcService::from_proto_entry(proto_entry(0, Vec::new(), true)).unwrap();
+        assert_eq!(entry.log_id.index, 7);
+        assert!(matches!(entry.payload, openraft::EntryPayload::Blank));
+    }
+
+    #[test]
+    fn missing_vote_is_a_protocol_error() {
+        assert!(required_vote(None, "AppendEntries").is_err());
+        assert!(required_vote(None, "Vote").is_err());
+
+        let proto = crate::raft::proto_convert::to_proto_vote(&openraft::Vote::new(3, 7));
+        let vote = required_vote(Some(proto), "Vote").unwrap();
+        assert_eq!(vote.leader_id().term, 3);
+        assert_eq!(vote.leader_id().node_id, 7);
+    }
+
+    #[test]
+    fn normal_entry_round_trips() {
+        let request = RaftRequest::ConfigRemove {
+            data_id: "a.properties".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            tenant: String::new(),
+            history: None,
+            now_ms: 1_700_000_000_000,
+        };
+        let payload = bincode::serialize(&request).unwrap();
+        let entry = RaftGrpcService::from_proto_entry(proto_entry(1, payload, true)).unwrap();
+        match entry.payload {
+            openraft::EntryPayload::Normal(decoded) => {
+                assert_eq!(decoded.op_type(), request.op_type());
+            }
+            other => panic!("expected Normal payload, got {other:?}"),
         }
     }
 }
