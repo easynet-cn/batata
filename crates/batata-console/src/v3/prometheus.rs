@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppState, secured};
 
-use super::metrics::METRICS;
+use super::metrics::{METRICS, cluster_snapshot};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,8 +44,9 @@ async fn prometheus_query(
             .build()
     );
 
-    let cluster_size = data.cluster_manager().member_count();
-    let is_healthy = data.cluster_manager().is_cluster_healthy();
+    // `cluster_manager` is `None` in a separated console; degrade instead of
+    // panicking (release uses `panic = "abort"`).
+    let (cluster_size, is_healthy) = cluster_snapshot(data.try_cluster_manager());
     let full_metrics = METRICS.to_prometheus_format(cluster_size, is_healthy);
 
     // Filter metrics by requested criteria

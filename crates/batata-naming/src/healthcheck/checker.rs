@@ -490,28 +490,43 @@ mod tests {
     async fn test_tcp_checker_port_override() {
         let checker = TcpHealthChecker;
 
+        // Do not assume any fixed port is closed: another local dev server may
+        // legitimately be listening on 8080/9090. Use an ephemeral port that we
+        // close as the instance port, and keep a listener open on a second
+        // ephemeral port as the override target. A successful override check
+        // can then only come from `checkPort`.
+        let closed_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let instance_port = closed_listener.local_addr().unwrap().port() as i32;
+        drop(closed_listener);
+        let override_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let override_port = override_listener.local_addr().unwrap().port();
+
         let instance = Instance {
             ip: "127.0.0.1".to_string(),
-            port: 8080,
+            port: instance_port,
             ..Default::default()
         };
 
-        // Test with custom port (use_instance_port = false)
+        // checkPort override (use_instance_port = false) must reach the open port.
         let mut data = std::collections::HashMap::new();
-        data.insert("checkPort".to_string(), "9090".to_string());
+        data.insert("checkPort".to_string(), override_port.to_string());
         data.insert("useInstancePort4Check".to_string(), "false".to_string());
         let config = HealthCheckerConfig::new("TCP").with_extend_data(data);
-
-        // This will fail because port 9090 is not open, but it should try 9090
         let result = checker.check(&instance, &config).await;
-        assert!(!result.success); // Expected to fail
+        assert!(
+            result.success,
+            "checkPort override should connect to the open override port"
+        );
 
-        // Test with use_instance_port = true
-        let data2 = std::collections::HashMap::new();
-        let config2 = HealthCheckerConfig::new("TCP").with_extend_data(data2);
+        // Default: the instance port is used and is closed, so the check fails.
+        let config2 =
+            HealthCheckerConfig::new("TCP").with_extend_data(std::collections::HashMap::new());
         let result2 = checker.check(&instance, &config2).await;
-        // This will also fail because 8080 is not open
-        assert!(!result2.success);
+        assert!(
+            !result2.success,
+            "the instance port is closed, so the default check must fail"
+        );
+        drop(override_listener);
     }
 
     #[test]

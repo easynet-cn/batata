@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
+use batata_common::model::clamp_page;
 use rocksdb::DB;
 
 use batata_consistency::raft::reader::RocksDbReader;
@@ -793,7 +794,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         let prefix = RocksStateMachine::config_history_prefix(namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         // Keep only the newest `limit` entries (largest ids) instead of
         // materializing the whole history in a Vec. The scan is still needed to
         // count `total` and apply filters, but storage is bounded to the page
@@ -892,7 +893,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<ConfigStorageData>> {
-        let all_configs = self.reader.list_configs(namespace_id)?;
+        let all_configs = self.reader.list_configs_for_export(namespace_id)?;
         let mut results = Vec::new();
 
         for json in &all_configs {

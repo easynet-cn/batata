@@ -1,6 +1,7 @@
 //! AuthPersistence implementation for ExternalDbPersistService
 
 use async_trait::async_trait;
+use batata_common::model::clamp_page;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::entity::{permissions, roles, users};
@@ -64,7 +65,7 @@ impl AuthPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let items = query_select
             .offset(offset)
             .limit(page_size)
@@ -196,7 +197,7 @@ impl AuthPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let items = query_select
             .offset(offset)
             .limit(page_size)
@@ -339,7 +340,7 @@ impl AuthPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let items = query_select
             .offset(offset)
             .limit(page_size)

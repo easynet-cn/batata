@@ -16,7 +16,6 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::model::ConsulErrorBody;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
-use tracing::error;
 
 /// Default partition name (always exists, cannot be deleted or updated)
 pub const DEFAULT_PARTITION: &str = "default";
@@ -55,6 +54,9 @@ pub struct ConsulPartitionService {
     index_provider: ConsulIndexProvider,
     /// Optional Raft writer for cluster-mode replication
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Test-only switch that simulates a failed Raft write.
+    #[cfg(test)]
+    fail_raft_writes: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ConsulPartitionService {
@@ -77,6 +79,8 @@ impl ConsulPartitionService {
             partitions,
             index_provider,
             raft_node: None,
+            #[cfg(test)]
+            fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -87,6 +91,10 @@ impl ConsulPartitionService {
     ) -> Self {
         let mut svc = Self::new(index_provider);
         svc.raft_node = Some(raft_node);
+        #[cfg(test)]
+        {
+            svc.fail_raft_writes = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        }
         svc
     }
 
@@ -133,8 +141,40 @@ impl ConsulPartitionService {
         Ok(())
     }
 
+    /// Toggle the test-only simulated Raft write failure.
+    #[cfg(test)]
+    pub fn set_fail_raft_writes(&self, fail: bool) {
+        self.fail_raft_writes
+            .store(fail, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replicate one partition mutation. A Raft transport failure must be
+    /// reported to the caller: previously it was logged and the HTTP handler
+    /// still returned the (unreplicated) partition as a success.
+    async fn replicate(&self, request: ConsulRaftRequest) -> Result<(), String> {
+        #[cfg(test)]
+        if self
+            .fail_raft_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err("injected Raft write failure".to_string());
+        }
+        let Some(ref raft) = self.raft_node else {
+            return Ok(());
+        };
+        let outcome = match raft.write(request).await {
+            Ok(r) => Ok((r.success, r.message.unwrap_or_default())),
+            Err(e) => Err(e.to_string()),
+        };
+        match crate::kv::classify_raft_write(outcome) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("raft rejected partition mutation".to_string()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Internal upsert: writes to in-memory, sends via Raft, increments index
-    async fn upsert(&self, partition: Partition) -> Partition {
+    async fn upsert(&self, partition: Partition) -> Result<Partition, String> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let existing = self.partitions.get(&partition.name);
         let create_index = existing.as_ref().map(|e| e.create_index).unwrap_or(index);
@@ -145,27 +185,18 @@ impl ConsulPartitionService {
             modify_index: index,
             ..partition
         };
-        self.partitions.insert(stored.name.clone(), stored.clone());
-        if let Some(ref raft) = self.raft_node {
-            let partition_json = serde_json::to_string(&stored).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::PartitionUpsert {
-                    name: stored.name.clone(),
-                    partition_json,
-                })
-                .await
-            {
-                Ok(r) if !r.success => {
-                    error!("Raft PartitionUpsert rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    error!("Raft PartitionUpsert failed: {}", e);
-                }
-                _ => {}
-            }
+        if self.raft_node.is_some() || cfg!(test) {
+            let partition_json = serde_json::to_string(&stored)
+                .map_err(|e| format!("failed to encode partition: {}", e))?;
+            self.replicate(ConsulRaftRequest::PartitionUpsert {
+                name: stored.name.clone(),
+                partition_json,
+            })
+            .await?;
         }
+        self.partitions.insert(stored.name.clone(), stored.clone());
         self.index_provider.increment(ConsulTable::Catalog);
-        stored
+        Ok(stored)
     }
 
     /// Create a new partition.
@@ -195,7 +226,7 @@ impl ConsulPartitionService {
             }
         }
 
-        let created = self.upsert(req).await;
+        let created = self.upsert(req).await.map_err(|e| (503, e))?;
         Ok(created)
     }
 
@@ -225,7 +256,7 @@ impl ConsulPartitionService {
             }
         }
 
-        let result = self.upsert(updated).await;
+        let result = self.upsert(updated).await.map_err(|e| (503, e))?;
         Ok(result)
     }
 
@@ -264,26 +295,17 @@ impl ConsulPartitionService {
             deleted_at: Some(now),
             ..existing
         };
-        self.partitions.insert(name.to_string(), deleted.clone());
-
-        if let Some(ref raft) = self.raft_node {
-            let partition_json = serde_json::to_string(&deleted).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::PartitionUpsert {
-                    name: name.to_string(),
-                    partition_json,
-                })
-                .await
-            {
-                Ok(r) if !r.success => {
-                    error!("Raft PartitionDelete (upsert) rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    error!("Raft PartitionDelete (upsert) failed: {}", e);
-                }
-                _ => {}
-            }
+        if self.raft_node.is_some() {
+            let partition_json = serde_json::to_string(&deleted)
+                .map_err(|e| (503, format!("failed to encode partition: {}", e)))?;
+            self.replicate(ConsulRaftRequest::PartitionUpsert {
+                name: name.to_string(),
+                partition_json,
+            })
+            .await
+            .map_err(|e| (503, e))?;
         }
+        self.partitions.insert(name.to_string(), deleted);
         self.index_provider.increment(ConsulTable::Catalog);
         Ok(())
     }
@@ -359,6 +381,8 @@ pub async fn create_partition(
                 HttpResponse::NotFound().consul_error(ConsulError::new(msg))
             } else if status == 409 {
                 HttpResponse::Conflict().consul_error(ConsulError::new(msg))
+            } else if status == 503 {
+                HttpResponse::ServiceUnavailable().consul_error(ConsulError::new(msg))
             } else {
                 HttpResponse::BadRequest().consul_error(ConsulError::new(msg))
             }
@@ -393,6 +417,8 @@ pub async fn update_partition(
                 HttpResponse::NotFound().consul_error(ConsulError::new(msg))
             } else if status == 409 {
                 HttpResponse::Conflict().consul_error(ConsulError::new(msg))
+            } else if status == 503 {
+                HttpResponse::ServiceUnavailable().consul_error(ConsulError::new(msg))
             } else {
                 HttpResponse::BadRequest().consul_error(ConsulError::new(msg))
             }
@@ -423,6 +449,8 @@ pub async fn delete_partition(
         Err((status, msg)) => {
             if status == 404 {
                 HttpResponse::NotFound().consul_error(ConsulError::new(msg))
+            } else if status == 503 {
+                HttpResponse::ServiceUnavailable().consul_error(ConsulError::new(msg))
             } else {
                 HttpResponse::BadRequest().consul_error(ConsulError::new(msg))
             }
@@ -433,6 +461,20 @@ pub async fn delete_partition(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[actix_web::test]
+    async fn create_partition_reports_raft_failure_as_503() {
+        let service = create_test_service();
+        service.set_fail_raft_writes(true);
+        let err = service
+            .create_partition(Partition {
+                name: "raft-fail".to_string(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("a failed Raft write must not be reported as a created partition");
+        assert_eq!(err.0, 503, "Raft failure must map to HTTP 503");
+    }
 
     fn create_test_service() -> ConsulPartitionService {
         ConsulPartitionService::new(ConsulIndexProvider::new())

@@ -2355,6 +2355,47 @@ mod tests {
         assert_eq!(after, corrupt, "acquire must not overwrite the corrupt row");
     }
 
+    /// Success paths for `apply_lock_expire`: an absent lock is a no-op, an
+    /// existing lock is written as `Expired`. Together with the pure
+    /// `expire_check` tests this also catches an "always fail" mutant.
+    #[tokio::test]
+    async fn lock_expire_handles_absent_and_existing_locks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+
+        // Absent: success, no row created.
+        let resp = sm.apply_lock_expire("public", "missing");
+        assert!(resp.success, "expiring an absent lock must be a no-op");
+        let key = RocksStateMachine::lock_key("public", "missing");
+        assert_eq!(
+            sm.db
+                .get_cf(sm.cf_locks(), key.as_bytes())
+                .expect("read")
+                .map(|b| b.to_vec()),
+            None
+        );
+
+        // Existing: succeeds and writes the Expired marker.
+        let acquired =
+            sm.apply_lock_acquire("public", "k1", "owner-a", 60_000, 1, None, TEST_NOW_MS);
+        assert!(acquired.success, "acquire must succeed");
+        let resp = sm.apply_lock_expire("public", "k1");
+        assert!(resp.success, "expiring an existing lock must succeed");
+        let row = sm
+            .db
+            .get_cf(
+                sm.cf_locks(),
+                RocksStateMachine::lock_key("public", "k1").as_bytes(),
+            )
+            .expect("read")
+            .expect("expired row exists");
+        let value: serde_json::Value = serde_json::from_slice(&row).expect("valid JSON");
+        assert_eq!(value["state"], "Expired");
+        assert_eq!(value["fence_token"], 0);
+    }
+
     /// A corrupt persisted gray config record must NOT be treated as a passing
     /// CAS check: that would let a write overwrite real gray config data. Fail
     /// closed, matching the non-gray `apply_config_publish` path.
@@ -2401,13 +2442,14 @@ mod tests {
         assert_eq!(after, corrupt, "publish must not overwrite the corrupt row");
     }
 
-    /// History pagination must clamp `page_size` at `MAX_HISTORY_PAGE_SIZE`
-    /// (1000). Without the clamp a caller requesting `u64::MAX` would
-    /// serialize the entire matched history into one Vec of JSON values.
+    /// History pagination must clamp `page_size` at `MAX_PAGE_SIZE` (1000)
+    /// via the shared `clamp_page` helper. Without the clamp a caller
+    /// requesting `u64::MAX` would serialize the entire matched history into
+    /// one Vec of JSON values.
     ///
-    /// Mutant check: removing `page_size.min(MAX_HISTORY_PAGE_SIZE)` makes
-    /// `take(u64::MAX)` return every matched row, so `page.len()` would be
-    /// `SEED` instead of the cap — this assertion would fail.
+    /// Mutant check: removing `clamp_page` makes `take(u64::MAX)` return every
+    /// matched row, so `page.len()` would be `SEED` instead of the cap — this
+    /// assertion would fail.
     #[tokio::test]
     async fn history_page_size_is_capped() {
         const CAP: u64 = 1000;

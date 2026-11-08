@@ -4,6 +4,7 @@ use md5::Digest;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use batata_common::model::clamp_page;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::entity::{config_info, config_info_gray, config_tags_relation, his_config_info};
@@ -252,17 +253,17 @@ impl ConfigPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, limit) = clamp_page(page_no, page_size);
         let items = base_select
             .offset(offset)
-            .limit(page_size)
+            .limit(limit)
             .all(&self.db)
             .await?
             .into_iter()
             .map(|m| config_entity_to_storage(m, String::new()))
             .collect();
 
-        Ok(Page::new(count_result, page_no, page_size, items))
+        Ok(Page::new(count_result, page_no, limit, items))
     }
 
     async fn config_create_or_update(
@@ -858,18 +859,18 @@ impl ConfigPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, limit) = clamp_page(page_no, page_size);
         let items = select
             .order_by_desc(his_config_info::Column::Nid)
             .offset(offset)
-            .limit(page_size)
+            .limit(limit)
             .all(&self.db)
             .await?
             .into_iter()
             .map(history_entity_to_storage)
             .collect();
 
-        Ok(Page::new(count, page_no, page_size, items))
+        Ok(Page::new(count, page_no, limit, items))
     }
 
     async fn config_count_by_namespace(&self, namespace_id: &str) -> anyhow::Result<i64> {
@@ -978,18 +979,18 @@ impl ConfigPersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, limit) = clamp_page(page_no, page_size);
         let items = select
             .order_by_desc(his_config_info::Column::Nid)
             .offset(offset)
-            .limit(page_size)
+            .limit(limit)
             .all(&self.db)
             .await?
             .into_iter()
             .map(history_entity_to_storage)
             .collect();
 
-        Ok(Page::new(count, page_no, page_size, items))
+        Ok(Page::new(count, page_no, limit, items))
     }
 
     async fn config_find_by_namespace(

@@ -1,6 +1,7 @@
 //! AiResourcePersistence implementation for ExternalDbPersistService
 
 use async_trait::async_trait;
+use batata_common::model::clamp_page;
 use chrono::Utc;
 use sea_orm::{
     prelude::Expr,
@@ -448,7 +449,7 @@ impl AiResourcePersistence for ExternalDbPersistService {
             query_select = query_select.order_by_desc(ai_resource::Column::DownloadCount);
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let items = query_select
             .offset(offset)
             .limit(page_size)
@@ -763,7 +764,7 @@ impl AiResourcePersistence for ExternalDbPersistService {
             return Ok(Page::empty());
         }
 
-        let offset = (page_no - 1) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let items = query_select
             .order_by_desc(pipeline_execution::Column::CreateTime)
             .offset(offset)

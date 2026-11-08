@@ -5,12 +5,12 @@
 use crate::bincode;
 use std::sync::Arc;
 
-/// Hard cap on the number of history rows returned in a single page. Guards
-/// against a caller requesting an unbounded page size (which would serialize
-/// the entire matched history into one Vec of JSON values).
-const MAX_HISTORY_PAGE_SIZE: u64 = 1000;
-
+use batata_common::model::clamp_page;
 use rocksdb::DB;
+
+/// Hard cap on the number of configs a single export may materialize.
+/// Kept in sync with the SQL backend's `MAX_EXPORT_CONFIGS` (10_000).
+const MAX_EXPORT_CONFIGS: usize = 10_000;
 
 use super::state_machine::{
     CF_CONFIG, CF_CONFIG_GRAY, CF_CONFIG_HISTORY, CF_INSTANCES, CF_NAMESPACE, CF_PERMISSIONS,
@@ -73,6 +73,39 @@ impl RocksDbReader {
 
     /// List all configs, optionally filtered by tenant prefix
     pub fn list_configs(&self, tenant: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+        self.collect_configs(tenant, None)
+    }
+
+    /// List configs for export, rejecting namespaces larger than
+    /// [`MAX_EXPORT_CONFIGS`] instead of materializing the whole namespace.
+    ///
+    /// Matches the SQL backend's `enforce_export_cap`: read one extra row to
+    /// detect an over-cap result and return a clear error rather than silently
+    /// truncating the export.
+    pub fn list_configs_for_export(&self, tenant: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+        self.list_configs_capped(tenant, MAX_EXPORT_CONFIGS)
+    }
+
+    fn list_configs_capped(
+        &self,
+        tenant: &str,
+        cap: usize,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let values = self.collect_configs(tenant, Some(cap.saturating_add(1)))?;
+        if values.len() > cap {
+            anyhow::bail!(
+                "config export would return more than {} configs; narrow the query (group, dataId, appName)",
+                cap
+            );
+        }
+        Ok(values)
+    }
+
+    fn collect_configs(
+        &self,
+        tenant: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
         let cf = self.cf_handle(CF_CONFIG)?;
         let mut values = Vec::new();
         if tenant.is_empty() {
@@ -82,6 +115,9 @@ impl RocksDbReader {
                 let stored: StoredConfig = bincode::deserialize(&v)
                     .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
                 values.push(serde_json::to_value(&stored)?);
+                if limit.is_some_and(|n| values.len() >= n) {
+                    break;
+                }
             }
         } else {
             let prefix = format!("{}@@", tenant);
@@ -94,6 +130,9 @@ impl RocksDbReader {
                 let stored: StoredConfig = bincode::deserialize(&v)
                     .map_err(|e| anyhow::anyhow!("StoredConfig decode error: {}", e))?;
                 values.push(serde_json::to_value(&stored)?);
+                if limit.is_some_and(|n| values.len() >= n) {
+                    break;
+                }
             }
         }
         Ok(values)
@@ -169,7 +208,7 @@ impl RocksDbReader {
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
         let cf = self.cf_handle(CF_CONFIG)?;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
 
         let mut total: u64 = 0;
         let mut page_items: Vec<serde_json::Value> = Vec::new();
@@ -391,8 +430,7 @@ impl RocksDbReader {
         entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
-        let page_size = page_size.min(MAX_HISTORY_PAGE_SIZE);
-        let offset = (page_no.saturating_sub(1)).saturating_mul(page_size);
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let page_items: Vec<serde_json::Value> = entries
             .into_iter()
             .skip(offset as usize)
@@ -459,8 +497,7 @@ impl RocksDbReader {
         entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
-        let page_size = page_size.min(MAX_HISTORY_PAGE_SIZE);
-        let offset = (page_no.saturating_sub(1)).saturating_mul(page_size);
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let page_items: Vec<serde_json::Value> = entries
             .into_iter()
             .skip(offset as usize)
@@ -524,7 +561,7 @@ impl RocksDbReader {
         };
 
         let total = filtered.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let page_items: Vec<serde_json::Value> = filtered
             .into_iter()
             .skip(offset as usize)
@@ -592,7 +629,7 @@ impl RocksDbReader {
             .collect();
 
         let total = filtered.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let page_items: Vec<serde_json::Value> = filtered
             .into_iter()
             .skip(offset as usize)
@@ -703,7 +740,7 @@ impl RocksDbReader {
         };
 
         let total = filtered.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let (offset, page_size) = clamp_page(page_no, page_size);
         let page_items: Vec<serde_json::Value> = filtered
             .into_iter()
             .skip(offset as usize)
@@ -1084,5 +1121,73 @@ mod tests {
         let mut groups = reader.find_all_group_names("public").unwrap();
         groups.sort();
         assert_eq!(groups, vec!["GROUP_A", "GROUP_B"]);
+    }
+
+    /// Seed `count` configs in the `public` namespace.
+    fn seed_configs(db: &DB, count: u64) {
+        let cf = db.cf_handle("batata_config").unwrap();
+        for i in 0..count {
+            let data_id = format!("d{i:05}");
+            let key = RocksStateMachine::config_key(&data_id, "DEFAULT_GROUP", "public");
+            let stored = StoredConfig {
+                data_id,
+                group: "DEFAULT_GROUP".to_string(),
+                tenant: "public".to_string(),
+                content: "v".to_string(),
+                ..Default::default()
+            };
+            db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
+                .unwrap();
+        }
+    }
+
+    /// A caller requesting `pageSize = u64::MAX` must not materialize the whole
+    /// column family. Mutant check: removing `clamp_page` from `search_configs`
+    /// makes `page.len()` equal `SEED` instead of `MAX_PAGE_SIZE`.
+    #[tokio::test]
+    async fn search_configs_clamps_unbounded_page_size() {
+        use batata_common::model::MAX_PAGE_SIZE;
+
+        const SEED: u64 = MAX_PAGE_SIZE + 5;
+        let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
+        seed_configs(&db, SEED);
+        let reader = RocksDbReader::new(db);
+
+        let (page, total) = reader
+            .search_configs("public", "", "", "", &[], &[], "", 1, u64::MAX)
+            .unwrap();
+        assert_eq!(total, SEED);
+        assert_eq!(page.len() as u64, MAX_PAGE_SIZE);
+    }
+
+    /// `page_no = u64::MAX` used to overflow `(page_no - 1) * page_size` in
+    /// debug builds. Mutant check: restoring the plain multiplication panics.
+    #[tokio::test]
+    async fn search_configs_does_not_overflow_on_max_page_no() {
+        let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
+        seed_configs(&db, 3);
+        let reader = RocksDbReader::new(db);
+
+        let (page, total) = reader
+            .search_configs("public", "", "", "", &[], &[], "", u64::MAX, u64::MAX)
+            .unwrap();
+        assert_eq!(total, 3);
+        assert!(page.is_empty(), "the saturated offset is past the last row");
+    }
+
+    /// Export must bound the read and reject an over-cap namespace instead of
+    /// silently truncating. Mutant check: removing the `len() > cap` guard
+    /// makes the `is_err()` assertion fail.
+    #[tokio::test]
+    async fn export_list_is_bounded_and_rejects_over_cap() {
+        let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
+        seed_configs(&db, 3);
+        let reader = RocksDbReader::new(db);
+
+        // Bounded read stops after cap + 1 rows.
+        assert_eq!(reader.collect_configs("public", Some(2)).unwrap().len(), 2);
+        // Success path (cap >= rows) and failure path (cap < rows).
+        assert_eq!(reader.list_configs_capped("public", 3).unwrap().len(), 3);
+        assert!(reader.list_configs_capped("public", 2).is_err());
     }
 }

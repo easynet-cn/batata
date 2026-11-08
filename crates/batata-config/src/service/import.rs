@@ -10,10 +10,36 @@ use zip::ZipArchive;
 
 use crate::model::{ConfigImportItem, ConsulKVExportItem, NacosConfigMetadata, NacosExportItem};
 
+/// Maximum number of entries in an imported ZIP archive.
+const MAX_ZIP_ENTRIES: usize = 10_000;
+
+/// Maximum total uncompressed bytes read from an imported ZIP archive.
+///
+/// A small compressed upload can expand without bound; capping the *actual*
+/// bytes read (not just the header-declared size) prevents a zip bomb from
+/// exhausting memory.
+const MAX_ZIP_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Parse a Nacos-format ZIP file and extract configuration items
 pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem>> {
+    parse_nacos_import_zip_with_limits(data, MAX_ZIP_ENTRIES, MAX_ZIP_UNCOMPRESSED_BYTES)
+}
+
+fn parse_nacos_import_zip_with_limits(
+    data: &[u8],
+    max_entries: usize,
+    max_uncompressed_bytes: u64,
+) -> anyhow::Result<Vec<NacosExportItem>> {
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)?;
+
+    if archive.len() > max_entries {
+        anyhow::bail!(
+            "import archive has {} entries, exceeding the limit of {}",
+            archive.len(),
+            max_entries
+        );
+    }
 
     // Pre-allocate with estimated capacity to avoid reallocations
     // Each config typically has a content file and a .meta file
@@ -24,9 +50,11 @@ pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem
     let mut meta_map: std::collections::HashMap<String, NacosConfigMetadata> =
         std::collections::HashMap::with_capacity(estimated_configs);
 
+    let mut total_uncompressed: u64 = 0;
+
     // First pass: read all files
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
+        let file = archive.by_index(i)?;
         // zip 9 returns a `Result` for entry names that fail to decode.
         let name = file.name()?.to_string();
 
@@ -34,8 +62,22 @@ pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem
             continue;
         }
 
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        // Read at most one byte past the remaining budget, so an over-cap
+        // entry is rejected instead of silently truncated. `take` bounds the
+        // real bytes read even if the ZIP header lies about `size()`.
+        let remaining = max_uncompressed_bytes.saturating_sub(total_uncompressed);
+        let mut bytes = Vec::new();
+        file.take(remaining.saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > remaining {
+            anyhow::bail!(
+                "import archive expands beyond {} uncompressed bytes",
+                max_uncompressed_bytes
+            );
+        }
+        total_uncompressed = total_uncompressed.saturating_add(bytes.len() as u64);
+        let contents = String::from_utf8(bytes)
+            .map_err(|e| anyhow::anyhow!("import entry is not valid UTF-8: {e}"))?;
 
         if name.ends_with(".meta") {
             // Parse metadata file
@@ -92,7 +134,11 @@ pub fn parse_consul_import_json(
     for kv in kv_items {
         // Decode base64 value
         let content = match BASE64.decode(&kv.value) {
-            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+            // A decoded value that is not UTF-8 is a corrupt export, not an
+            // empty config. Writing an empty string here silently loses data.
+            Ok(bytes) => String::from_utf8(bytes).map_err(|e| {
+                anyhow::anyhow!("Consul KV value for '{}' is not valid UTF-8: {}", kv.key, e)
+            })?,
             Err(_) => kv.value.clone(), // Assume plain text if not valid base64
         };
 
@@ -150,6 +196,49 @@ fn infer_config_type(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a small in-memory ZIP for the parser guards.
+    fn make_zip(entries: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        use zip::{ZipWriter, write::SimpleFileOptions};
+
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            for (name, content) in entries {
+                zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+                zip.write_all(content.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        buffer.into_inner()
+    }
+
+    /// Mutant check: removing the entry-count guard makes this return `Ok`.
+    #[test]
+    fn nacos_import_zip_rejects_too_many_entries() {
+        let zip = make_zip(&[("DEFAULT_GROUP/a.yaml", "a: 1")]);
+        assert!(parse_nacos_import_zip_with_limits(&zip, 0, 1024).is_err());
+    }
+
+    /// Mutant check: removing the uncompressed-byte guard (or reading the
+    /// entry without `take`) makes the over-cap call return `Ok`.
+    #[test]
+    fn nacos_import_zip_rejects_over_cap_uncompressed_bytes() {
+        let zip = make_zip(&[("DEFAULT_GROUP/a.yaml", "0123456789")]);
+        assert!(parse_nacos_import_zip_with_limits(&zip, 10, 4).is_err());
+        // Success path: an adequate budget must still parse.
+        assert!(parse_nacos_import_zip_with_limits(&zip, 10, 1024).is_ok());
+    }
+
+    /// Mutant check: restoring `String::from_utf8(...).unwrap_or_default()`
+    /// silently writes an empty config and returns `Ok`.
+    #[test]
+    fn consul_import_rejects_non_utf8_base64_value() {
+        // `/w==` decodes to the single byte 0xFF, which is not valid UTF-8.
+        let json = r#"[{"Key":"public/DEFAULT_GROUP/bad.yaml","Flags":0,"Value":"/w=="}]"#;
+        assert!(parse_consul_import_json(json.as_bytes(), "public").is_err());
+    }
 
     #[test]
     fn test_infer_config_type() {

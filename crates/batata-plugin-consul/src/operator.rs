@@ -819,74 +819,55 @@ pub async fn transfer_leader(
         ));
     };
 
-    // `target_addr` is the target member's main server address. The
-    // RaftManagementService gRPC used by `trigger_remote_election` listens on
-    // the Raft port (main port - 1000), so convert it before triggering.
-    let target_raft_addr = match target_addr.split_once(':') {
-        Some((host, port_str)) => {
-            let port: u16 = port_str.parse().unwrap_or(0);
-            let raft_port = port.saturating_sub(1000);
-            format!("{}:{}", host, raft_port)
-        }
-        None => target_addr.clone(),
-    };
+    // openraft 0.9 has no native `transfer_leader()`. The old approximation
+    // called `trigger().elect()` on a follower while the current leader's lease
+    // was still active: every voter rejects that vote (leader lease), the old
+    // leader steps down, and the group stays leaderless for the remaining lease
+    // plus the 5s wait and the recovery election. During that window every
+    // replicated KV / session / partition write fails with
+    // "Write failed: has to forward request to: None, None".
+    //
+    // A leader transfer is an operational convenience; availability is not.
+    // With a serving leader we do NOT disrupt the group — we return an explicit
+    // "not transferred" result (Consul SDKs only require a 2xx from this
+    // endpoint). An election is triggered only when the group is already
+    // leaderless, where it restores service instead of breaking it.
+    if !may_trigger_transfer_election(current_leader.is_some()) {
+        tracing::info!(
+            target = %target_addr,
+            "Leader transfer skipped: active leader lease; refusing to disrupt the Raft group"
+        );
+        return HttpResponse::Ok().json(TransferLeaderResponse {
+            success: false,
+            warning: Some(format!(
+                "Leader transfer to {} skipped: a leader is serving and openraft 0.9 \
+                 cannot transfer leadership without breaking its leader lease; \
+                 forcing an election here would leave the cluster without a leader",
+                target_addr
+            )),
+        });
+    }
 
-    // Send TriggerElection gRPC to the target node
-    tracing::info!(
-        target = %target_raft_addr,
-        "Initiating leader transfer to {}",
-        target_raft_addr
-    );
-
-    let response = match raft_node.trigger_remote_election(&target_raft_addr).await {
-        Ok(_) => {
-            // Wait for leader to change (5 second timeout)
-            match raft_node
-                .wait_for_leader_change(
-                    current_leader.unwrap_or(0),
-                    std::time::Duration::from_secs(5),
-                )
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Leader transfer successful");
-                    HttpResponse::Ok().json(TransferLeaderResponse {
-                        success: true,
-                        warning: None,
-                    })
-                }
-                Err(e) => {
-                    tracing::warn!("Leader transfer timed out: {}", e);
-                    HttpResponse::Ok().json(TransferLeaderResponse {
-                        success: false,
-                        warning: Some(format!("Leader transfer timed out: {}", e)),
-                    })
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Leader transfer failed: {}", e);
-            HttpResponse::InternalServerError().consul_error(ConsulError::new(format!(
-                "Failed to transfer leadership: {}",
-                e
-            )))
-        }
-    };
-
-    // Consul never leaves a datacenter without a leader: if the transfer did
-    // not settle, force an election so the group recovers instead of staying
-    // leaderless (which makes every later KV/session/status call fail).
+    // Already leaderless: restore a leader rather than attempting a transfer.
     ensure_leader_elected(&raft_node, &members).await;
-
-    response
+    let restored = raft_node.leader_id().is_some();
+    HttpResponse::Ok().json(TransferLeaderResponse {
+        success: restored,
+        warning: if restored {
+            None
+        } else {
+            Some("Could not restore a Raft leader after the transfer request".to_string())
+        },
+    })
 }
 
-/// Restore a leader when a transfer attempt left the Raft group leaderless.
+/// Restore a leader when the Raft group is already leaderless.
 ///
-/// Batata approximates leader transfer with a remote `elect()` (openraft 0.9
-/// has no native `transfer_leader()`), which can leave the group with **no**
-/// leader at all — `/v1/status/leader` then stays empty for the rest of the
-/// run. Nudge the nodes in turn until someone wins.
+/// Batata no longer forces an election while a leader is serving (see
+/// `transfer_leader`): a remote `elect()` against an active leader lease makes
+/// every voter reject the vote and drops the group into a leaderless window.
+/// This helper is now recovery-only. Nudge the nodes in turn until someone
+/// wins, and stop as soon as a leader reappears.
 async fn ensure_leader_elected(
     raft_node: &std::sync::Arc<batata_consistency::RaftNode>,
     members: &[batata_common::ExtendedMemberInfo],
@@ -910,6 +891,9 @@ async fn ensure_leader_elected(
     }
 
     for candidate in candidates {
+        if raft_node.leader_id().is_some() {
+            return;
+        }
         tracing::warn!(
             candidate = %candidate,
             "Leader transfer left the group without a leader; triggering election"
@@ -930,6 +914,15 @@ async fn ensure_leader_elected(
             return;
         }
     }
+}
+
+/// Whether a leader-transfer request may trigger an election.
+///
+/// openraft 0.9 rejects a vote while the serving leader's lease is active, so
+/// forcing an election with a leader present only drops the group into a
+/// leaderless window. Returning `false` here is the availability guard.
+fn may_trigger_transfer_election(has_leader: bool) -> bool {
+    !has_leader
 }
 
 /// Pick the best follower node for leader transfer.
@@ -1262,6 +1255,14 @@ pub async fn get_operator_utilization(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transfer_election_guard_never_disrupts_a_serving_leader() {
+        // A serving leader must never be displaced by a forced election.
+        assert!(!super::may_trigger_transfer_election(true));
+        // Recovery elections are only allowed when the group is leaderless.
+        assert!(super::may_trigger_transfer_election(false));
+    }
+
     use super::*;
     use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo, MemberState};
 

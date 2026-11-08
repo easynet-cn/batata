@@ -403,9 +403,14 @@ func TestOperatorLeaderTransfer(t *testing.T) {
 
 	// Leader transfer with empty string transfers to any eligible peer
 	// In a single-node cluster this should still not error
+	leaderBefore := waitForLeader(t, client, 5*time.Second)
+	require.NotEmpty(t, leaderBefore, "cluster needs a leader before transfer")
+
 	resp, err := operator.RaftLeaderTransfer("", nil)
 	require.NoError(t, err, "Leader transfer should not return an error")
 	assert.NotNil(t, resp, "Leader transfer response should not be nil")
+	assert.NotEmpty(t, waitForLeader(t, client, 5*time.Second),
+		"leader transfer must not leave the Raft group without a leader")
 	t.Logf("Leader transfer initiated successfully")
 }
 
@@ -438,6 +443,8 @@ func TestOperatorLeaderTransferToNode(t *testing.T) {
 	resp, err := operator.RaftLeaderTransfer(targetID, nil)
 	require.NoError(t, err, "Leader transfer to specific node should not error")
 	assert.NotNil(t, resp, "Leader transfer response should not be nil")
+	assert.NotEmpty(t, waitForLeader(t, client, 5*time.Second),
+		"leader transfer must not leave the Raft group without a leader")
 	t.Logf("Leader transfer to %s initiated", targetID)
 }
 

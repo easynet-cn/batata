@@ -28,27 +28,77 @@ fn test_http_client() -> Client {
         .expect("failed to build http client")
 }
 
+/// Whether a probe response is the `GET /apps` contract of an Apollo admin
+/// surface this suite can actually drive: 2xx carrying a JSON array.
+///
+/// A reachable port alone is not a usable test target. An unrelated local
+/// service, an SPA dev server, a proxy error page, or a batata build with
+/// admin access control enabled can all answer on `:8080` and then reject
+/// every request below with 401. Treating "any HTTP response" as "server
+/// available" turns such a port collision into three false-red tests that
+/// say nothing about the code under test.
+fn is_live_apollo_admin(status: reqwest::StatusCode, body: &str) -> bool {
+    status.is_success() && serde_json::from_str::<Value>(body).is_ok_and(|value| value.is_array())
+}
+
+#[test]
+fn live_server_probe_requires_a_real_apollo_admin_surface() {
+    let ok = reqwest::StatusCode::OK;
+    let unauthorized = reqwest::StatusCode::UNAUTHORIZED;
+
+    // Success path: the admin surface lists apps as a JSON array.
+    assert!(is_live_apollo_admin(ok, "[]"));
+    assert!(is_live_apollo_admin(
+        ok,
+        "[{\"appId\":\"demo\",\"name\":\"Demo\"}]"
+    ));
+
+    // A reachable but auth-gated server (the :8080 collision case).
+    assert!(!is_live_apollo_admin(
+        unauthorized,
+        "{\"code\":40100,\"data\":null,\"msg\":\"unauthenticated\"}"
+    ));
+    // An array body alone is not enough: the status must be 2xx.
+    assert!(!is_live_apollo_admin(unauthorized, "[]"));
+    // 2xx replies from an unrelated service / SPA / proxy page.
+    assert!(!is_live_apollo_admin(ok, "<!doctype html><html></html>"));
+    assert!(!is_live_apollo_admin(ok, "{\"code\":40100}"));
+    assert!(!is_live_apollo_admin(ok, ""));
+}
+
 /// Env-dependent suite guard: returns `true` when the caller should return
 /// early.
 ///
-/// Every test in this file drives the HTTP surface end to end, so it needs a
-/// batata server listening on `BASE_URL`. Mirroring the SQL suites in
-/// `common` — which self-skip when `TEST_DATABASE_URL` is absent — these
-/// return early with an explicit message instead of failing: a red test
-/// caused by a missing server says nothing about the code under test, and
-/// listing it in `regression_whitelist.txt` only hides the fact that it never
-/// actually ran. Start a server on `:8080` (or point `BASE_URL` at one) to
-/// exercise them.
+/// Every test in this file drives the HTTP surface end to end, so it needs an
+/// unauthenticated batata Apollo admin surface on `BASE_URL`. Mirroring the
+/// SQL suites in `common` — which self-skip when `TEST_DATABASE_URL` is
+/// absent — these return early with an explicit message instead of failing:
+/// a red test caused by a missing (or wrong) server says nothing about the
+/// code under test, and listing it in `regression_whitelist.txt` only hides
+/// the fact that it never actually ran. Start a server on `:8080` (or point
+/// `BASE_URL` at one) to exercise them.
 async fn skip_without_server(test: &str) -> bool {
-    let probe = tokio::time::timeout(
-        Duration::from_millis(500),
-        test_http_client().get(BASE_URL).send(),
-    )
+    let probe = tokio::time::timeout(Duration::from_millis(500), async {
+        let response = test_http_client()
+            .get(format!("{BASE_URL}/apps"))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        Ok::<_, reqwest::Error>((status, body))
+    })
     .await;
-    if matches!(probe, Ok(Ok(_))) {
+    let ready = probe
+        .ok()
+        .and_then(|result| result.ok())
+        .is_some_and(|(status, body)| is_live_apollo_admin(status, &body));
+    if ready {
         return false;
     }
-    eprintln!("SKIP {test}: no batata server reachable at {BASE_URL}");
+    eprintln!(
+        "SKIP {test}: no unauthenticated batata Apollo admin surface at {BASE_URL} \
+         (GET /apps must return 2xx with a JSON array)"
+    );
     true
 }
 

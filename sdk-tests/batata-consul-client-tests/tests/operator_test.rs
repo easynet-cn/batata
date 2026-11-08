@@ -189,6 +189,13 @@ async fn test_operator_raft_transfer_leader() {
     // We just verify the API call is accepted.
     let result = client.operator_raft_transfer_leader(&common::w()).await;
 
+    // A transfer request must never leave the Raft group without a leader:
+    // that window used to make every concurrent KV/session write fail.
+    assert!(
+        common::wait_for_leader(&client).await,
+        "cluster must still have a leader after a transfer request"
+    );
+
     match result {
         Ok(_meta) => {
             // Transfer accepted (may be a no-op in single-node cluster)

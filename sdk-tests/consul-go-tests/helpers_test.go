@@ -46,6 +46,20 @@ func waitForKVAbsent(t *testing.T, client *api.Client, key string, timeout time.
 	})
 }
 
+// waitForLeader polls /v1/status/leader until a leader is reported.
+func waitForLeader(t *testing.T, client *api.Client, timeout time.Duration) string {
+	var leader string
+	pollFunc("leader visible", timeout, 100*time.Millisecond, func() bool {
+		l, err := client.Status().Leader()
+		if err == nil && l != "" {
+			leader = l
+			return true
+		}
+		return false
+	})
+	return leader
+}
+
 // waitForSession polls a client until the session is visible or timeout.
 func waitForSession(t *testing.T, client *api.Client, sessionID string, timeout time.Duration) *api.SessionEntry {
 	var result *api.SessionEntry

@@ -535,7 +535,7 @@ impl ConfigPersistence for DistributedPersistService {
         data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<ConfigStorageData>> {
-        let all_configs = self.reader.list_configs(namespace_id)?;
+        let all_configs = self.reader.list_configs_for_export(namespace_id)?;
 
         let filtered: Vec<ConfigStorageData> = all_configs
             .iter()

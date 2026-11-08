@@ -40,6 +40,7 @@ PROJECT_ROOT="$ROOT"
 source "${SCRIPT_DIR}/test_utils.sh"
 source "${SCRIPT_DIR}/cluster_lib.sh"
 source "${SCRIPT_DIR}/sdk_run_lib.sh"
+source "${SCRIPT_DIR}/sdk_port_guard.sh"
 
 # ---------------------------------------------------------------------------
 # separation: Console/Server route separation test
@@ -574,10 +575,10 @@ cmd_sdk_matrix() {
             kill "$pid" 2>/dev/null || true
         done
         sleep 2
-        for port in 8848 8858 8868 8081 8082 8083 8500 8510 8520 \
-                    9848 9858 9868 9849 9859 9869 7848 7858 7868; do
-            lsof -ti:"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
-        done
+        # Include the Apollo ports: stop_servers() used to omit 18080/18090/
+        # 18100, so a stray loopback listener there survived between combos
+        # and kept hijacking the Apollo SDK suite.
+        sdk_ports_clear
         SERVER_PIDS=()
     }
 
@@ -703,6 +704,9 @@ cmd_sdk_matrix() {
         local combo="$1" platform="$2" mode="$3"
         local suite_dir="${SDK_REPORT_DIR}/${combo}"
         mkdir -p "${suite_dir}"
+        # Own every SDK port before starting: a foreign 127.0.0.1 listener
+        # beats batata's wildcard bind and silently serves the wrong process.
+        sdk_ports_clear
         log "=============== [${combo}] 开始 (mode=${mode}, platform=${platform}) ==============="
 
         if [ "$platform" != "embedded" ]; then
@@ -734,6 +738,16 @@ cmd_sdk_matrix() {
             sleep 8
             ok "${combo}: cluster 形成"
         fi
+
+        # 8848 liveness only proves the main listener is up. Confirm the
+        # Apollo endpoint is batata's too before any suite runs; otherwise a
+        # foreign 18080 listener turns 36 openapi cases into a fake regression.
+        if ! sdk_ports_verify; then
+            fail "${combo}: Apollo 端口未就绪（可能被外部进程占用）"
+            stop_servers
+            return 1
+        fi
+        ok "${combo}: Apollo 端口 18080 由 batata 提供服务"
 
         log ">>> 初始化管理用户 nacos/nacos"
         "${SCRIPT_DIR}/init-admin.sh" nacos nacos http://127.0.0.1:8848 \

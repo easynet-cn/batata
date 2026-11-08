@@ -396,10 +396,26 @@ impl Metrics {
 pub static METRICS: std::sync::LazyLock<Arc<Metrics>> =
     std::sync::LazyLock::new(|| Arc::new(Metrics::new()));
 
+/// Cluster gauge values for the Prometheus exposition endpoints.
+///
+/// A separated console has no `ClusterManager`: `DeploymentMode::Console`
+/// builds `PersistenceContext::empty()`, which leaves `cluster_manager` as
+/// `None`. Calling [`AppState::cluster_manager`] there would panic, and the
+/// release profile uses `panic = "abort"`, so a single scrape would kill the
+/// whole process. Report an explicit "unknown" state instead: zero members and
+/// not healthy, while keeping the endpoint parseable for Prometheus.
+pub(super) fn cluster_snapshot(
+    manager: Option<&Arc<dyn batata_common::ClusterManager>>,
+) -> (usize, bool) {
+    match manager {
+        Some(cm) => (cm.member_count(), cm.is_cluster_healthy()),
+        None => (0, false),
+    }
+}
+
 #[get("")]
 async fn metrics(data: web::Data<AppState>) -> impl Responder {
-    let cluster_size = data.cluster_manager().member_count();
-    let is_healthy = data.cluster_manager().is_cluster_healthy();
+    let (cluster_size, is_healthy) = cluster_snapshot(data.try_cluster_manager());
 
     let body = METRICS.to_prometheus_format(cluster_size, is_healthy);
 
@@ -416,6 +432,66 @@ pub fn routes() -> Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_common::{ClusterHealthSummary, ClusterManager, ExtendedMemberInfo};
+
+    /// Minimal cluster manager for the non-degraded snapshot path.
+    struct StubClusterManager;
+
+    impl ClusterManager for StubClusterManager {
+        fn is_standalone(&self) -> bool {
+            false
+        }
+        fn is_leader(&self) -> bool {
+            true
+        }
+        fn is_cluster_healthy(&self) -> bool {
+            true
+        }
+        fn leader_address(&self) -> Option<String> {
+            None
+        }
+        fn local_address(&self) -> &str {
+            "127.0.0.1:8848"
+        }
+        fn member_count(&self) -> usize {
+            3
+        }
+        fn all_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            vec![]
+        }
+        fn healthy_members_extended(&self) -> Vec<ExtendedMemberInfo> {
+            vec![]
+        }
+        fn get_member(&self, _address: &str) -> Option<ExtendedMemberInfo> {
+            None
+        }
+        fn get_self_member(&self) -> ExtendedMemberInfo {
+            unimplemented!("not used by cluster_snapshot")
+        }
+        fn health_summary(&self) -> ClusterHealthSummary {
+            ClusterHealthSummary::default()
+        }
+        fn refresh_self(&self) {}
+        fn is_self(&self, _address: &str) -> bool {
+            false
+        }
+        fn update_member_state(&self, _address: &str, _state: &str) -> Result<String, String> {
+            Ok("UP".to_string())
+        }
+    }
+
+    /// A separated console has no `ClusterManager`. Reading it through the
+    /// panicking accessor would abort the process in release builds.
+    #[test]
+    fn cluster_snapshot_without_manager_degrades_instead_of_panicking() {
+        assert_eq!(cluster_snapshot(None), (0, false));
+    }
+
+    #[test]
+    fn cluster_snapshot_reads_real_manager_when_present() {
+        let cm: Arc<dyn ClusterManager> = Arc::new(StubClusterManager);
+        assert_eq!(cluster_snapshot(Some(&cm)), (3, true));
+    }
 
     #[test]
     fn test_metrics_increment() {

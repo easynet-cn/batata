@@ -125,7 +125,18 @@ pub fn apply_central_config(
         .service_proxy
         .clone()
         .unwrap_or_else(|| serde_json::json!({}));
-    let proxy_obj = proxy.as_object_mut().expect("proxy must be object");
+
+    // `Proxy` comes from an unvalidated service registration. A non-object
+    // value must not panic here: release builds use `panic = "abort"`, so one
+    // malformed registration could take down the whole process. Skip the merge
+    // and preserve the original value instead of silently discarding it.
+    let Some(proxy_obj) = proxy.as_object_mut() else {
+        tracing::warn!(
+            service = %svc.service_name,
+            "skipping central-config merge: Service.Proxy is not a JSON object"
+        );
+        return;
+    };
 
     // Merge proxy-defaults first (lower precedence).
     if let Some(pd) = proxy_defaults {
@@ -2009,6 +2020,39 @@ mod tests {
         );
         let data = bytes::Bytes::from(serde_json::to_vec(reg).unwrap());
         store.register(&key, data).unwrap();
+    }
+
+    /// Mutant check: restoring `proxy.as_object_mut().expect(...)` panics on
+    /// this input. A malformed `Proxy` must be preserved and skipped, not abort.
+    #[test]
+    fn apply_central_config_skips_non_object_proxy() {
+        let reg = simple_reg("web", "web-1", "127.0.0.1", 8080);
+        let mut svc = CatalogService::from_registration(&reg, "node-1", "node-id", "dc1", 1);
+        let invalid = serde_json::json!(42);
+        svc.service_proxy = Some(invalid.clone());
+
+        apply_central_config(&mut svc, None, None);
+
+        assert_eq!(
+            svc.service_proxy,
+            Some(invalid),
+            "the invalid proxy must be preserved, not overwritten"
+        );
+    }
+
+    /// Success path: an object proxy is merged and written back. Guards against
+    /// an "always bail out" mutant of the new check.
+    #[test]
+    fn apply_central_config_merges_object_proxy() {
+        let reg = simple_reg("web", "web-1", "127.0.0.1", 8080);
+        let mut svc = CatalogService::from_registration(&reg, "node-1", "node-id", "dc1", 1);
+        svc.service_proxy = Some(serde_json::json!({"MeshGateway": {"Mode": "local"}}));
+
+        apply_central_config(&mut svc, None, None);
+
+        let proxy = svc.service_proxy.expect("proxy is still present");
+        assert!(proxy.is_object());
+        assert_eq!(proxy["MeshGateway"]["Mode"], "local");
     }
 
     fn simple_reg(name: &str, id: &str, ip: &str, port: u16) -> AgentServiceRegistration {

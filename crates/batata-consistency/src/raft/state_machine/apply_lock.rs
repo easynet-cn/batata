@@ -12,6 +12,20 @@ use super::RocksStateMachine;
 use super::json_to_bytes;
 use crate::raft::request::RaftResponse;
 
+/// Interpret the existence read performed by `apply_lock_expire`.
+///
+/// A read error must NOT be treated as "no lock to expire": that would report
+/// success while leaving a live lock in place. Keeping the decision in a pure
+/// function makes the fail-closed branch directly testable without having to
+/// inject a RocksDB I/O error into a state machine.
+fn expire_check(read: Result<Option<()>, String>) -> Result<bool, String> {
+    match read {
+        Ok(Some(())) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 impl RocksStateMachine {
     pub(super) fn apply_lock_acquire(
         &self,
@@ -323,10 +337,21 @@ impl RocksStateMachine {
     pub(super) fn apply_lock_expire(&self, namespace: &str, name: &str) -> RaftResponse {
         let key = Self::lock_key(namespace, name);
 
-        // Check existence without deserialization (saves JSON parse overhead)
-        match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(_)) => {}                    // Key exists, proceed to expire
-            _ => return RaftResponse::success(), // Nothing to expire
+        // Check existence without deserialization (saves JSON parse overhead),
+        // but fail closed on a read error: reporting success here would leave a
+        // live lock in place while telling the caller it was expired.
+        let read = self
+            .db
+            .get_cf(self.cf_locks(), key.as_bytes())
+            .map(|v| v.map(|_| ()))
+            .map_err(|e| e.to_string());
+        match expire_check(read) {
+            Ok(true) => {}                               // Key exists, proceed to expire
+            Ok(false) => return RaftResponse::success(), // Nothing to expire
+            Err(e) => {
+                error!("Failed to read lock for expire: {}", e);
+                return RaftResponse::failure(format!("Failed to read lock: {}", e));
+            }
         }
 
         let value = serde_json::json!({
@@ -357,5 +382,26 @@ impl RocksStateMachine {
                 RaftResponse::failure(format!("Failed to expire lock: {}", e))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expire_check;
+
+    /// Mutant check: treating a read error as "no lock to expire" makes this
+    /// assertion fail. That was the original fail-open bug.
+    #[test]
+    fn expire_check_fails_closed_on_read_error() {
+        assert_eq!(
+            expire_check(Err("io error".to_string())),
+            Err("io error".to_string())
+        );
+    }
+
+    #[test]
+    fn expire_check_distinguishes_absent_from_present() {
+        assert_eq!(expire_check(Ok(None)), Ok(false));
+        assert_eq!(expire_check(Ok(Some(()))), Ok(true));
     }
 }

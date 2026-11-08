@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+/// Maximum number of rows a single paginated read may return.
+///
+/// Query parameters are untrusted: without a cap, `pageSize = u64::MAX` forces
+/// the server to materialize an entire namespace / column family in memory.
+pub const MAX_PAGE_SIZE: u64 = 1000;
+
+/// Normalize untrusted pagination inputs into a bounded `(offset, page_size)`.
+///
+/// `saturating_*` arithmetic prevents `page_no = u64::MAX` from overflowing in
+/// debug builds or wrapping to an arbitrary offset in release builds.
+pub fn clamp_page(page_no: u64, page_size: u64) -> (u64, u64) {
+    let page_size = page_size.min(MAX_PAGE_SIZE);
+    let offset = page_no.saturating_sub(1).saturating_mul(page_size);
+    (offset, page_size)
+}
+
 /// AI-related model types.
 pub mod ai;
 /// Plugin model types.
@@ -68,5 +84,24 @@ impl<T> Page<T> {
     /// Creates an empty `Page`.
     pub fn empty() -> Self {
         Self::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_PAGE_SIZE, clamp_page};
+
+    #[test]
+    fn clamp_page_bounds_untrusted_page_size() {
+        assert_eq!(clamp_page(1, u64::MAX), (0, MAX_PAGE_SIZE));
+        assert_eq!(clamp_page(3, 25), (50, 25));
+        assert_eq!(clamp_page(0, 25), (0, 25), "page_no=0 must not underflow");
+    }
+
+    #[test]
+    fn clamp_page_never_overflows_on_max_page_no() {
+        let (offset, page_size) = clamp_page(u64::MAX, u64::MAX);
+        assert_eq!(page_size, MAX_PAGE_SIZE);
+        assert_eq!(offset, u64::MAX, "the product must saturate, not wrap");
     }
 }

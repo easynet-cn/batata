@@ -3,10 +3,10 @@
 //! Implements the Batata V2 configuration change listener API endpoint (Nacos-compatible):
 //! - POST /nacos/v2/cs/config/listener - Listen for configuration changes
 
-use actix_web::{HttpRequest, Responder, post, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, post, web};
 use batata_persistence::PersistenceService;
 use batata_server_common::{
-    ActionTypes, ApiType, Secured, SignType,
+    ActionTypes, ApiType, Secured, SignType, error,
     model::{AppState, response::Result},
     secured,
 };
@@ -76,6 +76,24 @@ fn compute_changed_configs(
     changed_configs
 }
 
+/// Interpret the result of the batched MD5 read.
+///
+/// A read error must NOT be reported as "no changes": long-poll clients treat
+/// an empty map as "your config is current" and would keep serving stale data
+/// until the next publish. Kept pure so the fail-closed branch is testable
+/// without a broken persistence backend.
+fn decide_changed_configs(
+    read: anyhow::Result<HashMap<String, String>>,
+    configs: &[(String, String, String, u64)],
+    namespace_id: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let server_md5s = read.map_err(|e| {
+        warn!(error = %e, "Failed to batch check config changes");
+        e
+    })?;
+    Ok(compute_changed_configs(configs, &server_md5s, namespace_id))
+}
+
 /// Check if any configuration has changed using a single batch MD5 query.
 ///
 /// Returns a map of changed configs with their group key as key.
@@ -89,7 +107,7 @@ async fn check_config_changes(
     persistence: &dyn PersistenceService,
     configs: &[(String, String, String, u64)],
     namespace_id: &str,
-) -> HashMap<String, String> {
+) -> anyhow::Result<HashMap<String, String>> {
     let keys: Vec<(String, String, String)> = configs
         .iter()
         .map(|(data_id, group, _, _)| (data_id.clone(), group.clone(), namespace_id.to_string()))
@@ -97,15 +115,19 @@ async fn check_config_changes(
 
     // ONE batched md5 read per call. The long-poll handler reuses this result and
     // limits the number of calls to the minimum needed for correctness.
-    let server_md5s = match persistence.config_find_md5_batch(&keys).await {
-        Ok(md5s) => md5s,
-        Err(e) => {
-            warn!(error = %e, "Failed to batch check config changes");
-            return HashMap::new();
-        }
-    };
+    let server_md5s = persistence.config_find_md5_batch(&keys).await;
+    decide_changed_configs(server_md5s, configs, namespace_id)
+}
 
-    compute_changed_configs(configs, &server_md5s, namespace_id)
+/// A failed MD5 read is a server error, not a "no changes" response. Nacos
+/// clients retry a non-200 long poll; an empty 200 would suppress that retry.
+fn listener_read_error(e: impl std::fmt::Display) -> HttpResponse {
+    Result::<HashMap<String, String>>::http_response(
+        500,
+        error::SERVER_ERROR.code,
+        format!("Failed to check config changes: {e}"),
+        HashMap::<String, String>::new(),
+    )
 }
 
 /// Listen for configuration changes
@@ -196,7 +218,10 @@ pub async fn config_listener(
     // Initial check: return immediately if anything already changed. This is one
     // of the two batched md5 reads a request performs; the other is after the
     // wait. The redundant loop-top check has been removed.
-    let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+    let changed_configs = match check_config_changes(persistence, &configs, &namespace_id).await {
+        Ok(c) => c,
+        Err(e) => return listener_read_error(e),
+    };
     if !changed_configs.is_empty() {
         info!(count = changed_configs.len(), "Config changes detected");
         return Result::<HashMap<String, String>>::http_success(changed_configs);
@@ -214,7 +239,11 @@ pub async fn config_listener(
             // A publish happened between our last check and waiter registration.
             // Re-check config immediately (no wait) to recover the missed wakeup;
             // if nothing relevant changed, loop again and keep waiting.
-            let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+            let changed_configs =
+                match check_config_changes(persistence, &configs, &namespace_id).await {
+                    Ok(c) => c,
+                    Err(e) => return listener_read_error(e),
+                };
             if !changed_configs.is_empty() {
                 info!(count = changed_configs.len(), "Config changes detected");
                 return Result::<HashMap<String, String>>::http_success(changed_configs);
@@ -232,7 +261,11 @@ pub async fn config_listener(
         .await;
 
         // One fresh batched md5 read after the wait decides the response.
-        let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+        let changed_configs = match check_config_changes(persistence, &configs, &namespace_id).await
+        {
+            Ok(c) => c,
+            Err(e) => return listener_read_error(e),
+        };
         if !changed_configs.is_empty() {
             info!(
                 count = changed_configs.len(),
@@ -265,6 +298,35 @@ mod tests {
 
     fn key(data_id: &str, group: &str, namespace: &str) -> String {
         batata_common::build_config_key(data_id, group, namespace)
+    }
+
+    /// Mutant check: restoring the old `return HashMap::new()` on a read error
+    /// makes this assertion fail. An empty diff tells long-poll clients their
+    /// stale config is current and suppresses the retry.
+    #[test]
+    fn decide_changed_configs_fails_closed_on_read_error() {
+        let configs = vec![cfg("a.yaml", "G", "old-md5")];
+        let result = decide_changed_configs(
+            Err(anyhow::anyhow!("database unavailable")),
+            &configs,
+            "public",
+        );
+        assert!(
+            result.is_err(),
+            "a failed MD5 read must not be reported as 'no changes'"
+        );
+    }
+
+    #[test]
+    fn decide_changed_configs_success_path_reports_changes() {
+        let configs = vec![cfg("a.yaml", "G", "old-md5")];
+        let mut server = HashMap::new();
+        server.insert(key("a.yaml", "G", "public"), "new-md5".to_string());
+        let changed = decide_changed_configs(Ok(server), &configs, "public").unwrap();
+        assert_eq!(
+            changed.get(&key("a.yaml", "G", "public")),
+            Some(&"new-md5".to_string())
+        );
     }
 
     // Mutant-checkable: removing either the mismatch arm or the missing-config

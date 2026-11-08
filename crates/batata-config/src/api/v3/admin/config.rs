@@ -615,13 +615,80 @@ async fn delete_config(
     model::common::Result::<bool>::http_success(true)
 }
 
+/// Maximum size of an uploaded configuration archive (10 MiB).
+const MAX_IMPORT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Outcome of reading the multipart upload for `import_config`.
+#[derive(Debug, PartialEq, Eq)]
+enum ImportUploadError {
+    /// The multipart stream (or a field) failed to parse.
+    Read(String),
+    /// The upload exceeded [`MAX_IMPORT_BYTES`].
+    TooLarge,
+    /// No `file` field was present, or it was empty.
+    Missing,
+}
+
+/// Read the `file` part of an import upload.
+///
+/// Errors must not be swallowed: `while let Some(Ok(..))` used to stop on the
+/// first error and report a successful import of a truncated archive.
+async fn read_import_upload(mut payload: Multipart) -> Result<Vec<u8>, ImportUploadError> {
+    let mut file_data: Vec<u8> = Vec::new();
+    let mut found_file = false;
+
+    loop {
+        let mut field = match payload.next().await {
+            Some(Ok(field)) => field,
+            Some(Err(e)) => {
+                return Err(ImportUploadError::Read(format!(
+                    "multipart read failed: {e}"
+                )));
+            }
+            None => break,
+        };
+
+        let is_file = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name())
+            .is_some_and(|name| name == "file");
+        if !is_file {
+            continue;
+        }
+        found_file = true;
+
+        loop {
+            match field.next().await {
+                Some(Ok(chunk)) => {
+                    if file_data.len().saturating_add(chunk.len()) > MAX_IMPORT_BYTES {
+                        return Err(ImportUploadError::TooLarge);
+                    }
+                    file_data.extend_from_slice(&chunk);
+                }
+                Some(Err(e)) => {
+                    return Err(ImportUploadError::Read(format!(
+                        "upload chunk read failed: {e}"
+                    )));
+                }
+                None => break,
+            }
+        }
+        break;
+    }
+
+    if !found_file || file_data.is_empty() {
+        return Err(ImportUploadError::Missing);
+    }
+    Ok(file_data)
+}
+
 /// POST /v3/admin/cs/config/import
 #[post("import")]
 async fn import_config(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<ImportRequest>,
-    mut payload: Multipart,
+    payload: Multipart,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -650,29 +717,33 @@ async fn import_config(
         .unwrap_or_default()
         .to_owned();
 
-    let mut file_data: Vec<u8> = Vec::new();
-    while let Some(Ok(mut field)) = payload.next().await {
-        if let Some(content_disposition) = field.content_disposition()
-            && content_disposition
-                .get_name()
-                .map(|n| n == "file")
-                .unwrap_or(false)
-        {
-            while let Some(Ok(chunk)) = field.next().await {
-                file_data.extend_from_slice(&chunk);
-            }
-            break;
+    let file_data = match read_import_upload(payload).await {
+        Ok(data) => data,
+        Err(ImportUploadError::Missing) => {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::PARAMETER_MISSING.code,
+                error::PARAMETER_MISSING.message.to_string(),
+                "No file uploaded",
+            );
         }
-    }
-
-    if file_data.is_empty() {
-        return model::common::Result::<ImportResult>::http_response(
-            StatusCode::BAD_REQUEST.as_u16(),
-            error::PARAMETER_MISSING.code,
-            error::PARAMETER_MISSING.message.to_string(),
-            "No file uploaded",
-        );
-    }
+        Err(ImportUploadError::TooLarge) => {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::PAYLOAD_TOO_LARGE.as_u16(),
+                error::PARAMETER_VALIDATE_ERROR.code,
+                error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+                format!("Uploaded file exceeds {} bytes", MAX_IMPORT_BYTES),
+            );
+        }
+        Err(ImportUploadError::Read(message)) => {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::PARAMETER_VALIDATE_ERROR.code,
+                error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+                message,
+            );
+        }
+    };
 
     let items = match service::import::parse_nacos_import_zip(&file_data) {
         Ok(i) => i,
@@ -2042,4 +2113,72 @@ pub fn routes() -> actix_web::Scope {
         .service(get_gray_config_info)
         .service(list_beta_versions)
         .service(list_beta_configs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_multipart::test::create_form_data_payload_and_headers;
+    use actix_web::error::PayloadError;
+    use actix_web::http::header::{self, HeaderMap, HeaderValue};
+    use actix_web::web::Bytes;
+    use futures::stream;
+
+    fn multipart_with_file(name: &str, data: Vec<u8>) -> Multipart {
+        let (payload, headers) = create_form_data_payload_and_headers(
+            name,
+            Some("import.zip".to_string()),
+            None,
+            Bytes::from(data),
+        );
+        Multipart::new(
+            &headers,
+            stream::once(async move { Ok::<_, PayloadError>(payload) }),
+        )
+    }
+
+    #[actix_web::test]
+    async fn import_upload_reads_the_file_field() {
+        let payload = multipart_with_file("file", b"zip-bytes".to_vec());
+        assert_eq!(read_import_upload(payload).await, Ok(b"zip-bytes".to_vec()));
+    }
+
+    #[actix_web::test]
+    async fn import_upload_reports_a_missing_file_field() {
+        let payload = multipart_with_file("not-file", b"zip-bytes".to_vec());
+        assert_eq!(
+            read_import_upload(payload).await,
+            Err(ImportUploadError::Missing)
+        );
+    }
+
+    /// Mutant check: removing the `MAX_IMPORT_BYTES` check leaves this as `Ok`.
+    #[actix_web::test]
+    async fn import_upload_rejects_oversized_archives() {
+        let payload = multipart_with_file("file", vec![0_u8; MAX_IMPORT_BYTES + 1]);
+        assert_eq!(
+            read_import_upload(payload).await,
+            Err(ImportUploadError::TooLarge)
+        );
+    }
+
+    /// Mutant check: restoring `while let Some(Ok(..))` silently swallows the
+    /// parse error and reports `Missing` instead of a real read failure.
+    #[actix_web::test]
+    async fn import_upload_reports_multipart_errors_instead_of_truncating() {
+        let mut headers = HeaderMap::new();
+        // A multipart content type without a boundary makes the parser fail.
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data"),
+        );
+        let payload = Multipart::new(
+            &headers,
+            stream::once(async { Ok::<_, PayloadError>(Bytes::new()) }),
+        );
+        assert!(matches!(
+            read_import_upload(payload).await,
+            Err(ImportUploadError::Read(_))
+        ));
+    }
 }

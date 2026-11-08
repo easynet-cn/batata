@@ -52,13 +52,18 @@ async fn test_raw_write_and_delete_kv() {
         .unwrap();
     assert!(ok, "raw_write to KV must succeed");
 
-    // Read back via typed SDK to verify
-    let (pair, _) = client.kv_get(&key, &common::q()).await.unwrap();
-    assert!(pair.is_some(), "key should exist after raw_write");
+    // Read back via typed SDK to verify. Allow a short replication window:
+    // an immediate assert here used to fail whenever the leader was changing.
+    assert!(
+        common::wait_for_kv(&client, &key, true).await,
+        "key should exist after raw_write"
+    );
 
     // Delete via raw
     let _meta = client.raw_delete(&path, &common::w()).await.unwrap();
 
-    let (pair, _) = client.kv_get(&key, &common::q()).await.unwrap();
-    assert!(pair.is_none(), "key should be gone after raw_delete");
+    assert!(
+        common::wait_for_kv(&client, &key, false).await,
+        "key should be gone after raw_delete"
+    );
 }

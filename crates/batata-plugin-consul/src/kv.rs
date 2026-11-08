@@ -398,6 +398,11 @@ pub struct ConsulKVService {
     _temp_dir: Option<Arc<tempfile::TempDir>>,
     /// Optional Raft writer for cluster mode replication (via core Raft PluginWrite)
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Test-only switch that makes `try_put` behave as if Raft rejected the
+    /// write, so the HTTP fail-closed wiring can be exercised without a live
+    /// Raft cluster.
+    #[cfg(test)]
+    fail_raft_writes: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ConsulKVService {
@@ -410,6 +415,8 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: Some(temp_dir),
             raft_node: None,
+            #[cfg(test)]
+            fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -424,6 +431,8 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: None,
             raft_node: None,
+            #[cfg(test)]
+            fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -438,6 +447,8 @@ impl ConsulKVService {
             notify: Arc::new(Notify::new()),
             _temp_dir: None,
             raft_node: Some(raft_node),
+            #[cfg(test)]
+            fail_raft_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -683,6 +694,323 @@ impl ConsulKVService {
         }
     }
 
+    /// Toggle the test-only simulated Raft write failure.
+    #[cfg(test)]
+    pub fn set_fail_raft_writes(&self, fail: bool) {
+        self.fail_raft_writes
+            .store(fail, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replicate one mutation through the shared Raft group.
+    ///
+    /// Cluster-mode writes used to log-and-ignore Raft failures while the HTTP
+    /// handler still returned `true`. Every mutation now goes through here so
+    /// `try_*` callers can fail closed when the write never reached the state
+    /// machine (no leader, timeout, transport error).
+    async fn replicate(&self, request: ConsulRaftRequest) -> Result<bool, String> {
+        let Some(ref raft) = self.raft_node else {
+            return Ok(true);
+        };
+        let outcome = match raft.write(request).await {
+            Ok(r) => Ok((r.success, r.message.unwrap_or_default())),
+            Err(e) => Err(e.to_string()),
+        };
+        classify_raft_write(outcome)
+    }
+
+    /// Checked `put`: a Raft failure is an error, never a reported success.
+    /// HTTP handlers must use this (or another `try_*`) so a leaderless window
+    /// surfaces as a 5xx instead of a silent `true`.
+    pub async fn try_put(
+        &self,
+        key: String,
+        value: &str,
+        flags: Option<u64>,
+    ) -> Result<KVPair, String> {
+        #[cfg(test)]
+        if self
+            .fail_raft_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err("injected Raft write failure".to_string());
+        }
+        let encoded = Some(BASE64.encode(value.as_bytes()));
+        let stored = self.build_stored_kv(&key, encoded, flags);
+        if self.raft_node.is_some() {
+            let json = serde_json::to_string(&stored)
+                .map_err(|e| format!("failed to encode KV '{}': {}", key, e))?;
+            let applied = self
+                .replicate(ConsulRaftRequest::KVPut {
+                    key: key.clone(),
+                    stored_kv_json: json,
+                    session_index_key: None,
+                })
+                .await?;
+            if !applied {
+                return Err(format!("raft rejected KV put for '{}'", key));
+            }
+        } else {
+            self.put_stored(&key, &stored);
+        }
+        self.notify.notify_waiters();
+        Ok(stored.pair)
+    }
+
+    /// Checked variant of `put_base64` (used by transactions).
+    pub async fn try_put_base64(
+        &self,
+        key: String,
+        base64_value: Option<String>,
+        flags: Option<u64>,
+    ) -> Result<KVPair, String> {
+        let stored = self.build_stored_kv(&key, base64_value, flags);
+        if self.raft_node.is_some() {
+            let json = serde_json::to_string(&stored)
+                .map_err(|e| format!("failed to encode KV '{}': {}", key, e))?;
+            let applied = self
+                .replicate(ConsulRaftRequest::KVPut {
+                    key: key.clone(),
+                    stored_kv_json: json,
+                    session_index_key: None,
+                })
+                .await?;
+            if !applied {
+                return Err(format!("raft rejected KV put for '{}'", key));
+            }
+        } else {
+            self.put_stored(&key, &stored);
+        }
+        self.notify.notify_waiters();
+        Ok(stored.pair)
+    }
+
+    /// Checked `cas`: `Ok(false)` is a normal index conflict, `Err` is a Raft
+    /// failure that must not be reported as a CAS miss.
+    pub async fn try_cas(
+        &self,
+        key: String,
+        value: &str,
+        cas_index: u64,
+        flags: Option<u64>,
+    ) -> Result<bool, String> {
+        if let Some(mut existing) = self.get_stored(&key) {
+            if existing.pair.modify_index == cas_index {
+                existing.pair.modify_index = self.next_index();
+                existing.pair.value = Some(BASE64.encode(value.as_bytes()));
+                if let Some(f) = flags {
+                    existing.pair.flags = f;
+                }
+                existing.modified_at = current_timestamp();
+                if self.raft_node.is_some() {
+                    let json = serde_json::to_string(&existing)
+                        .map_err(|e| format!("failed to encode KV '{}': {}", key, e))?;
+                    return self
+                        .replicate(ConsulRaftRequest::KVCas {
+                            key: key.clone(),
+                            stored_kv_json: json,
+                            expected_modify_index: cas_index,
+                        })
+                        .await;
+                }
+                self.put_stored(&key, &existing);
+                self.notify.notify_waiters();
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if cas_index == 0 {
+            self.try_put(key, value, flags).await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Checked `put_and_acquire`: `Ok(false)` means the lock is held by another
+    /// session; `Err` means the Raft write did not happen.
+    pub async fn try_put_and_acquire(
+        &self,
+        key: &str,
+        value: &str,
+        flags: Option<u64>,
+        session_id: &str,
+    ) -> Result<bool, String> {
+        let encoded = Some(BASE64.encode(value.as_bytes()));
+        let mut stored = self.build_stored_kv(key, encoded, flags);
+        match stored.pair.session.as_deref() {
+            Some(holder) if holder == session_id => {}
+            Some(_) => return Ok(false),
+            None => stored.pair.lock_index += 1,
+        }
+        stored.pair.session = Some(session_id.to_string());
+        stored.pair.modify_index = self.next_index();
+        stored.modified_at = current_timestamp();
+
+        if self.raft_node.is_some() {
+            let json = serde_json::to_string(&stored)
+                .map_err(|e| format!("failed to encode KV '{}': {}", key, e))?;
+            return self
+                .replicate(ConsulRaftRequest::KVAcquireSession {
+                    key: key.to_string(),
+                    session_id: session_id.to_string(),
+                    stored_kv_json: json,
+                })
+                .await;
+        }
+        let mut batch = WriteBatch::default();
+        self.batch_put_stored(&mut batch, key, &stored);
+        if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+            let idx_key = format!("kidx:{}:{}", session_id, key);
+            batch.put_cf(cf_sessions, idx_key.as_bytes(), b"");
+        }
+        self.db
+            .write(batch)
+            .map_err(|e| format!("failed to acquire session on '{}': {}", key, e))?;
+        self.notify.notify_waiters();
+        Ok(true)
+    }
+
+    /// Checked `put_and_release`.
+    pub async fn try_put_and_release(
+        &self,
+        key: &str,
+        value: &str,
+        flags: Option<u64>,
+        session_id: &str,
+    ) -> Result<bool, String> {
+        let encoded = Some(BASE64.encode(value.as_bytes()));
+        let mut stored = self.build_stored_kv(key, encoded, flags);
+        if stored.pair.session.as_deref() != Some(session_id) {
+            return Ok(false);
+        }
+        stored.pair.session = None;
+        stored.pair.modify_index = self.next_index();
+        stored.modified_at = current_timestamp();
+
+        if self.raft_node.is_some() {
+            let json = serde_json::to_string(&stored)
+                .map_err(|e| format!("failed to encode KV '{}': {}", key, e))?;
+            return self
+                .replicate(ConsulRaftRequest::KVReleaseSessionKey {
+                    key: key.to_string(),
+                    session_id: session_id.to_string(),
+                    stored_kv_json: json,
+                })
+                .await;
+        }
+        let mut batch = WriteBatch::default();
+        self.batch_put_stored(&mut batch, key, &stored);
+        if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+            let idx_key = format!("kidx:{}:{}", session_id, key);
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+        self.db
+            .write(batch)
+            .map_err(|e| format!("failed to release session on '{}': {}", key, e))?;
+        self.notify.notify_waiters();
+        Ok(true)
+    }
+
+    /// Checked `delete`: `Ok(false)` means the key was absent locally in
+    /// standalone mode; `Err` means the replicated delete did not happen.
+    pub async fn try_delete(&self, key: &str) -> Result<bool, String> {
+        #[cfg(test)]
+        if self
+            .fail_raft_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err("injected Raft write failure".to_string());
+        }
+        let stored = self.get_stored(key);
+        if stored.is_none() && self.raft_node.is_none() {
+            return Ok(false);
+        }
+        let session_index_cleanup = stored
+            .as_ref()
+            .and_then(|s| s.pair.session.as_ref())
+            .map(|sid| format!("kidx:{}:{}", sid, key));
+
+        if self.raft_node.is_some() {
+            let applied = self
+                .replicate(ConsulRaftRequest::KVDelete {
+                    key: key.to_string(),
+                    session_index_cleanup,
+                })
+                .await?;
+            if applied {
+                self.notify.notify_waiters();
+            }
+            return Ok(applied);
+        }
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_KV) else {
+            return Ok(false);
+        };
+        let mut batch = WriteBatch::default();
+        batch.delete_cf(cf, key.as_bytes());
+        if let Some(ref idx_key) = session_index_cleanup
+            && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
+        {
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+        self.db
+            .write(batch)
+            .map_err(|e| format!("failed to delete KV '{}': {}", key, e))?;
+        self.notify.notify_waiters();
+        Ok(true)
+    }
+
+    /// Checked `delete_prefix`.
+    pub async fn try_delete_prefix(&self, prefix: &str) -> Result<u32, String> {
+        if self.raft_node.is_some() {
+            let applied = self
+                .replicate(ConsulRaftRequest::KVDeletePrefix {
+                    prefix: prefix.to_string(),
+                })
+                .await?;
+            if !applied {
+                return Err(format!("raft rejected KV delete-prefix '{}'", prefix));
+            }
+            self.notify.notify_waiters();
+            return Ok(1);
+        }
+        let Some(cf_kv) = self.db.cf_handle(CF_CONSUL_KV) else {
+            return Ok(0);
+        };
+        let mode = if prefix.is_empty() {
+            rocksdb::IteratorMode::Start
+        } else {
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)
+        };
+        let iter = self.db.iterator_cf(cf_kv, mode);
+        let mut batch = WriteBatch::default();
+        let mut count = 0u32;
+        for item in iter.flatten() {
+            let (key_bytes, value_bytes) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if !prefix.is_empty() && !key.starts_with(prefix) {
+                break;
+            }
+            batch.delete_cf(cf_kv, key.as_bytes());
+            if let Ok(stored) = serde_json::from_slice::<StoredKV>(&value_bytes)
+                && let Some(ref session_id) = stored.pair.session
+                && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
+            {
+                let idx_key = format!("kidx:{}:{}", session_id, key);
+                batch.delete_cf(cf_sessions, idx_key.as_bytes());
+            }
+            count += 1;
+        }
+        if count > 0 {
+            self.db
+                .write(batch)
+                .map_err(|e| format!("failed to delete KV prefix '{}': {}", prefix, e))?;
+            self.notify.notify_waiters();
+        }
+        Ok(count)
+    }
+
     /// Put a key-value pair with pre-encoded base64 value (for transactions).
     pub async fn put_base64(
         &self,
@@ -690,114 +1018,39 @@ impl ConsulKVService {
         base64_value: Option<String>,
         flags: Option<u64>,
     ) -> KVPair {
-        let stored = self.build_stored_kv(&key, base64_value, flags);
-
-        if let Some(ref raft) = self.raft_node {
-            let json = serde_json::to_string(&stored).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::KVPut {
-                    key: key.clone(),
-                    stored_kv_json: json,
-                    session_index_key: None,
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVPut rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVPut failed: {}", e);
-                }
+        // Best-effort form for internal callers. HTTP handlers use
+        // `try_put_base64` so a Raft failure is never reported as success.
+        match self.try_put_base64(key.clone(), base64_value, flags).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!("Raft ConsulKVPut failed: {}", e);
+                KVPair::new(key, "")
             }
-        } else {
-            self.put_stored(&key, &stored);
-            self.notify.notify_waiters();
         }
-
-        stored.pair
     }
 
     /// Put a key-value pair
     pub async fn put(&self, key: String, value: &str, flags: Option<u64>) -> KVPair {
-        let encoded = Some(BASE64.encode(value.as_bytes()));
-        let stored = self.build_stored_kv(&key, encoded, flags);
-
-        if let Some(ref raft) = self.raft_node {
-            let json = serde_json::to_string(&stored).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::KVPut {
-                    key: key.clone(),
-                    stored_kv_json: json,
-                    session_index_key: None,
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVPut rejected: {:?}", r.message);
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVPut failed: {}", e);
-                }
+        // Best-effort form for internal callers. HTTP handlers use `try_put`.
+        match self.try_put(key.clone(), value, flags).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!("Raft ConsulKVPut failed: {}", e);
+                KVPair::new(key, value)
             }
-        } else {
-            self.put_stored(&key, &stored);
-            self.notify.notify_waiters();
         }
-
-        stored.pair
     }
 
     /// Check-and-set: only update if modify_index matches
     pub async fn cas(&self, key: String, value: &str, cas_index: u64, flags: Option<u64>) -> bool {
-        if let Some(mut existing) = self.get_stored(&key) {
-            if existing.pair.modify_index == cas_index {
-                let index = self.next_index();
-                existing.pair.modify_index = index;
-                existing.pair.value = Some(BASE64.encode(value.as_bytes()));
-                if let Some(f) = flags {
-                    existing.pair.flags = f;
-                }
-                existing.modified_at = current_timestamp();
-
-                if let Some(ref raft) = self.raft_node {
-                    let json = serde_json::to_string(&existing).unwrap_or_default();
-                    match raft
-                        .write(ConsulRaftRequest::KVCas {
-                            key: key.clone(),
-                            stored_kv_json: json,
-                            expected_modify_index: cas_index,
-                        })
-                        .await
-                    {
-                        Ok(r) if r.success => {
-                            self.notify.notify_waiters();
-                            return true;
-                        }
-                        Ok(_) => return false,
-                        Err(e) => {
-                            error!("Raft ConsulKVCas failed: {}", e);
-                            return false;
-                        }
-                    }
-                } else {
-                    self.put_stored(&key, &existing);
-                    self.notify.notify_waiters();
-                    return true;
-                }
+        // Best-effort form for internal callers. HTTP handlers use `try_cas`,
+        // which distinguishes a CAS conflict from a Raft failure.
+        match self.try_cas(key, value, cas_index, flags).await {
+            Ok(applied) => applied,
+            Err(e) => {
+                error!("Raft ConsulKVCas failed: {}", e);
+                false
             }
-            false
-        } else if cas_index == 0 {
-            // cas=0 means create only if doesn't exist
-            self.put(key, value, flags).await;
-            true
-        } else {
-            false
         }
     }
 
@@ -811,70 +1064,15 @@ impl ConsulKVService {
         flags: Option<u64>,
         session_id: &str,
     ) -> bool {
-        let encoded = Some(BASE64.encode(value.as_bytes()));
-        let mut stored = self.build_stored_kv(key, encoded, flags);
-
-        // Match Consul's LockIndex logic from kvs.go kvsLockTxn:
-        // - If already locked by the SAME session: preserve LockIndex (re-acquire is a no-op)
-        // - If locked by a DIFFERENT session: fail
-        // - If unlocked (no session): increment LockIndex (new lock transition)
-        match stored.pair.session.as_deref() {
-            Some(holder) if holder == session_id => {
-                // Same session re-acquiring — preserve lock_index, just update modify_index
+        match self
+            .try_put_and_acquire(key, value, flags, session_id)
+            .await
+        {
+            Ok(applied) => applied,
+            Err(e) => {
+                error!("Raft ConsulKVAcquireSession failed: {}", e);
+                false
             }
-            Some(_) => {
-                // Different session holds the lock — fail
-                return false;
-            }
-            None => {
-                // Unlocked → locked transition: increment lock_index
-                stored.pair.lock_index += 1;
-            }
-        }
-
-        stored.pair.session = Some(session_id.to_string());
-        stored.pair.modify_index = self.next_index();
-        stored.modified_at = current_timestamp();
-
-        if let Some(ref raft) = self.raft_node {
-            let json = serde_json::to_string(&stored).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::KVAcquireSession {
-                    key: key.to_string(),
-                    session_id: session_id.to_string(),
-                    stored_kv_json: json,
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                    true
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVAcquireSession rejected: {:?}", r.message);
-                    false
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVAcquireSession failed: {}", e);
-                    false
-                }
-            }
-        } else {
-            // Standalone: direct RocksDB write
-            let mut batch = WriteBatch::default();
-            self.batch_put_stored(&mut batch, key, &stored);
-            if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
-                let idx_key = format!("kidx:{}:{}", session_id, key);
-                batch.put_cf(cf_sessions, idx_key.as_bytes(), b"");
-            }
-
-            if let Err(e) = self.db.write(batch) {
-                error!("Failed to acquire session on '{}': {}", key, e);
-                return false;
-            }
-
-            self.notify.notify_waiters();
-            true
         }
     }
 
@@ -938,55 +1136,15 @@ impl ConsulKVService {
         flags: Option<u64>,
         session_id: &str,
     ) -> bool {
-        let encoded = Some(BASE64.encode(value.as_bytes()));
-        let mut stored = self.build_stored_kv(key, encoded, flags);
-
-        if stored.pair.session.as_deref() != Some(session_id) {
-            return false;
-        }
-
-        stored.pair.session = None;
-        stored.pair.modify_index = self.next_index();
-        stored.modified_at = current_timestamp();
-
-        if let Some(ref raft) = self.raft_node {
-            let json = serde_json::to_string(&stored).unwrap_or_default();
-            match raft
-                .write(ConsulRaftRequest::KVReleaseSessionKey {
-                    key: key.to_string(),
-                    session_id: session_id.to_string(),
-                    stored_kv_json: json,
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                    true
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVReleaseSessionKey rejected: {:?}", r.message);
-                    false
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVReleaseSessionKey failed: {}", e);
-                    false
-                }
+        match self
+            .try_put_and_release(key, value, flags, session_id)
+            .await
+        {
+            Ok(applied) => applied,
+            Err(e) => {
+                error!("Raft ConsulKVReleaseSessionKey failed: {}", e);
+                false
             }
-        } else {
-            let mut batch = WriteBatch::default();
-            self.batch_put_stored(&mut batch, key, &stored);
-            if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
-                let idx_key = format!("kidx:{}:{}", session_id, key);
-                batch.delete_cf(cf_sessions, idx_key.as_bytes());
-            }
-
-            if let Err(e) = self.db.write(batch) {
-                error!("Failed to release session on '{}': {}", key, e);
-                return false;
-            }
-
-            self.notify.notify_waiters();
-            true
         }
     }
 
@@ -1200,137 +1358,26 @@ impl ConsulKVService {
 
     /// Delete a key
     pub async fn delete(&self, key: &str) -> bool {
-        // Presence is resolved on the Raft leader during **apply**, not from
-        // this node's local store: a follower may not have applied the entry
-        // yet, and bailing out here would silently drop a legitimate delete
-        // (`DELETE /v1/kv/<key>` on any node must remove the cluster-wide key).
-        // The local lookup is still used to carry the session index cleanup
-        // hint, which apply tolerates being absent.
-        let stored = self.get_stored(key);
-        if stored.is_none() && self.raft_node.is_none() {
-            return false;
-        }
-        let session_index_cleanup = stored
-            .as_ref()
-            .and_then(|s| s.pair.session.as_ref())
-            .map(|sid| format!("kidx:{}:{}", sid, key));
-
-        if let Some(ref raft) = self.raft_node {
-            match raft
-                .write(ConsulRaftRequest::KVDelete {
-                    key: key.to_string(),
-                    session_index_cleanup,
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                    true
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVDelete rejected: {:?}", r.message);
-                    false
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVDelete failed: {}", e);
-                    false
-                }
+        // Best-effort form for internal callers. HTTP handlers use `try_delete`.
+        match self.try_delete(key).await {
+            Ok(deleted) => deleted,
+            Err(e) => {
+                error!("Raft ConsulKVDelete failed: {}", e);
+                false
             }
-        } else {
-            let Some(cf) = self.db.cf_handle(CF_CONSUL_KV) else {
-                return false;
-            };
-
-            let mut batch = WriteBatch::default();
-            batch.delete_cf(cf, key.as_bytes());
-
-            if let Some(ref idx_key) = session_index_cleanup
-                && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
-            {
-                batch.delete_cf(cf_sessions, idx_key.as_bytes());
-            }
-
-            if let Err(e) = self.db.write(batch) {
-                error!("Failed to delete KV entry '{}': {}", key, e);
-                return false;
-            }
-            self.notify.notify_waiters();
-            true
         }
     }
 
     /// Delete keys with prefix — O(k) via sorted iterator + WriteBatch
     pub async fn delete_prefix(&self, prefix: &str) -> u32 {
-        if let Some(ref raft) = self.raft_node {
-            // For Raft mode, send the prefix to the state machine which handles
-            // the scan + batch delete atomically on all nodes
-            match raft
-                .write(ConsulRaftRequest::KVDeletePrefix {
-                    prefix: prefix.to_string(),
-                })
-                .await
-            {
-                Ok(r) if r.success => {
-                    self.notify.notify_waiters();
-                    // We don't know exact count from Raft response, return 1 to indicate success
-                    1
-                }
-                Ok(r) => {
-                    error!("Raft ConsulKVDeletePrefix rejected: {:?}", r.message);
-                    0
-                }
-                Err(e) => {
-                    error!("Raft ConsulKVDeletePrefix failed: {}", e);
-                    0
-                }
+        // Best-effort form for internal callers. HTTP handlers use
+        // `try_delete_prefix`.
+        match self.try_delete_prefix(prefix).await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Raft ConsulKVDeletePrefix failed: {}", e);
+                0
             }
-        } else {
-            let Some(cf_kv) = self.db.cf_handle(CF_CONSUL_KV) else {
-                return 0;
-            };
-
-            let mode = if prefix.is_empty() {
-                rocksdb::IteratorMode::Start
-            } else {
-                rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)
-            };
-            let iter = self.db.iterator_cf(cf_kv, mode);
-
-            let mut batch = WriteBatch::default();
-            let mut count = 0u32;
-
-            for item in iter.flatten() {
-                let (key_bytes, value_bytes) = item;
-                let key = match String::from_utf8(key_bytes.to_vec()) {
-                    Ok(k) => k,
-                    Err(_) => continue,
-                };
-                if !prefix.is_empty() && !key.starts_with(prefix) {
-                    break;
-                }
-
-                batch.delete_cf(cf_kv, key.as_bytes());
-
-                // Clean up session index if this key had a session
-                if let Ok(stored) = serde_json::from_slice::<StoredKV>(&value_bytes)
-                    && let Some(ref session_id) = stored.pair.session
-                    && let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS)
-                {
-                    let idx_key = format!("kidx:{}:{}", session_id, key);
-                    batch.delete_cf(cf_sessions, idx_key.as_bytes());
-                }
-
-                count += 1;
-            }
-
-            if count > 0 {
-                if let Err(e) = self.db.write(batch) {
-                    error!("Failed to delete prefix '{}': {}", prefix, e);
-                    return 0;
-                }
-                self.notify.notify_waiters();
-            }
-            count
         }
     }
 
@@ -1503,7 +1550,7 @@ impl ConsulKVService {
         // Phase 2: Apply all operations
         let mut results: Vec<TxnResultItem> = Vec::new();
 
-        for op in ops.into_iter() {
+        for (idx, op) in ops.into_iter().enumerate() {
             if let Some(kv_op) = op.kv {
                 match kv_op.verb.to_lowercase().as_str() {
                     "get" => {
@@ -1525,7 +1572,13 @@ impl ConsulKVService {
                     }
                     "set" => {
                         let base64_val = txn_value_base64(&kv_op.value);
-                        let pair = self.put_base64(kv_op.key, base64_val, kv_op.flags).await;
+                        let pair = match self
+                            .try_put_base64(kv_op.key, base64_val, kv_op.flags)
+                            .await
+                        {
+                            Ok(pair) => pair,
+                            Err(e) => return txn_write_failure(idx, &e),
+                        };
                         results.push(TxnResultItem {
                             kv: Some(pair),
                             ..Default::default()
@@ -1534,8 +1587,12 @@ impl ConsulKVService {
                     "cas" => {
                         let value = decode_txn_value(&kv_op.value);
                         let cas_index = kv_op.index.unwrap_or(0);
-                        self.cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
-                            .await;
+                        if let Err(e) = self
+                            .try_cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
+                            .await
+                        {
+                            return txn_write_failure(idx, &e);
+                        }
                         if let Some(pair) = self.get(&kv_op.key) {
                             results.push(TxnResultItem {
                                 kv: Some(pair),
@@ -1544,17 +1601,23 @@ impl ConsulKVService {
                         }
                     }
                     "delete" => {
-                        self.delete(&kv_op.key).await;
+                        if let Err(e) = self.try_delete(&kv_op.key).await {
+                            return txn_write_failure(idx, &e);
+                        }
                         results.push(TxnResultItem {
                             kv: Some(KVPair::key_only(kv_op.key)),
                             ..Default::default()
                         });
                     }
                     "delete-tree" => {
-                        self.delete_prefix(&kv_op.key).await;
+                        if let Err(e) = self.try_delete_prefix(&kv_op.key).await {
+                            return txn_write_failure(idx, &e);
+                        }
                     }
                     "delete-cas" => {
-                        self.delete(&kv_op.key).await;
+                        if let Err(e) = self.try_delete(&kv_op.key).await {
+                            return txn_write_failure(idx, &e);
+                        }
                         results.push(TxnResultItem {
                             kv: Some(KVPair::key_only(kv_op.key)),
                             ..Default::default()
@@ -1571,9 +1634,13 @@ impl ConsulKVService {
                     }
                     "lock" => {
                         let base64_val = txn_value_base64(&kv_op.value);
-                        let pair = self
-                            .put_base64(kv_op.key.clone(), base64_val, kv_op.flags)
-                            .await;
+                        let pair = match self
+                            .try_put_base64(kv_op.key.clone(), base64_val, kv_op.flags)
+                            .await
+                        {
+                            Ok(pair) => pair,
+                            Err(e) => return txn_write_failure(idx, &e),
+                        };
                         self.increment_lock_index(&kv_op.key);
                         results.push(TxnResultItem {
                             kv: Some(pair),
@@ -1854,49 +1921,43 @@ pub async fn put_kv(
         crate::api_metrics::incr_endpoint("kv_put", "error");
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
-    crate::api_metrics::incr_endpoint("kv_put", "success");
 
     let value = String::from_utf8_lossy(&body).to_string();
 
-    // Handle acquire (session-based lock) — atomic put + acquire
-    if let Some(ref session_id) = query.acquire {
-        let success = kv_service
-            .put_and_acquire(&key, &value, query.flags, session_id)
-            .await;
-        if success {
-            index_provider.increment(ConsulTable::KVS);
-        }
-        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-        return consul_ok(&meta).json(success);
-    }
+    // Every write below goes through a `try_*` method. `Ok(false)` is a
+    // business result (CAS/lock conflict); `Err` means Raft never applied the
+    // write and must be reported as 503 rather than an acknowledged success.
+    let outcome: Result<bool, String> = if let Some(ref session_id) = query.acquire {
+        kv_service
+            .try_put_and_acquire(&key, &value, query.flags, session_id)
+            .await
+    } else if let Some(ref session_id) = query.release {
+        kv_service
+            .try_put_and_release(&key, &value, query.flags, session_id)
+            .await
+    } else if let Some(cas_index) = query.cas {
+        kv_service
+            .try_cas(key.clone(), &value, cas_index, query.flags)
+            .await
+    } else {
+        kv_service
+            .try_put(key.clone(), &value, query.flags)
+            .await
+            .map(|_| true)
+    };
 
-    // Handle release (session-based unlock) — atomic put + release
-    if let Some(ref session_id) = query.release {
-        let success = kv_service
-            .put_and_release(&key, &value, query.flags, session_id)
-            .await;
-        if success {
-            index_provider.increment(ConsulTable::KVS);
-        }
-        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-        return consul_ok(&meta).json(success);
+    let success = match outcome {
+        Ok(success) => success,
+        Err(e) => return raft_write_unavailable("kv_put", &e),
+    };
+    // Only count a success after the replicated write is known to have landed;
+    // `raft_write_unavailable` records the error counter for the 503 path.
+    crate::api_metrics::incr_endpoint("kv_put", "success");
+    if success {
+        index_provider.increment(ConsulTable::KVS);
     }
-
-    // Check-and-set if cas parameter is provided
-    if let Some(cas_index) = query.cas {
-        let success = kv_service.cas(key, &value, cas_index, query.flags).await;
-        if success {
-            index_provider.increment(ConsulTable::KVS);
-        }
-        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-        return consul_ok(&meta).json(success);
-    }
-
-    // Regular put
-    kv_service.put(key, &value, query.flags).await;
-    index_provider.increment(ConsulTable::KVS);
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
-    consul_ok(&meta).json(true)
+    consul_ok(&meta).json(success)
 }
 
 /// DELETE /v1/kv/{key:.*}
@@ -1916,7 +1977,6 @@ pub async fn delete_kv(
         crate::api_metrics::incr_endpoint("kv_delete", "error");
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
-    crate::api_metrics::incr_endpoint("kv_delete", "success");
 
     let recurse = query.recurse.unwrap_or(false);
 
@@ -1933,11 +1993,15 @@ pub async fn delete_kv(
         }
     }
 
-    if recurse {
-        kv_service.delete_prefix(&key).await;
+    let outcome: Result<(), String> = if recurse {
+        kv_service.try_delete_prefix(&key).await.map(|_| ())
     } else {
-        kv_service.delete(&key).await;
+        kv_service.try_delete(&key).await.map(|_| ())
+    };
+    if let Err(e) = outcome {
+        return raft_write_unavailable("kv_delete", &e);
     }
+    crate::api_metrics::incr_endpoint("kv_delete", "success");
 
     index_provider.increment(ConsulTable::KVS);
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
@@ -1961,7 +2025,13 @@ pub async fn txn(
     let ops = body.into_inner();
     let result = kv_service.transaction(ops).await;
 
-    // Return 409 Conflict if there are errors
+    // A failed replicated write is a service error, not a transaction conflict.
+    if result.errors.as_ref().is_some_and(|errs| {
+        errs.iter()
+            .any(|e| e.what.starts_with("Raft write failed:"))
+    }) {
+        return raft_write_unavailable("kv_txn", "transaction could not be replicated");
+    }
     if result.errors.is_some() {
         HttpResponse::Conflict().json(result)
     } else {
@@ -2008,6 +2078,42 @@ fn validate_kv_key(key: &str) -> Result<(), String> {
         return Err("Key must not contain encoded path traversal".to_string());
     }
     Ok(())
+}
+
+/// Classify the outcome of a replicated Consul write.
+///
+/// `Ok(bool)` is the state machine's business-level answer: `false` can mean a
+/// CAS index conflict or a lock held by another session, and is a legitimate
+/// result for the client. `Err` means the request never reached the state
+/// machine (no leader, forwarding timeout, transport error) — reporting that
+/// as success is what made `PUT /v1/kv` acknowledge writes that never landed.
+pub(crate) fn classify_raft_write(outcome: Result<(bool, String), String>) -> Result<bool, String> {
+    match outcome {
+        Ok((success, _message)) => Ok(success),
+        Err(e) => Err(format!("raft write failed: {}", e)),
+    }
+}
+
+/// Build a 503 for a replicated write that never reached the state machine.
+/// The old handlers returned `200 true` here, which is how a leaderless window
+/// turned into an acknowledged write that was never persisted.
+fn raft_write_unavailable(endpoint: &'static str, err: &str) -> HttpResponse {
+    crate::api_metrics::incr_endpoint(endpoint, "error");
+    HttpResponse::ServiceUnavailable()
+        .consul_error(ConsulError::new(format!("Raft write failed: {}", err)))
+}
+
+/// Transaction counterpart: Consul reports transaction failures as 409 with an
+/// error list, so a Raft failure becomes an explicit `TxnError` rather than a
+/// partial success.
+fn txn_write_failure(op_index: usize, err: &str) -> TxnResult {
+    TxnResult {
+        results: None,
+        errors: Some(vec![TxnError {
+            op_index: op_index as u32,
+            what: format!("Raft write failed: {}", err),
+        }]),
+    }
 }
 
 fn current_timestamp() -> i64 {
@@ -2118,6 +2224,111 @@ pub async fn import_kv(
 
 #[cfg(test)]
 mod tests {
+    use actix_web::{App, http::StatusCode, web};
+
+    #[actix_web::test]
+    async fn put_kv_returns_503_when_raft_write_fails() {
+        let kv = web::Data::new(ConsulKVService::new());
+        kv.set_fail_raft_writes(true);
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(kv.clone())
+                .app_data(web::Data::new(AclService::disabled()))
+                .app_data(web::Data::new(ConsulIndexProvider::new()))
+                .route("/v1/kv/{key:.*}", web::put().to(super::put_kv)),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::put()
+            .uri("/v1/kv/test/fail")
+            .set_payload("hello")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a failed Raft write must not be acknowledged as success"
+        );
+    }
+
+    #[actix_web::test]
+    async fn delete_kv_returns_503_when_raft_write_fails() {
+        let kv = web::Data::new(ConsulKVService::new());
+        kv.set_fail_raft_writes(true);
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(kv.clone())
+                .app_data(web::Data::new(AclService::disabled()))
+                .app_data(web::Data::new(ConsulIndexProvider::new()))
+                .route("/v1/kv/{key:.*}", web::delete().to(super::delete_kv)),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::delete()
+            .uri("/v1/kv/test/fail")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a failed replicated delete must not be acknowledged as success"
+        );
+    }
+
+    #[actix_web::test]
+    async fn put_kv_returns_true_when_write_succeeds() {
+        let kv = web::Data::new(ConsulKVService::new());
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(kv.clone())
+                .app_data(web::Data::new(AclService::disabled()))
+                .app_data(web::Data::new(ConsulIndexProvider::new()))
+                .route("/v1/kv/{key:.*}", web::put().to(super::put_kv)),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::put()
+            .uri("/v1/kv/test/ok")
+            .set_payload("hello")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(actix_web::test::read_body(resp).await, "true");
+    }
+
+    #[test]
+    fn classify_raft_write_propagates_transport_failure() {
+        assert_eq!(
+            super::classify_raft_write(Ok((true, String::new()))),
+            Ok(true)
+        );
+        // A business-level rejection (CAS/lock conflict) is not a Raft failure.
+        assert_eq!(
+            super::classify_raft_write(Ok((false, "cas conflict".to_string()))),
+            Ok(false)
+        );
+        let err = super::classify_raft_write(Err("no leader".to_string()));
+        assert!(
+            err.is_err(),
+            "a transport failure must never be reported as an applied write"
+        );
+        assert!(err.unwrap_err().contains("no leader"));
+    }
+
+    #[test]
+    fn raft_write_unavailable_returns_503() {
+        let resp = super::raft_write_unavailable("kv_put", "no leader");
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn txn_write_failure_is_marked_as_raft_error() {
+        let result = super::txn_write_failure(3, "no leader");
+        let errors = result.errors.expect("transaction errors");
+        assert_eq!(errors[0].op_index, 3);
+        assert!(errors[0].what.starts_with("Raft write failed:"));
+    }
+
     use super::*;
 
     #[test]
