@@ -42,6 +42,14 @@ pub struct EmbeddedPersistService {
     /// caller read. RocksDB has no compare-and-set, so the read and the write
     /// are held together under this lock. Nothing is awaited while it is held.
     task_lock: Mutex<()>,
+    /// Serializes config CAS (read -> check -> WriteBatch) sequences.
+    ///
+    /// RocksDB has no compare-and-set, so two concurrent publishes with the
+    /// same `casMd5` could both pass the check and both write. The read, the
+    /// CAS check and the write are held together under this single global lock.
+    /// The guarded methods contain no `.await`, so a `std::sync` guard is safe
+    /// and deadlock-free (no other lock is taken while it is held).
+    config_cas_lock: Mutex<()>,
 }
 
 impl EmbeddedPersistService {
@@ -52,6 +60,7 @@ impl EmbeddedPersistService {
             reader: RocksDbReader::new(db.clone()),
             db,
             task_lock: Mutex::new(()),
+            config_cas_lock: Mutex::new(()),
         }
     }
 
@@ -61,6 +70,7 @@ impl EmbeddedPersistService {
             reader: RocksDbReader::new(db.clone()),
             db,
             task_lock: Mutex::new(()),
+            config_cas_lock: Mutex::new(()),
         }
     }
 
@@ -82,6 +92,20 @@ impl EmbeddedPersistService {
     /// Compute MD5 hash of content
     fn compute_md5(content: &str) -> String {
         const_hex::encode(md5::Md5::digest(content.as_bytes()))
+    }
+
+    /// Build a RocksDB scan prefix for keys laid out as
+    /// `tenant@@group@@data_id@@...` (config, gray and history CFs).
+    ///
+    /// Delegates to the canonical `RocksStateMachine::config_history_prefix`
+    /// (batata-consistency is not editable from this crate) so the
+    /// empty-tenant / empty-leading-segment behaviour is identical to the
+    /// history-search path: an empty tenant yields an empty prefix (full scan),
+    /// and empty group / data_id segments widen the prefix instead of producing
+    /// `@@` gaps that match nothing.
+    #[inline]
+    fn config_scan_prefix(tenant: &str, group: &str, data_id: &str) -> String {
+        RocksStateMachine::config_history_prefix(tenant, group, data_id)
     }
 
     /// Convert a JSON value from RocksDB into a [`ConfigStorageData`].
@@ -127,6 +151,37 @@ impl EmbeddedPersistService {
             encrypted_data_key: v["encrypted_data_key"].as_str().unwrap_or("").to_string(),
             created_time: v["created_time"].as_i64().unwrap_or(0),
             modified_time: v["modified_time"].as_i64().unwrap_or(0),
+        }
+    }
+
+    /// Convert a typed `StoredConfigHistory` directly into a
+    /// `ConfigHistoryStorageData`.
+    ///
+    /// The filtered history search already has the deserialized typed record;
+    /// building the response from it avoids the `serde_json::to_value` ->
+    /// `json_to_history` round-trip, whose `unwrap_or_default()` silently
+    /// turned a serialization failure into an all-empty record. Crate-visible
+    /// so the distributed backend's predecessor lookup can reuse it.
+    pub(crate) fn typed_to_history(
+        stored: &batata_consistency::raft::state_machine::StoredConfigHistory,
+    ) -> ConfigHistoryStorageData {
+        ConfigHistoryStorageData {
+            id: stored.id,
+            data_id: stored.data_id.clone(),
+            group: stored.group.clone(),
+            tenant: stored.tenant.clone(),
+            content: stored.content.clone(),
+            md5: stored.md5.clone(),
+            app_name: stored.app_name.clone(),
+            src_user: stored.src_user.clone().unwrap_or_default(),
+            src_ip: stored.src_ip.clone().unwrap_or_default(),
+            op_type: stored.op_type.clone(),
+            publish_type: stored.publish_type.clone(),
+            gray_name: stored.gray_name.clone(),
+            ext_info: stored.ext_info.clone(),
+            encrypted_data_key: stored.encrypted_data_key.clone(),
+            created_time: stored.created_time,
+            modified_time: stored.modified_time,
         }
     }
 
@@ -294,6 +349,15 @@ impl ConfigPersistence for EmbeddedPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
+        // Serialize the whole read -> CAS check -> WriteBatch sequence so two
+        // concurrent publishes cannot both observe the same pre-write md5 and
+        // both pass the check. This method has no `.await`, so the std::sync
+        // guard keeps the async_trait future Send and never blocks a runtime
+        // worker across an await.
+        let _cas_guard = self
+            .config_cas_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_key(data_id, group_id, tenant_id);
         let now = chrono::Utc::now().timestamp_millis();
         let md5_val = Self::compute_md5(content);
@@ -508,6 +572,13 @@ impl ConfigPersistence for EmbeddedPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
+        // Same CAS serialization as `config_create_or_update`: the gray read,
+        // check and write must be atomic with respect to other publishes. No
+        // `.await` in this method, so a std::sync guard is safe here.
+        let _cas_guard = self
+            .config_cas_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let key = RocksStateMachine::config_gray_key(data_id, group_id, tenant_id, gray_name);
         let now = chrono::Utc::now().timestamp_millis();
         let md5_val = Self::compute_md5(content);
@@ -593,7 +664,12 @@ impl ConfigPersistence for EmbeddedPersistService {
         }
 
         // Delete all gray configs for this data_id/group/namespace
-        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let prefix = Self::config_scan_prefix(namespace_id, group, data_id);
+        // An empty tenant yields an empty prefix (full CF scan). Never perform
+        // a full-scan delete: it would remove grays belonging to every tenant.
+        if prefix.is_empty() {
+            return Ok(false);
+        }
         let cf = self.cf(CF_CONFIG_GRAY)?;
         let mut keys_to_delete = Vec::new();
 
@@ -674,7 +750,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         namespace_id: &str,
         current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
-        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let prefix = Self::config_scan_prefix(namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
         let mut best: Option<serde_json::Value> = None;
@@ -717,8 +793,18 @@ impl ConfigPersistence for EmbeddedPersistService {
         let prefix = RocksStateMachine::config_history_prefix(namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_HISTORY)?;
 
-        let mut all_items: Vec<batata_consistency::raft::state_machine::StoredConfigHistory> =
-            Vec::new();
+        let offset = (page_no.saturating_sub(1)) * page_size;
+        // Keep only the newest `limit` entries (largest ids) instead of
+        // materializing the whole history in a Vec. The scan is still needed to
+        // count `total` and apply filters, but storage is bounded to the page
+        // window. BTreeMap keys by id, so `pop_first` evicts the oldest entry.
+        let limit = offset.saturating_add(page_size) as usize;
+        let mut window: std::collections::BTreeMap<
+            i64,
+            batata_consistency::raft::state_machine::StoredConfigHistory,
+        > = std::collections::BTreeMap::new();
+        let mut total = 0u64;
+
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
         for item in iter {
             let (key, value) =
@@ -753,19 +839,22 @@ impl ConfigPersistence for EmbeddedPersistService {
                 continue;
             }
 
-            all_items.push(stored);
+            total += 1;
+            window.insert(stored.id, stored);
+            if window.len() > limit {
+                let _ = window.pop_first();
+            }
         }
 
-        // Sort by id descending (newest first)
-        all_items.sort_by(|a, b| b.id.cmp(&a.id));
-
-        let total = all_items.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
-        let page_items: Vec<ConfigHistoryStorageData> = all_items
-            .iter()
+        // BTreeMap iterates in ascending id order; reverse for newest-first and
+        // slice out exactly the requested page. Build responses straight from
+        // the typed records (no serde round-trip, no unwrap_or_default).
+        let page_items: Vec<ConfigHistoryStorageData> = window
+            .into_iter()
+            .rev()
             .skip(offset as usize)
             .take(page_size as usize)
-            .map(|stored| Self::json_to_history(&serde_json::to_value(stored).unwrap_or_default()))
+            .map(|(_, stored)| Self::typed_to_history(&stored))
             .collect();
 
         Ok(Page::new(total, page_no, page_size, page_items))
@@ -775,7 +864,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigStorageData>> {
-        let prefix = format!("{}@@", namespace_id);
+        let prefix = Self::config_scan_prefix(namespace_id, "", "");
         let cf = self.cf(CF_CONFIG)?;
         let mut results = Vec::new();
 
@@ -1998,5 +2087,74 @@ mod tests {
 
         assert_eq!(svc.storage_mode(), StorageMode::StandaloneEmbedded);
         assert!(svc.health_check().await.is_ok());
+    }
+
+    // ==================== Guard regression tests (findings 17/18) ==========
+
+    #[test]
+    fn test_config_scan_prefix_uses_canonical_empty_tenant_semantics() {
+        // Fully-qualified prefix is identical to the historical hand-written
+        // format, so the success path is preserved.
+        assert_eq!(
+            EmbeddedPersistService::config_scan_prefix("tenant", "group", "data"),
+            "tenant@@group@@data@@"
+        );
+        // Tenant-only prefix (used by namespace scans).
+        assert_eq!(
+            EmbeddedPersistService::config_scan_prefix("tenant", "", ""),
+            "tenant@@"
+        );
+        // Empty tenant MUST widen to an empty (full-CF-scan) prefix. The old
+        // hand-written `format!("{}@@{}@@{}@@", ...)` produced "@@group@@data@@"
+        // here, which matches nothing; this assertion fails if that bug is
+        // reintroduced.
+        assert_eq!(
+            EmbeddedPersistService::config_scan_prefix("", "group", "data"),
+            ""
+        );
+        // Empty group widens the prefix rather than leaving an "@@" gap.
+        assert_eq!(
+            EmbeddedPersistService::config_scan_prefix("tenant", "", "data"),
+            "tenant@@"
+        );
+    }
+
+    #[test]
+    fn test_typed_to_history_preserves_typed_fields_without_serde_roundtrip() {
+        let stored = batata_consistency::raft::state_machine::StoredConfigHistory {
+            id: 42,
+            data_id: "d".to_string(),
+            group: "g".to_string(),
+            tenant: "t".to_string(),
+            content: "v=1".to_string(),
+            md5: "abc".to_string(),
+            app_name: "app".to_string(),
+            src_user: Some("admin".to_string()),
+            src_ip: Some("127.0.0.1".to_string()),
+            op_type: "U".to_string(),
+            publish_type: "formal".to_string(),
+            gray_name: "beta".to_string(),
+            ext_info: "{}".to_string(),
+            encrypted_data_key: "key".to_string(),
+            created_time: 100,
+            modified_time: 200,
+        };
+        let history = EmbeddedPersistService::typed_to_history(&stored);
+        assert_eq!(history.id, 42);
+        assert_eq!(history.content, "v=1");
+        assert_eq!(history.src_user, "admin");
+        assert_eq!(history.src_ip, "127.0.0.1");
+        assert_eq!(history.op_type, "U");
+        assert_eq!(history.modified_time, 200);
+        // Optional fields default to empty without swallowing the whole record
+        // into an all-empty serde value.
+        let none_user = batata_consistency::raft::state_machine::StoredConfigHistory {
+            src_user: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            EmbeddedPersistService::typed_to_history(&none_user).src_user,
+            ""
+        );
     }
 }

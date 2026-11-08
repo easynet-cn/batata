@@ -258,12 +258,24 @@ impl RocksStateMachine {
             let cf = self.cf_config_gray();
             match self.db.get_cf(cf, key.as_bytes()) {
                 Ok(Some(bytes)) => {
-                    if let Ok(existing) = bincode::deserialize::<StoredConfigGray>(&bytes) {
-                        let current_md5 = existing.md5.as_str();
-                        if current_md5 != expected_md5.as_str() {
+                    match bincode::deserialize::<StoredConfigGray>(&bytes) {
+                        Ok(existing) => {
+                            let current_md5 = existing.md5.as_str();
+                            if current_md5 != expected_md5.as_str() {
+                                return RaftResponse::failure(format!(
+                                    "CAS conflict: expected md5={}, actual md5={}",
+                                    expected_md5, current_md5
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            // A corrupt existing record must not be treated as a
+                            // passing CAS: that would let a write overwrite real
+                            // gray config data. Fail closed, matching the
+                            // non-gray config path (`apply_config_publish`).
                             return RaftResponse::failure(format!(
-                                "CAS conflict: expected md5={}, actual md5={}",
-                                expected_md5, current_md5
+                                "Failed to decode existing gray config: {}",
+                                e
                             ));
                         }
                     }

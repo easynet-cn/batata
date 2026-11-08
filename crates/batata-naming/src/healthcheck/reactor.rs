@@ -25,6 +25,26 @@ use tracing::{debug, info, warn};
 /// enough that a stuck event loop applies backpressure instead of OOMing.
 const REACTOR_CHANNEL_CAPACITY: usize = 4096;
 
+/// Hard cap on simultaneously-tracked long-lived health-check tasks.
+///
+/// Every check spawns a `tokio::task` that lives until cancellation, so an
+/// unbounded schedule flood (mass registration, a misbehaving facade) would
+/// otherwise grow task count without limit. The reactor is a singleton in
+/// practice, so bounding its `task_handles` bounds the process-wide task
+/// count. New schedules beyond the cap are logged and dropped; re-scheduling
+/// an existing task is always allowed because its old handle is removed
+/// first, so the live count does not grow.
+///
+/// The test build uses a small cap so the overflow guard can be exercised
+/// without spawning thousands of tasks.
+const MAX_CHECK_TASKS: usize = if cfg!(test) { 8 } else { 4096 };
+
+/// Whether a new long-lived check task may be spawned given `live_handles`
+/// currently-tracked tasks. Pure helper so the cap boundary stays testable.
+fn within_check_task_cap(live_handles: usize) -> bool {
+    live_handles < MAX_CHECK_TASKS
+}
+
 /// Health check reactor message
 #[derive(Debug)]
 pub enum ReactorMessage {
@@ -172,6 +192,17 @@ impl HealthCheckReactor {
                             handle.abort();
                         }
 
+                        // Hard cap on long-lived tasks. Checked after the
+                        // removal above so a replacement never trips it (its
+                        // old handle no longer counts toward the live total).
+                        if !within_check_task_cap(task_handles.len()) {
+                            warn!(
+                                "Health check task cap ({}) reached, dropping Schedule({})",
+                                MAX_CHECK_TASKS, task_id
+                            );
+                            continue;
+                        }
+
                         // Mark task as active (presence-only, no value clone)
                         tasks.insert(Arc::clone(&task_id), ());
 
@@ -204,6 +235,18 @@ impl HealthCheckReactor {
                             // Cancel existing handle if present
                             if let Some((_, handle)) = task_handles.remove(check_key_arc.as_ref()) {
                                 handle.abort();
+                            }
+
+                            // Same global cap as the Schedule arm: reject a
+                            // NEW task when the live handle count is at the
+                            // cap. Replacements pass (their old handle was
+                            // just removed). No handle is spawned on reject.
+                            if !within_check_task_cap(task_handles.len()) {
+                                warn!(
+                                    "Health check task cap ({}) reached, dropping ScheduleRegistryCheck({})",
+                                    MAX_CHECK_TASKS, check_key
+                                );
+                                continue;
                             }
 
                             // Cluster responsibility gate.
@@ -308,6 +351,10 @@ impl HealthCheckReactor {
     /// awaits are needed. Previously this was `async fn` and took unused
     /// `naming_service` / `config` Arcs that the caller cloned per schedule
     /// event, producing pure waste.
+    ///
+    /// The `MAX_CHECK_TASKS` cap is enforced by the event loop before this is
+    /// called (and before `tasks` is marked active), so a rejected schedule
+    /// leaves no orphaned handle or active-task entry behind.
     fn schedule_task_loop(
         task: HealthCheckTask,
         task_id: Arc<str>,
@@ -897,6 +944,54 @@ mod tests {
             reactor.get_active_task_count(),
             0,
             "No tasks should be scheduled when disabled"
+        );
+    }
+
+    #[test]
+    fn test_check_task_cap_boundary() {
+        // Removing the `live_handles < MAX_CHECK_TASKS` guard (or making the
+        // cap effectively unbounded) fails these assertions.
+        assert!(within_check_task_cap(0));
+        assert!(within_check_task_cap(MAX_CHECK_TASKS - 1));
+        assert!(!within_check_task_cap(MAX_CHECK_TASKS));
+        assert!(!within_check_task_cap(MAX_CHECK_TASKS + 1));
+    }
+
+    #[tokio::test]
+    async fn test_reactor_drops_new_schedule_when_at_cap() {
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+        // A registry must be set so the event loop reaches the spawn path.
+        reactor.set_registry(Arc::new(
+            crate::healthcheck::registry::InstanceCheckRegistry::with_naming_service(
+                naming_service,
+            ),
+        ));
+
+        // Pre-fill the handle map to the cap with already-completed dummy
+        // tasks. Any NEW spawned task would push the count over the cap.
+        for i in 0..MAX_CHECK_TASKS {
+            let handle = tokio::spawn(async {});
+            reactor
+                .task_handles
+                .insert(Arc::from(format!("dummy-{}", i).as_str()), handle);
+        }
+        assert_eq!(reactor.task_handles.len(), MAX_CHECK_TASKS);
+
+        reactor.schedule_registry_check("overflow-check");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // The cap guard must reject the new task. If it is removed, a fresh
+        // handle is inserted for "overflow-check" and this assertion fails.
+        assert_eq!(
+            reactor.task_handles.len(),
+            MAX_CHECK_TASKS,
+            "a new registry check must be dropped when the task cap is reached"
+        );
+        assert!(
+            !reactor.task_handles.contains_key("overflow-check"),
+            "the overflowing check must not get a task handle"
         );
     }
 }

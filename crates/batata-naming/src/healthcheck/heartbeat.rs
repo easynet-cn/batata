@@ -9,7 +9,7 @@
 
 use super::config::HealthCheckConfig;
 use super::interceptor::HealthCheckInterceptorChain;
-use crate::service::NamingService;
+use crate::service::{NamingService, build_instance_key_parts};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,6 +33,14 @@ pub struct HeartbeatEntry {
     /// Whether this is an ephemeral instance. Persistent instances (false) are
     /// not auto-deleted on heartbeat timeout — they use server-side active checks.
     ephemeral: bool,
+    /// Precomputed `ip#port#cluster` storage key for the instance. Building it
+    /// once at record time avoids a per-tick `format!` and lets the timeout
+    /// path use `NamingService::get_instance_by_key` point lookup instead of
+    /// cloning and linearly scanning the whole service snapshot.
+    instance_key: String,
+    /// Precomputed `ip:port` responsibility id used by the interceptor chain.
+    /// Also hoisted out of the per-tick loop to avoid a `format!` per instance.
+    responsible_id: String,
 }
 
 /// Unhealthy instance checker (matches Nacos UnhealthyInstanceChecker)
@@ -103,6 +111,8 @@ impl UnhealthyInstanceChecker {
             heartbeat_timeout,
             ip_delete_timeout,
             ephemeral,
+            instance_key: build_instance_key_parts(ip, port, cluster_name),
+            responsible_id: format!("{}:{}", ip, port),
         };
 
         self.heartbeat_map.insert(key.clone(), entry);
@@ -172,9 +182,9 @@ impl UnhealthyInstanceChecker {
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
             for entry in heartbeat_map.iter() {
-                // Responsibility check: skip instances assigned to other nodes
-                let responsible_id = format!("{}:{}", entry.ip, entry.port);
-                if !chain.should_execute(&responsible_id) {
+                // Responsibility check: skip instances assigned to other nodes.
+                // The id is precomputed on the entry, so no per-tick `format!`.
+                if !chain.should_execute(&entry.responsible_id) {
                     continue;
                 }
 
@@ -195,28 +205,29 @@ impl UnhealthyInstanceChecker {
                 // --- heartbeat_map lock released ---
 
                 if let Some(entry) = entry_data {
-                    // Zero-copy snapshot — we only read fields, no ownership needed.
-                    let snapshot = naming_service.get_instances_snapshot(
+                    // Point lookup by the precomputed instance key. The old path
+                    // cloned the entire service instance list and linearly
+                    // scanned it for a single ip/port match; that was O(all
+                    // instances in the service) per timed-out heartbeat. The
+                    // `ip#port#cluster` key is the exact storage key, so this is
+                    // a single DashMap lookup and preserves the cluster scoping
+                    // the snapshot filter provided.
+                    let instance = naming_service.get_instance_by_key(
                         &entry.namespace,
                         &entry.group_name,
                         &entry.service_name,
-                        &entry.cluster_name,
-                        false,
+                        &entry.instance_key,
                     );
 
-                    for instance in snapshot.iter() {
-                        if instance.ip == entry.ip && instance.port == entry.port {
-                            // Nacos parity — `UnhealthyInstanceChecker.doCheck()` only acts on
-                            // instances that are *still* healthy:
-                            //   if (instance.isHealthy() && isUnhealthy(...)) { changeHealthyStatus(...) }
-                            // Without this guard the checker re-marks long-dead instances and
-                            // re-publishes their health-change / Distro sync on every interval,
-                            // forever. Instances that recover are flipped back to healthy by
-                            // `heartbeat()`, so a later timeout is still detected.
-                            if !instance.healthy {
-                                break;
-                            }
-
+                    if let Some(instance) = instance {
+                        // Nacos parity — `UnhealthyInstanceChecker.doCheck()` only acts on
+                        // instances that are *still* healthy:
+                        //   if (instance.isHealthy() && isUnhealthy(...)) { changeHealthyStatus(...) }
+                        // Without this guard the checker re-marks long-dead instances and
+                        // re-publishes their health-change / Distro sync on every interval,
+                        // forever. Instances that recover are flipped back to healthy by
+                        // `heartbeat()`, so a later timeout is still detected.
+                        if instance.healthy {
                             info!(
                                 "Marking instance {}:{} as unhealthy due to heartbeat timeout (elapsed: {}ms, timeout: {}ms)",
                                 entry.ip, entry.port, elapsed, entry.heartbeat_timeout
@@ -245,7 +256,6 @@ impl UnhealthyInstanceChecker {
                                     instance.ip, instance.port
                                 );
                             }
-                            break;
                         }
                     }
                 }
@@ -355,9 +365,9 @@ impl ExpiredInstanceChecker {
                     continue;
                 }
 
-                // Responsibility check: skip instances assigned to other nodes
-                let responsible_id = format!("{}:{}", entry.ip, entry.port);
-                if !chain.should_execute(&responsible_id) {
+                // Responsibility check: skip instances assigned to other nodes.
+                // The id is precomputed on the entry, so no per-tick `format!`.
+                if !chain.should_execute(&entry.responsible_id) {
                     continue;
                 }
 
@@ -999,5 +1009,55 @@ mod tests {
 
         // Should have 2 separate entries
         assert_eq!(checker.get_tracked_count(), 2);
+    }
+
+    #[test]
+    fn test_precomputed_keys_enable_point_lookup() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service.clone(), config, test_chain());
+
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "svc",
+            "10.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+            true,
+        );
+
+        // The per-tick hot path must not rebuild these with `format!`; it reads
+        // them from the entry. Assert they are precomputed and exact — removing
+        // either field breaks this test (and the point-lookup path).
+        let guard = checker.heartbeat_map.iter().next().unwrap();
+        let entry = guard.value().clone();
+        drop(guard);
+        assert_eq!(entry.responsible_id, "10.0.0.1:8080");
+        assert_eq!(entry.instance_key, "10.0.0.1#8080#DEFAULT");
+
+        // The timeout path uses a single point lookup with the precomputed
+        // instance key instead of cloning and scanning the whole service.
+        // Registering the same instance must make that lookup succeed.
+        let instance = crate::model::Instance {
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            ..Default::default()
+        };
+        let _ = naming_service.register_instance("public", "DEFAULT_GROUP", "svc", instance);
+        let found = naming_service.get_instance_by_key(
+            "public",
+            "DEFAULT_GROUP",
+            "svc",
+            &entry.instance_key,
+        );
+        assert!(
+            found.is_some(),
+            "point lookup must find the instance by the precomputed key"
+        );
+        assert_eq!(found.unwrap().ip, "10.0.0.1");
     }
 }

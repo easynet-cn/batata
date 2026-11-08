@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use batata_api::{model::Member, remote::model::ResponseTrait};
+use batata_api::{
+    model::Member,
+    remote::model::{RequestTrait, ResponseTrait},
+};
 use batata_server_api::distro::{
     DistroDataBatchSyncRequest, DistroDataBatchSyncResponse, DistroDataItem,
     DistroDataSnapshotRequest, DistroDataSnapshotResponse, DistroDataSyncRequest,
@@ -31,6 +34,12 @@ use batata_server_api::distro::{
 /// `batata.cluster.distro.batch_sync_size` (or the Nacos-compatible alias
 /// `nacos.core.protocol.distro.data.sync.batchSize`).
 pub const DISTRO_BATCH_SIZE: usize = 50;
+
+/// Maximum number of times a single sync task is retried before it is
+/// dropped. Bounding retries keeps a permanently unreachable peer from
+/// pinning a task (and its memory) in the queue forever; the verify cycle
+/// re-detects any remaining divergence once the peer is reachable again.
+pub const MAX_SYNC_RETRIES: u32 = 100;
 
 /// Wire-level fallback name for a `Custom` distro data type whose
 /// `custom_type_name` was omitted by an older peer.
@@ -390,6 +399,78 @@ fn install_ring(members: &DashMap<String, Member>, mapper: &DistroMapper) {
     mapper.update_members(ring_members(members));
 }
 
+/// A verify RPC whose JSON body was encoded once and shared across every
+/// peer. `DistroDataVerifyRequest` owns a `HashMap<String, i64>` and
+/// `ClusterClientManager::send_request` takes the request by value, so the
+/// naive implementation cloned (and re-serialized) the whole key->version
+/// map once per peer. All peers receive the identical payload, so we encode
+/// it a single time and replay the bytes through this lightweight
+/// `RequestTrait` adapter. The bytes and the `request_type` are exactly those
+/// a normal `DistroDataVerifyRequest` would produce, so the wire format is
+/// unchanged.
+struct SharedVerifyRequest {
+    request_type: &'static str,
+    body: Arc<Vec<u8>>,
+}
+
+impl Serialize for SharedVerifyRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // `body()` is overridden, so serde never serializes this value; this
+        // impl only exists to satisfy the `Serialize` bound on send_request.
+        serializer.serialize_unit()
+    }
+}
+
+impl RequestTrait for SharedVerifyRequest {
+    fn headers(&self) -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::new()
+    }
+
+    fn insert_headers(&mut self, _headers: std::collections::HashMap<String, String>) {}
+
+    fn request_type(&self) -> &'static str {
+        self.request_type
+    }
+
+    fn body(&self) -> Vec<u8>
+    where
+        Self: Serialize,
+    {
+        (*self.body).clone()
+    }
+}
+
+/// Remove pending sync tasks whose target is no longer a cluster member.
+/// Called once per verify cycle so a departed peer cannot keep a task
+/// retrying forever. A member that is still present but merely unreachable
+/// is intentionally kept (retries are bounded by `MAX_SYNC_RETRIES`).
+fn prune_stale_sync_targets(
+    sync_tasks: &DashMap<String, DistroSyncTask>,
+    members: &DashMap<String, Member>,
+) {
+    // Snapshot the member set first so we never hold a guard on one map
+    // while locking the other (respects the documented lock ordering).
+    let live: std::collections::HashSet<String> = members.iter().map(|e| e.key().clone()).collect();
+    let stale: Vec<String> = sync_tasks
+        .iter()
+        .filter(|e| !live.contains(&e.value().target_address))
+        .map(|e| e.key().clone())
+        .collect();
+    let pruned = stale.len();
+    for key in stale {
+        sync_tasks.remove(&key);
+    }
+    if pruned > 0 {
+        debug!(
+            "Pruned {} sync tasks targeting members no longer in the cluster",
+            pruned
+        );
+    }
+}
+
 /// Distro protocol manager
 ///
 /// # Lock Ordering
@@ -421,6 +502,10 @@ pub struct DistroProtocol {
     initialized: Arc<AtomicBool>,
     /// Operation counters for monitoring
     counters: Arc<DistroCounters>,
+    /// Handles of long-lived background tasks (member-change listener, sync
+    /// task processor, verify loop). Aborted in `stop()` so they cannot
+    /// outlive the protocol.
+    task_handles: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl DistroProtocol {
@@ -443,6 +528,7 @@ impl DistroProtocol {
             mapper: Arc::new(DistroMapper::new()),
             initialized: Arc::new(AtomicBool::new(false)),
             counters: Arc::new(DistroCounters::new()),
+            task_handles: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -466,6 +552,7 @@ impl DistroProtocol {
             mapper: Arc::new(DistroMapper::new()),
             initialized: Arc::new(AtomicBool::new(false)),
             counters: Arc::new(DistroCounters::new()),
+            task_handles: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -507,6 +594,14 @@ impl DistroProtocol {
         let data_type = handler.data_type();
         info!("Registering distro handler for type: {}", data_type);
         self.handlers.insert(data_type, handler);
+    }
+
+    /// Register a long-lived background task so `stop()` can abort it.
+    fn track_task(&self, handle: tokio::task::JoinHandle<()>) {
+        self.task_handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(handle);
     }
 
     /// Start the distro protocol
@@ -589,7 +684,7 @@ impl DistroProtocol {
     ) {
         let mut rx = publisher.subscribe();
         let this = Arc::clone(self);
-        tokio::spawn(async move {
+        self.track_task(tokio::spawn(async move {
             use super::member_event::MemberChangeType;
             loop {
                 match rx.recv().await {
@@ -624,7 +719,7 @@ impl DistroProtocol {
                     }
                 }
             }
-        });
+        }));
     }
 
     /// Drop all locally-stored keys that the local node is no longer
@@ -694,6 +789,22 @@ impl DistroProtocol {
 
         let mut running = self.running.write().await;
         *running = false;
+        drop(running);
+
+        // `running=false` lets the sync/verify loops exit at their next
+        // tick, but the member-change listener blocks on `rx.recv().await`
+        // and has no tick. Abort every tracked task so none outlive the
+        // protocol.
+        let handles: Vec<_> = self
+            .task_handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect();
+        for handle in handles {
+            handle.abort();
+        }
+
         info!("Stopped Distro protocol");
     }
 
@@ -811,8 +922,48 @@ impl DistroProtocol {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{}:{}", data_type, key).hash(&mut hasher);
+        // Hash the components directly instead of allocating a temporary
+        // "type:key" String on every call (this runs on the 100ms sync tick).
+        // Shard assignment is an internal, per-process routing decision that
+        // is neither persisted nor sent on the wire, so only determinism
+        // within one process is required.
+        data_type.hash(&mut hasher);
+        key.hash(&mut hasher);
         (hasher.finish() % worker_count as u64) as usize
+    }
+
+    /// Atomically claim sync tasks that are due at `now`.
+    ///
+    /// The scan and the removal are separate phases: a concurrent
+    /// `sync_data()`/retry can replace a task with a newer `scheduled_time`
+    /// between them. `claim_observed_sync_tasks` only removes a value whose
+    /// `scheduled_time` still matches the observation, so a newer task is
+    /// never dropped by an older claim (TOCTOU).
+    fn claim_ready_sync_tasks(
+        sync_tasks: &DashMap<String, DistroSyncTask>,
+        now: i64,
+    ) -> Vec<(String, DistroSyncTask)> {
+        let observed: Vec<(String, i64)> = sync_tasks
+            .iter()
+            .filter(|e| e.value().scheduled_time <= now)
+            .map(|e| (e.key().clone(), e.value().scheduled_time))
+            .collect();
+        Self::claim_observed_sync_tasks(sync_tasks, observed)
+    }
+
+    /// Remove exactly the tasks whose `scheduled_time` still equals the value
+    /// observed during the scan. A plain `remove(&key)` would delete a newer
+    /// task inserted after the scan.
+    fn claim_observed_sync_tasks(
+        sync_tasks: &DashMap<String, DistroSyncTask>,
+        observed: Vec<(String, i64)>,
+    ) -> Vec<(String, DistroSyncTask)> {
+        observed
+            .into_iter()
+            .filter_map(|(key, observed_time)| {
+                sync_tasks.remove_if(&key, |_k, v| v.scheduled_time == observed_time)
+            })
+            .collect()
     }
 
     /// Send one ready sync task, re-queueing it with backoff when the RPC fails.
@@ -830,13 +981,24 @@ impl DistroProtocol {
         task: DistroSyncTask,
         now: i64,
     ) {
+        // Own the handler Arc and drop the DashMap shard read guard BEFORE
+        // any await: holding it across the RPC (or the async get_data) would
+        // block writers to this shard for the whole round-trip.
+        let handler = handlers
+            .get(&task.data_type)
+            .map(|entry| Arc::clone(entry.value()));
         // Get data from handler and send sync request
-        if let Some(handler) = handlers.get(&task.data_type)
+        if let Some(handler) = handler
             && let Some(data) = handler.get_data(&task.key).await
         {
-            // Send sync request
-            let result =
-                Self::send_sync_data(client_manager, &task.target_address, data.clone()).await;
+            // Send sync request (bounded by sync_timeout inside the helper)
+            let result = Self::send_sync_data(
+                client_manager,
+                &task.target_address,
+                data.clone(),
+                config.sync_timeout,
+            )
+            .await;
 
             if result.is_ok() {
                 counters.sync_success.fetch_add(1, Ordering::Relaxed);
@@ -846,14 +1008,21 @@ impl DistroProtocol {
                 );
             } else {
                 counters.sync_failure.fetch_add(1, Ordering::Relaxed);
-                // Nacos-compatible retry: unlimited attempts with
-                // capped exponential backoff. The task stays in
-                // the queue until it succeeds OR the target is
-                // removed from cluster membership (handled by the
-                // verify loop's cleanup_non_responsible_keys /
-                // member refresh). Dropping after N attempts
-                // risks losing registration under a long network
-                // partition.
+                // Bound retries so a permanently unreachable peer cannot pin
+                // a task (and its memory) in the queue forever. The verify
+                // cycle re-detects any divergence once the peer is reachable
+                // again.
+                if task.retry_count >= MAX_SYNC_RETRIES {
+                    warn!(
+                        "Dropping sync task for {}:{} to {} after {} retries (max reached)",
+                        task.data_type, task.key, task.target_address, task.retry_count
+                    );
+                    return;
+                }
+                // Nacos-compatible retry: capped exponential backoff. The task
+                // stays in the queue until it succeeds, the retry budget is
+                // exhausted, or the target leaves the cluster (pruned by the
+                // verify loop).
                 //
                 // Backoff schedule (cap at 2^6 = 64x base):
                 //   attempt 1: base * 2
@@ -906,7 +1075,7 @@ impl DistroProtocol {
         let _local_address = self.local_address.clone();
         let counters = self.counters.clone();
 
-        tokio::spawn(async move {
+        self.track_task(tokio::spawn(async move {
             loop {
                 {
                     let is_running = running.read().await;
@@ -917,17 +1086,11 @@ impl DistroProtocol {
 
                 let now = chrono::Utc::now().timestamp_millis();
 
-                // Atomically claim ready tasks: collect keys first, then remove.
-                // Only clone keys (not values) during iteration to reduce overhead.
-                let ready_keys: Vec<String> = sync_tasks
-                    .iter()
-                    .filter(|e| e.value().scheduled_time <= now)
-                    .map(|e| e.key().clone())
-                    .collect();
-                let ready_tasks: Vec<(String, DistroSyncTask)> = ready_keys
-                    .into_iter()
-                    .filter_map(|key| sync_tasks.remove(&key))
-                    .collect();
+                // Atomically claim ready tasks. A concurrent sync_data()/retry
+                // can replace a task with a newer scheduled_time between the
+                // scan and the removal; claim_ready_sync_tasks verifies the
+                // observed scheduled_time before removing (avoids TOCTOU).
+                let ready_tasks = Self::claim_ready_sync_tasks(&sync_tasks, now);
 
                 if !ready_tasks.is_empty() {
                     // Shard by distro key — upstream `addTask(distroKey, task)`
@@ -976,7 +1139,7 @@ impl DistroProtocol {
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        });
+        }));
     }
 
     /// Start the verification task - periodically verifies data consistency with peers.
@@ -994,7 +1157,7 @@ impl DistroProtocol {
         let counters = self.counters.clone();
         let mapper = self.mapper.clone();
 
-        tokio::spawn(async move {
+        self.track_task(tokio::spawn(async move {
             loop {
                 {
                     let is_running = running.read().await;
@@ -1026,6 +1189,10 @@ impl DistroProtocol {
                 // mapper is shared with the naming health check, that also
                 // moved instance probing to a different node.
                 install_ring(&members, &mapper);
+
+                // Evict sync tasks whose target has left the cluster so a
+                // departed peer cannot keep a task retrying forever.
+                prune_stale_sync_targets(&sync_tasks, &members);
 
                 // NOTE: Distro keeps a full replica of every key on every node
                 // (Nacos semantics) and this loop walks *all* of them, so
@@ -1082,37 +1249,52 @@ impl DistroProtocol {
                         continue;
                     }
 
+                    // Build the verify request ONCE. Every peer receives the
+                    // identical payload, so encoding it a single time and
+                    // sharing the bytes avoids cloning (and re-serializing)
+                    // the full key->version map once per peer.
+                    let (api_data_type, custom_type_name) = match data_type {
+                        DistroDataType::NamingInstance => (
+                            batata_server_api::distro::DistroDataType::NamingInstance,
+                            None,
+                        ),
+                        DistroDataType::Custom(name) => (
+                            batata_server_api::distro::DistroDataType::Custom,
+                            Some(name.clone()),
+                        ),
+                    };
+                    let mut verify_request = DistroDataVerifyRequest::new();
+                    verify_request.data_type = api_data_type;
+                    verify_request.custom_type_name = custom_type_name;
+                    verify_request.verify_data = verify_data; // move, no per-peer clone
+                    // Versions are per-node counters: tell the peer whose
+                    // counter it is being asked about.
+                    verify_request.source = local_address.clone();
+                    let request_type = verify_request.request_type();
+                    let encoded = Arc::new(verify_request.body());
+                    let verify_timeout = config.verify_timeout;
+
                     // Send verify requests to ALL peers in parallel
                     let mut handles = Vec::with_capacity(other_members.len());
 
                     for member_address in &other_members {
-                        let (api_data_type, custom_type_name) = match data_type {
-                            DistroDataType::NamingInstance => (
-                                batata_server_api::distro::DistroDataType::NamingInstance,
-                                None,
-                            ),
-                            DistroDataType::Custom(name) => (
-                                batata_server_api::distro::DistroDataType::Custom,
-                                Some(name.clone()),
-                            ),
-                        };
-
-                        let mut request = DistroDataVerifyRequest::new();
-                        request.data_type = api_data_type;
-                        request.custom_type_name = custom_type_name;
-                        request.verify_data = verify_data.clone();
-                        // Versions are per-node counters: tell the peer whose
-                        // counter it is being asked about.
-                        request.source = local_address.clone();
-
                         let cm = client_manager.clone();
                         let addr = member_address.clone();
                         let dt = data_type.clone();
+                        let body = Arc::clone(&encoded);
 
-                        // Each peer verification runs concurrently
+                        // Each peer verification runs concurrently, bounded
+                        // by verify_timeout so a hung peer cannot stall the
+                        // whole verify cycle.
                         handles.push(tokio::spawn(async move {
-                            match cm.send_request(&addr, request).await {
-                                Ok(response) => {
+                            let request = SharedVerifyRequest { request_type, body };
+                            let send = tokio::time::timeout(
+                                verify_timeout,
+                                cm.send_request(&addr, request),
+                            )
+                            .await;
+                            match send {
+                                Ok(Ok(response)) => {
                                     if let Some(body) = response.body
                                         && let Ok(verify_response) =
                                             serde_json::from_slice::<DistroDataVerifyResponse>(
@@ -1131,8 +1313,15 @@ impl DistroProtocol {
                                     }
                                     None
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     warn!("Failed to verify distro data with {}: {}", addr, e);
+                                    None
+                                }
+                                Err(_) => {
+                                    warn!(
+                                        "Verify distro data with {} timed out after {:?}",
+                                        addr, verify_timeout
+                                    );
                                     None
                                 }
                             }
@@ -1164,7 +1353,7 @@ impl DistroProtocol {
                     }
                 }
             }
-        });
+        }));
     }
 
     /// Load initial data from peers when this node starts (snapshot load).
@@ -1229,12 +1418,15 @@ impl DistroProtocol {
                 for member_address in &peers {
                     let request = DistroDataSnapshotRequest::new(api_data_type.clone());
 
-                    match self
-                        .client_manager
-                        .send_request(member_address, request)
-                        .await
-                    {
-                        Ok(response) => {
+                    // Bound the snapshot RPC so an unreachable peer cannot
+                    // stall initial load until the next retry round.
+                    let send = tokio::time::timeout(
+                        self.config.sync_timeout,
+                        self.client_manager.send_request(member_address, request),
+                    )
+                    .await;
+                    match send {
+                        Ok(Ok(response)) => {
                             if let Some(body) = response.body
                                 && let Ok(snapshot_response) =
                                     serde_json::from_slice::<DistroDataSnapshotResponse>(
@@ -1242,6 +1434,8 @@ impl DistroProtocol {
                                     )
                             {
                                 let item_count = snapshot_response.snapshot.len();
+                                let mut applied = 0usize;
+                                let mut failures = 0usize;
                                 for item in snapshot_response.snapshot {
                                     let internal_data_type = match item.data_type {
                                         batata_server_api::distro::DistroDataType::NamingInstance => {
@@ -1262,23 +1456,45 @@ impl DistroProtocol {
                                         item.version,
                                     );
 
-                                    if let Err(e) = self.receive_sync_data(data).await {
-                                        warn!("Failed to process snapshot data: {}", e);
+                                    match self.receive_sync_data(data).await {
+                                        Ok(()) => applied += 1,
+                                        Err(e) => {
+                                            failures += 1;
+                                            warn!("Failed to process snapshot data: {}", e);
+                                        }
                                     }
                                 }
 
-                                info!(
-                                    "Loaded {} items for type {} from {}",
-                                    item_count, data_type, member_address
-                                );
-                                loaded = true;
-                                break;
+                                // A snapshot where EVERY item failed to apply
+                                // must not count as a successful load: doing
+                                // so marks the node initialised with no data
+                                // and skips the remaining peers/retries.
+                                if applied == 0 && failures > 0 {
+                                    warn!(
+                                        "Snapshot for type {} from {} had {} items but all \
+                                         failed to apply; trying next peer",
+                                        data_type, member_address, item_count
+                                    );
+                                } else {
+                                    info!(
+                                        "Loaded {} items for type {} from {} ({} failed)",
+                                        applied, data_type, member_address, failures
+                                    );
+                                    loaded = true;
+                                    break;
+                                }
                             }
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             warn!(
                                 "Failed to load snapshot from {}: {}, trying next peer",
                                 member_address, e
+                            );
+                        }
+                        Err(_) => {
+                            warn!(
+                                "Snapshot load from {} timed out after {:?}, trying next peer",
+                                member_address, self.config.sync_timeout
                             );
                         }
                     }
@@ -1335,7 +1551,13 @@ impl DistroProtocol {
             if chunk.is_empty() {
                 break;
             }
-            Self::send_batch_sync_data(&self.client_manager, target, chunk).await?;
+            Self::send_batch_sync_data(
+                &self.client_manager,
+                target,
+                chunk,
+                self.config.sync_timeout,
+            )
+            .await?;
         }
         debug!(
             "Batch sync to {} complete: {} items in chunks of {}",
@@ -1349,6 +1571,7 @@ impl DistroProtocol {
         client_manager: &Arc<ClusterClientManager>,
         target: &str,
         items: Vec<DistroData>,
+        sync_timeout: Duration,
     ) -> Result<(), String> {
         let api_items: Vec<DistroDataItem> = items
             .into_iter()
@@ -1376,8 +1599,10 @@ impl DistroProtocol {
 
         let count = api_items.len();
         let request = DistroDataBatchSyncRequest::with_items(api_items);
-        match client_manager.send_request(target, request).await {
-            Ok(response) => {
+        let send =
+            tokio::time::timeout(sync_timeout, client_manager.send_request(target, request)).await;
+        match send {
+            Ok(Ok(response)) => {
                 if let Some(body) = response.body
                     && let Ok(batch_response) =
                         serde_json::from_slice::<DistroDataBatchSyncResponse>(&body.value)
@@ -1399,11 +1624,20 @@ impl DistroProtocol {
                         batch_response.response.message
                     ));
                 }
-                // Unparseable response — assume success rather than triggering
-                // a retry storm; the verify cycle will catch any divergence.
-                Ok(())
+                // A missing or malformed body is NOT proof of success.
+                // Returning Ok would count the sync as done and drop the
+                // task, leaving the replica silently divergent; surface an
+                // Err so the existing retry path re-queues it.
+                Err(format!(
+                    "Distro batch sync to {}: missing or malformed response body",
+                    target
+                ))
             }
-            Err(e) => Err(format!("Failed to send distro batch sync: {}", e)),
+            Ok(Err(e)) => Err(format!("Failed to send distro batch sync: {}", e)),
+            Err(_) => Err(format!(
+                "Distro batch sync to {} timed out after {:?}",
+                target, sync_timeout
+            )),
         }
     }
 
@@ -1412,6 +1646,7 @@ impl DistroProtocol {
         client_manager: &Arc<ClusterClientManager>,
         target: &str,
         data: DistroData,
+        sync_timeout: Duration,
     ) -> Result<(), String> {
         debug!(
             "Sending distro sync data to {}: type={}, key={}",
@@ -1442,9 +1677,11 @@ impl DistroProtocol {
         // Create sync request
         let request = DistroDataSyncRequest::with_data(data_item);
 
-        // Send via cluster client manager
-        match client_manager.send_request(target, request).await {
-            Ok(response) => {
+        // Send via cluster client manager, bounded by sync_timeout.
+        let send =
+            tokio::time::timeout(sync_timeout, client_manager.send_request(target, request)).await;
+        match send {
+            Ok(Ok(response)) => {
                 // Parse response to check if it's successful
                 if let Some(body) = response.body
                     && let Ok(sync_response) =
@@ -1460,16 +1697,29 @@ impl DistroProtocol {
                         ));
                     }
                 }
-                // If we can't parse the response, assume success
-                Ok(())
+                // A missing or malformed body is NOT proof of success; let
+                // the retry path re-queue instead of silently diverging.
+                Err(format!(
+                    "Distro sync for key={} to {}: missing or malformed response body",
+                    data.key, target
+                ))
             }
-            Err(e) => Err(format!("Failed to send distro sync: {}", e)),
+            Ok(Err(e)) => Err(format!("Failed to send distro sync: {}", e)),
+            Err(_) => Err(format!(
+                "Distro sync for key={} to {} timed out after {:?}",
+                data.key, target, sync_timeout
+            )),
         }
     }
 
     /// Process received sync data
     pub async fn receive_sync_data(&self, data: DistroData) -> Result<(), String> {
-        if let Some(handler) = self.handlers.get(&data.data_type) {
+        // Own the handler Arc and drop the shard read guard before awaiting.
+        let handler = self
+            .handlers
+            .get(&data.data_type)
+            .map(|entry| Arc::clone(entry.value()));
+        if let Some(handler) = handler {
             handler.process_sync_data(data).await
         } else {
             Err(format!("No handler for data type: {}", data.data_type))
@@ -1490,7 +1740,12 @@ impl DistroProtocol {
         source: &str,
         version: i64,
     ) -> bool {
-        let Some(handler) = self.handlers.get(data_type) else {
+        // Own the handler Arc and drop the shard read guard before awaiting.
+        let handler = self
+            .handlers
+            .get(data_type)
+            .map(|entry| Arc::clone(entry.value()));
+        let Some(handler) = handler else {
             return false;
         };
         let probe = DistroData::with_version(
@@ -1566,7 +1821,12 @@ impl DistroProtocol {
 
     /// Get snapshot for initial data load
     pub async fn get_snapshot(&self, data_type: &DistroDataType) -> Vec<DistroData> {
-        if let Some(handler) = self.handlers.get(data_type) {
+        // Own the handler Arc and drop the shard read guard before awaiting.
+        let handler = self
+            .handlers
+            .get(data_type)
+            .map(|entry| Arc::clone(entry.value()));
+        if let Some(handler) = handler {
             handler.get_snapshot().await
         } else {
             vec![]
@@ -2359,5 +2619,199 @@ mod tests {
         assert!(json.contains("\"sync_success_total\":100"));
         assert!(json.contains("\"initialized\":true"));
         assert!(json.contains("\"member_count\":3"));
+    }
+
+    fn sync_task(key: &str, scheduled_time: i64, retry_count: u32) -> DistroSyncTask {
+        DistroSyncTask {
+            data_type: DistroDataType::NamingInstance,
+            key: key.to_string(),
+            target_address: "10.0.0.2:8848".to_string(),
+            scheduled_time,
+            retry_count,
+        }
+    }
+
+    /// The shared-body verify adapter must emit the exact bytes and request
+    /// type of a normal `DistroDataVerifyRequest` (wire compatibility).
+    #[test]
+    fn test_shared_verify_request_preserves_wire_bytes_and_type() {
+        use batata_api::remote::model::RequestTrait as _;
+        let mut request = DistroDataVerifyRequest::new();
+        request.verify_data.insert("k".to_string(), 7);
+        request.source = "10.0.0.1:8848".to_string();
+        let expected = request.body();
+        let shared = SharedVerifyRequest {
+            request_type: request.request_type(),
+            body: Arc::new(expected.clone()),
+        };
+        assert_eq!(
+            shared.body(),
+            expected,
+            "body() must replay the exact encoded bytes"
+        );
+        assert_eq!(shared.request_type(), request.request_type());
+    }
+
+    /// Tasks targeting a departed member are pruned; live ones are kept.
+    #[test]
+    fn test_prune_stale_sync_targets() {
+        use batata_api::model::NodeState;
+        let sync_tasks: DashMap<String, DistroSyncTask> = DashMap::new();
+        let members: DashMap<String, Member> = DashMap::new();
+        members.insert(
+            "10.0.0.2:8848".to_string(),
+            member_with_state("10.0.0.2:8848", NodeState::Up),
+        );
+
+        let mut live = sync_task("live", 0, 0);
+        live.target_address = "10.0.0.2:8848".to_string();
+        let mut stale = sync_task("stale", 0, 0);
+        stale.target_address = "10.0.0.9:8848".to_string(); // departed member
+        sync_tasks.insert("live".to_string(), live);
+        sync_tasks.insert("stale".to_string(), stale);
+
+        prune_stale_sync_targets(&sync_tasks, &members);
+
+        assert!(
+            sync_tasks.contains_key("live"),
+            "tasks for live members must be kept"
+        );
+        assert!(
+            !sync_tasks.contains_key("stale"),
+            "tasks for departed members must be pruned"
+        );
+    }
+
+    #[test]
+    fn test_claim_ready_sync_tasks_only_claims_due_keys() {
+        let tasks: DashMap<String, DistroSyncTask> = DashMap::new();
+        tasks.insert("due".to_string(), sync_task("due", 50, 0));
+        tasks.insert("future".to_string(), sync_task("future", 5000, 0));
+
+        let claimed = DistroProtocol::claim_ready_sync_tasks(&tasks, 1000);
+        assert_eq!(claimed.len(), 1, "only the due task must be claimed");
+        assert_eq!(claimed[0].0, "due");
+        assert!(!tasks.contains_key("due"));
+        assert!(
+            tasks.contains_key("future"),
+            "a task not yet due must stay queued"
+        );
+    }
+
+    #[test]
+    fn test_claim_observed_sync_tasks_keeps_newer_replacement() {
+        let tasks: DashMap<String, DistroSyncTask> = DashMap::new();
+        // Guard: a value refreshed after the scan (newer scheduled_time)
+        // must NOT be removed by a stale observation.
+        tasks.insert("k".to_string(), sync_task("k", 9999, 0));
+        let observed = vec![("k".to_string(), 50i64)];
+        let claimed = DistroProtocol::claim_observed_sync_tasks(&tasks, observed);
+        assert!(
+            claimed.is_empty(),
+            "a newer task must not be claimed by a stale observation"
+        );
+        assert_eq!(tasks.get("k").unwrap().scheduled_time, 9999);
+
+        // Success path: an unchanged value IS claimed.
+        let observed2 = vec![("k".to_string(), 9999i64)];
+        let claimed2 = DistroProtocol::claim_observed_sync_tasks(&tasks, observed2);
+        assert_eq!(claimed2.len(), 1);
+        assert!(tasks.is_empty());
+    }
+
+    /// A failed sync below the cap is re-queued; at the cap it is dropped.
+    #[tokio::test]
+    async fn test_sync_task_bounded_retries() {
+        let (proto, handler) = test_protocol("10.0.0.1:8848");
+        // Non-UTF-8 content makes send_sync_data fail fast in
+        // distro_content_to_string, with no network I/O.
+        let mut bad = build_item("svc-a");
+        bad.content = vec![0xff, 0xfe];
+        handler.share().insert("svc-a".to_string(), bad);
+
+        let sync_tasks: Arc<DashMap<String, DistroSyncTask>> = Arc::new(DashMap::new());
+        let config = proto.config.clone();
+
+        // Success path: below the cap, a failed sync is re-queued with an
+        // incremented retry_count and a future scheduled_time.
+        DistroProtocol::run_sync_task(
+            &proto.handlers,
+            &proto.client_manager,
+            &config,
+            &proto.counters,
+            &sync_tasks,
+            "task-below".to_string(),
+            sync_task("svc-a", 0, 0),
+            10_000,
+        )
+        .await;
+        {
+            let t = sync_tasks
+                .get("task-below")
+                .expect("a below-cap failure must be re-queued");
+            assert_eq!(t.retry_count, 1);
+            assert!(
+                t.scheduled_time > 10_000,
+                "backoff must push the retry into the future"
+            );
+        }
+
+        // Guard: at the cap the task is dropped, not re-queued.
+        DistroProtocol::run_sync_task(
+            &proto.handlers,
+            &proto.client_manager,
+            &config,
+            &proto.counters,
+            &sync_tasks,
+            "task-capped".to_string(),
+            sync_task("svc-a", 0, MAX_SYNC_RETRIES),
+            10_000,
+        )
+        .await;
+        assert!(
+            sync_tasks.get("task-capped").is_none(),
+            "a task that exhausted its retry budget must be dropped"
+        );
+    }
+
+    /// A guard that flips a flag when the tracked task's future is dropped,
+    /// which is what `JoinHandle::abort` does.
+    struct DropSignal(Arc<AtomicBool>);
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// `stop()` must clear and abort tracked long-lived tasks.
+    #[tokio::test]
+    async fn test_stop_aborts_and_clears_tracked_tasks() {
+        let (proto, _handler) = test_protocol("10.0.0.1:8848");
+        let aborted = Arc::new(AtomicBool::new(false));
+        let signal = DropSignal(aborted.clone());
+        let handle = tokio::spawn(async move {
+            let _signal = signal;
+            std::future::pending::<()>().await;
+        });
+        proto.track_task(handle);
+        assert_eq!(proto.task_handles.lock().unwrap().len(), 1);
+
+        proto.stop().await; // no pending sync_tasks -> returns immediately
+
+        assert!(
+            proto.task_handles.lock().unwrap().is_empty(),
+            "stop() must clear tracked task handles"
+        );
+        // Aborting the task drops its future, which drops DropSignal.
+        for _ in 0..40 {
+            if aborted.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            aborted.load(Ordering::SeqCst),
+            "stop() must abort long-lived tracked tasks"
+        );
     }
 }

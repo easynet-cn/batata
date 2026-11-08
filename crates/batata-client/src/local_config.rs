@@ -123,28 +123,31 @@ impl LocalConfigInfoProcessor {
         tenant: &str,
         config: Option<&str>,
     ) -> ClientResult<()> {
-        if !self.snapshot_switch.is_enabled() {
-            return Ok(());
-        }
-
         let file = self.get_snapshot_file(data_id, group, tenant)?;
+        Self::write_snapshot_file(self.snapshot_switch.is_enabled(), &file, config)
+    }
 
-        if let Some(content) = config {
-            // Create parent directories
-            if let Some(parent) = file.parent() {
-                fs::create_dir_all(parent).map_err(|e| BatataClientError::Other(e.into()))?;
-            }
-
-            // Write content
-            fs::write(&file, content).map_err(|e| BatataClientError::Other(e.into()))?;
-        } else {
-            // Delete snapshot
-            if file.exists() {
-                fs::remove_file(&file).map_err(|e| BatataClientError::Other(e.into()))?;
-            }
-        }
-
-        Ok(())
+    /// Async, non-blocking variant of [`Self::save_snapshot`].
+    ///
+    /// The sync helper does `create_dir_all`/`write`/`remove_file` with
+    /// `std::fs`; offload that work to `spawn_blocking` with owned arguments.
+    pub async fn save_snapshot_async(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        config: Option<&str>,
+    ) -> ClientResult<()> {
+        let file = self.get_snapshot_file(data_id, group, tenant)?;
+        let enabled = self.snapshot_switch.is_enabled();
+        let content = config.map(|s| s.to_string());
+        tokio::task::spawn_blocking(move || {
+            Self::write_snapshot_file(enabled, &file, content.as_deref())
+        })
+        .await
+        .map_err(|e| {
+            BatataClientError::Other(anyhow::anyhow!("snapshot write task failed: {}", e))
+        })?
     }
 
     /// Get failover config for emergency scenarios
@@ -155,13 +158,26 @@ impl LocalConfigInfoProcessor {
         tenant: &str,
     ) -> ClientResult<Option<String>> {
         let file = self.get_failover_file(data_id, group, tenant)?;
-        if !file.exists() {
-            return Ok(None);
-        }
+        Self::read_failover_file(&file)
+    }
 
-        Self::read_file(&file)
-            .map(Some)
-            .map_err(BatataClientError::Other)
+    /// Async, non-blocking variant of [`Self::get_failover`].
+    ///
+    /// The sync helper reads from disk with `std::fs`; running it on a Tokio
+    /// worker would block the executor. Offload the disk IO to
+    /// `spawn_blocking` with owned arguments.
+    pub async fn get_failover_async(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+    ) -> ClientResult<Option<String>> {
+        let file = self.get_failover_file(data_id, group, tenant)?;
+        tokio::task::spawn_blocking(move || Self::read_failover_file(&file))
+            .await
+            .map_err(|e| {
+                BatataClientError::Other(anyhow::anyhow!("failover read task failed: {}", e))
+            })?
     }
 
     /// Clean all snapshots for the current environment
@@ -263,6 +279,34 @@ impl LocalConfigInfoProcessor {
     fn read_file(path: &Path) -> Result<String> {
         fs::read_to_string(path).with_context(|| format!("Failed to read file: {:?}", path))
     }
+
+    /// Read a failover file (sync `std::fs`; called from `spawn_blocking`).
+    fn read_failover_file(file: &Path) -> ClientResult<Option<String>> {
+        if !file.exists() {
+            return Ok(None);
+        }
+        Self::read_file(file)
+            .map(Some)
+            .map_err(BatataClientError::Other)
+    }
+
+    /// Write/remove a snapshot file (sync `std::fs`; called from
+    /// `spawn_blocking`). Owned `file`/`config` keep the blocking closure
+    /// `Send + 'static`.
+    fn write_snapshot_file(enabled: bool, file: &Path, config: Option<&str>) -> ClientResult<()> {
+        if !enabled {
+            return Ok(());
+        }
+        if let Some(content) = config {
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|e| BatataClientError::Other(e.into()))?;
+            }
+            fs::write(file, content).map_err(|e| BatataClientError::Other(e.into()))?;
+        } else if file.exists() {
+            fs::remove_file(file).map_err(|e| BatataClientError::Other(e.into()))?;
+        }
+        Ok(())
+    }
 }
 
 /// Snapshot file metadata
@@ -298,28 +342,44 @@ impl SnapshotManager {
     ) -> ClientResult<()> {
         let processor = self.processor.read().await;
         for (data_id, group, tenant, content) in configs {
-            processor.save_snapshot(&data_id, &group, &tenant, Some(&content))?;
+            // The sync `save_snapshot` does `std::fs` IO; offload it so the
+            // Tokio worker is never blocked by a large batch.
+            processor
+                .save_snapshot_async(&data_id, &group, &tenant, Some(&content))
+                .await?;
         }
         Ok(())
     }
 
     /// List all snapshots
     pub async fn list_snapshots(&self) -> ClientResult<Vec<SnapshotMetadata>> {
-        let processor = self.processor.read().await;
+        // Resolve the path while holding the async lock, then release it before
+        // offloading the blocking directory walk to the blocking pool.
+        let snapshot_path = {
+            let processor = self.processor.read().await;
+            processor
+                .base_path
+                .join(format!("{}{}", processor.env_name, "_batata"))
+                .join("snapshot")
+        };
+
+        tokio::task::spawn_blocking(move || Self::read_snapshots_dir(&snapshot_path))
+            .await
+            .map_err(|e| {
+                BatataClientError::Other(anyhow::anyhow!("snapshot list task failed: {}", e))
+            })?
+    }
+
+    /// Synchronous directory walk for [`Self::list_snapshots`]; runs on
+    /// `spawn_blocking` so `std::fs` IO never stalls a Tokio worker.
+    fn read_snapshots_dir(snapshot_path: &Path) -> ClientResult<Vec<SnapshotMetadata>> {
         let mut snapshots = Vec::new();
-
-        // Walk snapshot directory
-        let env_path = processor
-            .base_path
-            .join(format!("{}{}", processor.env_name, "_batata"));
-        let snapshot_path = env_path.join("snapshot");
-
         if !snapshot_path.exists() {
             return Ok(snapshots);
         }
 
         let entries =
-            fs::read_dir(&snapshot_path).map_err(|e| BatataClientError::Other(e.into()))?;
+            fs::read_dir(snapshot_path).map_err(|e| BatataClientError::Other(e.into()))?;
 
         for entry in entries {
             let entry = entry.map_err(|e: std::io::Error| BatataClientError::Other(e.into()))?;
@@ -768,6 +828,44 @@ mod tests {
         assert_eq!(
             processor.get_snapshot("id2", "group", "").unwrap(),
             Some("content2".to_string())
+        );
+    }
+
+    /// The async config helpers must round-trip through `spawn_blocking` while
+    /// keeping the sync API intact. Success path: both an async snapshot and an
+    /// async failover read return the expected content.
+    #[tokio::test]
+    async fn test_async_snapshot_and_failover_helpers() {
+        let temp_dir = TempDir::new().unwrap();
+        let _env = lock_snapshot_env();
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+        // The processor captured the base path above; release the env lock
+        // before awaiting (holding a std MutexGuard across await stalls the runtime).
+        drop(_env);
+
+        processor
+            .save_snapshot_async("async-id", "group", "", Some("async-content"))
+            .await
+            .unwrap();
+        assert_eq!(
+            processor.get_snapshot("async-id", "group", "").unwrap(),
+            Some("async-content".to_string())
+        );
+
+        let failover_file = processor
+            .get_failover_file("async-id", "group", "")
+            .unwrap();
+        fs::create_dir_all(failover_file.parent().unwrap()).unwrap();
+        fs::write(&failover_file, "async-failover").unwrap();
+        assert_eq!(
+            processor
+                .get_failover_async("async-id", "group", "")
+                .await
+                .unwrap(),
+            Some("async-failover".to_string())
         );
     }
 }

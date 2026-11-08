@@ -19,6 +19,9 @@ pub struct ApolloPluginInner {
 pub struct ApolloPlugin {
     config: ApolloPluginConfig,
     inner: std::sync::OnceLock<ApolloPluginInner>,
+    /// Handle for the service-registry heartbeat loop. Aborted on shutdown so
+    /// the loop cannot re-register the services ~10s after deregistration.
+    heartbeat_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ApolloPlugin {
@@ -27,6 +30,7 @@ impl ApolloPlugin {
         Self {
             config,
             inner: std::sync::OnceLock::new(),
+            heartbeat_task: std::sync::Mutex::new(None),
         }
     }
 
@@ -151,7 +155,7 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
         // process, so both service names are registered.
         let hb_persistence = persistence.clone();
         let port = self.config.port;
-        tokio::spawn(async move {
+        let heartbeat = tokio::spawn(async move {
             let uri = std::env::var("APOLLO_SERVICE_REGISTRY_URI")
                 .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
             use crate::persistence::traits::ServiceRegistryPersistence;
@@ -172,12 +176,38 @@ impl ProtocolAdapterPlugin for ApolloPlugin {
             }
         });
 
+        // Keep the handle so `shutdown()` can abort the loop. Without this the
+        // loop would keep running and re-register both services ~10s after we
+        // deregistered them. Abort any stale handle defensively.
+        let mut task_guard = self
+            .heartbeat_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = task_guard.take() {
+            old.abort();
+        }
+        *task_guard = Some(heartbeat);
+        drop(task_guard);
+
         tracing::info!("Apollo compatibility plugin initialized successfully");
         Ok(())
     }
 
     async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Apollo compatibility plugin shutting down");
+
+        // Stop the heartbeat loop FIRST so it cannot re-register the services
+        // after the deregistration below. Dropping a JoinHandle without
+        // aborting would only detach the loop, so abort explicitly.
+        let abort_handle = self
+            .heartbeat_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(handle) = abort_handle {
+            handle.abort();
+        }
+
         // Deregister from the service registry on graceful shutdown.
         if let Some(inner) = self.inner.get() {
             use crate::persistence::traits::ServiceRegistryPersistence;
@@ -284,6 +314,38 @@ mod tests {
         assert_eq!(
             state.get("apollo_http_workers"),
             Some(&Some("4".to_string()))
+        );
+    }
+
+    /// Regression: shutdown() must abort the heartbeat loop, otherwise it
+    /// re-registers the services ~10s after deregistration.
+    #[tokio::test]
+    async fn test_shutdown_aborts_heartbeat_task() {
+        let plugin = ApolloPlugin::from_plugin_config(ApolloPluginConfig::default());
+
+        // Stand-in for the long-lived heartbeat loop. Its oneshot sender is
+        // dropped (and `rx` resolves) only when the task is actually aborted.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _keep = tx;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        *plugin.heartbeat_task.lock().unwrap() = Some(handle);
+        // Success path: the handle is stored before shutdown.
+        assert!(plugin.heartbeat_task.lock().unwrap().is_some());
+
+        plugin.shutdown().await.unwrap();
+
+        // Guard: the handle was taken AND the loop was aborted. If shutdown
+        // only dropped the handle (detaching it) or skipped the abort, the
+        // sender would stay alive and `rx` would never resolve.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+                .await
+                .is_ok(),
+            "heartbeat task must be aborted on shutdown"
         );
     }
 }

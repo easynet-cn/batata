@@ -5,6 +5,11 @@
 use crate::bincode;
 use std::sync::Arc;
 
+/// Hard cap on the number of history rows returned in a single page. Guards
+/// against a caller requesting an unbounded page size (which would serialize
+/// the entire matched history into one Vec of JSON values).
+const MAX_HISTORY_PAGE_SIZE: u64 = 1000;
+
 use rocksdb::DB;
 
 use super::state_machine::{
@@ -386,7 +391,8 @@ impl RocksDbReader {
         entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let page_size = page_size.min(MAX_HISTORY_PAGE_SIZE);
+        let offset = (page_no.saturating_sub(1)).saturating_mul(page_size);
         let page_items: Vec<serde_json::Value> = entries
             .into_iter()
             .skip(offset as usize)
@@ -453,7 +459,8 @@ impl RocksDbReader {
         entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
-        let offset = (page_no.saturating_sub(1)) * page_size;
+        let page_size = page_size.min(MAX_HISTORY_PAGE_SIZE);
+        let offset = (page_no.saturating_sub(1)).saturating_mul(page_size);
         let page_items: Vec<serde_json::Value> = entries
             .into_iter()
             .skip(offset as usize)

@@ -24,6 +24,11 @@ use super::node::RaftNode;
 use super::request::RaftRequest;
 use super::types::{NodeId, TypeConfig};
 
+/// Upper bound on a single received snapshot stream. A buggy or malicious
+/// leader must not be able to fill the disk with an unbounded stream; real
+/// snapshots stay well under this.
+const MAX_SNAPSHOT_STREAM_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 /// gRPC service for Raft consensus protocol
 pub struct RaftGrpcService {
     raft: Arc<RwLock<Option<Arc<RaftNode>>>>,
@@ -244,6 +249,16 @@ impl RaftService for RaftGrpcService {
             })?;
             chunk_count += 1;
             total_bytes += chunk.data.len() as u64;
+
+            // Bound the stream: reject runaway/malicious transfers instead of
+            // letting the staging file grow without limit.
+            if total_bytes > MAX_SNAPSHOT_STREAM_BYTES {
+                let _ = tokio::fs::remove_file(&staging_path).await;
+                return Err(Status::invalid_argument(format!(
+                    "Snapshot stream exceeded {} bytes",
+                    MAX_SNAPSHOT_STREAM_BYTES
+                )));
+            }
 
             if chunk.done {
                 break;

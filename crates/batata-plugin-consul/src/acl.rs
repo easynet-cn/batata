@@ -511,7 +511,12 @@ query_prefix "" { policy = "write" }
         // Use configured initial management token or generate a random UUID
         let bootstrap_secret =
             initial_management_token.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        info!("ACL bootstrap token secret_id: {}", bootstrap_secret);
+        // Never log the bootstrap secret: it is the highest-privilege token in
+        // the cluster. Log only the well-known accessor id and a redacted marker.
+        info!(
+            "ACL bootstrap token created (accessor_id={}, secret_id=[REDACTED])",
+            BOOTSTRAP_ACCESSOR_ID
+        );
         let bootstrap_token = AclToken {
             accessor_id: BOOTSTRAP_ACCESSOR_ID.to_string(),
             secret_id: Some(bootstrap_secret.clone()),

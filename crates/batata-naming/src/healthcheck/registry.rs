@@ -938,6 +938,41 @@ impl InstanceCheckRegistry {
         result
     }
 
+    /// Visit every (config, status) pair without deep-cloning the maps.
+    ///
+    /// Monitor sweeps used to call `get_all_checks()`, which cloned every
+    /// config and status into a `Vec` on each tick. This visits the pairs in
+    /// place with borrowed references, so the caller only clones the small
+    /// amount of data it actually acts on. The closure must NOT mutate the
+    /// registry (a DashMap shard read guard is held for the visit); defer any
+    /// mutation until after this call returns.
+    pub fn for_each_check<F>(&self, mut f: F)
+    where
+        F: FnMut(&InstanceCheckConfig, &InstanceCheckStatus),
+    {
+        for config in self.configs.iter() {
+            if let Some(status) = self.statuses.get(config.key()) {
+                f(config.value(), status.value());
+            }
+        }
+    }
+
+    /// Like [`Self::for_each_check`] but only visits checks whose status equals
+    /// `status`. Used by the deregister monitor: only `Critical` checks are
+    /// relevant, so non-matching checks are never even handed to the closure.
+    pub fn for_each_check_with_status<F>(&self, status: &CheckStatus, mut f: F)
+    where
+        F: FnMut(&InstanceCheckConfig, &InstanceCheckStatus),
+    {
+        for config in self.configs.iter() {
+            if let Some(s) = self.statuses.get(config.key())
+                && &s.value().status == status
+            {
+                f(config.value(), s.value());
+            }
+        }
+    }
+
     /// Get a single check (config + status) by check_key
     pub fn get_check(&self, check_key: &str) -> Option<(InstanceCheckConfig, InstanceCheckStatus)> {
         let config = self.configs.get(check_key)?.clone();
@@ -1914,6 +1949,57 @@ mod tests {
         assert_eq!(
             deserialized[0].deregister_critical_after,
             Some(Duration::from_secs(90))
+        );
+    }
+
+    #[test]
+    fn test_for_each_check_visits_all_pairs() {
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+        registry.register_check(make_config("c1", CheckType::Ttl, CheckStatus::Passing));
+        registry.register_check(make_config("c2", CheckType::Tcp, CheckStatus::Warning));
+        registry.register_check(make_config("c3", CheckType::Http, CheckStatus::Critical));
+
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = 0usize;
+        registry.for_each_check(|config, status| {
+            // Borrowed values (no deep clone of the whole map): the live status
+            // still matches the config's seeded initial status.
+            assert_eq!(status.status, config.initial_status);
+            seen.insert(config.check_id.clone());
+            pairs += 1;
+        });
+        assert_eq!(pairs, 3);
+        assert_eq!(seen.len(), 3);
+        assert!(seen.contains("c1") && seen.contains("c2") && seen.contains("c3"));
+    }
+
+    #[test]
+    fn test_for_each_check_with_status_only_visits_matching() {
+        let registry = InstanceCheckRegistry::with_naming_service(test_naming_service());
+        registry.register_check(make_config("passing", CheckType::Tcp, CheckStatus::Passing));
+        registry.register_check(make_config(
+            "critical-a",
+            CheckType::Tcp,
+            CheckStatus::Critical,
+        ));
+        registry.register_check(make_config("warning", CheckType::Tcp, CheckStatus::Warning));
+        registry.register_check(make_config(
+            "critical-b",
+            CheckType::Tcp,
+            CheckStatus::Critical,
+        ));
+
+        let mut visited = Vec::new();
+        registry.for_each_check_with_status(&CheckStatus::Critical, |config, status| {
+            // A regression that drops the status filter would hand non-critical
+            // checks to this closure and fail the assertion.
+            assert_eq!(status.status, CheckStatus::Critical);
+            visited.push(config.check_id.clone());
+        });
+        visited.sort();
+        assert_eq!(
+            visited,
+            vec!["critical-a".to_string(), "critical-b".to_string()]
         );
     }
 }

@@ -6,23 +6,32 @@
 //! 2. upsert an `InstanceConfig` row keyed (instanceId, configAppId,
 //!    configNamespaceName) with the delivered `releaseKey`.
 //!
-//! Two bounded in-memory caches mirror upstream and keep write volume low:
-//! - `instance_cache`   (1h TTL): identity → instance id
-//! - `release_key_cache`(1d TTL): instance+ns → last audited releaseKey
-//! Writes run on detached tokio tasks; failures are logged, never propagated.
+//! Two in-memory caches mirror upstream and keep write volume low:
+//! - `instance_cache`   (1h TTL): identity -> instance id
+//! - `release_key_cache`(1d TTL): instance+ns -> last audited releaseKey
+//!
+//! The HTTP layer constructs an `InstanceAuditService` per request, so the
+//! caches and the spawn gate live in a single process-wide `SharedState` that
+//! every instance points at. This is what makes release-key dedup effective
+//! across requests. Detached audit tasks are additionally gated by a bounded
+//! `Semaphore` so a burst of fetches cannot create unbounded tasks; when the
+//! gate is saturated the audit event is dropped (logged), matching upstream's
+//! bounded audit queue. Failures are logged, never propagated.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::api::dto::InstanceConfigDTO;
 use crate::persistence::traits::{ApolloPersistenceService, InstancePersistence};
 
 const INSTANCE_CACHE_TTL: Duration = Duration::from_secs(3600);
 const RELEASE_KEY_CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
-/// Upstream `instance.config.audit.max.size` default queue bound.
-#[allow(dead_code)]
-const MAX_PENDING: usize = 10_000;
+/// Maximum number of audit tasks allowed to run at once. Detached spawns are
+/// gated by a `Semaphore` of this size.
+const MAX_CONCURRENT_AUDITS: usize = 32;
 
 struct CachedEntry<T> {
     value: T,
@@ -35,25 +44,80 @@ impl<T> CachedEntry<T> {
     }
 }
 
+/// State shared by every `InstanceAuditService` instance in the process.
+///
+/// The HTTP layer builds a fresh service per request, so keeping the caches
+/// (and the spawn gate) here is what allows release-key dedup to survive
+/// across requests and bounds the number of detached tasks.
+struct SharedState {
+    instance_cache: Mutex<HashMap<String, CachedEntry<i64>>>,
+    release_key_cache: Mutex<HashMap<String, CachedEntry<String>>>,
+    spawn_gate: Arc<Semaphore>,
+}
+
+impl SharedState {
+    fn new(max_concurrent_audits: usize) -> Arc<Self> {
+        Arc::new(Self {
+            instance_cache: Mutex::new(HashMap::new()),
+            release_key_cache: Mutex::new(HashMap::new()),
+            spawn_gate: Arc::new(Semaphore::new(max_concurrent_audits)),
+        })
+    }
+
+    /// Try to reserve one detached-task slot. Returns `None` when the gate is
+    /// saturated; the returned permit is released (via `Drop`) when the task
+    /// finishes, so the bound holds for the whole task lifetime.
+    fn try_reserve(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.spawn_gate).try_acquire_owned().ok()
+    }
+
+    fn is_recently_audited(&self, rk_key: &str, release_key: &str) -> bool {
+        let cache = self.release_key_cache.lock().unwrap();
+        match cache.get(rk_key) {
+            Some(hit) => hit.fresh(RELEASE_KEY_CACHE_TTL) && hit.value.as_str() == release_key,
+            None => false,
+        }
+    }
+
+    fn mark_audited(&self, rk_key: String, release_key: String) {
+        self.release_key_cache.lock().unwrap().insert(
+            rk_key,
+            CachedEntry {
+                value: release_key,
+                inserted: Instant::now(),
+            },
+        );
+    }
+}
+
+static GLOBAL_SHARED: OnceLock<Arc<SharedState>> = OnceLock::new();
+
+fn global_shared() -> Arc<SharedState> {
+    GLOBAL_SHARED
+        .get_or_init(|| SharedState::new(MAX_CONCURRENT_AUDITS))
+        .clone()
+}
+
 /// Represents the `InstanceAuditService` entity.
 pub struct InstanceAuditService {
     persistence: Arc<dyn ApolloPersistenceService>,
-    instance_cache: std::sync::Mutex<HashMap<String, CachedEntry<i64>>>,
-    release_key_cache: std::sync::Mutex<HashMap<String, CachedEntry<String>>>,
+    shared: Arc<SharedState>,
 }
 
 impl InstanceAuditService {
     /// Creates a new `InstanceAuditService`.
+    ///
+    /// All instances share one `SharedState`, so constructing a service per
+    /// request does not reset the dedup caches or the spawn gate.
     pub fn new(persistence: Arc<dyn ApolloPersistenceService>) -> Self {
         Self {
             persistence,
-            instance_cache: std::sync::Mutex::new(HashMap::new()),
-            release_key_cache: std::sync::Mutex::new(HashMap::new()),
+            shared: global_shared(),
         }
     }
 
     /// Fire-and-forget audit for one delivered release (upstream queues the
-    /// work; we spawn a task instead — same observable behaviour).
+    /// work; we spawn a task instead - same observable behaviour).
     pub fn audit_async(
         &self,
         client_app_id: &str,
@@ -64,8 +128,21 @@ impl InstanceAuditService {
         config_namespace_name: &str,
         release_key: String,
     ) {
-        let persistence = self.persistence.clone();
-        let service = Self::new(persistence.clone());
+        // Bound the number of concurrent detached tasks. Under a burst we drop
+        // the excess event (matching upstream's bounded audit queue) instead of
+        // spawning without limit.
+        let permit = match self.shared.try_reserve() {
+            Some(p) => p,
+            None => {
+                tracing::warn!("instance audit concurrency limit reached; dropping audit event");
+                return;
+            }
+        };
+
+        // Reuse the shared caches instead of building a fresh `Self` whose
+        // empty caches would defeat release-key dedup on every delivery.
+        let persistence = Arc::clone(&self.persistence);
+        let shared = Arc::clone(&self.shared);
         let client_app_id = client_app_id.to_string();
         let cluster_name = cluster_name.to_string();
         let data_center = data_center.to_string();
@@ -73,9 +150,16 @@ impl InstanceAuditService {
         let config_app_id = config_app_id.to_string();
         let config_namespace_name = config_namespace_name.to_string();
         tokio::spawn(async move {
+            // Held for the whole task; released on drop (including early
+            // returns) so a slot is always recycled.
+            let _permit = permit;
             if client_ip.is_empty() {
                 return; // upstream skips empty ips too
             }
+            let service = InstanceAuditService {
+                persistence,
+                shared,
+            };
             if let Err(e) = service
                 .audit(
                     &client_app_id,
@@ -113,10 +197,7 @@ impl InstanceAuditService {
             "{}+{}+{}",
             instance_id, config_app_id, config_namespace_name
         );
-        if let Some(hit) = self.release_key_cache.lock().unwrap().get(&rk_key)
-            && hit.fresh(RELEASE_KEY_CACHE_TTL)
-            && hit.value == release_key
-        {
+        if self.shared.is_recently_audited(&rk_key, &release_key) {
             return Ok(());
         }
 
@@ -135,13 +216,7 @@ impl InstanceAuditService {
             })
             .await?;
 
-        self.release_key_cache.lock().unwrap().insert(
-            rk_key,
-            CachedEntry {
-                value: release_key,
-                inserted: Instant::now(),
-            },
-        );
+        self.shared.mark_audited(rk_key, release_key);
         Ok(())
     }
 
@@ -153,10 +228,13 @@ impl InstanceAuditService {
         ip: &str,
     ) -> anyhow::Result<i64> {
         let cache_key = format!("{}|{}|{}|{}", app_id, cluster_name, ip, data_center);
-        if let Some(hit) = self.instance_cache.lock().unwrap().get(&cache_key)
-            && hit.fresh(INSTANCE_CACHE_TTL)
         {
-            return Ok(hit.value);
+            let cache = self.shared.instance_cache.lock().unwrap();
+            if let Some(hit) = cache.get(&cache_key)
+                && hit.fresh(INSTANCE_CACHE_TTL)
+            {
+                return Ok(hit.value);
+            }
         }
 
         let existing =
@@ -186,7 +264,7 @@ impl InstanceAuditService {
             }
         };
 
-        self.instance_cache.lock().unwrap().insert(
+        self.shared.instance_cache.lock().unwrap().insert(
             cache_key,
             CachedEntry {
                 value: instance_id,
@@ -194,5 +272,70 @@ impl InstanceAuditService {
             },
         );
         Ok(instance_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_gate_is_bounded() {
+        let shared = SharedState::new(2);
+        assert_eq!(shared.spawn_gate.available_permits(), 2);
+
+        // Success path: slots are granted until the bound is reached.
+        let first = shared.try_reserve().expect("first slot granted");
+        let second = shared.try_reserve().expect("second slot granted");
+
+        // Guard: once saturated, further spawns must be rejected.
+        assert!(
+            shared.try_reserve().is_none(),
+            "gate must reject when all permits are held"
+        );
+
+        // Permits are returned as tasks finish, so the pool recovers.
+        drop(first);
+        assert_eq!(shared.spawn_gate.available_permits(), 1);
+        assert!(shared.try_reserve().is_some(), "slot recycled after drop");
+        drop(second);
+    }
+
+    #[test]
+    fn spawn_gate_uses_configured_max() {
+        assert_eq!(MAX_CONCURRENT_AUDITS, 32);
+        let shared = SharedState::new(MAX_CONCURRENT_AUDITS);
+        assert_eq!(
+            shared.spawn_gate.available_permits(),
+            MAX_CONCURRENT_AUDITS,
+            "fresh state must expose exactly the configured bound"
+        );
+    }
+
+    #[test]
+    fn global_shared_state_is_reused_across_instances() {
+        // The HTTP layer calls `new()` per request; all of them must point at
+        // the same state or the dedup caches reset on every delivery.
+        let a = global_shared();
+        let b = global_shared();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn release_key_cache_deduplicates_within_ttl() {
+        let shared = SharedState::new(MAX_CONCURRENT_AUDITS);
+        let key = "7+app+namespace".to_string();
+
+        // Success path: nothing audited yet, so a delivery is not deduped.
+        assert!(!shared.is_recently_audited(&key, "release-1"));
+
+        shared.mark_audited(key.clone(), "release-1".to_string());
+
+        // Guard: the same release is recognised and the redundant write skipped.
+        assert!(shared.is_recently_audited(&key, "release-1"));
+        // A different release must still be written.
+        assert!(!shared.is_recently_audited(&key, "release-2"));
+        // An unrelated key must not be deduped.
+        assert!(!shared.is_recently_audited("other", "release-1"));
     }
 }

@@ -27,6 +27,31 @@ use super::model::{
     ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigSearchDetailParam,
 };
 
+/// Hard cap on config content size (10 MiB), mirroring Nacos. This bound holds
+/// regardless of the configured `max_content` value, so a bad configuration
+/// cannot allow unbounded publishes.
+const MAX_CONFIG_CONTENT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Validate content size against the hard byte cap and the configurable
+/// character limit. Returns a human-readable reason when the content is too
+/// large; `None` means the content is acceptable. Kept pure so the guard is
+/// unit testable without an `AppState`.
+fn content_size_violation(content: &str, configured_max_chars: usize) -> Option<String> {
+    if content.len() > MAX_CONFIG_CONTENT_BYTES {
+        return Some(format!(
+            "config content exceeds hard cap of {} bytes",
+            MAX_CONFIG_CONTENT_BYTES
+        ));
+    }
+    if content.chars().count() > configured_max_chars {
+        return Some(format!(
+            "config content exceeds configured limit of {} characters",
+            configured_max_chars
+        ));
+    }
+    None
+}
+
 /// Helper to convert ConfigStorageData to ConfigBasicInfo
 fn config_storage_to_basic_info(config: batata_persistence::ConfigStorageData) -> ConfigBasicInfo {
     ConfigBasicInfo {
@@ -202,6 +227,19 @@ pub async fn publish_config(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'content' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    // Enforce a hard byte cap plus the configured character limit. Clamp a
+    // misconfigured negative `max_content` to zero so it can never disable the
+    // configured check (the hard cap always applies regardless).
+    let configured_max_chars = data.configuration.max_content().max(0) as usize;
+    if let Some(reason) = content_size_violation(&form.content, configured_max_chars) {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            reason,
             String::new(),
         );
     }
@@ -659,5 +697,45 @@ pub async fn search_config_detail(
                 Page::<ConfigBasicInfo>::default(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mutant-checkable: removing either the hard-cap check or the configured
+    // limit check makes one of the "over" tests fail; the success path is
+    // covered by the within-limits and exact-boundary cases.
+    #[test]
+    fn test_content_size_violation_under_and_at_boundary_ok() {
+        assert!(content_size_violation("small config", 100).is_none());
+        let at_hard_cap = "x".repeat(MAX_CONFIG_CONTENT_BYTES);
+        assert!(
+            content_size_violation(&at_hard_cap, MAX_CONFIG_CONTENT_BYTES).is_none(),
+            "content exactly at the hard cap must be accepted"
+        );
+    }
+
+    #[test]
+    fn test_content_size_violation_hard_cap_even_with_loose_config() {
+        // Configured limit is larger than the hard cap; the hard cap must still win.
+        let over = "x".repeat(MAX_CONFIG_CONTENT_BYTES + 1);
+        let reason = content_size_violation(&over, MAX_CONFIG_CONTENT_BYTES * 2);
+        assert!(
+            reason.is_some(),
+            "hard byte cap must reject oversized content"
+        );
+        assert!(reason.unwrap().contains("hard cap"));
+    }
+
+    #[test]
+    fn test_content_size_violation_configured_limit_when_stricter() {
+        let reason = content_size_violation("abcdef", 5);
+        assert!(
+            reason.is_some(),
+            "configured character limit must reject longer content"
+        );
+        assert!(reason.unwrap().contains("configured limit"));
     }
 }

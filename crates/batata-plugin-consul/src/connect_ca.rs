@@ -1267,6 +1267,28 @@ fn permission_http_matches(permission: &IntentionPermission, l7: Option<&L7Reque
     evaluate_http_permission(http, l7)
 }
 
+/// Cached compiled L7 path regexes, keyed by pattern string.
+///
+/// `evaluate_http_permission` runs on every authorized L7 request; recompiling
+/// the same pattern each time is wasteful. Patterns are validated at intention
+/// creation time (see `validate_intention_permissions`) and are immutable once
+/// stored, so a process-wide cache is safe.
+static PATH_REGEX_CACHE: std::sync::OnceLock<DashMap<String, regex::Regex>> =
+    std::sync::OnceLock::new();
+
+/// Return a compiled regex for `pattern`, reusing a cached one when possible.
+/// Invalid patterns yield `Err(())`, preserving the caller's deny behaviour
+/// (invalid regexes are rejected at creation time).
+fn cached_path_regex(pattern: &str) -> Result<regex::Regex, ()> {
+    let cache = PATH_REGEX_CACHE.get_or_init(DashMap::new);
+    if let Some(hit) = cache.get(pattern) {
+        return Ok(hit.value().clone());
+    }
+    let compiled = regex::Regex::new(pattern).map_err(|_| ())?;
+    cache.insert(pattern.to_string(), compiled.clone());
+    Ok(compiled)
+}
+
 /// Evaluate an `IntentionHTTPPermission` against the L7 request context.
 ///
 /// All defined conditions are ANDed together. If a condition is absent it is
@@ -1305,7 +1327,7 @@ fn evaluate_http_permission(http: &IntentionHTTPPermission, l7: Option<&L7Reques
 
     if let Some(regex) = &http.path_regex {
         let path = req_path.unwrap_or("");
-        match regex::Regex::new(regex) {
+        match cached_path_regex(regex) {
             Ok(re) => {
                 if !re.is_match(path) {
                     return false;
@@ -2154,6 +2176,35 @@ pub async fn delete_intention_exact_persistent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_cached_path_regex_reuses_compiled_pattern() {
+        let pattern = "^/cached-api/[0-9]+$";
+        // Unique pattern + removal keeps this test independent of others that
+        // may run in parallel against the shared static cache.
+        PATH_REGEX_CACHE.get_or_init(DashMap::new).remove(pattern);
+
+        // Success path: a valid pattern compiles and matches as expected.
+        let re = cached_path_regex(pattern).expect("valid regex must compile");
+        assert!(re.is_match("/cached-api/42"));
+        assert!(!re.is_match("/other/42"));
+
+        // Guard: the compiled regex must be cached for reuse. Removing the
+        // cache insert in `cached_path_regex` makes this assertion fail.
+        assert!(
+            PATH_REGEX_CACHE.get().unwrap().contains_key(pattern),
+            "compiled path regex must be cached"
+        );
+        // A second lookup returns the cached regex with identical behaviour.
+        let re2 = cached_path_regex(pattern).expect("cached lookup");
+        assert!(re2.is_match("/cached-api/7"));
+    }
+
+    #[test]
+    fn test_cached_path_regex_rejects_invalid() {
+        // Invalid patterns keep the deny behaviour (Err, never cached).
+        assert!(cached_path_regex("([").is_err());
+    }
 
     #[tokio::test]
     async fn test_ca_roots() {

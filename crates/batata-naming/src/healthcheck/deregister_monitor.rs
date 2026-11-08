@@ -47,72 +47,85 @@ impl DeregisterMonitor {
     /// Exposed so callers (and tests) can drive a sweep deterministically
     /// instead of waiting for the background interval to fire.
     pub fn reap_critical_instances(&self) {
-        let critical_checks = self.registry.get_checks_by_status(&CheckStatus::Critical);
         let now = current_timestamp_ms();
 
-        for (config, status) in critical_checks {
-            // A check with no owning service (Consul node-level checks) has
-            // nothing to deregister. Upstream `Agent.reapServicesInternal`
-            // skips these too (`if serviceID.ID == "" { continue }`); without
-            // the guard the result handler falls back to IP:Port matching and
-            // can remove an unrelated service that happens to share the
-            // address.
-            if config.service_name.is_empty() {
-                continue;
-            }
+        // Visit only Critical checks in place (no deep clone of every
+        // config/status). Collect the minimal data for checks that actually
+        // need reaping; the deregistration mutations are deferred until the
+        // visit finishes so no DashMap read guard is held while the registry
+        // is mutated (which would self-deadlock).
+        let mut targets: Vec<(String, i64, i64)> = Vec::new();
+        self.registry
+            .for_each_check_with_status(&CheckStatus::Critical, |config, status| {
+                // A check with no owning service (Consul node-level checks) has
+                // nothing to deregister. Upstream `Agent.reapServicesInternal`
+                // skips these too (`if serviceID.ID == "" { continue }`); without
+                // the guard the result handler falls back to IP:Port matching and
+                // can remove an unrelated service that happens to share the
+                // address.
+                if config.service_name.is_empty() {
+                    return;
+                }
 
-            // Only process checks with deregister_critical_after configured
-            let deregister_after = match config.deregister_critical_after {
-                Some(d) => d,
+                // Only process checks with deregister_critical_after configured
+                let deregister_after = match config.deregister_critical_after {
+                    Some(d) => d,
+                    None => return,
+                };
+
+                // Check if the instance has been Critical long enough
+                let critical_since = match status.critical_since {
+                    Some(t) => t,
+                    None => return,
+                };
+
+                let critical_duration_ms = now - critical_since;
+                let threshold_ms = deregister_after.as_millis() as i64;
+
+                if critical_duration_ms >= threshold_ms {
+                    targets.push((config.registry_key(), critical_duration_ms, threshold_ms));
+                }
+            });
+
+        for (check_key, critical_duration_ms, threshold_ms) in targets {
+            // Re-read only the config we act on (cheap, and node-qualified key
+            // safe). Skip if it was already removed by an earlier target.
+            let config = match self.registry.get_check_config(&check_key) {
+                Some(c) => c,
                 None => continue,
             };
 
-            // Check if the instance has been Critical long enough
-            let critical_since = match status.critical_since {
-                Some(t) => t,
-                None => continue,
-            };
+            warn!(
+                "Auto-deregistering instance for check {}: critical for {}ms (threshold: {}ms)",
+                config.check_id, critical_duration_ms, threshold_ms
+            );
 
-            let critical_duration_ms = now - critical_since;
-            let threshold_ms = deregister_after.as_millis() as i64;
+            // Deregister via result handler
+            self.registry.result_handler().on_deregister(
+                &config.check_id,
+                &config.namespace,
+                &config.group_name,
+                &config.service_name,
+                &config.ip,
+                config.port,
+                &config.cluster_name,
+            );
 
-            if critical_duration_ms >= threshold_ms {
-                warn!(
-                    "Auto-deregistering instance for check {}: critical for {}ms (threshold: {}ms)",
-                    config.check_id, critical_duration_ms, threshold_ms
-                );
+            // Deregister all checks for this instance
+            let instance_key = super::registry::build_instance_key(
+                &config.namespace,
+                &config.group_name,
+                &config.service_name,
+                &config.ip,
+                config.port,
+                &config.cluster_name,
+            );
+            self.registry.deregister_all_instance_checks(&instance_key);
 
-                // Deregister via result handler
-                self.registry.result_handler().on_deregister(
-                    &config.check_id,
-                    &config.namespace,
-                    &config.group_name,
-                    &config.service_name,
-                    &config.ip,
-                    config.port,
-                    &config.cluster_name,
-                );
-
-                // Deregister all checks for this instance
-                let instance_key = super::registry::build_instance_key(
-                    &config.namespace,
-                    &config.group_name,
-                    &config.service_name,
-                    &config.ip,
-                    config.port,
-                    &config.cluster_name,
-                );
-                self.registry.deregister_all_instance_checks(&instance_key);
-
-                info!(
-                    "Auto-deregistered instance {}:{} from {}/{}/{}",
-                    config.ip,
-                    config.port,
-                    config.namespace,
-                    config.group_name,
-                    config.service_name
-                );
-            }
+            info!(
+                "Auto-deregistered instance {}:{} from {}/{}/{}",
+                config.ip, config.port, config.namespace, config.group_name, config.service_name
+            );
         }
     }
 }

@@ -19,6 +19,23 @@ use crate::{
 };
 use batata_config::service::import as config_import;
 
+/// Maximum number of configs allowed in a single Consul KV export.
+///
+/// Some persistence backends do not cap `config_find_for_export`, so guard at
+/// the API boundary before serializing the whole result set into one JSON body.
+const MAX_EXPORT_CONFIGS: usize = 10_000;
+
+/// Reject an export that would serialize an unbounded result set.
+fn check_export_size(count: usize) -> Result<(), String> {
+    if count > MAX_EXPORT_CONFIGS {
+        return Err(format!(
+            "config export exceeds the maximum of {} configs; narrow the query",
+            MAX_EXPORT_CONFIGS
+        ));
+    }
+    Ok(())
+}
+
 /// GET /v1/kv/export
 /// Export all configurations in Consul format
 pub async fn export_kv(
@@ -49,6 +66,12 @@ pub async fn export_kv(
             return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string()));
         }
     };
+
+    // Bound the export before serializing: backends that do not cap
+    // `config_find_for_export` could otherwise return an entire namespace.
+    if let Err(msg) = check_export_size(storage_configs.len()) {
+        return HttpResponse::InternalServerError().json(ConsulError::new(msg));
+    }
 
     if storage_configs.is_empty() {
         return HttpResponse::Ok().json(Vec::<ConsulKVExportItem>::new());
@@ -186,4 +209,24 @@ async fn import_with_persistence(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_export_size_allows_within_cap() {
+        // Success path: empty and exactly-at-cap results are accepted.
+        assert!(check_export_size(0).is_ok());
+        assert!(check_export_size(MAX_EXPORT_CONFIGS).is_ok());
+    }
+
+    #[test]
+    fn check_export_size_rejects_over_cap() {
+        // Guard: an over-cap export must be rejected rather than silently
+        // serialized. Removing the cap check makes this assertion fail.
+        let err = check_export_size(MAX_EXPORT_CONFIGS + 1).unwrap_err();
+        assert!(err.contains("narrow the query"));
+    }
 }

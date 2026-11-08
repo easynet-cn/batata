@@ -181,10 +181,14 @@ impl BatataConfigService {
         match self.get_config_full(data_id, group, tenant).await {
             Ok(result) => Ok(result.content),
             Err(e) => {
-                // Try failover if available
+                // Try failover if available. The lookup is offloaded to
+                // `spawn_blocking` so its sync disk IO never blocks a worker.
                 if let Some(processor) = &self.local_processor
-                    && let Ok(Some(failover_content)) =
-                        processor.get_failover(data_id, group, tenant)
+                    && let Some(failover_content) = processor
+                        .get_failover_async(data_id, group, tenant)
+                        .await
+                        .ok()
+                        .flatten()
                 {
                     warn!(
                         "Using failover config for dataId={}, group={}, tenant={}",
@@ -209,10 +213,13 @@ impl BatataConfigService {
         match self.get_config_full(data_id, group, tenant).await {
             Ok(result) => Ok(result),
             Err(e) => {
-                // Try failover if available
+                // Try failover if available (offloaded to spawn_blocking).
                 if let Some(processor) = &self.local_processor
-                    && let Ok(Some(failover_content)) =
-                        processor.get_failover(data_id, group, tenant)
+                    && let Some(failover_content) = processor
+                        .get_failover_async(data_id, group, tenant)
+                        .await
+                        .ok()
+                        .flatten()
                 {
                     warn!(
                         "Using failover config for dataId={}, group={}, tenant={}",
@@ -278,9 +285,11 @@ impl BatataConfigService {
                 cache
             });
 
-        // Save snapshot if available
+        // Save snapshot if available (offloaded to spawn_blocking).
         if let Some(processor) = &self.local_processor
-            && let Err(e) = processor.save_snapshot(data_id, group, tenant, Some(&content))
+            && let Err(e) = processor
+                .save_snapshot_async(data_id, group, tenant, Some(&content))
+                .await
         {
             warn!("Failed to save snapshot: {}", e);
         }
@@ -390,8 +399,9 @@ impl BatataConfigService {
             }
 
             if let Some(processor) = &self.local_processor
-                && let Err(e) =
-                    processor.save_snapshot(data_id, group, tenant, Some(&filter_req.content))
+                && let Err(e) = processor
+                    .save_snapshot_async(data_id, group, tenant, Some(&filter_req.content))
+                    .await
             {
                 warn!("Failed to save snapshot: {}", e);
             }
@@ -415,9 +425,11 @@ impl BatataConfigService {
             let key = build_cache_key(data_id, group, tenant);
             self.cache_map.remove(&key);
 
-            // Remove snapshot
+            // Remove snapshot (offloaded to spawn_blocking).
             if let Some(processor) = &self.local_processor
-                && let Err(e) = processor.save_snapshot(data_id, group, tenant, None)
+                && let Err(e) = processor
+                    .save_snapshot_async(data_id, group, tenant, None)
+                    .await
             {
                 warn!("Failed to remove snapshot: {}", e);
             }

@@ -54,45 +54,53 @@ impl TtlMonitor {
 
     /// Scan all checks and mark expired TTL checks as Critical
     async fn scan_expired_ttl_checks(&self) {
-        let all_checks = self.registry.get_all_checks();
-
-        for (config, status) in all_checks {
+        // Visit the registry in place (no deep clone of every config/status).
+        // Only the few checks that actually expired are collected, and the
+        // async `ttl_update` calls are deferred until after the visit so no
+        // DashMap read guard is held across an `.await`.
+        let mut expired: Vec<(String, i64, u128)> = Vec::new();
+        self.registry.for_each_check(|config, status| {
             // Only process TTL checks
             if config.check_type != CheckType::Ttl {
-                continue;
+                return;
             }
 
             // Skip checks already in Critical state
             if status.status == CheckStatus::Critical {
-                continue;
+                return;
             }
 
             // Check if TTL has expired
             if let Some(ttl) = config.ttl
-                && TtlHealthCheckProcessor::check_expiration(&status, ttl)
+                && TtlHealthCheckProcessor::check_expiration(status, ttl)
             {
                 // `registry_key()` (not `check_id`): the registry is keyed by
                 // the node-qualified id, so passing the bare id would silently
                 // target nothing for checks that carry a node.
-                let check_key = config.registry_key();
-                warn!(
-                    "TTL expired for check {}: last_updated={}ms ago, ttl={}ms",
-                    check_key,
+                expired.push((
+                    config.registry_key(),
                     current_timestamp_ms() - status.last_updated,
-                    ttl.as_millis()
-                );
-                self.registry
-                    .ttl_update(
-                        &check_key,
-                        CheckStatus::Critical,
-                        Some("TTL expired".to_string()),
-                    )
-                    .await;
-                debug!(
-                    "Marked check {} as Critical due to TTL expiration",
-                    check_key
-                );
+                    ttl.as_millis(),
+                ));
             }
+        });
+
+        for (check_key, last_updated_ms_ago, ttl_ms) in expired {
+            warn!(
+                "TTL expired for check {}: last_updated={}ms ago, ttl={}ms",
+                check_key, last_updated_ms_ago, ttl_ms
+            );
+            self.registry
+                .ttl_update(
+                    &check_key,
+                    CheckStatus::Critical,
+                    Some("TTL expired".to_string()),
+                )
+                .await;
+            debug!(
+                "Marked check {} as Critical due to TTL expiration",
+                check_key
+            );
         }
     }
 }

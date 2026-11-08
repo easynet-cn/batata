@@ -459,23 +459,38 @@ impl ConfigPersistence for DistributedPersistService {
         namespace_id: &str,
         current_nid: i64,
     ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
-        let (entries, _) =
-            self.reader
-                .search_config_history(data_id, group, namespace_id, 1, u64::MAX)?;
+        // Targeted predecessor lookup directly over the history CF. The old
+        // `search_config_history(..., 1, u64::MAX)` deserialized, sorted and
+        // JSON-converted the ENTIRE history just to find one entry. Instead we
+        // scan the prefix once and keep only the highest numeric `id` below
+        // `current_nid`: O(n) time, O(1) memory, no global sort and no
+        // serialize-all. This is a bounded single-pass fallback rather than a
+        // reverse-iterator short-circuit because history keys carry the id as a
+        // decimal string, so lexicographic key order is not guaranteed to match
+        // numeric id order; comparing `stored.id` keeps the result exact.
+        let prefix = RocksStateMachine::config_history_prefix(namespace_id, group, data_id);
+        let db = self.reader.db();
+        let cf = db
+            .cf_handle(batata_consistency::raft::state_machine::CF_CONFIG_HISTORY)
+            .ok_or_else(|| anyhow::anyhow!("Column family CF_CONFIG_HISTORY not found"))?;
 
-        // Find the entry with the highest id that is still less than current_nid
-        let mut best: Option<&serde_json::Value> = None;
-        let mut best_id: i64 = 0;
-
-        for entry in &entries {
-            let id = entry["id"].as_i64().unwrap_or(0);
-            if id < current_nid && id > best_id {
-                best_id = id;
-                best = Some(entry);
+        let mut best: Option<batata_consistency::raft::state_machine::StoredConfigHistory> = None;
+        let iter = db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored: batata_consistency::raft::state_machine::StoredConfigHistory =
+                crate::bincode::deserialize(&value)
+                    .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
+            if stored.id < current_nid && best.as_ref().is_none_or(|b| stored.id > b.id) {
+                best = Some(stored);
             }
         }
 
-        Ok(best.map(EmbeddedPersistService::json_to_history))
+        Ok(best.map(|stored| EmbeddedPersistService::typed_to_history(&stored)))
     }
 
     async fn config_history_search_with_filters(

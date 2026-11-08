@@ -16,6 +16,20 @@ use batata_server_common::{
 
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
+/// Maximum page size accepted from the console instance-listing API.
+const MAX_PAGE_SIZE: u64 = 500;
+
+/// Clamp caller-supplied pagination to safe bounds and compute the slice
+/// offset with saturating arithmetic. A huge `page_no * page_size` must not
+/// overflow (and, in debug builds, panic) or force a giant allocation.
+fn clamp_pagination(page_no: u64, page_size: u64) -> (u64, u64, usize) {
+    let page_no = page_no.max(1);
+    let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
+    let offset = (page_no - 1).saturating_mul(page_size);
+    let start = usize::try_from(offset).unwrap_or(usize::MAX);
+    (page_no, page_size, start)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
@@ -203,10 +217,11 @@ async fn list_instances(
         }
     };
 
+    // The console datasource exposes only a full-list API (no server-side
+    // pagination), so bound the page size and slice in memory. Revisit if a
+    // paginated datasource method becomes available.
     let total_count = all_instances.len();
-    let page_no = params.page_no.max(1);
-    let page_size = params.page_size.max(1);
-    let start = ((page_no - 1) * page_size) as usize;
+    let (page_no, page_size, start) = clamp_pagination(params.page_no, params.page_size);
     let list: Vec<Instance> = all_instances
         .into_iter()
         .skip(start)
@@ -361,4 +376,39 @@ pub fn routes() -> Scope {
         .service(list_instances)
         .service(update_instance)
         .service(delete_instance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_pagination_normal_values() {
+        // Success path: a normal page computes the expected offset.
+        let (page_no, page_size, start) = clamp_pagination(3, 10);
+        assert_eq!(page_no, 3);
+        assert_eq!(page_size, 10);
+        assert_eq!(start, 20);
+    }
+
+    #[test]
+    fn clamp_pagination_clamps_page_size() {
+        // Guard: an unbounded page_size must be clamped to MAX_PAGE_SIZE.
+        let (_, page_size, _) = clamp_pagination(1, u64::MAX);
+        assert_eq!(page_size, MAX_PAGE_SIZE);
+        // A zero page_size is raised to 1.
+        let (_, page_size, _) = clamp_pagination(1, 0);
+        assert_eq!(page_size, 1);
+    }
+
+    #[test]
+    fn clamp_pagination_no_overflow_on_huge_values() {
+        // Guard: saturating/checked arithmetic must not overflow (which would
+        // panic in debug builds) and must keep the page size bounded.
+        let (page_no, page_size, start) = clamp_pagination(u64::MAX, u64::MAX);
+        assert_eq!(page_no, u64::MAX);
+        assert_eq!(page_size, MAX_PAGE_SIZE);
+        // The offset saturates and converts to a large but valid skip.
+        assert!(start > 0);
+    }
 }

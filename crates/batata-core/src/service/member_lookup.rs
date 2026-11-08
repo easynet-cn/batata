@@ -272,6 +272,7 @@ impl FileMemberLookup {
         tokio::spawn(async move {
             let check_interval = poll_interval;
             let mut last_modified = initial_modified;
+            let default_port = config.server_main_port();
 
             loop {
                 tokio::time::sleep(check_interval).await;
@@ -280,59 +281,79 @@ impl FileMemberLookup {
                     break;
                 }
 
-                let current_modified = std::fs::metadata(&conf_path)
-                    .and_then(|m| m.modified())
-                    .ok();
+                // `std::fs` metadata + reading cluster.conf are synchronous
+                // disk operations. Run them on the blocking pool so a slow
+                // filesystem never stalls a Tokio worker on each poll; the
+                // poll loop itself stays async.
+                let path_for_meta = conf_path.clone();
+                let current_modified = tokio::task::spawn_blocking(move || {
+                    std::fs::metadata(&path_for_meta)
+                        .and_then(|m| m.modified())
+                        .ok()
+                })
+                .await
+                .unwrap_or(None);
 
-                if current_modified != last_modified {
-                    info!(
-                        "Detected change in {}, reloading cluster members",
-                        conf_path
-                    );
-                    last_modified = current_modified;
+                if current_modified == last_modified {
+                    continue;
+                }
 
-                    // Re-read the file and update members
-                    let path = Path::new(&conf_path);
-                    if let Ok(file) = File::open(path) {
-                        let reader = BufReader::new(file);
-                        let default_port = config.server_main_port();
-                        let mut new_addresses = HashSet::new();
+                info!(
+                    "Detected change in {}, reloading cluster members",
+                    conf_path
+                );
+                last_modified = current_modified;
 
-                        for line in reader.lines().map_while(Result::ok) {
-                            let line = line.trim().to_string();
-                            if line.is_empty() || line.starts_with('#') {
-                                continue;
-                            }
-                            if let Some(member) =
-                                FileMemberLookup::parse_member(&line, default_port)
-                            {
-                                new_addresses.insert(member.address.clone());
-                                if !members.contains_key(&member.address) {
-                                    info!("New cluster member discovered: {}", member.address);
-                                    members.insert(member.address.clone(), member);
-                                }
-                            }
+                let path_for_read = conf_path.clone();
+                let parsed = tokio::task::spawn_blocking(move || {
+                    let file = File::open(Path::new(&path_for_read)).ok()?;
+                    let reader = BufReader::new(file);
+                    let mut parsed = Vec::new();
+                    for line in reader.lines().map_while(Result::ok) {
+                        let line = line.trim().to_string();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
                         }
-
-                        // Remove members no longer in file
-                        let to_remove: Vec<String> = members
-                            .iter()
-                            .filter(|e| !new_addresses.contains(e.key()))
-                            .map(|e| e.key().clone())
-                            .collect();
-                        for addr in to_remove {
-                            info!("Removing cluster member: {}", addr);
-                            members.remove(&addr);
+                        if let Some(member) = FileMemberLookup::parse_member(&line, default_port) {
+                            parsed.push(member);
                         }
+                    }
+                    Some(parsed)
+                })
+                .await;
 
-                        info!("Reloaded {} cluster members", members.len());
+                // A failed open/read leaves the previous snapshot untouched,
+                // matching the original behaviour.
+                let Ok(Some(parsed)) = parsed else {
+                    continue;
+                };
 
-                        // Forward the snapshot so the member manager (and its
-                        // join/leave listeners, e.g. the distro mapper) sees
-                        // the change instead of just this lookup's cache.
-                        Self::notify_members_changed(&members, &hook).await;
+                let new_addresses: HashSet<String> =
+                    parsed.iter().map(|m| m.address.clone()).collect();
+                for member in parsed {
+                    if !members.contains_key(&member.address) {
+                        info!("New cluster member discovered: {}", member.address);
+                        members.insert(member.address.clone(), member);
                     }
                 }
+
+                // Remove members no longer in file
+                let to_remove: Vec<String> = members
+                    .iter()
+                    .filter(|e| !new_addresses.contains(e.key()))
+                    .map(|e| e.key().clone())
+                    .collect();
+                for addr in to_remove {
+                    info!("Removing cluster member: {}", addr);
+                    members.remove(&addr);
+                }
+
+                info!("Reloaded {} cluster members", members.len());
+
+                // Forward the snapshot so the member manager (and its
+                // join/leave listeners, e.g. the distro mapper) sees the
+                // change instead of just this lookup's cache.
+                Self::notify_members_changed(&members, &hook).await;
             }
         });
     }
@@ -405,10 +426,20 @@ impl AddressServerMemberLookup {
 
         let url = format!("http://{}:{}{}", domain, port, path);
 
+        // Never fall back to `Client::default()`: it has no timeout, so a hung
+        // address server would stall every member-refresh poll forever. Retry
+        // once with the same explicit timeout and fail loudly if it still
+        // cannot be built.
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                error!("failed to build address-server HTTP client: {}", e);
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(5))
+                    .build()
+                    .expect("address-server HTTP client must have an explicit timeout")
+            });
 
         Self {
             config,
@@ -751,5 +782,25 @@ mod tests {
             "hook must observe the reloaded members (lookup cache now holds {})",
             lookup.get_members().len()
         );
+    }
+
+    /// The address-server lookup must build its HTTP client with an explicit
+    /// timeout; constructing it must succeed (never rely on a no-timeout
+    /// `Client::default()` fallback).
+    #[test]
+    fn test_address_server_lookup_constructs_timed_client() {
+        let config = config::Config::builder()
+            .set_default("batata.standalone", false)
+            .unwrap()
+            .set_default("batata.server.main.port", 8848)
+            .unwrap()
+            .set_default("batata.version", "1.0.0")
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let lookup = AddressServerMemberLookup::new(Configuration::from_config(config));
+        assert!(lookup.use_address_server());
+        assert!(lookup.get_members().is_empty());
     }
 }

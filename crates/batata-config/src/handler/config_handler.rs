@@ -17,7 +17,9 @@ fn build_group_key(data_id: &str, group: &str, tenant: &str) -> String {
     key
 }
 
+use futures::StreamExt;
 use futures::future::join_all;
+use tokio::sync::Semaphore;
 use tonic::Status;
 use tracing::{debug, info, warn};
 
@@ -50,6 +52,14 @@ use batata_server_common::model::AppState;
 /// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
 #[allow(dead_code)]
 const DEFAULT_MAX_GRAY_VERSION_COUNT: usize = 10;
+
+/// Max concurrent background config-push tasks. Bounds fire-and-forget spawns
+/// and subscriber fan-out under high publish/remove load.
+const MAX_CONCURRENT_CONFIG_PUSH_TASKS: usize = 64;
+
+/// Shared semaphore limiting concurrent config-push tasks across all handlers.
+static CONFIG_PUSH_SEMAPHORE: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_CONFIG_PUSH_TASKS)));
 
 use crate::model::gray_rule::GrayRule;
 
@@ -116,31 +126,24 @@ fn build_client_labels(connection: &Connection) -> HashMap<String, String> {
     labels
 }
 
-/// Find a matching gray config for the given connection and config key.
-/// Returns (content, md5, encrypted_data_key, last_modified, gray_name) if a gray config matches.
-pub async fn find_matching_gray_config(
+/// Find a matching gray config, preserving persistence errors.
+///
+/// Returns `Ok(Some(..))` when a gray config matches, `Ok(None)` when none
+/// matches, and `Err` when the underlying lookup fails. Callers that must not
+/// treat a failed lookup as "no gray config" use this variant.
+pub async fn try_find_matching_gray_config(
     persistence: &dyn PersistenceService,
     data_id: &str,
     group: &str,
     tenant: &str,
     labels: &HashMap<String, String>,
-) -> Option<(String, String, String, i64, String)> {
-    let grays = match persistence
+) -> anyhow::Result<Option<(String, String, String, i64, String)>> {
+    let grays = persistence
         .config_find_all_grays(data_id, group, tenant)
-        .await
-    {
-        Ok(g) => g,
-        Err(e) => {
-            debug!(
-                "Failed to find gray configs for {}/{}/{}: {}",
-                data_id, group, tenant, e
-            );
-            return None;
-        }
-    };
+        .await?;
 
     if grays.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Parse (with caching) and sort by priority (higher priority first)
@@ -161,17 +164,40 @@ pub async fn find_matching_gray_config(
                 "Gray config matched: data_id={}, group={}, tenant={}, gray_name={}",
                 data_id, group, tenant, gray.gray_name
             );
-            return Some((
+            return Ok(Some((
                 gray.content.clone(),
                 gray.md5.clone(),
                 gray.encrypted_data_key.clone(),
                 gray.modified_time,
                 gray.gray_name.clone(),
-            ));
+            )));
         }
     }
 
-    None
+    Ok(None)
+}
+
+/// Find a matching gray config for the given connection and config key.
+/// Returns (content, md5, encrypted_data_key, last_modified, gray_name) if a gray config matches.
+/// Persistence errors are logged and treated as "no match", preserving the
+/// original contract for callers that cannot propagate errors.
+pub async fn find_matching_gray_config(
+    persistence: &dyn PersistenceService,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+    labels: &HashMap<String, String>,
+) -> Option<(String, String, String, i64, String)> {
+    match try_find_matching_gray_config(persistence, data_id, group, tenant, labels).await {
+        Ok(matched) => matched,
+        Err(e) => {
+            debug!(
+                "Failed to find gray configs for {}/{}/{}: {}",
+                data_id, group, tenant, e
+            );
+            None
+        }
+    }
 }
 
 // Handler for ConfigQueryRequest - queries configuration by dataId, group, tenant
@@ -737,7 +763,9 @@ impl PayloadHandler for ConfigPublishHandler {
                     let tnt = tenant.to_string();
                     let sip = src_ip.to_string();
                     let md5 = new_md5;
+                    let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await;
                         if let Err(e) = handler
                             .notify_fuzzy_watchers(&did, &grp, &tnt, &sip, &md5)
                             .await
@@ -762,7 +790,9 @@ impl PayloadHandler for ConfigPublishHandler {
                     let group = group.to_string();
                     let tenant = tenant.to_string();
                     let last_modified = chrono::Utc::now().timestamp_millis();
+                    let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await;
                         sender
                             .broadcast_config_change(
                                 &members,
@@ -933,7 +963,9 @@ impl ConfigPublishHandler {
             let group_owned = group.to_string();
             let tenant_owned = tenant.to_string();
             let subscriber_count = subscribers.len();
+            let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
             tokio::spawn(async move {
+                let _permit = semaphore.acquire().await;
                 let futs: Vec<_> = subscribers
                     .iter()
                     .map(|subscriber| {
@@ -956,7 +988,12 @@ impl ConfigPublishHandler {
                         }
                     })
                     .collect();
-                join_all(futs).await;
+                // Bound the fan-out so a config with many subscribers cannot
+                // open an unbounded number of concurrent pushes.
+                futures::stream::iter(futs)
+                    .buffer_unordered(MAX_CONCURRENT_CONFIG_PUSH_TASKS)
+                    .for_each(|_| std::future::ready(()))
+                    .await;
 
                 info!(
                     "Notified {} regular subscribers for config change: {}@@{}@@{}",
@@ -1080,7 +1117,9 @@ impl PayloadHandler for ConfigRemoveHandler {
                     let group = group.to_string();
                     let tenant = tenant.to_string();
                     let src_ip = src_ip.to_string();
+                    let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await;
                         if let Err(e) = handler
                             .notify_fuzzy_watchers(&data_id, &group, &tenant, &src_ip)
                             .await
@@ -1105,7 +1144,9 @@ impl PayloadHandler for ConfigRemoveHandler {
                     let group = group.to_string();
                     let tenant = tenant.to_string();
                     let last_modified = chrono::Utc::now().timestamp_millis();
+                    let semaphore = CONFIG_PUSH_SEMAPHORE.clone();
                     tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await;
                         sender
                             .broadcast_config_change(
                                 &members,
@@ -1269,7 +1310,12 @@ impl ConfigRemoveHandler {
                     }
                 })
                 .collect();
-            join_all(futs).await;
+            // Bound the fan-out so a config with many subscribers cannot open an
+            // unbounded number of concurrent pushes.
+            futures::stream::iter(futs)
+                .buffer_unordered(MAX_CONCURRENT_CONFIG_PUSH_TASKS)
+                .for_each(|_| std::future::ready(()))
+                .await;
 
             // Update subscriber MD5 to empty to prevent duplicate notifications
             for subscriber in &subscribers {
@@ -1290,6 +1336,37 @@ impl ConfigRemoveHandler {
         }
 
         Ok(())
+    }
+}
+
+/// Outcome of resolving the effective md5 for a listened config.
+enum EffectiveMd5 {
+    /// A matching gray (or formal) config with its server md5.
+    Found(String),
+    /// No config exists on the server ("null" sentinel).
+    Missing,
+    /// A persistence lookup failed; must never be reported as a change.
+    LookupFailed,
+}
+
+/// Decide whether a batch-listen client should be told the config changed.
+/// Kept pure so the DB-error / not-found / md5-mismatch decision matrix is
+/// unit testable without an `AppState`.
+fn is_config_changed_for_listen(
+    effective: &EffectiveMd5,
+    is_listen: bool,
+    client_md5: &str,
+) -> bool {
+    match effective {
+        EffectiveMd5::Found(server_md5) => client_md5 != server_md5,
+        EffectiveMd5::Missing => {
+            // Upstream ConfigCacheService.isUptodate() treats a missing config
+            // as the "null" sentinel. A client that already knows there is
+            // nothing to fetch (empty md5) must not be told "changed" again.
+            is_listen && !client_md5.is_empty()
+        }
+        // A failed lookup must not emit a spurious "changed" push.
+        EffectiveMd5::LookupFailed => false,
     }
 }
 
@@ -1372,7 +1449,10 @@ impl PayloadHandler for ConfigBatchListenHandler {
             .app_state
             .persistence
             .as_ref()
-            .expect("Persistence service not available")
+            .ok_or_else(|| {
+                warn!("ConfigBatchListen: persistence service not available");
+                Status::unavailable("Persistence service not available")
+            })?
             .clone();
         let is_listen = request.listen;
         let check_futs: Vec<_> = contexts_to_check
@@ -1386,47 +1466,49 @@ impl PayloadHandler for ConfigBatchListenHandler {
                 let response_tenant = ctx.response_tenant.to_string();
                 let client_md5 = ctx.client_md5.to_string();
                 async move {
-                    // First check gray config
-                    if let Some((_, gray_md5, _, _, _)) =
-                        find_matching_gray_config(p.as_ref(), &data_id, &group, &tenant, &labels)
-                            .await
+                    // Resolve the effective md5, short-circuiting the formal
+                    // lookup when a gray config already answers the question.
+                    // Persistences errors become LookupFailed so no spurious
+                    // "changed" push is ever emitted for them.
+                    let effective = match try_find_matching_gray_config(
+                        p.as_ref(),
+                        &data_id,
+                        &group,
+                        &tenant,
+                        &labels,
+                    )
+                    .await
                     {
-                        if client_md5 != gray_md5 {
-                            return Some(ConfigContext {
-                                data_id,
-                                group,
-                                tenant: response_tenant,
-                            });
+                        Ok(Some((_, gray_md5, _, _, _))) => EffectiveMd5::Found(gray_md5),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "ConfigBatchListen: gray config lookup failed, skipping change detection"
+                            );
+                            EffectiveMd5::LookupFailed
                         }
-                        return None;
-                    }
-                    // Fall through to formal config
-                    if let Ok(Some(config)) = p.config_find_one(&data_id, &group, &tenant).await {
-                        if client_md5 != config.md5 {
-                            return Some(ConfigContext {
-                                data_id,
-                                group,
-                                tenant: response_tenant,
-                            });
-                        }
-                    } else if is_listen {
-                        // No formal config on the server. Upstream
-                        // `ConfigCacheService.isUptodate()` compares the client MD5
-                        // with the server MD5, which is the "null" sentinel for a
-                        // missing config. A client that already knows there is
-                        // nothing to fetch (empty MD5) must not be told "changed"
-                        // again, otherwise it re-queries on every listen cycle and
-                        // the entry never becomes consistent.
-                        if client_md5.is_empty() {
-                            return None;
-                        }
-                        return Some(ConfigContext {
+                        Ok(None) => match p.config_find_one(&data_id, &group, &tenant).await {
+                            Ok(Some(config)) => EffectiveMd5::Found(config.md5),
+                            Ok(None) => EffectiveMd5::Missing,
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    "ConfigBatchListen: formal config lookup failed, skipping change detection"
+                                );
+                                EffectiveMd5::LookupFailed
+                            }
+                        },
+                    };
+
+                    if is_config_changed_for_listen(&effective, is_listen, &client_md5) {
+                        Some(ConfigContext {
                             data_id,
                             group,
                             tenant: response_tenant,
-                        });
+                        })
+                    } else {
+                        None
                     }
-                    None
                 }
             })
             .collect();
@@ -1727,20 +1809,44 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
             if let Some(pat) = pattern {
                 let persistence = self.app_state.persistence();
                 // Find all configs matching the pattern's namespace
-                if let Ok(configs) = persistence.config_find_by_namespace(&pat.namespace).await {
-                    let conn_id = connection_id.to_string();
-                    let cm = self.connection_manager.clone();
-                    // Send matching configs as ADD_CONFIG notifications
-                    for config in &configs {
-                        if pat.matches(&pat.namespace, &config.group, &config.data_id) {
-                            let group_key =
-                                build_group_key(&config.data_id, &config.group, &pat.namespace);
-                            let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
-                            notification.group_key = group_key;
-                            notification.change_type = "ADD_CONFIG".to_string();
-                            let payload = notification.build_server_push_payload();
-                            cm.push_message(&conn_id, payload).await;
-                        }
+                match persistence.config_find_by_namespace(&pat.namespace).await {
+                    Ok(configs) => {
+                        let conn_id = connection_id.to_string();
+                        let cm = self.connection_manager.clone();
+                        // Build all INIT notifications up front, then push them
+                        // with bounded concurrency instead of awaiting each send
+                        // sequentially.
+                        let payloads: Vec<_> = configs
+                            .iter()
+                            .filter(|config| {
+                                pat.matches(&pat.namespace, &config.group, &config.data_id)
+                            })
+                            .map(|config| {
+                                let group_key =
+                                    build_group_key(&config.data_id, &config.group, &pat.namespace);
+                                let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
+                                notification.group_key = group_key;
+                                notification.change_type = "ADD_CONFIG".to_string();
+                                notification.build_server_push_payload()
+                            })
+                            .collect();
+
+                        futures::stream::iter(payloads.into_iter().map(move |payload| {
+                            let cm = cm.clone();
+                            let conn_id = conn_id.clone();
+                            async move {
+                                cm.push_message(&conn_id, payload).await;
+                            }
+                        }))
+                        .buffer_unordered(MAX_CONCURRENT_CONFIG_PUSH_TASKS)
+                        .for_each(|_| std::future::ready(()))
+                        .await;
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Config fuzzy watch init: failed to load configs for namespace"
+                        );
                     }
                 }
             }
@@ -1914,5 +2020,88 @@ impl PayloadHandler for ClientConfigMetricHandler {
 
     fn can_handle(&self) -> &'static str {
         "ClientConfigMetricRequest"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mutant-checkable for finding 12: a DB error (LookupFailed) must never be
+    // reported as a change, and the missing-config sentinel must not fire for
+    // an empty client md5. Also covers the success paths (md5 match / mismatch).
+    #[test]
+    fn test_is_config_changed_for_listen_md5_paths() {
+        assert!(is_config_changed_for_listen(
+            &EffectiveMd5::Found("new-md5".to_string()),
+            true,
+            "old-md5",
+        ));
+        assert!(!is_config_changed_for_listen(
+            &EffectiveMd5::Found("same-md5".to_string()),
+            true,
+            "same-md5",
+        ));
+    }
+
+    #[test]
+    fn test_is_config_changed_for_listen_error_never_changes() {
+        assert!(!is_config_changed_for_listen(
+            &EffectiveMd5::LookupFailed,
+            true,
+            "anything",
+        ));
+        assert!(!is_config_changed_for_listen(
+            &EffectiveMd5::LookupFailed,
+            false,
+            "",
+        ));
+    }
+
+    #[test]
+    fn test_is_config_changed_for_listen_missing_sentinel() {
+        // A listen client with a non-empty md5 must be told about a missing config.
+        assert!(is_config_changed_for_listen(
+            &EffectiveMd5::Missing,
+            true,
+            "stale-md5",
+        ));
+        // A client that already knows nothing exists must not be told "changed".
+        assert!(!is_config_changed_for_listen(
+            &EffectiveMd5::Missing,
+            true,
+            ""
+        ));
+        // Non-listen requests never report a missing config as changed.
+        assert!(!is_config_changed_for_listen(
+            &EffectiveMd5::Missing,
+            false,
+            "stale-md5",
+        ));
+    }
+
+    // Mutant-checkable for the shared bound (finding 13): the semaphore must
+    // reject any push task beyond MAX_CONCURRENT_CONFIG_PUSH_TASKS and grant
+    // permits again once released.
+    #[test]
+    fn test_config_push_semaphore_enforces_cap() {
+        let mut permits = Vec::with_capacity(MAX_CONCURRENT_CONFIG_PUSH_TASKS);
+        for _ in 0..MAX_CONCURRENT_CONFIG_PUSH_TASKS {
+            permits.push(
+                CONFIG_PUSH_SEMAPHORE
+                    .clone()
+                    .try_acquire_owned()
+                    .expect("permit within the cap must be available"),
+            );
+        }
+        assert!(
+            CONFIG_PUSH_SEMAPHORE.clone().try_acquire_owned().is_err(),
+            "a push task beyond the cap must be rejected"
+        );
+        drop(permits);
+        assert!(
+            CONFIG_PUSH_SEMAPHORE.clone().try_acquire_owned().is_ok(),
+            "permits must be reusable after the in-flight tasks finish"
+        );
     }
 }

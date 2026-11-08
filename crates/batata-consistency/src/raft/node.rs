@@ -593,12 +593,21 @@ impl RaftNode {
         };
 
         let mut client = RaftManagementServiceClient::new(channel);
-        let response = client
-            .write(ClientWriteRequest {
-                data: request_bytes.to_vec(),
-            })
-            .await?
-            .into_inner();
+        // Bound the leader RPC: the channel only has a connect timeout, so a
+        // stalled leader connection would hang the follower's forwarded write
+        // (and its retry loop) indefinitely.
+        let write_fut = client.write(ClientWriteRequest {
+            data: request_bytes.to_vec(),
+        });
+        let response = match tokio::time::timeout(Duration::from_secs(30), write_fut).await {
+            Ok(Ok(resp)) => resp.into_inner(),
+            Ok(Err(e)) => return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+            Err(_) => {
+                return Err("forward write to leader timed out after 30s"
+                    .to_string()
+                    .into());
+            }
+        };
 
         if response.success {
             Ok((

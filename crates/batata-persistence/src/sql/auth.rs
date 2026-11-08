@@ -9,6 +9,12 @@ use crate::traits::*;
 
 use super::ExternalDbPersistService;
 
+/// Maximum number of rows returned by `user_search`'s unqualified LIKE scan.
+///
+/// Without a bound, a broad `username` pattern would load every matching user
+/// into memory in one query.
+const MAX_SEARCH_ROWS: u64 = 1000;
+
 #[async_trait]
 impl AuthPersistence for ExternalDbPersistService {
     async fn user_find_by_username(&self, username: &str) -> anyhow::Result<Option<UserInfo>> {
@@ -125,6 +131,7 @@ impl AuthPersistence for ExternalDbPersistService {
             .select_only()
             .column(users::Column::Username)
             .filter(users::Column::Username.like(format!("%{}%", username)))
+            .limit(MAX_SEARCH_ROWS)
             .into_tuple::<String>()
             .all(&self.db)
             .await?;
@@ -401,5 +408,18 @@ impl AuthPersistence for ExternalDbPersistService {
         .exec(&self.db)
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_search_row_cap_is_bounded() {
+        // Success path: the cap is a positive, sane bound. Guards against an
+        // unbounded (or zero) limit silently disabling the row cap.
+        assert!(MAX_SEARCH_ROWS > 0);
+        assert!(MAX_SEARCH_ROWS <= 10_000);
     }
 }

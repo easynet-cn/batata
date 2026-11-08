@@ -1951,11 +1951,12 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
                 .await
                 .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
-            for (key, value) in self
-                .db
-                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
-                .flatten()
-            {
+            // Iterate explicitly and propagate RocksDB errors: `.flatten()` on
+            // the iterator would silently drop a read error and yield an
+            // incomplete column family that still gets a valid checksum.
+            let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            for item in iter {
+                let (key, value) = item.map_err(|e| sm_error(e, ErrorVerb::Read))?;
                 writer
                     .write_entry(&key, &value)
                     .await
@@ -2107,7 +2108,13 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             db: self.db.clone(),
             last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
-            plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
+            // Clone the LIVE registry, not a fresh empty one. The snapshot
+            // builder's `snapshot_cf_names()` reads this registry to enumerate
+            // plugin column families (Consul/Apollo/visibility etc.). Building
+            // from an empty registry would silently drop every plugin CF from
+            // the snapshot, so a follower restored from it would lose all
+            // plugin data.
+            plugin_registry: self.plugin_registry.clone(),
             naming_hook: self.naming_hook.clone(),
             health_check_hook: self.health_check_hook.clone(),
             write_opts: rocksdb::WriteOptions::default(),
@@ -2183,6 +2190,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raft::reader::RocksDbReader;
 
     /// Fixed leader clock for lock tests: assertions must not depend on the
     /// wall clock, and two replicas applying the same entry must see the
@@ -2312,6 +2320,139 @@ mod tests {
             .expect("read")
             .expect("row still present");
         assert_eq!(after, corrupt, "publish must not overwrite the row");
+    }
+
+    /// A corrupt persisted lock record must NOT be treated as "lock free":
+    /// doing so lets a second owner acquire a lock that is actually held,
+    /// which silently breaks mutual exclusion. Fail closed instead.
+    ///
+    /// Mutant check: dropping the `Err(e) => return failure` branch in
+    /// `apply_lock_acquire`'s read/decode makes a corrupt record look like an
+    /// absent one, so `acquire` would return success and overwrite the row —
+    /// this assertion (`!success` + row untouched) would then fail.
+    #[tokio::test]
+    async fn lock_acquire_rejects_corrupt_existing_record() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let key = RocksStateMachine::lock_key("public", "k1");
+        let corrupt = vec![0xff_u8; 16];
+        sm.db
+            .put_cf(sm.cf_locks(), key.as_bytes(), &corrupt)
+            .expect("seed corrupt lock row");
+
+        let resp = sm.apply_lock_acquire("public", "k1", "owner-b", 60_000, 7, None, TEST_NOW_MS);
+        assert!(
+            !resp.success,
+            "decode failure on an existing lock must abort the acquire"
+        );
+        let after = sm
+            .db
+            .get_cf(sm.cf_locks(), key.as_bytes())
+            .expect("read")
+            .expect("row still present");
+        assert_eq!(after, corrupt, "acquire must not overwrite the corrupt row");
+    }
+
+    /// A corrupt persisted gray config record must NOT be treated as a passing
+    /// CAS check: that would let a write overwrite real gray config data. Fail
+    /// closed, matching the non-gray `apply_config_publish` path.
+    ///
+    /// Mutant check: removing the `Err(e) => return failure` branch in the
+    /// gray CAS decode makes a corrupt record fall through as "no conflict",
+    /// so the publish would succeed and overwrite the row — caught by the
+    /// `!success` + row-untouched assertions.
+    #[tokio::test]
+    async fn gray_publish_rejects_corrupt_existing_record() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let key = RocksStateMachine::config_gray_key("d", "g", "t", "beta");
+        let corrupt = vec![0xff_u8; 16];
+        sm.db
+            .put_cf(sm.cf_config_gray(), key.as_bytes(), &corrupt)
+            .expect("seed corrupt gray row");
+
+        let resp = sm.apply_config_gray_publish(
+            "d",
+            "g",
+            "t",
+            "content",
+            "beta",
+            "rule",
+            None,
+            None,
+            None,
+            None,
+            Some("anything".to_string()), // cas_md5 triggers the read+decode path
+            TEST_NOW_MS,
+        );
+        assert!(
+            !resp.success,
+            "decode failure on an existing gray config must abort the publish"
+        );
+        let after = sm
+            .db
+            .get_cf(sm.cf_config_gray(), key.as_bytes())
+            .expect("read")
+            .expect("row still present");
+        assert_eq!(after, corrupt, "publish must not overwrite the corrupt row");
+    }
+
+    /// History pagination must clamp `page_size` at `MAX_HISTORY_PAGE_SIZE`
+    /// (1000). Without the clamp a caller requesting `u64::MAX` would
+    /// serialize the entire matched history into one Vec of JSON values.
+    ///
+    /// Mutant check: removing `page_size.min(MAX_HISTORY_PAGE_SIZE)` makes
+    /// `take(u64::MAX)` return every matched row, so `page.len()` would be
+    /// `SEED` instead of the cap — this assertion would fail.
+    #[tokio::test]
+    async fn history_page_size_is_capped() {
+        const CAP: u64 = 1000;
+        const SEED: u64 = CAP + 500; // 1500 rows, well above the cap
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sm = RocksStateMachine::new(dir.path())
+            .await
+            .expect("state machine");
+        let cf = sm.cf_config_history();
+        for i in 0..SEED {
+            let h = StoredConfigHistory {
+                id: i as i64,
+                data_id: "d".to_string(),
+                group: "g".to_string(),
+                tenant: "t".to_string(),
+                content: "c".to_string(),
+                md5: "m".to_string(),
+                app_name: String::new(),
+                src_user: None,
+                src_ip: None,
+                op_type: "U".to_string(),
+                publish_type: "formal".to_string(),
+                gray_name: String::new(),
+                ext_info: String::new(),
+                encrypted_data_key: String::new(),
+                created_time: 0,
+                modified_time: 0,
+            };
+            let key = RocksStateMachine::config_history_key("d", "g", "t", i);
+            let encoded = bincode::serialize(&h).expect("encode history");
+            sm.db
+                .put_cf(&cf, key.as_bytes(), &encoded)
+                .expect("seed history row");
+        }
+
+        let reader = RocksDbReader::from_state_machine(&sm);
+        let (page, total) = reader
+            .search_config_history("d", "g", "t", 1, u64::MAX)
+            .expect("search");
+        assert_eq!(total, SEED, "total must report every matched row");
+        assert_eq!(
+            page.len() as u64,
+            CAP,
+            "page_size must be clamped to the cap even when the caller asks for u64::MAX"
+        );
     }
 
     #[test]

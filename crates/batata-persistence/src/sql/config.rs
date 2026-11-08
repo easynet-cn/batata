@@ -12,6 +12,25 @@ use crate::traits::*;
 
 use super::ExternalDbPersistService;
 
+/// Hard cap on the number of configs returned by `config_find_for_export`.
+///
+/// The export path serializes the whole result set into a single JSON body, so
+/// an unbounded query could materialize an entire namespace in memory. We read
+/// one extra row to detect an over-cap result and return a clear error instead
+/// of silently truncating.
+const MAX_EXPORT_CONFIGS: u64 = 10_000;
+
+/// Reject an export whose row count exceeds [`MAX_EXPORT_CONFIGS`].
+fn enforce_export_cap(count: usize) -> anyhow::Result<()> {
+    if count as u64 > MAX_EXPORT_CONFIGS {
+        anyhow::bail!(
+            "config export would return more than {} configs; narrow the query (group, dataId, appName)",
+            MAX_EXPORT_CONFIGS
+        );
+    }
+    Ok(())
+}
+
 /// Escape SQL wildcard characters and convert user wildcards to SQL LIKE pattern.
 #[inline]
 fn escape_sql_like_pattern(input: &str) -> String {
@@ -1044,7 +1063,10 @@ impl ConfigPersistence for ExternalDbPersistService {
             query = query.filter(config_info::Column::AppName.eq(app));
         }
 
-        let configs = query.all(&self.db).await?;
+        // Read at most MAX+1 rows so an over-cap result is detected instead of
+        // silently truncated, and cap the DB work up front.
+        let configs = query.limit(MAX_EXPORT_CONFIGS + 1).all(&self.db).await?;
+        enforce_export_cap(configs.len())?;
 
         // Fetch tags for all matching configs
         let config_ids: Vec<i64> = configs.iter().map(|c| c.id).collect();
@@ -1186,5 +1208,25 @@ impl ConfigPersistence for ExternalDbPersistService {
         }
 
         Ok(result.rows_affected > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enforce_export_cap_allows_within_limit() {
+        // Success path: empty and exactly-at-cap results are accepted.
+        assert!(enforce_export_cap(0).is_ok());
+        assert!(enforce_export_cap(MAX_EXPORT_CONFIGS as usize).is_ok());
+    }
+
+    #[test]
+    fn enforce_export_cap_rejects_over_limit() {
+        // Guard: an over-cap result must be rejected with a clear error rather
+        // than silently truncated. Removing the check makes this assertion fail.
+        let err = enforce_export_cap(MAX_EXPORT_CONFIGS as usize + 1).unwrap_err();
+        assert!(err.to_string().contains("narrow the query"));
     }
 }

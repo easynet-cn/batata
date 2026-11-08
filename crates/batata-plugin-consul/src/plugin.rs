@@ -193,6 +193,10 @@ pub struct ConsulPlugin {
     pub dc_config: ConsulDatacenterConfig,
     /// Lazily initialized inner state (populated during `init()`).
     inner: std::sync::OnceLock<ConsulPluginInner>,
+    /// Handles of the long-lived loops started by `start_background_tasks`.
+    /// Aborted on `shutdown()` so they stop probing/heartbeating/re-registering
+    /// instead of being merely detached.
+    background_tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl ConsulPlugin {
@@ -210,6 +214,7 @@ impl ConsulPlugin {
             config,
             dc_config,
             inner: std::sync::OnceLock::new(),
+            background_tasks: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -400,6 +405,7 @@ impl ConsulPlugin {
             config,
             dc_config,
             inner: std::sync::OnceLock::new(),
+            background_tasks: std::sync::Mutex::new(Vec::new()),
         };
 
         let inner =
@@ -439,6 +445,7 @@ impl ConsulPlugin {
             config,
             dc_config,
             inner: std::sync::OnceLock::new(),
+            background_tasks: std::sync::Mutex::new(Vec::new()),
         };
 
         let inner =
@@ -475,6 +482,15 @@ impl ConsulPlugin {
     pub fn event_service(&self) -> &ConsulEventService {
         &self.inner().event
     }
+}
+
+/// Spawn a background task and record its `JoinHandle` so `shutdown()` can
+/// abort every loop started by `start_background_tasks`.
+fn spawn_background(
+    handles: &mut Vec<tokio::task::JoinHandle<()>>,
+    fut: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    handles.push(tokio::spawn(fut));
 }
 
 // Implement the unified ProtocolAdapterPlugin SPI
@@ -633,6 +649,18 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
     async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Consul compatibility plugin shutting down");
+
+        // Abort every long-lived loop started by `start_background_tasks`.
+        // Dropping a JoinHandle only detaches the task, so abort explicitly to
+        // stop probes, heartbeats and auto-registration after shutdown.
+        let mut guard = self
+            .background_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
+
         Ok(())
     }
 
@@ -678,13 +706,14 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
 
     async fn start_background_tasks(&self) -> anyhow::Result<()> {
         let inner = self.inner();
+        let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         // Auto-register Consul service if enabled
         if self.config.register_self {
             tracing::info!("Auto-registering Consul service...");
             let agent = inner.agent.clone();
             let dc_config = self.dc_config.clone();
-            tokio::spawn(async move {
+            spawn_background(&mut handles, async move {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 if let Err(e) = agent.register_consul_service(&dc_config).await {
                     tracing::error!("Failed to auto-register Consul service: {}", e);
@@ -695,14 +724,14 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // TTL monitor
         tracing::info!("Starting Consul TTL monitor...");
         let ttl_monitor = TtlMonitor::new(inner.registry.clone());
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             ttl_monitor.start().await;
         });
 
         // Deregister monitor (5s interval for responsive service cleanup)
         tracing::info!("Starting Consul deregister monitor...");
         let deregister_monitor = DeregisterMonitor::new(inner.registry.clone(), 5);
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             deregister_monitor.start().await;
         });
 
@@ -717,7 +746,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             let coord_svc = Arc::new(inner.coordinate.clone());
             let cm_clone = cm.clone();
             let dc_config = self.dc_config.clone();
-            tokio::spawn(async move {
+            spawn_background(&mut handles, async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 interval.tick().await; // skip initial firing
                 let self_node = dc_config.node_name.clone();
@@ -787,7 +816,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                     .set_replicator(Arc::new(RaftHealthReplicator::new(raft.clone())));
                 let hook = Arc::new(RegistryApplyHook::new(inner.registry.clone()));
                 let raft_for_hook = raft.clone();
-                tokio::spawn(async move {
+                spawn_background(&mut handles, async move {
                     raft_for_hook.register_health_check_hook(hook).await;
                 });
                 tracing::info!("Consul reactor wired to Raft for cluster-wide health status sync");
@@ -854,7 +883,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // it is empty. Worst case is a <=5s propagation delay, which matches
         // how slowly Consul alias status is expected to move anyway.
         let health_for_alias = inner.health.clone();
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.tick().await; // skip initial firing
             loop {
@@ -874,7 +903,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // (cheap) so that leader changes don't stall cleanup.
         let session_svc = inner.session.clone();
         let kv_svc = inner.kv.clone();
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
@@ -891,7 +920,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // that stream status reflects a live connection during Phase 1 (no
         // real gRPC stream). Runs every 30s; cheap in-memory updates only.
         let peering_svc = inner.peering.clone();
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             interval.tick().await; // skip initial firing
             loop {
@@ -910,7 +939,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         // fetch service catalog + health data and import it locally. Runs every
         // 30s; failures are logged and do not interrupt the loop.
         let peering_svc_repl = inner.peering.clone();
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             interval.tick().await; // skip initial firing
             loop {
@@ -952,7 +981,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         let grpc_port = self.dc_config.grpc_port;
         let xds_server_clone = xds_server.clone();
         let (_grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(async move {
+        spawn_background(&mut handles, async move {
             let addr = match format!("0.0.0.0:{}", grpc_port).parse() {
                 Ok(a) => a,
                 Err(e) => {
@@ -967,6 +996,12 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
                 tracing::error!(error = %e, "Consul Connect xDS gRPC server failed");
             }
         });
+
+        // Retain the handles so `shutdown()` can abort all of these loops.
+        *self
+            .background_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = handles;
 
         Ok(())
     }
@@ -1262,6 +1297,40 @@ mod tests {
             state.get("consul_enabled"),
             Some(&Some("false".to_string()))
         );
+    }
+
+    /// Regression: `shutdown()` must abort every tracked background loop, not
+    /// just log. Dropping a `JoinHandle` only detaches the task, so without an
+    /// explicit abort the loop keeps running after the plugin is stopped.
+    #[tokio::test]
+    async fn test_shutdown_aborts_background_tasks() {
+        let plugin = create_test_plugin();
+
+        // Stand-in for one of the long-lived loops. Its oneshot sender is
+        // dropped (and `rx` resolves) only when the task is actually aborted.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _keep = tx;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        plugin.background_tasks.lock().unwrap().push(handle);
+        // Success path: a handle is tracked before shutdown.
+        assert_eq!(plugin.background_tasks.lock().unwrap().len(), 1);
+
+        plugin.shutdown().await.unwrap();
+
+        // Guard: the loop must be aborted. If shutdown only drained/dropped
+        // the handles without aborting, the sender stays alive and `rx` never
+        // resolves, so this times out and fails.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+                .await
+                .is_ok(),
+            "background tasks must be aborted on shutdown"
+        );
+        assert!(plugin.background_tasks.lock().unwrap().is_empty());
     }
 
     fn create_test_plugin() -> ConsulPlugin {

@@ -5,9 +5,30 @@
 //! them to the target environment via its V2 config API.
 
 use actix_web::{HttpResponse, Responder, get, post, web};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use batata_server_common::model::AppState;
+
+/// Hard cap on the number of configs synced in one request.
+const MAX_SYNC_BATCH: usize = 1000;
+/// Maximum number of in-flight HTTP POSTs during a sync.
+const SYNC_CONCURRENCY: usize = 8;
+/// Wall-clock bound for the whole sync batch.
+const SYNC_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Per-request timeout for the target HTTP client.
+const SYNC_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Reject a sync batch that is too large to push safely in one request.
+fn check_sync_batch_size(count: usize) -> Result<(), String> {
+    if count > MAX_SYNC_BATCH {
+        return Err(format!(
+            "sync batch of {} configs exceeds the limit of {}; narrow the query (dataIds/group)",
+            count, MAX_SYNC_BATCH
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,7 +154,8 @@ pub async fn sync_configs(
 ) -> impl Responder {
     let target_url = &body.target_url;
     let namespace = body.namespace_id.as_deref().unwrap_or("");
-    let policy = body.policy.as_deref().unwrap_or("skip");
+    // Owned so each concurrent sync task can clone it independently.
+    let policy = body.policy.clone().unwrap_or_else(|| "skip".to_string());
 
     if target_url.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -162,9 +184,21 @@ pub async fn sync_configs(
         Vec::new()
     };
 
-    // Sync each config to target via HTTP
+    // Bound the number of configs we are willing to push in one request, so a
+    // whole namespace cannot turn into an unbounded sequence of HTTP POSTs.
+    if let Err(msg) = check_sync_batch_size(configs.len()) {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "code": 400,
+            "message": msg,
+        }));
+    }
+    let total = configs.len() as u32;
+
+    // Sync each config to target via HTTP. A per-request timeout bounds each
+    // POST, `buffer_unordered` bounds concurrency, and the outer
+    // `tokio::time::timeout` bounds the total wall-clock duration.
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(SYNC_REQUEST_TIMEOUT)
         .build()
     {
         Ok(c) => c,
@@ -176,70 +210,94 @@ pub async fn sync_configs(
         }
     };
 
-    let mut synced = 0u32;
-    let mut skipped = 0u32;
-    let mut failed = 0u32;
-    let mut details = Vec::new();
+    let post_url = format!("{}/nacos/v2/cs/config", target_url.trim_end_matches('/'));
 
-    for config in &configs {
-        let result = client
-            .post(format!(
-                "{}/nacos/v2/cs/config",
-                target_url.trim_end_matches('/')
-            ))
-            .form(&[
-                ("dataId", &config.data_id),
-                ("group", &config.group),
-                ("tenant", &config.tenant),
-                ("content", &config.content),
-                ("type", &config.config_type),
-            ])
-            .send()
-            .await;
+    let outcomes_fut = stream::iter(configs.iter().enumerate())
+        .map(|(index, config)| {
+            let client = client.clone();
+            let post_url = post_url.clone();
+            let policy = policy.clone();
+            async move {
+                let result = client
+                    .post(&post_url)
+                    .form(&[
+                        ("dataId", &config.data_id),
+                        ("group", &config.group),
+                        ("tenant", &config.tenant),
+                        ("content", &config.content),
+                        ("type", &config.config_type),
+                    ])
+                    .send()
+                    .await;
 
-        match result {
-            Ok(resp) if resp.status().is_success() => {
-                synced += 1;
-                details.push(SyncItemResult {
-                    data_id: config.data_id.clone(),
-                    group: config.group.clone(),
-                    status: "synced".to_string(),
-                    message: None,
-                });
-            }
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                if policy == "skip" && status == 409 {
-                    skipped += 1;
-                    details.push(SyncItemResult {
+                let detail = match result {
+                    Ok(resp) if resp.status().is_success() => SyncItemResult {
                         data_id: config.data_id.clone(),
                         group: config.group.clone(),
-                        status: "skipped".to_string(),
-                        message: Some("Already exists on target".to_string()),
-                    });
-                } else {
-                    failed += 1;
-                    details.push(SyncItemResult {
+                        status: "synced".to_string(),
+                        message: None,
+                    },
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        if policy == "skip" && status == 409 {
+                            SyncItemResult {
+                                data_id: config.data_id.clone(),
+                                group: config.group.clone(),
+                                status: "skipped".to_string(),
+                                message: Some("Already exists on target".to_string()),
+                            }
+                        } else {
+                            SyncItemResult {
+                                data_id: config.data_id.clone(),
+                                group: config.group.clone(),
+                                status: "failed".to_string(),
+                                message: Some(format!("HTTP {}", status)),
+                            }
+                        }
+                    }
+                    Err(e) => SyncItemResult {
                         data_id: config.data_id.clone(),
                         group: config.group.clone(),
                         status: "failed".to_string(),
-                        message: Some(format!("HTTP {}", status)),
-                    });
-                }
+                        message: Some(e.to_string()),
+                    },
+                };
+                (index, detail)
             }
-            Err(e) => {
-                failed += 1;
-                details.push(SyncItemResult {
-                    data_id: config.data_id.clone(),
-                    group: config.group.clone(),
-                    status: "failed".to_string(),
-                    message: Some(e.to_string()),
-                });
-            }
-        }
-    }
+        })
+        .buffer_unordered(SYNC_CONCURRENCY)
+        .collect::<Vec<_>>();
 
-    let total = configs.len() as u32;
+    // Bound the whole batch in wall-clock time so a slow target cannot hold
+    // the admin request open indefinitely.
+    let mut outcomes = match tokio::time::timeout(SYNC_TOTAL_TIMEOUT, outcomes_fut).await {
+        Ok(v) => v,
+        Err(_) => {
+            return HttpResponse::GatewayTimeout().json(serde_json::json!({
+                "code": 504,
+                "message": format!(
+                    "config sync timed out after {:?}; narrow the query (dataIds/group)",
+                    SYNC_TOTAL_TIMEOUT
+                ),
+            }));
+        }
+    };
+
+    // Preserve the original request/response order despite out-of-order
+    // completion, then aggregate counters and details.
+    outcomes.sort_by_key(|(index, _)| *index);
+    let mut synced = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+    let mut details = Vec::with_capacity(outcomes.len());
+    for (_, detail) in outcomes {
+        match detail.status.as_str() {
+            "synced" => synced += 1,
+            "skipped" => skipped += 1,
+            _ => failed += 1,
+        }
+        details.push(detail);
+    }
 
     HttpResponse::Ok().json(serde_json::json!({
         "code": 0,
@@ -271,4 +329,32 @@ pub fn routes() -> actix_web::Scope {
         .service(get_sync_environments)
         .service(sync_configs)
         .service(get_sync_history)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_sync_batch_size_allows_within_cap() {
+        // Success path: empty and exactly-at-cap batches are accepted.
+        assert!(check_sync_batch_size(0).is_ok());
+        assert!(check_sync_batch_size(MAX_SYNC_BATCH).is_ok());
+    }
+
+    #[test]
+    fn check_sync_batch_size_rejects_over_cap() {
+        // Guard: an over-cap batch must be rejected with a clear error rather
+        // than silently truncated. Removing the check makes this fail.
+        let err = check_sync_batch_size(MAX_SYNC_BATCH + 1).unwrap_err();
+        assert!(err.contains("narrow the query"));
+    }
+
+    #[test]
+    fn sync_bounds_are_sane() {
+        // Success path: concurrency and duration bounds are positive and the
+        // total timeout covers at least one per-request timeout.
+        assert!(SYNC_CONCURRENCY > 0 && SYNC_CONCURRENCY <= 64);
+        assert!(SYNC_TOTAL_TIMEOUT >= SYNC_REQUEST_TIMEOUT);
+    }
 }

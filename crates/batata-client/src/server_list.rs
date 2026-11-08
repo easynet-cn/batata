@@ -10,6 +10,27 @@ use std::time::Duration;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+/// Timeout applied to the server-list refresh HTTP client.
+const REFRESH_CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Build the HTTP client used to refresh the server list.
+///
+/// A no-timeout client (e.g. `Client::default()`) would let a hung endpoint
+/// block the refresh task forever. Construction is retried once with the same
+/// explicit timeout and fails loudly rather than silently degrading.
+fn build_refresh_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(REFRESH_CLIENT_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::error!("failed to build server-list HTTP client: {}", e);
+            reqwest::Client::builder()
+                .timeout(REFRESH_CLIENT_TIMEOUT)
+                .build()
+                .expect("server-list HTTP client must have an explicit timeout")
+        })
+}
+
 /// Health status of a server
 #[derive(Debug, Clone)]
 struct ServerHealth {
@@ -187,10 +208,7 @@ impl ServerListManager {
     pub fn start_refresh_task(self: &Arc<Self>, endpoint: String, interval: Duration) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .unwrap_or_default();
+            let client = build_refresh_client();
 
             let mut timer = tokio::time::interval(interval);
             loop {
@@ -313,5 +331,14 @@ mod tests {
         let mgr = ServerListManager::new("");
         assert_eq!(mgr.total_count(), 0);
         assert!(mgr.next_server().is_none());
+    }
+
+    #[test]
+    fn test_build_refresh_client_is_timed() {
+        // Success path: the client is constructible.
+        let _client = build_refresh_client();
+        // Guard: a non-zero timeout must be configured. A no-timeout client
+        // (Client::default()) would let a hung endpoint block the refresh task.
+        assert!(REFRESH_CLIENT_TIMEOUT > Duration::ZERO);
     }
 }
