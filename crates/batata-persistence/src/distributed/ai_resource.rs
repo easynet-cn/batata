@@ -293,7 +293,7 @@ impl DistributedPersistService {
         count: u32,
     ) -> anyhow::Result<Vec<i64>> {
         let response = self
-            .raft_node
+            .raft_port
             .write(RaftRequest::AiAllocateIds {
                 cf: cf.to_string(),
                 counter_key: counter_key.to_string(),

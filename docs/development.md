@@ -97,6 +97,32 @@ the tag is only reflected in the artifact/Release filename.
 ## Project Statistics
 
 - **~50,000+ lines** of Rust code
-- **19 internal crates** in workspace
-- **333 unit tests** with comprehensive coverage
-- **3 benchmark suites** for performance testing
+- **25 internal crates** in workspace
+- **3750 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-08)
+- **3 benchmark suites** for performance testing; absolute RPS is not a gate —
+  use `scripts/bench_ab.py` or the same-binary A/B guards in the code (see
+  ADR-0002 in [Architecture](architecture.md))
+
+## Ignored test inventory
+
+`#[ignore]` means the test does not exist as far as the gate is concerned. There
+are 162 ignored Rust tests; they are **not** bulk-enabled. Classification
+(2026-11-08):
+
+| Reason string | Count | Interpretation |
+|---|---|---|
+| `requires running server` | 82 | Environment-dependent |
+| `feature not implemented yet` | 26 | Stale label: the endpoints now exist, but the tests still need a live server |
+| `#[ignore]` (no reason) | 16 | Environment-dependent; 4 of these sit in the unused `test_both_databases!` macro |
+| `performance tests require specialized setup` | 11 | Environment-dependent; run via the perf gate |
+| `requires test database` | 10 | Environment-dependent |
+| `requires running server with Consul plugin` | 10 | Environment-dependent |
+| `requires running gRPC server` | 2 | Environment-dependent |
+| `requires PostgreSQL database` | 2 | Environment-dependent |
+| `requires MySQL database` | 2 | Environment-dependent |
+| `cluster gate removed; needs Raft status replication first` | 1 | The only real functional gap |
+
+So 135 are environment-dependent, 26 carry a stale "unimplemented" label that
+must be re-checked before enabling, and 1 documents an unimplemented Raft
+status replication. None are enabled by this inventory; the authoritative
+source is the `#[ignore = "..."]` reason string in each file.

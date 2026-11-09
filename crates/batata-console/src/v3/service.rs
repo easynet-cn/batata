@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
+use batata_api::naming::{ServiceFormData, normalize_console_value};
 use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, default_page_no, default_page_size};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model::AppState, model::response::Result,
@@ -102,20 +103,21 @@ struct ServiceForm {
 }
 
 impl ServiceForm {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
-
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
+    /// Normalize the CONSOLE JSON payload into the shared DTO.
+    ///
+    /// The wire shape stays JSON with structured `metadata`/`selector`
+    /// values; only the downstream representation is shared with the ADMIN
+    /// surface.
+    fn normalize(&self) -> ServiceFormData {
+        ServiceFormData {
+            namespace_id: self.namespace_id.clone(),
+            group_name: self.group_name.clone(),
+            service_name: self.service_name.clone(),
+            ephemeral: self.ephemeral,
+            protect_threshold: self.protect_threshold,
+            metadata: normalize_console_value(self.metadata.as_ref()),
+            selector: normalize_console_value(self.selector.as_ref()),
+        }
     }
 }
 
@@ -289,6 +291,7 @@ async fn create_service(
     data: web::Data<AppState>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
+    let form = form.normalize();
     if form.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
@@ -298,8 +301,8 @@ async fn create_service(
         );
     }
 
-    let namespace_id = form.namespace_id_or_default();
-    let group_name = form.group_name_or_default();
+    let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
+    let group_name = form.group_name_or_default(DEFAULT_GROUP);
 
     let resource = format!(
         "{}:{}:naming/{}",
@@ -315,16 +318,8 @@ async fn create_service(
 
     let threshold = form.protect_threshold.unwrap_or(0.0);
     let ephemeral = form.ephemeral.unwrap_or(false);
-    let metadata_str = form
-        .metadata
-        .as_ref()
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    let selector_str = form
-        .selector
-        .as_ref()
-        .map(|v| v.to_string())
-        .unwrap_or_default();
+    let metadata_str = form.metadata_text();
+    let selector_str = form.selector_text();
 
     match data
         .console_datasource
@@ -356,6 +351,7 @@ async fn update_service(
     data: web::Data<AppState>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
+    let form = form.normalize();
     if form.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
@@ -365,8 +361,8 @@ async fn update_service(
         );
     }
 
-    let namespace_id = form.namespace_id_or_default();
-    let group_name = form.group_name_or_default();
+    let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
+    let group_name = form.group_name_or_default(DEFAULT_GROUP);
 
     let resource = format!(
         "{}:{}:naming/{}",
@@ -380,8 +376,8 @@ async fn update_service(
             .build()
     );
 
-    let metadata_str = form.metadata.as_ref().map(|v| v.to_string());
-    let selector_str = form.selector.as_ref().map(|v| v.to_string());
+    let metadata_str = form.metadata.clone();
+    let selector_str = form.selector.clone();
 
     match data
         .console_datasource
@@ -640,6 +636,30 @@ mod tests {
         // An f32 would serialize as 0.699999988079071 and the detail page
         // would not show the "0.7" the user just saved.
         assert_eq!(serde_json::to_string(&threshold).unwrap(), "0.7");
+    }
+
+    /// CONSOLE naming is JSON and carries metadata/selector as structured
+    /// values. Normalizing must produce the same DTO the ADMIN form surface
+    /// produces (see `batata-naming/src/api/v3/admin/service.rs`), without
+    /// changing either wire shape.
+    #[test]
+    fn test_console_json_keeps_object_wire_shape_and_normalizes() {
+        let json = r#"{"serviceName":"svc","namespaceId":"public","groupName":"DEFAULT_GROUP","ephemeral":true,"protectThreshold":0.5,"metadata":{"env":"test"},"selector":{"type":"label","expression":"env=test"}}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert!(form.metadata.as_ref().is_some_and(|v| v.is_object()));
+        assert!(form.selector.as_ref().is_some_and(|v| v.is_object()));
+        assert_eq!(
+            form.normalize(),
+            ServiceFormData {
+                namespace_id: Some("public".to_string()),
+                group_name: Some("DEFAULT_GROUP".to_string()),
+                service_name: "svc".to_string(),
+                ephemeral: Some(true),
+                protect_threshold: Some(0.5),
+                metadata: Some(r#"{"env":"test"}"#.to_string()),
+                selector: Some(r#"{"expression":"env=test","type":"label"}"#.to_string()),
+            }
+        );
     }
 
     #[test]

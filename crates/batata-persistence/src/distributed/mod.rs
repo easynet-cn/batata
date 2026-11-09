@@ -13,6 +13,10 @@ use batata_consistency::raft::reader::RocksDbReader;
 use batata_consistency::raft::request::{RaftRequest, RaftResponse};
 use batata_consistency::raft::state_machine::RocksStateMachine;
 
+pub mod port;
+
+use port::{RaftNodePort, RaftStatePort, classify_raft_write, health_from_leader};
+
 use crate::model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
     DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, UserInfo,
@@ -30,29 +34,45 @@ use crate::embedded::EmbeddedPersistService;
 
 /// Distributed persistence using Raft consensus + RocksDB
 ///
-/// - Writes go through Raft consensus (RaftNode.write())
+/// - Writes go through the [`RaftStatePort`] consensus proposal path
 /// - Reads use linearizable_read() then read from local RocksDB
 /// - Hot config reads are cached with configurable TTL (0 = disabled)
 pub struct DistributedPersistService {
     reader: RocksDbReader,
-    raft_node: Arc<RaftNode>,
+    raft_port: Arc<dyn RaftStatePort>,
     /// Optional read cache for config_find_one (key: "dataId@@group@@tenant")
     config_cache: Option<Cache<String, Option<ConfigStorageData>>>,
 }
 
 impl DistributedPersistService {
-    /// Create from a RaftNode (no cache)
+    /// Create from a concrete RaftNode (no cache).
+    ///
+    /// Production uses [`Self::with_port`] so the composition root owns the
+    /// adapter; this convenience constructor keeps the Raft-cluster test
+    /// harnesses unchanged.
     pub fn new(raft_node: Arc<RaftNode>, reader: RocksDbReader) -> Self {
-        Self {
-            reader,
-            raft_node,
-            config_cache: None,
-        }
+        Self::with_port(Arc::new(RaftNodePort::new(raft_node)), reader, 0, 0)
     }
 
-    /// Create with config read cache enabled
+    /// Create with config read cache enabled.
     pub fn with_cache(
         raft_node: Arc<RaftNode>,
+        reader: RocksDbReader,
+        ttl_secs: u64,
+        max_entries: u64,
+    ) -> Self {
+        Self::with_port(
+            Arc::new(RaftNodePort::new(raft_node)),
+            reader,
+            ttl_secs,
+            max_entries,
+        )
+    }
+
+    /// Create from an injected consensus port (production composition root and
+    /// mock-backed tests).
+    pub fn with_port(
+        raft_port: Arc<dyn RaftStatePort>,
         reader: RocksDbReader,
         ttl_secs: u64,
         max_entries: u64,
@@ -69,7 +89,7 @@ impl DistributedPersistService {
         };
         Self {
             reader,
-            raft_node,
+            raft_port,
             config_cache,
         }
     }
@@ -126,20 +146,7 @@ impl DistributedPersistService {
     /// allocation and compare-and-set writes report their outcome in
     /// [`RaftResponse::data`].
     async fn raft_write_response(&self, request: RaftRequest) -> anyhow::Result<RaftResponse> {
-        let response = self
-            .raft_node
-            .write(request)
-            .await
-            .map_err(|e| anyhow::anyhow!("Raft write failed: {}", e))?;
-
-        if response.success {
-            Ok(response)
-        } else {
-            Err(anyhow::anyhow!(
-                "Raft write rejected: {}",
-                response.message.unwrap_or_default()
-            ))
-        }
+        classify_raft_write(self.raft_port.write(request).await)
     }
 
     /// Compute MD5 hash
@@ -1099,11 +1106,7 @@ impl PersistenceService for DistributedPersistService {
 
     async fn health_check(&self) -> anyhow::Result<()> {
         // Verify Raft is working by checking if there's a leader
-        if self.raft_node.leader_id().is_some() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("No Raft leader elected"))
-        }
+        health_from_leader(self.raft_port.has_leader())
     }
 
     fn invalidate_config_read_cache(&self, data_id: &str, group: &str, tenant: &str) {

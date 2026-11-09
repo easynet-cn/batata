@@ -5,8 +5,44 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
+
+/// Default capacity of the bounded audit queue.
+///
+/// Audit logging is a side channel: a slow store must never apply backpressure
+/// to config publish/remove. The queue is therefore bounded and full queues
+/// drop the newest entry instead of growing without limit.
+pub const AUDIT_QUEUE_CAPACITY: usize = 1024;
+
+/// Observable counters for the bounded audit queue.
+#[derive(Debug, Default)]
+pub struct AuditQueueStats {
+    /// Entries accepted into the queue (including ones still pending).
+    pub enqueued: AtomicU64,
+    /// Entries dropped because the queue was full or the consumer stopped.
+    pub dropped: AtomicU64,
+    /// Entries the consumer failed to append to the store.
+    pub append_failed: AtomicU64,
+}
+
+impl AuditQueueStats {
+    /// Number of entries accepted into the queue.
+    pub fn enqueued(&self) -> u64 {
+        self.enqueued.load(Ordering::Relaxed)
+    }
+
+    /// Number of entries dropped by the explicit drop-newest policy.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Number of store append failures observed by the consumer.
+    pub fn append_failed(&self) -> u64 {
+        self.append_failed.load(Ordering::Relaxed)
+    }
+}
 
 use crate::spi::{
     ConfigChangePluginV2, ConfigChangeRequest, ConfigChangeResult, ConfigPointcut, ExecuteType,
@@ -144,25 +180,51 @@ impl AuditLogStore for InMemoryAuditLogStore {
     }
 }
 
-/// Default audit plugin implementation
+/// Default audit plugin implementation.
+///
+/// Entries are handed to a single background consumer through a bounded
+/// channel. The explicit drop policy is **drop-newest**: when the queue is
+/// full, the new entry is discarded immediately and counted in
+/// [`AuditQueueStats::dropped`]. The config request path never awaits the
+/// queue, so a slow or stalled audit store cannot stall config operations or
+/// grow the process heap without bound.
 pub struct AuditPlugin {
     store: Arc<dyn AuditLogStore>,
-    log_tx: mpsc::UnboundedSender<AuditLogEntry>,
+    log_tx: mpsc::Sender<AuditLogEntry>,
+    capacity: usize,
+    stats: Arc<AuditQueueStats>,
 }
 
 impl AuditPlugin {
-    /// Create a new audit plugin backed by the given log store.
+    /// Create a new audit plugin backed by the given log store, using
+    /// [`AUDIT_QUEUE_CAPACITY`].
     pub fn new(store: Arc<dyn AuditLogStore>) -> Self {
-        let (log_tx, mut log_rx) = mpsc::unbounded_channel::<AuditLogEntry>();
+        Self::new_with_capacity(store, AUDIT_QUEUE_CAPACITY)
+    }
+
+    /// Create a new audit plugin with an explicit queue capacity (clamped to
+    /// at least 1). Exposed mainly for tests and for deployments that need a
+    /// different bounded-queue budget.
+    pub fn new_with_capacity(store: Arc<dyn AuditLogStore>, capacity: usize) -> Self {
+        let capacity = capacity.max(1);
+        let (log_tx, mut log_rx) = mpsc::channel::<AuditLogEntry>(capacity);
         let store_clone = store.clone();
+        let stats = Arc::new(AuditQueueStats::default());
+        let consumer_stats = stats.clone();
         tokio::spawn(async move {
             while let Some(entry) = log_rx.recv().await {
                 if let Err(e) = store_clone.append(entry).await {
+                    consumer_stats.append_failed.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(target: "audit_plugin", "Failed to append audit log: {}", e);
                 }
             }
         });
-        Self { store, log_tx }
+        Self {
+            store,
+            log_tx,
+            capacity,
+            stats,
+        }
     }
 
     /// Create a new audit plugin backed by an in-memory store of the given size.
@@ -170,13 +232,54 @@ impl AuditPlugin {
         Self::new(Arc::new(InMemoryAuditLogStore::new(max_size)))
     }
 
+    /// Create a new audit plugin backed by an in-memory store, with an
+    /// explicit queue capacity.
+    pub fn with_memory_store_and_capacity(max_size: usize, capacity: usize) -> Self {
+        Self::new_with_capacity(Arc::new(InMemoryAuditLogStore::new(max_size)), capacity)
+    }
+
     /// Return the underlying audit log store.
     pub fn store(&self) -> Arc<dyn AuditLogStore> {
         self.store.clone()
     }
 
+    /// Return the live queue counters.
+    pub fn queue_stats(&self) -> Arc<AuditQueueStats> {
+        self.stats.clone()
+    }
+
+    /// Return the configured (maximum) queue capacity.
+    pub fn queue_capacity(&self) -> usize {
+        self.capacity
+    }
+
     fn log(&self, entry: AuditLogEntry) {
-        let _ = self.log_tx.send(entry);
+        match self.log_tx.try_send(entry) {
+            Ok(()) => {
+                self.stats.enqueued.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                let dropped = self.stats.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                // Rate-limited: a stalled store can produce thousands of
+                // entries per second, and one warning per drop is worse than
+                // the problem being reported.
+                if dropped == 1 || dropped.is_multiple_of(100) {
+                    tracing::warn!(
+                        target: "audit_plugin",
+                        dropped,
+                        capacity = self.capacity,
+                        "audit queue full; dropping newest entry (drop-newest policy)"
+                    );
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.stats.dropped.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    target: "audit_plugin",
+                    "audit consumer stopped; dropping entry"
+                );
+            }
+        }
     }
 }
 
@@ -485,5 +588,172 @@ mod tests {
         let entry = AuditLogEntry::from_request(&req, false, Some("not allowed".to_string()));
         assert!(!entry.success);
         assert_eq!(entry.reason.as_deref(), Some("not allowed"));
+    }
+
+    struct BlockingStore {
+        permits: Arc<tokio::sync::Semaphore>,
+        appended: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AuditLogStore for BlockingStore {
+        async fn append(&self, _entry: AuditLogEntry) -> anyhow::Result<()> {
+            // The test grants permits only after it has verified the request
+            // path is not blocked; until then the consumer is stalled.
+            self.permits.acquire().await.unwrap().forget();
+            self.appended
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
+
+        async fn query(
+            &self,
+            _data_id: Option<&str>,
+            _group: Option<&str>,
+            _tenant: Option<&str>,
+            _operator: Option<&str>,
+            _start_time: Option<i64>,
+            _end_time: Option<i64>,
+            _page_no: u64,
+            _page_size: u64,
+        ) -> anyhow::Result<Vec<AuditLogEntry>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct FailingStore;
+
+    #[async_trait::async_trait]
+    impl AuditLogStore for FailingStore {
+        async fn append(&self, _entry: AuditLogEntry) -> anyhow::Result<()> {
+            anyhow::bail!("store unavailable")
+        }
+
+        async fn query(
+            &self,
+            _data_id: Option<&str>,
+            _group: Option<&str>,
+            _tenant: Option<&str>,
+            _operator: Option<&str>,
+            _start_time: Option<i64>,
+            _end_time: Option<i64>,
+            _page_no: u64,
+            _page_size: u64,
+        ) -> anyhow::Result<Vec<AuditLogEntry>> {
+            Ok(Vec::new())
+        }
+    }
+
+    async fn wait_for<F: Fn() -> bool>(ready: F) -> bool {
+        for _ in 0..50 {
+            if ready() {
+                return true;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+        ready()
+    }
+
+    /// A stalled consumer must not stall config requests or grow the queue
+    /// without bound: the excess entries are dropped and counted.
+    #[tokio::test]
+    async fn test_bounded_audit_queue_drops_when_consumer_is_slow() {
+        let permits = Arc::new(tokio::sync::Semaphore::new(0));
+        let appended = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let store = Arc::new(BlockingStore {
+            permits: permits.clone(),
+            appended: appended.clone(),
+        });
+        let plugin = AuditPlugin::new_with_capacity(store, 2);
+        assert_eq!(plugin.queue_capacity(), 2);
+
+        let mut req = make_request(ConfigPointcut::Publish, ExecuteType::After);
+        let burst = 20u64;
+        let completed = tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
+            for _ in 0..burst {
+                plugin.execute(&mut req).await;
+            }
+        })
+        .await;
+        assert!(
+            completed.is_ok(),
+            "audit logging must never apply backpressure to config requests"
+        );
+
+        let stats = plugin.queue_stats();
+        assert!(
+            stats.dropped() > 0,
+            "a bounded queue must drop entries under a stalled consumer"
+        );
+        assert_eq!(stats.enqueued() + stats.dropped(), burst);
+        assert_eq!(stats.append_failed(), 0);
+        assert!(
+            stats.enqueued() <= plugin.queue_capacity() as u64 + 1,
+            "at most capacity entries plus the one held by the consumer may be queued"
+        );
+
+        // Success path: once the store recovers, queued entries are appended.
+        permits.add_permits(30);
+        assert!(wait_for(|| appended.load(std::sync::atomic::Ordering::Relaxed) > 0).await);
+        assert_eq!(stats.append_failed(), 0);
+    }
+
+    /// The normal path must count accepted entries and produce no drops or
+    /// append failures.
+    #[tokio::test]
+    async fn test_audit_queue_success_path_counts_enqueued_entries() {
+        let plugin = AuditPlugin::with_memory_store_and_capacity(100, 8);
+        let store = plugin.store();
+        let mut req = make_request(ConfigPointcut::Publish, ExecuteType::After);
+        for _ in 0..3 {
+            plugin.execute(&mut req).await;
+        }
+        let mut observed = 0;
+        for _ in 0..50 {
+            observed = store
+                .query(None, None, None, None, None, None, 1, 100)
+                .await
+                .unwrap()
+                .len();
+            if observed == 3 {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(observed, 3, "all accepted entries must reach the store");
+        let stats = plugin.queue_stats();
+        assert_eq!(stats.enqueued(), 3);
+        assert_eq!(stats.dropped(), 0);
+        assert_eq!(stats.append_failed(), 0);
+    }
+
+    /// Store failures are observable instead of being swallowed.
+    #[tokio::test]
+    async fn test_audit_append_failures_are_counted() {
+        let plugin = AuditPlugin::new_with_capacity(Arc::new(FailingStore), 8);
+        let mut req = make_request(ConfigPointcut::Remove, ExecuteType::After);
+        plugin.execute(&mut req).await;
+        let stats = plugin.queue_stats();
+        assert!(wait_for(|| stats.append_failed() > 0).await);
+        assert_eq!(stats.enqueued(), 1);
+        assert_eq!(stats.dropped(), 0);
+    }
+
+    /// A stopped consumer is a drop, not a silent success.
+    #[tokio::test]
+    async fn test_closed_consumer_counts_as_dropped() {
+        let (tx, rx) = mpsc::channel::<AuditLogEntry>(1);
+        drop(rx);
+        let plugin = AuditPlugin {
+            store: Arc::new(InMemoryAuditLogStore::new(4)),
+            log_tx: tx,
+            capacity: 1,
+            stats: Arc::new(AuditQueueStats::default()),
+        };
+        let mut req = make_request(ConfigPointcut::Publish, ExecuteType::After);
+        plugin.execute(&mut req).await;
+        let stats = plugin.queue_stats();
+        assert_eq!(stats.dropped(), 1);
+        assert_eq!(stats.enqueued(), 0);
     }
 }

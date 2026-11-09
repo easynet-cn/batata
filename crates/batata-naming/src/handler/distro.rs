@@ -16,6 +16,27 @@ use tracing::{debug, info};
 use crate::service::instance::is_distro_replica;
 use crate::service::{ConnectionManagerPusher, NamingService, SubscriberPusher};
 
+#[cfg(test)]
+mod test_instrumentation {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PAYLOAD_BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn note_payload_build() {
+        PAYLOAD_BUILDS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    pub(crate) fn payload_builds() -> usize {
+        PAYLOAD_BUILDS.with(|c| c.get())
+    }
+
+    pub(crate) fn reset() {
+        PAYLOAD_BUILDS.with(|c| c.set(0));
+    }
+}
+
 // Re-export DistroProtocol for convenience
 pub use batata_core::service::distro::DistroProtocol;
 
@@ -197,6 +218,18 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         self.naming_service.get_all_service_keys()
     }
 
+    /// Cheap version lookup used by verify rounds.
+    ///
+    /// `get_data` clones every locally-owned ephemeral instance and serializes
+    /// the whole sync payload, but `verify_round` only reads
+    /// `DistroData::version`. That counter is the local-mutation-only distro
+    /// version, so it can be read directly. Invalid keys still return `None`,
+    /// matching `get_data`.
+    async fn get_version(&self, key: &str) -> Option<i64> {
+        Self::parse_service_key(key)?;
+        Some(self.naming_service.get_distro_version(key))
+    }
+
     async fn get_data(&self, key: &str) -> Option<DistroData> {
         // Parse the service key
         let (namespace, group_name, service_name) = Self::parse_service_key(key)?;
@@ -266,6 +299,8 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         };
 
         let content = serde_json::to_vec(&data).ok()?;
+        #[cfg(test)]
+        test_instrumentation::note_payload_build();
 
         // Use the local-mutation-only distro version instead of the shared
         // service revision. The revision also moves when a peer's sync is
@@ -654,6 +689,51 @@ mod tests {
             1,
             "merging a peer's sync must NOT move our own version"
         );
+    }
+
+    /// A verify round must be able to read the version without rebuilding the
+    /// sync payload. Mutant check: removing the `get_version` override makes
+    /// the default trait method call `get_data`, which serializes the payload.
+    #[tokio::test]
+    async fn test_verify_version_lookup_skips_payload_build() {
+        let naming = Arc::new(NamingService::new());
+        let key = "public@@DEFAULT_GROUP@@svc-verify-version";
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "svc-verify-version",
+            crate::Instance {
+                instance_id: "local#9001#DEFAULT#svc-verify-version".to_string(),
+                ip: "10.1.0.9".to_string(),
+                port: 9001,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "svc-verify-version".to_string(),
+                metadata: std::collections::HashMap::new(),
+            },
+        );
+        let handler = NamingInstanceDistroHandler::new("10.0.0.1:8848".to_string(), naming.clone());
+
+        test_instrumentation::reset();
+        let version = handler.get_version(key).await;
+        assert_eq!(version, Some(naming.get_distro_version(key)));
+        assert_eq!(
+            test_instrumentation::payload_builds(),
+            0,
+            "verify lookup must not serialize a sync payload"
+        );
+
+        // Success path: the full payload path still reports the same version.
+        let data = handler.get_data(key).await.expect("payload must exist");
+        assert_eq!(Some(data.version), version);
+        assert_eq!(test_instrumentation::payload_builds(), 1);
+
+        // Invalid keys must behave exactly like `get_data` (None).
+        assert!(handler.get_version("not-a-service-key").await.is_none());
+        assert!(handler.get_data("not-a-service-key").await.is_none());
     }
 
     /// Verify-failure flow end-to-end on the naming layer: dispossess drops

@@ -40,24 +40,9 @@ pub fn configure_v2_console_routes(cfg: &mut actix_web::web::ServiceConfig) {
 /// Configure v3 console routes on a given ServiceConfig.
 /// This allows composing console routes with additional routes (e.g., AI handlers)
 /// in the same `/v3/console` scope.
+///
+/// Delegates to the single canonical list in `v3::route::configure`; the
+/// self-contained `v3_routes()` scope uses the same list.
 pub fn configure_v3_console_routes(cfg: &mut actix_web::web::ServiceConfig) {
-    cfg.service(v3::cluster::routes())
-        .service(v3::health::routes())
-        .service(v3::metrics::routes())
-        .service(v3::server_state::routes())
-        .service(v3::config::routes())
-        .service(v3::history::routes())
-        .service(v3::namespace::routes())
-        .service(v3::service::routes())
-        .service(v3::audit::routes())
-        .service(v3::sync::routes())
-        .service(v3::tracing_api::routes())
-        .service(v3::control::routes())
-        .service(v3::cmdb::routes())
-        .service(v3::prometheus::routes())
-        // AI resource importer: the console mirror of `/v3/admin/ai/import`.
-        // Register the fully-qualified `/ai/import` scope directly: a bare
-        // `/ai` scope here would shadow the sibling `/ai/a2a`, `/ai/mcp`, ...
-        // scopes that batata-server registers next.
-        .service(v3::ai_import::console_routes());
+    v3::route::configure(cfg);
 }

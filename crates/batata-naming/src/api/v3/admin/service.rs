@@ -18,7 +18,7 @@ use batata_server_common::{
 
 use crate::service::DeleteServiceError;
 use crate::service::ServiceMetadata;
-use batata_api::naming::NamingServiceProvider;
+use batata_api::naming::{NamingServiceProvider, ServiceFormData, normalize_json_text};
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -83,9 +83,22 @@ struct ServiceForm {
 }
 
 impl ServiceForm {
-    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
-
-    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
+    /// Normalize the ADMIN form payload into the shared DTO.
+    ///
+    /// The wire shape stays form-encoded with JSON text in `metadata` /
+    /// `selector`; only the downstream representation is shared with the
+    /// CONSOLE surface.
+    fn normalize(&self) -> ServiceFormData {
+        ServiceFormData {
+            namespace_id: self.namespace_id.clone(),
+            group_name: self.group_name.clone(),
+            service_name: self.service_name.clone(),
+            ephemeral: self.ephemeral,
+            protect_threshold: self.protect_threshold,
+            metadata: normalize_json_text(self.metadata.as_deref()),
+            selector: normalize_json_text(self.selector.as_deref()),
+        }
+    }
 }
 
 /// Nacos-compatible Page response for service list.
@@ -470,6 +483,7 @@ async fn create_service(
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<ServiceForm>,
 ) -> impl Responder {
+    let form = form.normalize();
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -479,8 +493,8 @@ async fn create_service(
         );
     }
 
-    let namespace_id = form.namespace_id_or_default();
-    let group_name = form.group_name_or_default();
+    let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
+    let group_name = form.group_name_or_default(DEFAULT_GROUP);
 
     let resource = format!(
         "{}:{}:naming/{}",
@@ -503,28 +517,13 @@ async fn create_service(
         );
     }
 
-    let metadata: HashMap<String, String> = form
-        .metadata
-        .as_ref()
-        .and_then(|m| serde_json::from_str(m).ok())
-        .unwrap_or_default();
-
-    let (selector_type, selector_expression) = if let Some(selector) = &form.selector {
-        let selector_obj: serde_json::Value = serde_json::from_str(selector).unwrap_or_default();
-        (
-            selector_obj["type"].as_str().unwrap_or("none").to_string(),
-            selector_obj["expression"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-        )
-    } else {
-        ("none".to_string(), String::new())
-    };
+    let (selector_type, selector_expression) = form
+        .selector_parts()
+        .unwrap_or_else(|| ("none".to_string(), String::new()));
 
     let service_metadata = ServiceMetadata {
         protect_threshold: form.protect_threshold.unwrap_or(0.0),
-        metadata,
+        metadata: form.metadata_map(),
         selector_type,
         selector_expression,
         ephemeral: form.ephemeral.unwrap_or(false),
@@ -549,6 +548,7 @@ async fn update_service(
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<ServiceForm>,
 ) -> impl Responder {
+    let form = form.normalize();
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -558,8 +558,8 @@ async fn update_service(
         );
     }
 
-    let namespace_id = form.namespace_id_or_default();
-    let group_name = form.group_name_or_default();
+    let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
+    let group_name = form.group_name_or_default(DEFAULT_GROUP);
 
     let resource = format!(
         "{}:{}:naming/{}",
@@ -591,9 +591,7 @@ async fn update_service(
         );
     }
 
-    if let Some(metadata_str) = &form.metadata
-        && let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
-    {
+    if let Some(metadata) = form.try_metadata_map() {
         naming_service.update_service_metadata_map(
             namespace_id,
             group_name,
@@ -602,17 +600,13 @@ async fn update_service(
         );
     }
 
-    if let Some(selector) = &form.selector {
-        let selector_obj: serde_json::Value = serde_json::from_str(selector).unwrap_or_default();
-        let selector_type = selector_obj["type"].as_str().unwrap_or("none");
-        let selector_expression = selector_obj["expression"].as_str().unwrap_or("");
-
+    if let Some((selector_type, selector_expression)) = form.selector_parts() {
         naming_service.update_service_selector(
             namespace_id,
             group_name,
             &form.service_name,
-            selector_type,
-            selector_expression,
+            &selector_type,
+            &selector_expression,
         );
     }
 
@@ -923,5 +917,41 @@ mod serde_naming_contract {
         .unwrap();
         assert_eq!(form.service_name, "svc");
         assert_eq!(form.protect_threshold, Some(0.7));
+    }
+
+    /// ADMIN naming is form-encoded and carries metadata/selector as JSON
+    /// text. Normalizing must produce the same DTO the CONSOLE JSON surface
+    /// produces (see `batata-console/src/v3/service.rs`), without changing
+    /// either wire shape.
+    #[test]
+    fn admin_form_keeps_json_text_wire_shape_and_normalizes() {
+        let json = r#"{"serviceName":"svc","namespaceId":"public","groupName":"DEFAULT_GROUP","ephemeral":true,"protectThreshold":0.5,"metadata":"{\"env\":\"test\"}","selector":"{\"type\":\"label\",\"expression\":\"env=test\"}"}"#;
+        let form: ServiceForm = serde_json::from_str(json).unwrap();
+        assert_eq!(form.metadata.as_deref(), Some(r#"{"env":"test"}"#));
+        assert_eq!(
+            form.selector.as_deref(),
+            Some(r#"{"type":"label","expression":"env=test"}"#)
+        );
+        assert_eq!(
+            form.normalize(),
+            ServiceFormData {
+                namespace_id: Some("public".to_string()),
+                group_name: Some("DEFAULT_GROUP".to_string()),
+                service_name: "svc".to_string(),
+                ephemeral: Some(true),
+                protect_threshold: Some(0.5),
+                metadata: Some(r#"{"env":"test"}"#.to_string()),
+                selector: Some(r#"{"expression":"env=test","type":"label"}"#.to_string()),
+            }
+        );
+
+        // A structured object is NOT valid on the ADMIN wire: it cannot be
+        // expressed as a single form field value.
+        assert!(
+            serde_json::from_str::<ServiceForm>(
+                r#"{"serviceName":"svc","metadata":{"env":"test"}}"#
+            )
+            .is_err()
+        );
     }
 }

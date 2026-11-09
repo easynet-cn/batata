@@ -5,6 +5,7 @@
 pub mod config;
 pub mod grpc_service;
 pub mod health_check_hook;
+pub(crate) mod history;
 pub mod log_store;
 pub mod naming_hook;
 pub mod network;

@@ -1,68 +1,11 @@
-//! Configuration service traits: ConsoleDataSource, ConfigSubscriptionService,
+//! Configuration service traits: ConfigSubscriptionService,
 //! ConfigEncryptionProvider and related types.
+//!
+//! The console data abstraction lives in `batata-server-common`
+//! (`console::datasource::ConsoleDataSource`); the old same-named trait that
+//! used to be declared here had no implementors and no callers.
 
 use crate::crypto::CryptoResult;
-
-/// Console data source trait
-///
-/// Abstracts console operations that can be performed either
-/// locally (direct database access) or remotely (via HTTP to leader).
-#[async_trait::async_trait]
-pub trait ConsoleDataSource: Send + Sync {
-    /// Check if this is a remote data source
-    fn is_remote(&self) -> bool;
-
-    // Namespace operations
-
-    /// Find all namespaces
-    async fn namespace_find_all(&self) -> Vec<NamespaceInfo>;
-
-    /// Get namespace by ID
-    async fn namespace_get_by_id(
-        &self,
-        namespace_id: &str,
-        tenant_id: &str,
-    ) -> anyhow::Result<NamespaceInfo>;
-
-    /// Create a new namespace
-    async fn namespace_create(
-        &self,
-        namespace_id: &str,
-        namespace_name: &str,
-        namespace_desc: &str,
-    ) -> anyhow::Result<()>;
-
-    /// Update a namespace
-    async fn namespace_update(
-        &self,
-        namespace_id: &str,
-        namespace_name: &str,
-        namespace_desc: &str,
-    ) -> anyhow::Result<bool>;
-
-    /// Delete a namespace
-    async fn namespace_delete(&self, namespace_id: &str) -> anyhow::Result<bool>;
-
-    /// Check if a namespace exists
-    async fn namespace_check(&self, namespace_id: &str) -> anyhow::Result<bool>;
-}
-
-/// Namespace information
-#[derive(Debug, Clone, Default)]
-pub struct NamespaceInfo {
-    /// The `namespace_id` field.
-    pub namespace_id: String,
-    /// The `namespace_name` field.
-    pub namespace_name: String,
-    /// The `namespace_desc` field.
-    pub namespace_desc: String,
-    /// The `quota` field.
-    pub quota: i32,
-    /// The `config_count` field.
-    pub config_count: i32,
-    /// The `namespace_type` field.
-    pub namespace_type: i32,
-}
 
 /// Connection metadata for trait-based access
 #[derive(Debug, Clone, Default)]
@@ -208,16 +151,6 @@ pub trait ConfigEncryptionProvider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_namespace_info_default() {
-        let ns = NamespaceInfo::default();
-
-        assert!(ns.namespace_id.is_empty());
-        assert!(ns.namespace_name.is_empty());
-        assert_eq!(ns.config_count, 0);
-        assert_eq!(ns.quota, 0);
-    }
 
     #[test]
     fn test_config_subscription_key() {

@@ -5,12 +5,43 @@
 use crate::bincode;
 use std::sync::Arc;
 
+use super::history::{HistoryTopK, bounded_history_cap, history_id_from_key};
 use batata_common::model::clamp_page;
 use rocksdb::DB;
 
 /// Hard cap on the number of configs a single export may materialize.
 /// Kept in sync with the SQL backend's `MAX_EXPORT_CONFIGS` (10_000).
 const MAX_EXPORT_CONFIGS: usize = 10_000;
+
+#[cfg(test)]
+mod test_instrumentation {
+    use std::cell::Cell;
+
+    thread_local! {
+        static HISTORY_DECODES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn note_decode() {
+        HISTORY_DECODES.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    pub(crate) fn decode_count() -> usize {
+        HISTORY_DECODES.with(|c| c.get())
+    }
+
+    pub(crate) fn reset() {
+        HISTORY_DECODES.with(|c| c.set(0));
+    }
+}
+
+/// Decode one stored history record. Test builds count every deserialization
+/// so the bounded-scan guards can prove they actually avoid the full decode.
+fn decode_history(bytes: &[u8]) -> anyhow::Result<StoredConfigHistory> {
+    #[cfg(test)]
+    test_instrumentation::note_decode();
+    bincode::deserialize(bytes)
+        .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))
+}
 
 use super::state_machine::{
     CF_CONFIG, CF_CONFIG_GRAY, CF_CONFIG_HISTORY, CF_INSTANCES, CF_NAMESPACE, CF_PERMISSIONS,
@@ -379,24 +410,42 @@ impl RocksDbReader {
 
     // ==================== Config History Operations ====================
 
-    /// Get a config history entry by ID
+    /// Get a config history entry by ID.
+    ///
+    /// The lookup only receives `nid`; there is no tenant/group/dataId to build
+    /// the compound history key from, so a point read is impossible without a
+    /// second on-disk index (which would change the storage/snapshot format).
+    /// The trailing `@@{id}` segment still lets us rule out almost every entry
+    /// *before* deserializing it: only a matching (or unparsable) key is
+    /// decoded, and the stored id is still checked afterwards so the result is
+    /// identical to the old full decode-and-compare scan.
     pub fn get_config_history_by_id(&self, nid: i64) -> anyhow::Result<Option<serde_json::Value>> {
-        // History entries have compound keys; we need to scan and find by id field
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
 
         for item in iter {
-            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            let stored: StoredConfigHistory = bincode::deserialize(&value)
-                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
-            if stored.id as i64 == nid {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if history_id_from_key(&key).is_some_and(|id| id != nid) {
+                continue;
+            }
+            let stored = decode_history(&value)?;
+            if stored.id == nid {
                 return Ok(Some(serde_json::to_value(&stored)?));
             }
         }
         Ok(None)
     }
 
-    /// Search config history with pagination
+    /// Search config history with pagination.
+    ///
+    /// A reverse RocksDB iterator cannot be used here: the key trailing id is
+    /// a decimal string, so `"9"` sorts after `"100"`. Instead we rank the
+    /// matching keys by their *numeric* id with a bounded top-K selector and
+    /// deserialize only the `offset + page_size` candidates that can reach the
+    /// page. Any key that does not carry a parseable id (or whose stored id
+    /// disagrees with the key) falls back to the streaming full-scan path, so
+    /// the page order and totals never depend on the key layout being intact.
     pub fn search_config_history(
         &self,
         data_id: &str,
@@ -406,27 +455,74 @@ impl RocksDbReader {
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
         let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
+        let (offset, page_size) = clamp_page(page_no, page_size);
+        let cap = bounded_history_cap(offset, page_size);
+        if cap.is_none() {
+            return self.history_full_page(&prefix, page_no, page_size, |_| true);
+        }
+        let cap = cap.unwrap_or(0);
+
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
-
-        let mut entries: Vec<StoredConfigHistory> = Vec::new();
-        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
-
-        for item in iter {
+        let mut top = HistoryTopK::new(cap);
+        let mut total: u64 = 0;
+        for item in self.db.prefix_iterator_cf(cf, prefix.as_bytes()) {
             let (key, value) =
                 item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
             if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
-            let stored: StoredConfigHistory = bincode::deserialize(&value)
-                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
-            entries.push(stored);
+            total += 1;
+            let Some(id) = history_id_from_key(&key) else {
+                return self.history_full_page(&prefix, page_no, page_size, |_| true);
+            };
+            top.push(id, key.to_vec(), value.to_vec());
         }
 
-        // Sort by id descending (most recent first). `id` is the canonical,
-        // strictly-monotonic history sequence, so this is stable even when two
-        // entries share the same millisecond `created_time` (which made the old
-        // created_time-only sort unstable and could surface a non-latest entry
-        // as the first page item).
+        let start = offset as usize;
+        let end = start.saturating_add(page_size as usize);
+        let mut page_items = Vec::new();
+        for (index, (id, bytes)) in top.into_sorted().into_iter().enumerate() {
+            let stored = decode_history(&bytes)?;
+            if stored.id != id {
+                return self.history_full_page(&prefix, page_no, page_size, |_| true);
+            }
+            if index >= start && index < end {
+                page_items.push(serde_json::to_value(&stored).unwrap_or(serde_json::Value::Null));
+            }
+        }
+        Ok((page_items, total))
+    }
+
+    /// Streaming fallback: deserialize every matching record, stable-sort by
+    /// numeric id descending, then take the requested page. This is also the
+    /// implementation of record the bounded path must be equivalent to.
+    fn history_full_page<F>(
+        &self,
+        prefix: &str,
+        page_no: u64,
+        page_size: u64,
+        keep: F,
+    ) -> anyhow::Result<(Vec<serde_json::Value>, u64)>
+    where
+        F: Fn(&StoredConfigHistory) -> bool,
+    {
+        let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
+        let mut entries: Vec<StoredConfigHistory> = Vec::new();
+        for item in self.db.prefix_iterator_cf(cf, prefix.as_bytes()) {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored = decode_history(&value)?;
+            if keep(&stored) {
+                entries.push(stored);
+            }
+        }
+
+        // Stable sort by id descending (most recent first). `id` is the
+        // canonical, strictly-monotonic history sequence, so this is stable
+        // even when two entries share the same millisecond `created_time`.
         entries.sort_by(|a, b| b.id.cmp(&a.id));
 
         let total = entries.len() as u64;
@@ -437,11 +533,15 @@ impl RocksDbReader {
             .take(page_size as usize)
             .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
             .collect();
-
         Ok((page_items, total))
     }
 
-    /// Search config history with advanced filters
+    /// Search config history with advanced filters.
+    ///
+    /// Filters need fields from the record, so every candidate is still
+    /// deserialized. The bounded top-K selector replaces the full vector plus
+    /// full stable sort, keeping only `offset + page_size` decoded records in
+    /// memory and ranking them in O(n log cap).
     #[allow(clippy::too_many_arguments)]
     pub fn search_config_history_with_filters(
         &self,
@@ -453,58 +553,64 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
-
-        let mut entries: Vec<StoredConfigHistory> = Vec::new();
-        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
-
-        for item in iter {
-            let (key, value) =
-                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
-            if !key.starts_with(prefix.as_bytes()) {
-                break;
-            }
-            let stored: StoredConfigHistory = bincode::deserialize(&value)
-                .map_err(|e| anyhow::anyhow!("StoredConfigHistory decode error: {}", e))?;
-
-            // Apply filters
+        let (offset, page_size) = clamp_page(page_no, page_size);
+        let matches = |stored: &StoredConfigHistory| -> bool {
             if let Some(op) = op_type
                 && stored.op_type != op
             {
-                continue;
+                return false;
             }
             if let Some(user) = src_user {
                 let entry_user = stored.src_user.as_deref().unwrap_or("");
                 if !entry_user.contains(user) {
-                    continue;
+                    return false;
                 }
             }
             if let Some(start) = start_time
                 && stored.modified_time < start
             {
-                continue;
+                return false;
             }
             if let Some(end) = end_time
                 && stored.modified_time > end
             {
+                return false;
+            }
+            true
+        };
+
+        let Some(cap) = bounded_history_cap(offset, page_size) else {
+            return self.history_full_page(prefix, page_no, page_size, matches);
+        };
+
+        let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
+        let mut top = HistoryTopK::new(cap);
+        let mut total: u64 = 0;
+        for item in self.db.prefix_iterator_cf(cf, prefix.as_bytes()) {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored = decode_history(&value)?;
+            if !matches(&stored) {
                 continue;
             }
-
-            entries.push(stored);
+            total += 1;
+            top.push(stored.id, key.to_vec(), stored);
         }
 
-        // Sort by id descending (newest first)
-        entries.sort_by(|a, b| b.id.cmp(&a.id));
-
-        let total = entries.len() as u64;
-        let (offset, page_size) = clamp_page(page_no, page_size);
-        let page_items: Vec<serde_json::Value> = entries
+        let start = offset as usize;
+        let end = start.saturating_add(page_size as usize);
+        let page_items = top
+            .into_sorted()
             .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
+            .enumerate()
+            .filter(|(index, _)| *index >= start && *index < end)
+            .map(|(_, (_, stored))| {
+                serde_json::to_value(&stored).unwrap_or(serde_json::Value::Null)
+            })
             .collect();
-
         Ok((page_items, total))
     }
 
@@ -1189,5 +1295,296 @@ mod tests {
         // Success path (cap >= rows) and failure path (cap < rows).
         assert_eq!(reader.list_configs_capped("public", 3).unwrap().len(), 3);
         assert!(reader.list_configs_capped("public", 2).is_err());
+    }
+
+    const HISTORY_PREFIX: &str = "public@@DEFAULT_GROUP@@app.yml@@";
+
+    fn seed_history(db: &Arc<DB>, ids: &[i64]) {
+        let cf = db.cf_handle(CF_CONFIG_HISTORY).unwrap();
+        for (n, id) in ids.iter().enumerate() {
+            let key = RocksStateMachine::config_history_key(
+                "app.yml",
+                "DEFAULT_GROUP",
+                "public",
+                *id as u64,
+            );
+            let stored = StoredConfigHistory {
+                id: *id,
+                data_id: "app.yml".to_string(),
+                group: "DEFAULT_GROUP".to_string(),
+                tenant: "public".to_string(),
+                content: "x".repeat(512),
+                md5: format!("md5-{}", id),
+                op_type: if n % 2 == 0 { "U" } else { "I" }.to_string(),
+                src_user: Some(if n % 3 == 0 { "alice" } else { "bob" }.to_string()),
+                modified_time: *id * 10,
+                ..Default::default()
+            };
+            db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
+                .unwrap();
+        }
+    }
+
+    fn write_history_with_key(db: &Arc<DB>, key: &str, id: i64) {
+        let cf = db.cf_handle(CF_CONFIG_HISTORY).unwrap();
+        let stored = StoredConfigHistory {
+            id,
+            data_id: "app.yml".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            tenant: "public".to_string(),
+            content: "x".repeat(512),
+            ..Default::default()
+        };
+        db.put_cf(cf, key.as_bytes(), bincode::serialize(&stored).unwrap())
+            .unwrap();
+    }
+
+    /// The bounded numeric-id ranking must be indistinguishable from the old
+    /// full decode + stable sort on every page, including non-padded ids where
+    /// key lexicographic order differs from numeric order.
+    #[tokio::test]
+    async fn bounded_history_pagination_matches_full_scan_on_every_page() {
+        let (db, _tmp_dir) = create_test_db().await;
+        seed_history(&db, &[1, 2, 9, 10, 99, 100, 101, 1000]);
+        let reader = RocksDbReader::new(db);
+
+        for (page_no, page_size) in [
+            (1, 3),
+            (2, 3),
+            (3, 3),
+            (4, 3),
+            (1, 1000),
+            (0, 3),
+            (u64::MAX, 3),
+        ] {
+            let (bounded, bounded_total) = reader
+                .search_config_history("app.yml", "DEFAULT_GROUP", "public", page_no, page_size)
+                .unwrap();
+            let (reference, reference_total) = reader
+                .history_full_page(HISTORY_PREFIX, page_no, page_size, |_| true)
+                .unwrap();
+            assert_eq!(bounded_total, reference_total, "page_no={page_no}");
+            assert_eq!(
+                bounded, reference,
+                "page_no={page_no} page_size={page_size}"
+            );
+        }
+    }
+
+    /// Guard for the optimisation itself: if the bounded path regresses to a
+    /// full scan (or to a lexicographic reverse iterator) this test turns red.
+    #[tokio::test]
+    async fn bounded_history_page_decodes_only_the_requested_window() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=200).collect();
+        seed_history(&db, &ids);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 5)
+            .unwrap();
+        let bounded_decodes = test_instrumentation::decode_count();
+        assert_eq!(total, 200);
+        assert_eq!(page.len(), 5);
+        assert_eq!(page[0]["id"].as_i64(), Some(200));
+        assert_eq!(page[4]["id"].as_i64(), Some(196));
+        assert!(
+            bounded_decodes <= 5,
+            "bounded path deserialized {bounded_decodes} records for a 5-row page"
+        );
+
+        test_instrumentation::reset();
+        let (reference, _) = reader
+            .history_full_page(HISTORY_PREFIX, 1, 5, |_| true)
+            .unwrap();
+        assert_eq!(reference, page, "full scan must return the same page");
+        assert_eq!(test_instrumentation::decode_count(), 200);
+    }
+
+    /// A key whose trailing id is not decimal must send the query down the
+    /// full-scan fallback: its stored id still has to appear, in numeric order.
+    #[tokio::test]
+    async fn bounded_history_falls_back_for_non_decimal_key() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=200).collect();
+        seed_history(&db, &ids);
+        write_history_with_key(&db, "public@@DEFAULT_GROUP@@app.yml@@legacy", 5000);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 5)
+            .unwrap();
+        assert_eq!(total, 201);
+        assert_eq!(page.len(), 5);
+        assert_eq!(page[0]["id"].as_i64(), Some(5000));
+        assert_eq!(page[1]["id"].as_i64(), Some(200));
+        assert!(
+            test_instrumentation::decode_count() >= 201,
+            "fallback must deserialize every record"
+        );
+    }
+
+    /// Legacy data whose stored id disagrees with the key must also fall back,
+    /// so the page is ordered by the authoritative stored id.
+    #[tokio::test]
+    async fn bounded_history_falls_back_for_mismatched_stored_id() {
+        let (db, _tmp_dir) = create_test_db().await;
+        seed_history(&db, &[1, 2, 3]);
+        // Key id 0 sorts last, stored id 7000 sorts first. Keep page_size
+        // larger than the dataset so the odd record is inside the top-K and
+        // actually gets decoded (that is what exposes the mismatch guard).
+        write_history_with_key(&db, "public@@DEFAULT_GROUP@@app.yml@@0", 7000);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 10)
+            .unwrap();
+        assert_eq!(total, 4);
+        assert_eq!(page[0]["id"].as_i64(), Some(7000));
+        assert_eq!(page[1]["id"].as_i64(), Some(3));
+        assert!(
+            test_instrumentation::decode_count() >= 4,
+            "mismatched id must trigger the full-scan fallback"
+        );
+    }
+
+    /// `get_config_history_by_id` has only the id, so it still scans keys —
+    /// but it must decode only the candidate(s) and must not skip legacy keys.
+    #[tokio::test]
+    async fn history_find_by_id_is_exact_and_skips_unrelated_decodes() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=200).collect();
+        seed_history(&db, &ids);
+        write_history_with_key(&db, "public@@DEFAULT_GROUP@@app.yml@@legacy", 7777);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let found = reader.get_config_history_by_id(7777).unwrap().unwrap();
+        assert_eq!(found["id"].as_i64(), Some(7777));
+        assert!(
+            test_instrumentation::decode_count() <= 2,
+            "unrelated history records must not be deserialized"
+        );
+
+        test_instrumentation::reset();
+        assert!(reader.get_config_history_by_id(424_242).unwrap().is_none());
+        assert!(test_instrumentation::decode_count() <= 2);
+    }
+
+    fn reference_filter(
+        stored: &StoredConfigHistory,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+    ) -> bool {
+        if let Some(op) = op_type
+            && stored.op_type != op
+        {
+            return false;
+        }
+        if let Some(user) = src_user
+            && !stored.src_user.as_deref().unwrap_or("").contains(user)
+        {
+            return false;
+        }
+        if let Some(start) = start_time
+            && stored.modified_time < start
+        {
+            return false;
+        }
+        if let Some(end) = end_time
+            && stored.modified_time > end
+        {
+            return false;
+        }
+        true
+    }
+
+    /// The filtered path still has to deserialize every record (filters live
+    /// in the value), but its bounded ranking must match the old full sort.
+    #[tokio::test]
+    async fn filtered_history_pagination_matches_full_scan() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=40).collect();
+        seed_history(&db, &ids);
+        let reader = RocksDbReader::new(db);
+
+        let cases: [(Option<&str>, Option<&str>, Option<i64>, Option<i64>); 4] = [
+            (None, None, None, None),
+            (Some("U"), None, None, None),
+            (None, Some("alice"), None, None),
+            (Some("I"), Some("bob"), Some(50), Some(350)),
+        ];
+        for (op, user, start, end) in cases {
+            for (page_no, page_size) in [(1, 7), (2, 7), (3, 7), (1, 1000)] {
+                let (bounded, bounded_total) = reader
+                    .search_config_history_with_filters(
+                        HISTORY_PREFIX,
+                        op,
+                        user,
+                        start,
+                        end,
+                        page_no,
+                        page_size,
+                    )
+                    .unwrap();
+                let (reference, reference_total) = reader
+                    .history_full_page(HISTORY_PREFIX, page_no, page_size, |stored| {
+                        reference_filter(stored, op, user, start, end)
+                    })
+                    .unwrap();
+                assert_eq!(bounded_total, reference_total, "filter={op:?}/{user:?}");
+                assert_eq!(bounded, reference, "filter={op:?}/{user:?} page={page_no}");
+            }
+        }
+    }
+
+    /// Same-binary / same-session A/B diagnostic. Absolute RPS is meaningless
+    /// on this host; only the full-scan vs bounded ratio in one process counts.
+    #[tokio::test]
+    async fn history_pagination_ab_same_binary() {
+        use std::time::Instant;
+
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=1000).collect();
+        seed_history(&db, &ids);
+        let reader = RocksDbReader::new(db);
+
+        let (fast, fast_total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 20)
+            .unwrap();
+        let (slow, slow_total) = reader
+            .history_full_page(HISTORY_PREFIX, 1, 20, |_| true)
+            .unwrap();
+        assert_eq!(fast, slow);
+        assert_eq!(fast_total, slow_total);
+
+        let loops = 8;
+        let t0 = Instant::now();
+        for _ in 0..loops {
+            reader
+                .history_full_page(HISTORY_PREFIX, 1, 20, |_| true)
+                .unwrap();
+        }
+        let full_scan = t0.elapsed();
+        let t1 = Instant::now();
+        for _ in 0..loops {
+            reader
+                .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 20)
+                .unwrap();
+        }
+        let bounded = t1.elapsed();
+        println!(
+            "history A/B ({} rows x {} loops): full_scan={:?} bounded={:?} ratio={:.2}x",
+            ids.len(),
+            loops,
+            full_scan,
+            bounded,
+            full_scan.as_secs_f64() / bounded.as_secs_f64().max(f64::EPSILON)
+        );
     }
 }

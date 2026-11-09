@@ -302,6 +302,16 @@ pub trait DistroDataHandler: Send + Sync {
     /// Get data by key
     async fn get_data(&self, key: &str) -> Option<DistroData>;
 
+    /// Return only the local version for `key`, as needed by a verify round.
+    ///
+    /// The default keeps every existing handler correct by delegating to
+    /// [`DistroDataHandler::get_data`]. Handlers whose `get_data` builds a full
+    /// sync payload should override this with a cheap lookup: a verify round
+    /// runs for every key on every tick and only ever reads `DistroData::version`.
+    async fn get_version(&self, key: &str) -> Option<i64> {
+        self.get_data(key).await.map(|data| data.version)
+    }
+
     /// Process received sync data
     async fn process_sync_data(&self, data: DistroData) -> Result<(), String>;
 
@@ -441,6 +451,26 @@ impl RequestTrait for SharedVerifyRequest {
     {
         (*self.body).clone()
     }
+}
+
+/// Collect the local `key -> version` map for one verify round.
+///
+/// Uses [`DistroDataHandler::get_version`] rather than `get_data`: a handler's
+/// `get_data` may clone and serialize every instance of a service, while a
+/// verify round only needs the version counter. Keeping this in a small
+/// function makes the hot-path wiring testable without starting the
+/// background verify task.
+async fn collect_verify_versions(
+    handler: &Arc<dyn DistroDataHandler>,
+    keys: &[String],
+) -> std::collections::HashMap<String, i64> {
+    let mut versions = std::collections::HashMap::with_capacity(keys.len());
+    for key in keys {
+        if let Some(version) = handler.get_version(key).await {
+            versions.insert(key.clone(), version);
+        }
+    }
+    versions
 }
 
 /// Remove pending sync tasks whose target is no longer a cluster member.
@@ -1237,13 +1267,9 @@ impl DistroProtocol {
                         continue;
                     }
 
-                    // Build verify_data: key -> version
-                    let mut verify_data = std::collections::HashMap::new();
-                    for key in &keys {
-                        if let Some(data) = handler.get_data(key).await {
-                            verify_data.insert(key.clone(), data.version);
-                        }
-                    }
+                    // Only versions are needed here; `get_data` would rebuild
+                    // (and serialize) the full sync payload for every key.
+                    let verify_data = collect_verify_versions(handler, &keys).await;
 
                     if verify_data.is_empty() {
                         continue;
@@ -2339,6 +2365,7 @@ mod tests {
     struct MockHandler {
         data: Arc<DashMap<String, DistroData>>,
         fail_keys: Arc<DashMap<String, ()>>,
+        get_data_calls: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl MockHandler {
@@ -2346,6 +2373,7 @@ mod tests {
             Self {
                 data: Arc::new(DashMap::new()),
                 fail_keys: Arc::new(DashMap::new()),
+                get_data_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             }
         }
 
@@ -2365,7 +2393,14 @@ mod tests {
         }
 
         async fn get_data(&self, key: &str) -> Option<DistroData> {
+            self.get_data_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.data.get(key).map(|e| e.value().clone())
+        }
+
+        async fn get_version(&self, key: &str) -> Option<i64> {
+            // Cheap override: no payload clone, no serialization.
+            self.data.get(key).map(|e| e.value().version)
         }
 
         async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
@@ -2813,5 +2848,92 @@ mod tests {
             aborted.load(Ordering::SeqCst),
             "stop() must abort long-lived tracked tasks"
         );
+    }
+
+    /// Wrapper that deliberately does NOT override `get_version`, so the
+    /// trait's default implementation is exercised.
+    struct DefaultVersionHandler(MockHandler);
+
+    #[tonic::async_trait]
+    impl DistroDataHandler for DefaultVersionHandler {
+        fn data_type(&self) -> DistroDataType {
+            self.0.data_type()
+        }
+        async fn get_all_keys(&self) -> Vec<String> {
+            self.0.get_all_keys().await
+        }
+        async fn get_data(&self, key: &str) -> Option<DistroData> {
+            self.0.get_data(key).await
+        }
+        async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
+            self.0.process_sync_data(data).await
+        }
+        async fn process_verify_data(&self, data: &DistroData) -> Result<bool, String> {
+            self.0.process_verify_data(data).await
+        }
+        async fn get_snapshot(&self) -> Vec<DistroData> {
+            self.0.get_snapshot().await
+        }
+        async fn remove_data(&self, key: &str) -> Result<(), String> {
+            self.0.remove_data(key).await
+        }
+    }
+
+    fn seed_verify_fixture(mock: &MockHandler) {
+        for (key, version) in [("k1", 3i64), ("k2", 7), ("k3", 11)] {
+            mock.share().insert(
+                key.to_string(),
+                DistroData::with_version(
+                    DistroDataType::NamingInstance,
+                    key.to_string(),
+                    Vec::new(),
+                    "peer:8848".to_string(),
+                    version,
+                ),
+            );
+        }
+    }
+
+    /// Verify rounds must use the cheap `get_version` port. Mutant check:
+    /// reverting `collect_verify_versions` to `get_data` builds a payload for
+    /// every key and this counter assertion fails.
+    #[tokio::test]
+    async fn verify_round_collects_versions_without_building_payloads() {
+        let mock = MockHandler::new();
+        seed_verify_fixture(&mock);
+        let calls = mock.get_data_calls.clone();
+        let handler: Arc<dyn DistroDataHandler> = Arc::new(mock);
+
+        let keys = handler.get_all_keys().await;
+        let versions = collect_verify_versions(&handler, &keys).await;
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions.get("k1"), Some(&3));
+        assert_eq!(versions.get("k2"), Some(&7));
+        assert_eq!(versions.get("k3"), Some(&11));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a verify round must not call get_data on a handler with a cheap version port"
+        );
+    }
+
+    /// Success path for the new default trait method: handlers that do not
+    /// override `get_version` must still report exactly `get_data().version`,
+    /// and missing keys must stay absent from the verify map.
+    #[tokio::test]
+    async fn default_get_version_matches_get_data_and_skips_missing_keys() {
+        let mock = MockHandler::new();
+        seed_verify_fixture(&mock);
+        let calls = mock.get_data_calls.clone();
+        let handler: Arc<dyn DistroDataHandler> = Arc::new(DefaultVersionHandler(mock));
+
+        assert_eq!(handler.get_version("k2").await, Some(7));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(handler.get_version("missing").await.is_none());
+
+        let keys = vec!["k1".to_string(), "k2".to_string(), "missing".to_string()];
+        let versions = collect_verify_versions(&handler, &keys).await;
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions.get("k2"), Some(&7));
     }
 }
