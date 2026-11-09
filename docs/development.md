@@ -98,7 +98,7 @@ the tag is only reflected in the artifact/Release filename.
 
 - **~50,000+ lines** of Rust code
 - **25 internal crates** in workspace
-- **3750 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-08)
+- **3757 unit tests** (`cargo test --workspace --exclude batata-integration-tests`, 2026-11-09)
 - **3 benchmark suites** for performance testing; absolute RPS is not a gate —
   use `scripts/bench_ab.py` or the same-binary A/B guards in the code (see
   ADR-0002 in [Architecture](architecture.md))

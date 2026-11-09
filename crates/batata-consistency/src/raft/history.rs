@@ -92,6 +92,13 @@ impl<T> HistoryTopK<T> {
         }
     }
 
+    /// Number of candidates currently retained. Test builds use this to prove
+    /// the fallback path stays bounded by the requested page depth.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.heap.len()
+    }
+
     /// Offer a candidate. Candidates that cannot reach the first `cap` slots
     /// are dropped without keeping their (potentially large) value.
     pub(crate) fn push(&mut self, id: i64, key: Vec<u8>, value: T) {
@@ -110,14 +117,22 @@ impl<T> HistoryTopK<T> {
         }
     }
 
-    /// Return the retained candidates as `(id, value)` in final page order:
-    /// numeric id descending, RocksDB key ascending for ties.
-    pub(crate) fn into_sorted(self) -> Vec<(i64, T)> {
+    /// Return the retained candidates as `(id, key, value)` in final page
+    /// order: numeric id descending, RocksDB key ascending for ties.
+    pub(crate) fn into_sorted_entries(self) -> Vec<(i64, Vec<u8>, T)> {
         let mut ranked: Vec<Ranked<T>> = self.heap.into_iter().map(|item| item.0).collect();
         ranked.sort_by(|a, b| b.cmp(a));
         ranked
             .into_iter()
-            .map(|item| (item.id, item.value))
+            .map(|item| (item.id, item.key, item.value))
+            .collect()
+    }
+
+    /// Return the retained candidates as `(id, value)` in final page order.
+    pub(crate) fn into_sorted(self) -> Vec<(i64, T)> {
+        self.into_sorted_entries()
+            .into_iter()
+            .map(|(id, _, value)| (id, value))
             .collect()
     }
 }
@@ -214,5 +229,41 @@ mod tests {
         let mut top = HistoryTopK::new(0);
         top.push(7, b"t@@g@@d@@7".to_vec(), 7);
         assert!(top.into_sorted().is_empty());
+    }
+
+    /// The streaming fallback re-reads its page by exact key, so the selector
+    /// must expose the original RocksDB keys in final page order.
+    #[test]
+    fn into_sorted_entries_returns_ranked_keys_for_exact_reads() {
+        let fixture = fixture();
+        let mut top = HistoryTopK::new(3);
+        for (id, key, _) in &fixture {
+            top.push(*id, key.clone(), ());
+        }
+        assert_eq!(top.len(), 3, "selector must stay bounded by cap");
+
+        let entries = top.into_sorted_entries();
+        assert_eq!(
+            entries.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+            vec![1000, 101, 100]
+        );
+        assert_eq!(
+            entries[0].1,
+            b"public@@DEFAULT_GROUP@@app.yml@@1000".to_vec()
+        );
+        assert_eq!(
+            entries[2].1,
+            b"public@@DEFAULT_GROUP@@app.yml@@100".to_vec()
+        );
+    }
+
+    #[test]
+    fn selector_len_never_exceeds_capacity() {
+        let mut top = HistoryTopK::new(4);
+        for id in 0..50 {
+            top.push(id, Vec::new(), id);
+        }
+        assert_eq!(top.len(), 4);
+        assert_eq!(top.into_sorted().len(), 4);
     }
 }

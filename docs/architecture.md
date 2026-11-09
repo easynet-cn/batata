@@ -191,10 +191,23 @@ bounded numeric-id top-K selector. `search_config_history` ranks keys by the
 numeric id and deserialises only the `offset + page_size` candidates; the
 filtered variant keeps the required per-record decode but no longer holds or
 sorts the full result set. Any key with an unparsable id, or whose stored id
-disagrees with its key, falls back to the streaming full scan — the page order
+disagrees with its key, falls back to `history_bounded_page` — the page order
 never depends on the key layout being intact. `get_config_history_by_id` skips
 decoding rows whose key id cannot match, while still checking `stored.id`.
-Deep pages beyond `MAX_BOUNDED_HISTORY_KEYS` use the streaming path.
+Deep pages beyond `MAX_BOUNDED_HISTORY_KEYS` use the same bounded fallback.
+
+**Follow-up (F16, 2026-11-09): remove the remaining full scans.** `search_users`,
+`search_roles` and `search_permissions` used to deserialise the whole column
+family into `Vec<serde_json::Value>`, filter it, then `skip`/`take`. They now
+share `paginate_bincode_cf`, which streams the CF, counts every matching row for
+an exact `total`, and materialises only the requested window. The history
+fallback (`history_bounded_page`) no longer retains one decoded
+`StoredConfigHistory` per row either: it ranks compact `(id, key)` entries in an
+`offset + page_size` top-K and re-reads the requested window by exact key. For
+pages deeper than `MAX_BOUNDED_HISTORY_KEYS` retention is O(number of matching
+keys) compact entries instead of O(number of records) full records. The old
+full-vector implementation survives only as a `#[cfg(test)]` equivalence oracle.
+Wire contracts, key builders and snapshot formats are unchanged.
 
 **Decision (F14).** `DistroDataHandler::get_version` is a narrow port with a
 default implementation that delegates to `get_data`; verify rounds call it
@@ -211,5 +224,9 @@ and append-failure counters, and full/closed-queue warnings are rate-limited.
 **Verification.** Absolute RPS is not used as evidence. The A/B comparison runs
 the full-scan reference and the bounded path in the same process, against the
 same RocksDB fixture and the same release binary; correctness equivalence is
-asserted before the ratio is printed. Every new guard is mutant-checked,
-including the fallback branches and the queue counters.
+asserted before the ratio is printed. Both streaming paths are asserted equal to
+their legacy full-vector oracles across filters, accurate/fuzzy matching, edge
+pages and saturated offsets; test-only decode/materialisation counters prove the
+bounded path actually avoids the full work rather than merely returning the same
+answer. Every new guard is mutant-checked, including the fallback branches and
+the queue counters.

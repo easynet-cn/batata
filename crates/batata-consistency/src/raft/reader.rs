@@ -19,6 +19,8 @@ mod test_instrumentation {
 
     thread_local! {
         static HISTORY_DECODES: Cell<usize> = const { Cell::new(0) };
+        static AUTH_MATERIALIZATIONS: Cell<usize> = const { Cell::new(0) };
+        static HISTORY_RETAINED_KEYS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn note_decode() {
@@ -29,8 +31,28 @@ mod test_instrumentation {
         HISTORY_DECODES.with(|c| c.get())
     }
 
+    /// Count records converted to `serde_json::Value` by the auth paging path.
+    pub(crate) fn note_auth_materialization() {
+        AUTH_MATERIALIZATIONS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    pub(crate) fn auth_materialization_count() -> usize {
+        AUTH_MATERIALIZATIONS.with(|c| c.get())
+    }
+
+    /// Record how many compact keys a bounded history page retained.
+    pub(crate) fn note_history_retained_keys(count: usize) {
+        HISTORY_RETAINED_KEYS.with(|c| c.set(count));
+    }
+
+    pub(crate) fn history_retained_keys() -> usize {
+        HISTORY_RETAINED_KEYS.with(|c| c.get())
+    }
+
     pub(crate) fn reset() {
         HISTORY_DECODES.with(|c| c.set(0));
+        AUTH_MATERIALIZATIONS.with(|c| c.set(0));
+        HISTORY_RETAINED_KEYS.with(|c| c.set(0));
     }
 }
 
@@ -458,7 +480,7 @@ impl RocksDbReader {
         let (offset, page_size) = clamp_page(page_no, page_size);
         let cap = bounded_history_cap(offset, page_size);
         if cap.is_none() {
-            return self.history_full_page(&prefix, page_no, page_size, |_| true);
+            return self.history_bounded_page(&prefix, page_no, page_size, |_| true);
         }
         let cap = cap.unwrap_or(0);
 
@@ -473,7 +495,7 @@ impl RocksDbReader {
             }
             total += 1;
             let Some(id) = history_id_from_key(&key) else {
-                return self.history_full_page(&prefix, page_no, page_size, |_| true);
+                return self.history_bounded_page(&prefix, page_no, page_size, |_| true);
             };
             top.push(id, key.to_vec(), value.to_vec());
         }
@@ -484,7 +506,7 @@ impl RocksDbReader {
         for (index, (id, bytes)) in top.into_sorted().into_iter().enumerate() {
             let stored = decode_history(&bytes)?;
             if stored.id != id {
-                return self.history_full_page(&prefix, page_no, page_size, |_| true);
+                return self.history_bounded_page(&prefix, page_no, page_size, |_| true);
             }
             if index >= start && index < end {
                 page_items.push(serde_json::to_value(&stored).unwrap_or(serde_json::Value::Null));
@@ -493,9 +515,11 @@ impl RocksDbReader {
         Ok((page_items, total))
     }
 
-    /// Streaming fallback: deserialize every matching record, stable-sort by
-    /// numeric id descending, then take the requested page. This is also the
-    /// implementation of record the bounded path must be equivalent to.
+    /// Test-only reference: deserialize every matching record, stable-sort by
+    /// numeric id descending, then take the requested page. This is the
+    /// implementation of record that all bounded paths must be equivalent to;
+    /// production no longer calls it, so it is compiled only for tests.
+    #[cfg(test)]
     fn history_full_page<F>(
         &self,
         prefix: &str,
@@ -533,6 +557,68 @@ impl RocksDbReader {
             .take(page_size as usize)
             .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
             .collect();
+        Ok((page_items, total))
+    }
+
+    /// Bounded-memory fallback for history pages whose keys cannot be trusted
+    /// (unparsable id, stored id disagreeing with the key) or whose requested
+    /// page is too deep for the key-only ranking path.
+    ///
+    /// The authoritative rank is `stored.id`, so every candidate is decoded
+    /// once. But the selector retains only compact `(id, key)` entries — never
+    /// a full `StoredConfigHistory` per row — and ranks at most
+    /// `offset + page_size` of them. The requested window is then read back by
+    /// exact key, so only `page_size` records are materialized as JSON. For
+    /// pages deeper than `MAX_BOUNDED_HISTORY_KEYS` the retention is O(number
+    /// of matching keys) compact entries instead of O(number of matching
+    /// records) full records; exact `total` and ordering are unchanged.
+    fn history_bounded_page<F>(
+        &self,
+        prefix: &str,
+        page_no: u64,
+        page_size: u64,
+        keep: F,
+    ) -> anyhow::Result<(Vec<serde_json::Value>, u64)>
+    where
+        F: Fn(&StoredConfigHistory) -> bool,
+    {
+        let (offset, page_size) = clamp_page(page_no, page_size);
+        let cap = bounded_history_cap(offset, page_size).unwrap_or(usize::MAX);
+
+        let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
+        let mut top = HistoryTopK::new(cap);
+        let mut total: u64 = 0;
+        for item in self.db.prefix_iterator_cf(cf, prefix.as_bytes()) {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let stored = decode_history(&value)?;
+            if !keep(&stored) {
+                continue;
+            }
+            total += 1;
+            top.push(stored.id, key.to_vec(), ());
+        }
+
+        #[cfg(test)]
+        test_instrumentation::note_history_retained_keys(top.len());
+
+        let start = offset as usize;
+        let end = start.saturating_add(page_size as usize);
+        let mut page_items = Vec::new();
+        for (index, (_id, key, ())) in top.into_sorted_entries().into_iter().enumerate() {
+            if index >= start && index < end {
+                let bytes = self
+                    .db
+                    .get_cf(cf, &key)
+                    .map_err(|e| anyhow::anyhow!("RocksDB get error: {}", e))?
+                    .ok_or_else(|| anyhow::anyhow!("history key disappeared during paging"))?;
+                let stored = decode_history(&bytes)?;
+                page_items.push(serde_json::to_value(&stored).unwrap_or(serde_json::Value::Null));
+            }
+        }
         Ok((page_items, total))
     }
 
@@ -580,7 +666,7 @@ impl RocksDbReader {
         };
 
         let Some(cap) = bounded_history_cap(offset, page_size) else {
-            return self.history_full_page(prefix, page_no, page_size, matches);
+            return self.history_bounded_page(prefix, page_no, page_size, matches);
         };
 
         let cf = self.cf_handle(CF_CONFIG_HISTORY)?;
@@ -640,7 +726,10 @@ impl RocksDbReader {
         self.iterate_cf_bincode::<StoredUser>(CF_USERS)
     }
 
-    /// Search users with optional username filter and pagination
+    /// Search users with optional username filter and pagination.
+    ///
+    /// Streams the column family so only the requested page is materialized as
+    /// JSON; `total` still counts every matching row.
     pub fn search_users(
         &self,
         username_pattern: &str,
@@ -648,33 +737,21 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let all_users = self.list_users()?;
-
-        let filtered: Vec<serde_json::Value> = if username_pattern.is_empty() {
-            all_users
-        } else {
-            all_users
-                .into_iter()
-                .filter(|v| {
-                    let u = v["username"].as_str().unwrap_or("");
-                    if accurate {
-                        u == username_pattern
-                    } else {
-                        u.contains(username_pattern)
-                    }
-                })
-                .collect()
-        };
-
-        let total = filtered.len() as u64;
-        let (offset, page_size) = clamp_page(page_no, page_size);
-        let page_items: Vec<serde_json::Value> = filtered
-            .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .collect();
-
-        Ok((page_items, total))
+        self.paginate_bincode_cf::<StoredUser, _>(
+            CF_USERS,
+            |stored| {
+                if username_pattern.is_empty() {
+                    return true;
+                }
+                if accurate {
+                    stored.username == username_pattern
+                } else {
+                    stored.username.contains(username_pattern)
+                }
+            },
+            page_no,
+            page_size,
+        )
     }
 
     // ==================== Role Operations ====================
@@ -697,7 +774,8 @@ impl RocksDbReader {
         Ok(roles)
     }
 
-    /// Search roles with pagination
+    /// Search roles with pagination. Streams the column family instead of
+    /// materializing every row before filtering.
     pub fn search_roles(
         &self,
         username_pattern: &str,
@@ -706,43 +784,28 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let all_roles = self.iterate_cf_bincode::<StoredRole>(CF_ROLES)?;
-
-        let filtered: Vec<serde_json::Value> = all_roles
-            .into_iter()
-            .filter(|v| {
-                let u = v["username"].as_str().unwrap_or("");
-                let r = v["role"].as_str().unwrap_or("");
-
+        self.paginate_bincode_cf::<StoredRole, _>(
+            CF_ROLES,
+            |stored| {
                 let username_match = if username_pattern.is_empty() {
                     true
                 } else if accurate {
-                    u == username_pattern
+                    stored.username == username_pattern
                 } else {
-                    u.contains(username_pattern)
+                    stored.username.contains(username_pattern)
                 };
-
                 let role_match = if role_pattern.is_empty() {
                     true
                 } else if accurate {
-                    r == role_pattern
+                    stored.role == role_pattern
                 } else {
-                    r.contains(role_pattern)
+                    stored.role.contains(role_pattern)
                 };
-
                 username_match && role_match
-            })
-            .collect();
-
-        let total = filtered.len() as u64;
-        let (offset, page_size) = clamp_page(page_no, page_size);
-        let page_items: Vec<serde_json::Value> = filtered
-            .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .collect();
-
-        Ok((page_items, total))
+            },
+            page_no,
+            page_size,
+        )
     }
 
     /// Check if any global admin role exists
@@ -819,7 +882,8 @@ impl RocksDbReader {
         Ok(permissions)
     }
 
-    /// Search permissions with pagination
+    /// Search permissions with pagination. Streams the column family instead
+    /// of materializing every row before filtering.
     pub fn search_permissions(
         &self,
         role_pattern: &str,
@@ -827,33 +891,21 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let all_perms = self.iterate_cf_bincode::<StoredPermission>(CF_PERMISSIONS)?;
-
-        let filtered: Vec<serde_json::Value> = if role_pattern.is_empty() {
-            all_perms
-        } else {
-            all_perms
-                .into_iter()
-                .filter(|v| {
-                    let r = v["role"].as_str().unwrap_or("");
-                    if accurate {
-                        r == role_pattern
-                    } else {
-                        r.contains(role_pattern)
-                    }
-                })
-                .collect()
-        };
-
-        let total = filtered.len() as u64;
-        let (offset, page_size) = clamp_page(page_no, page_size);
-        let page_items: Vec<serde_json::Value> = filtered
-            .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .collect();
-
-        Ok((page_items, total))
+        self.paginate_bincode_cf::<StoredPermission, _>(
+            CF_PERMISSIONS,
+            |stored| {
+                if role_pattern.is_empty() {
+                    return true;
+                }
+                if accurate {
+                    stored.role == role_pattern
+                } else {
+                    stored.role.contains(role_pattern)
+                }
+            },
+            page_no,
+            page_size,
+        )
     }
 
     // ==================== Instance Operations ====================
@@ -937,6 +989,48 @@ impl RocksDbReader {
             }
             None => Ok(None),
         }
+    }
+
+    /// Stream one bincode-encoded column family into a filtered page.
+    ///
+    /// The previous auth searches deserialized every row into a `Vec<Value>`,
+    /// filtered that vector, then applied `skip`/`take`. This keeps only the
+    /// requested window in memory while still counting every matching row for
+    /// `total`. Ordering matches `iterate_cf_bincode` (RocksDB key order), and
+    /// the emitted JSON is produced by the same `serde_json::to_value(&T)`.
+    /// Corrupt rows still fail the whole query rather than being skipped.
+    fn paginate_bincode_cf<T, F>(
+        &self,
+        cf_name: &str,
+        matches: F,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<(Vec<serde_json::Value>, u64)>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize,
+        F: Fn(&T) -> bool,
+    {
+        let cf = self.cf_handle(cf_name)?;
+        let (offset, page_size) = clamp_page(page_no, page_size);
+        let mut total: u64 = 0;
+        let mut page_items: Vec<serde_json::Value> = Vec::new();
+
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let stored: T = bincode::deserialize(&value)
+                .map_err(|e| anyhow::anyhow!("bincode decode error: {}", e))?;
+            if !matches(&stored) {
+                continue;
+            }
+            if total >= offset && page_items.len() < page_size as usize {
+                #[cfg(test)]
+                test_instrumentation::note_auth_materialization();
+                page_items.push(serde_json::to_value(&stored)?);
+            }
+            total += 1;
+        }
+
+        Ok((page_items, total))
     }
 
     /// Iterate all bincode-decoded values in a CF, emitted as `serde_json::Value`.
@@ -1586,5 +1680,392 @@ mod tests {
             bounded,
             full_scan.as_secs_f64() / bounded.as_secs_f64().max(f64::EPSILON)
         );
+    }
+
+    // ==================== Leftover: bounded auth / history scans ==========
+
+    /// One user, one role and one permission per row. Two role names keep both
+    /// exact and fuzzy filters meaningful on every surface.
+    fn seed_auth_rows(db: &Arc<DB>, count: u64) {
+        let users_cf = db.cf_handle(CF_USERS).unwrap();
+        let roles_cf = db.cf_handle(CF_ROLES).unwrap();
+        let perms_cf = db.cf_handle(CF_PERMISSIONS).unwrap();
+        for i in 0..count {
+            let username = format!("user{i:04}");
+            let role = if i % 3 == 0 {
+                "ROLE_ADMIN"
+            } else {
+                "ROLE_USER"
+            };
+
+            let user = StoredUser {
+                username: username.clone(),
+                password_hash: "h".repeat(64),
+                enabled: true,
+                ..Default::default()
+            };
+            db.put_cf(
+                users_cf,
+                RocksStateMachine::user_key(&username).as_bytes(),
+                bincode::serialize(&user).unwrap(),
+            )
+            .unwrap();
+
+            let stored_role = StoredRole {
+                role: role.to_string(),
+                username: username.clone(),
+                ..Default::default()
+            };
+            db.put_cf(
+                roles_cf,
+                RocksStateMachine::role_key(role, &username).as_bytes(),
+                bincode::serialize(&stored_role).unwrap(),
+            )
+            .unwrap();
+
+            let resource = format!("public::{i:04}");
+            let permission = StoredPermission {
+                role: role.to_string(),
+                resource: resource.clone(),
+                action: "rw".to_string(),
+                ..Default::default()
+            };
+            db.put_cf(
+                perms_cf,
+                RocksStateMachine::permission_key(role, &resource, "rw").as_bytes(),
+                bincode::serialize(&permission).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    /// Old implementation of record: materialize the whole CF as JSON, filter
+    /// it, then `skip`/`take`. The streaming path must be wire-for-wire
+    /// identical to this on every filter / page combination.
+    fn legacy_paginate(
+        all: Vec<serde_json::Value>,
+        keep: impl Fn(&serde_json::Value) -> bool,
+        page_no: u64,
+        page_size: u64,
+    ) -> (Vec<serde_json::Value>, u64) {
+        let filtered: Vec<serde_json::Value> = all.into_iter().filter(keep).collect();
+        let total = filtered.len() as u64;
+        let (offset, page_size) = clamp_page(page_no, page_size);
+        let page = filtered
+            .into_iter()
+            .skip(offset as usize)
+            .take(page_size as usize)
+            .collect();
+        (page, total)
+    }
+
+    fn legacy_user_page(
+        reader: &RocksDbReader,
+        pattern: &str,
+        accurate: bool,
+        page_no: u64,
+        page_size: u64,
+    ) -> (Vec<serde_json::Value>, u64) {
+        legacy_paginate(
+            reader.list_users().unwrap(),
+            |v| {
+                if pattern.is_empty() {
+                    return true;
+                }
+                let username = v["username"].as_str().unwrap_or("");
+                if accurate {
+                    username == pattern
+                } else {
+                    username.contains(pattern)
+                }
+            },
+            page_no,
+            page_size,
+        )
+    }
+
+    fn legacy_role_page(
+        reader: &RocksDbReader,
+        user_pattern: &str,
+        role_pattern: &str,
+        accurate: bool,
+        page_no: u64,
+        page_size: u64,
+    ) -> (Vec<serde_json::Value>, u64) {
+        legacy_paginate(
+            reader.iterate_cf_bincode::<StoredRole>(CF_ROLES).unwrap(),
+            |v| {
+                let username = v["username"].as_str().unwrap_or("");
+                let role = v["role"].as_str().unwrap_or("");
+                let username_match = if user_pattern.is_empty() {
+                    true
+                } else if accurate {
+                    username == user_pattern
+                } else {
+                    username.contains(user_pattern)
+                };
+                let role_match = if role_pattern.is_empty() {
+                    true
+                } else if accurate {
+                    role == role_pattern
+                } else {
+                    role.contains(role_pattern)
+                };
+                username_match && role_match
+            },
+            page_no,
+            page_size,
+        )
+    }
+
+    fn legacy_permission_page(
+        reader: &RocksDbReader,
+        role_pattern: &str,
+        accurate: bool,
+        page_no: u64,
+        page_size: u64,
+    ) -> (Vec<serde_json::Value>, u64) {
+        legacy_paginate(
+            reader
+                .iterate_cf_bincode::<StoredPermission>(CF_PERMISSIONS)
+                .unwrap(),
+            |v| {
+                if role_pattern.is_empty() {
+                    return true;
+                }
+                let role = v["role"].as_str().unwrap_or("");
+                if accurate {
+                    role == role_pattern
+                } else {
+                    role.contains(role_pattern)
+                }
+            },
+            page_no,
+            page_size,
+        )
+    }
+
+    /// Correctness guard for `paginate_bincode_cf`: replacing a full-vector
+    /// scan with a streaming scan must not change the returned page, the exact
+    /// `total`, the ordering, or the behaviour of edge pages.
+    #[tokio::test]
+    async fn streaming_auth_paging_matches_legacy_full_scan() {
+        const N: u64 = 60;
+        let (db, _tmp_dir) = create_test_db().await;
+        seed_auth_rows(&db, N);
+        let reader = RocksDbReader::new(db);
+
+        let pages = [
+            (1, 7),
+            (2, 7),
+            (9, 7),
+            (1, 1000),
+            (1, 0),
+            (0, 7),
+            (u64::MAX, 7),
+        ];
+
+        for (pattern, accurate) in [
+            ("", false),
+            ("user", false),
+            // "user00" is a prefix of every username but matches none exactly:
+            // these two cases make accurate vs fuzzy observably different.
+            ("user00", true),
+            ("user00", false),
+            ("user0001", true),
+            ("user0001", false),
+            ("no-such-user", false),
+        ] {
+            for (page_no, page_size) in pages {
+                assert_eq!(
+                    reader
+                        .search_users(pattern, accurate, page_no, page_size)
+                        .unwrap(),
+                    legacy_user_page(&reader, pattern, accurate, page_no, page_size),
+                    "users pattern={pattern:?} accurate={accurate} page={page_no}/{page_size}"
+                );
+            }
+        }
+
+        for (user_pattern, role_pattern, accurate) in [
+            ("", "", false),
+            ("user00", "", true),
+            ("user00", "ROLE_ADMIN", false),
+            ("", "ROLE_USER", false),
+            ("", "ROLE_ADMIN", true),
+            ("user0001", "ROLE_ADMIN", true),
+        ] {
+            for (page_no, page_size) in pages {
+                assert_eq!(
+                    reader
+                        .search_roles(user_pattern, role_pattern, accurate, page_no, page_size)
+                        .unwrap(),
+                    legacy_role_page(
+                        &reader,
+                        user_pattern,
+                        role_pattern,
+                        accurate,
+                        page_no,
+                        page_size
+                    ),
+                    "roles user={user_pattern:?} role={role_pattern:?} accurate={accurate} page={page_no}/{page_size}"
+                );
+            }
+        }
+
+        for (role_pattern, accurate) in [
+            ("", false),
+            ("ROLE_ADMIN", false),
+            ("ROLE", false),
+            ("ROLE", true),
+            ("ROLE_ADMIN", true),
+        ] {
+            for (page_no, page_size) in pages {
+                assert_eq!(
+                    reader
+                        .search_permissions(role_pattern, accurate, page_no, page_size)
+                        .unwrap(),
+                    legacy_permission_page(&reader, role_pattern, accurate, page_no, page_size),
+                    "permissions role={role_pattern:?} accurate={accurate} page={page_no}/{page_size}"
+                );
+            }
+        }
+    }
+
+    /// Guard for the optimisation itself: only the returned rows are turned
+    /// into `serde_json::Value`. Reverting to the old "materialize all rows"
+    /// implementation (or dropping the offset/window guards) turns this red.
+    #[tokio::test]
+    async fn streaming_auth_paging_materializes_only_the_requested_window() {
+        const N: u64 = 60;
+        let (db, _tmp_dir) = create_test_db().await;
+        seed_auth_rows(&db, N);
+        let reader = RocksDbReader::new(db);
+
+        for (page_no, page_size, expected) in [
+            (1, 5, 5),
+            (3, 5, 5),
+            (13, 5, 0),
+            (1, u64::MAX, N as usize),
+            (2, u64::MAX, 0),
+        ] {
+            test_instrumentation::reset();
+            let (page, total) = reader.search_users("", false, page_no, page_size).unwrap();
+            assert_eq!(total, N);
+            assert_eq!(page.len(), expected, "page={page_no}/{page_size}");
+            assert_eq!(
+                test_instrumentation::auth_materialization_count(),
+                expected,
+                "only returned rows may become Values (page={page_no}/{page_size})"
+            );
+        }
+
+        test_instrumentation::reset();
+        // "user001" matches user0010..user0019 only (not user0001).
+        let (page, total) = reader.search_users("user001", false, 1, 3).unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(page.len(), 3);
+        assert_eq!(test_instrumentation::auth_materialization_count(), 3);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_roles("user", "ROLE_ADMIN", false, 1, 4)
+            .unwrap();
+        assert_eq!(total, 20);
+        assert_eq!(page.len(), 4);
+        assert_eq!(test_instrumentation::auth_materialization_count(), 4);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_permissions("ROLE_ADMIN", false, 2, 4)
+            .unwrap();
+        assert_eq!(total, 20);
+        assert_eq!(page.len(), 4);
+        assert_eq!(test_instrumentation::auth_materialization_count(), 4);
+    }
+
+    /// `history_bounded_page` retains compact `(id, key)` entries and re-reads
+    /// only the requested window by exact key. Mutant check: reverting to the
+    /// full-vector reference implementation drops both counters.
+    #[tokio::test]
+    async fn bounded_history_fallback_retains_keys_not_records() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=200).collect();
+        seed_history(&db, &ids);
+        let reader = RocksDbReader::new(db);
+
+        for (page_no, page_size, expected_retained) in [(1, 5, 5), (3, 5, 15)] {
+            test_instrumentation::reset();
+            let (page, total) = reader
+                .history_bounded_page(HISTORY_PREFIX, page_no, page_size, |_| true)
+                .unwrap();
+            let decodes = test_instrumentation::decode_count();
+            let retained = test_instrumentation::history_retained_keys();
+            assert_eq!(total, 200);
+            assert_eq!(page.len(), 5);
+            assert_eq!(retained, expected_retained, "page={page_no}/{page_size}");
+            assert_eq!(
+                decodes,
+                200 + 5,
+                "page={page_no}/{page_size}: one scan decode per row plus exact-key re-reads for the window"
+            );
+
+            let (reference, reference_total) = reader
+                .history_full_page(HISTORY_PREFIX, page_no, page_size, |_| true)
+                .unwrap();
+            assert_eq!(reference_total, total);
+            assert_eq!(reference, page, "page={page_no}/{page_size}");
+        }
+    }
+
+    /// The public API must route untrusted-key fallbacks through the bounded
+    /// page rather than the old full-vector reference implementation.
+    #[tokio::test]
+    async fn history_public_fallback_uses_bounded_page() {
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=200).collect();
+        seed_history(&db, &ids);
+        write_history_with_key(&db, "public@@DEFAULT_GROUP@@app.yml@@legacy", 5000);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", 1, 5)
+            .unwrap();
+        let decodes = test_instrumentation::decode_count();
+        let retained = test_instrumentation::history_retained_keys();
+        assert_eq!(total, 201);
+        assert_eq!(page.len(), 5);
+        assert_eq!(page[0]["id"].as_i64(), Some(5000));
+        assert_eq!(retained, 5);
+        assert_eq!(decodes, 201 + 5);
+    }
+
+    /// A page deeper than `MAX_BOUNDED_HISTORY_KEYS` takes the `cap = None`
+    /// branch; it must still return the exact window and the exact total.
+    #[tokio::test]
+    async fn deep_history_page_returns_exact_window_without_full_record_vector() {
+        use crate::raft::history::MAX_BOUNDED_HISTORY_KEYS;
+
+        const N: i64 = (MAX_BOUNDED_HISTORY_KEYS + 5) as i64;
+        let page_no: u64 = 11;
+        let page_size: u64 = 1000;
+        assert!(bounded_history_cap((page_no - 1) * page_size, page_size).is_none());
+
+        let (db, _tmp_dir) = create_test_db().await;
+        let ids: Vec<i64> = (1..=N).collect();
+        seed_history(&db, &ids);
+        let reader = RocksDbReader::new(db);
+
+        test_instrumentation::reset();
+        let (page, total) = reader
+            .search_config_history("app.yml", "DEFAULT_GROUP", "public", page_no, page_size)
+            .unwrap();
+        assert_eq!(total, N as u64);
+        assert_eq!(page.len(), 5);
+        assert_eq!(page[0]["id"].as_i64(), Some(5));
+        assert_eq!(page[4]["id"].as_i64(), Some(1));
+        assert_eq!(test_instrumentation::history_retained_keys(), N as usize);
+        assert_eq!(test_instrumentation::decode_count(), N as usize + 5);
     }
 }
