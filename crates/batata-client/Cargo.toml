@@ -6,12 +6,21 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust SDK client for Batata/Nacos"
+readme = "README.md"
+keywords = ["nacos", "batata", "service-discovery", "configuration", "microservices"]
+categories = ["network-programming", "config"]
+documentation = "https://docs.rs/batata-client"
+homepage = "https://github.com/easynet-cn/batata"
+rust-version = "1.88"
 
 [dependencies]
 batata-api = { workspace = true }
 
 # gRPC
-tonic = { workspace = true }
+# `tls-aws-lc` makes tonic pick the aws-lc-rs rustls provider explicitly.
+# Without it tonic falls back to `rustls::ClientConfig::builder()`, which
+# panics when a workspace build enables both `ring` and `aws_lc_rs`.
+tonic = { workspace = true, features = ["transport", "tls-native-roots", "tls-aws-lc"] }
 prost = { workspace = true }
 
 # HTTP client
@@ -48,9 +57,6 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
-# File operations
-tempfile = { workspace = true }
-
 # Random
 rand = { workspace = true }
 
@@ -67,6 +73,12 @@ prometheus = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+rcgen = { workspace = true }
+rustls = "0.23"
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net"] }
+tokio-rustls = "0.26"
+tokio-stream = { workspace = true, features = ["net"] }
 
 [[bench]]
 name = "client_bench"

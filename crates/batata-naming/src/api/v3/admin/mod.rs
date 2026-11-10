@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod cluster;
+pub(crate) mod form;
 pub mod health;
 pub mod instance;
 pub mod ops;

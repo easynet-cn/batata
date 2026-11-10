@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-server-common"
 version.workspace = true
 authors.workspace = true
@@ -71,7 +72,7 @@ html-escape = { workspace = true }
 url = { workspace = true }
 
 # gRPC (for TLS config)
-tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
+tonic = { workspace = true, features = ["transport", "tls-native-roots", "tls-aws-lc"] }
 
 # RocksDB (for RocksDbConfig helper methods)
 rocksdb = { workspace = true }

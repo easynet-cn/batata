@@ -1,6 +1,6 @@
 # Batata
 
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/easynet-cn/batata/ci.yml?branch=main)](https://github.com/easynet-cn/batata/actions)
 
@@ -63,6 +63,27 @@ expose the Nacos-compatible data APIs:
 | `8848` | SDK HTTP | Nacos-compatible REST API |
 | `9848` | SDK gRPC | Client SDK communication |
 | `9849` | Cluster gRPC | Inter-node / Raft communication |
+
+## Rust SDK
+
+The client SDKs are published on [crates.io](https://crates.io) from this
+workspace:
+
+| Crate | Purpose |
+|-------|---------|
+| [`batata-client`](https://crates.io/crates/batata-client) | Config, service discovery, gRPC with TLS/mTLS, auth and failover |
+| [`batata-maintainer-client`](https://crates.io/crates/batata-maintainer-client) | Admin APIs over HTTP/HTTPS: cluster, namespace, config, naming, AI, plugins |
+| [`batata-api`](https://crates.io/crates/batata-api) | Shared wire models (transitive dependency) |
+
+```bash
+cargo add batata-client
+cargo add batata-maintainer-client
+```
+
+All three crates share version `1.0.0`. See each crate's README for quick-start
+examples. Note that `batata-client` 1.0.0 is a rewrite of the earlier standalone
+`0.0.x` releases (yanked, with that repository archived); its README and
+CHANGELOG contain migration notes.
 
 ## Quick Start
 

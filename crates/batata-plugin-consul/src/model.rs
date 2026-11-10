@@ -73,7 +73,7 @@ pub struct ConsulDatacenterConfig {
     pub primary_datacenter: String,
     /// The Consul compatibility version (e.g., "1.22.5")
     pub consul_version: String,
-    /// The Batata version (e.g., "0.1.0")
+    /// The Batata version (e.g., "1.0.0")
     pub batata_version: String,
     /// The Consul compatibility HTTP port (default 8500)
     pub consul_port: u16,

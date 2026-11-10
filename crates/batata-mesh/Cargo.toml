@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-mesh"
 version.workspace = true
 authors.workspace = true

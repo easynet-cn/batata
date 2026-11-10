@@ -8,6 +8,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 
+use crate::tls::TlsOptions;
+
 /// Configuration for the HTTP client
 #[derive(Clone, Debug)]
 pub struct HttpClientConfig {
@@ -29,6 +31,8 @@ pub struct HttpClientConfig {
     pub server_identity_key: String,
     /// Server identity header value
     pub server_identity_value: String,
+    /// TLS settings (custom CA / mTLS identity) applied to the reqwest client
+    pub tls: TlsOptions,
 }
 
 impl Default for HttpClientConfig {
@@ -43,6 +47,7 @@ impl Default for HttpClientConfig {
             auth_endpoint: "/v1/auth/login".to_string(),
             server_identity_key: String::new(),
             server_identity_value: String::new(),
+            tls: TlsOptions::default(),
         }
     }
 }
@@ -97,6 +102,12 @@ impl HttpClientConfig {
         self
     }
 
+    /// Apply TLS settings (custom CA / mTLS identity) to the reqwest client.
+    pub fn with_tls(mut self, tls: TlsOptions) -> Self {
+        self.tls = tls;
+        self
+    }
+
     /// Check if identity-based auth is configured
     pub fn has_server_identity(&self) -> bool {
         !self.server_identity_key.is_empty()
@@ -135,6 +146,7 @@ impl BatataHttpClient {
             password: client_config.password.clone(),
             connect_timeout_ms: client_config.connect_timeout.as_millis() as u64,
             read_timeout_ms: client_config.request_timeout.as_millis() as u64,
+            tls: client_config.tls_options(),
             ..Default::default()
         };
 
@@ -164,11 +176,11 @@ impl BatataHttpClient {
 
     /// Create a new HTTP client
     pub async fn new(config: HttpClientConfig) -> anyhow::Result<Self> {
-        let client = Client::builder()
+        let builder = Client::builder()
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .timeout(Duration::from_millis(config.read_timeout_ms))
-            .no_proxy() // Skip system proxy for direct server communication
-            .build()?;
+            .no_proxy(); // Skip system proxy for direct server communication
+        let client = config.tls.apply_to_reqwest(builder)?.build()?;
 
         let use_identity = config.has_server_identity();
 
@@ -199,11 +211,11 @@ impl BatataHttpClient {
 
     /// Create a client without initial authentication (for testing)
     pub fn new_without_auth(config: HttpClientConfig) -> anyhow::Result<Self> {
-        let client = Client::builder()
+        let builder = Client::builder()
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .timeout(Duration::from_millis(config.read_timeout_ms))
-            .no_proxy()
-            .build()?;
+            .no_proxy();
+        let client = config.tls.apply_to_reqwest(builder)?.build()?;
 
         Ok(Self {
             client,

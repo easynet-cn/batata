@@ -410,8 +410,12 @@ run_sdk_suite() {
 # to a silent 25-minute release build — or, worse, run the suites against
 # nothing, which shows up as a pile of login failures.
 ensure_server_binary() {
-    [ -x "${ROOT}/target/release/batata-server" ] && return 0
-    [ -x "${ROOT}/target/debug/batata-server" ] && return 0
+    # The integration stage launches target/debug/batata-server directly.
+    # `cargo check` never relinks that executable, so an early "file exists"
+    # return would run every SDK suite against a stale binary after any source
+    # change (and an existing release binary does not help: test.sh sdk
+    # --quick uses the debug one unless RELEASE=1). Always let cargo decide;
+    # the build is incremental and a no-op when nothing changed.
     echo "    building batata-server (debug)..."
     cargo build -p batata-server > "$LOG_DIR/build-server.log" 2>&1
 }

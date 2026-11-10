@@ -29,7 +29,7 @@
 #   ./scripts/podman.sh up mysql monitoring
 #   ./scripts/podman.sh up cluster
 #   ./scripts/podman.sh down -v all
-#   ./scripts/podman.sh build v0.1.0
+#   ./scripts/podman.sh build v1.0.0
 #
 # Environment variables:
 #   BUILD=1          Force rebuild images (up)

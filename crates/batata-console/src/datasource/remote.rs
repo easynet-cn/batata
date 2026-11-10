@@ -57,6 +57,7 @@ fn build_maintainer_config(configuration: &Configuration) -> MaintainerClientCon
         connect_timeout_ms: configuration.console_remote_connect_timeout_ms(),
         read_timeout_ms: configuration.console_remote_read_timeout_ms(),
         context_path: configuration.server_context_path(),
+        ..Default::default()
     }
 }
 

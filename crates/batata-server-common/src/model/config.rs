@@ -3646,8 +3646,8 @@ batata.server.main.port: 8888
 
     #[test]
     fn test_compat_version_override() {
-        let cfg = build_config(vec![("nacos.version", "3.2.3".into())]);
-        assert_eq!(cfg.compat_version(), "3.2.3");
+        let cfg = build_config(vec![("nacos.version", "3.3.0".into())]);
+        assert_eq!(cfg.compat_version(), "3.3.0");
     }
 
     // ========================================================================

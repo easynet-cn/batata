@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-auth"
 version.workspace = true
 authors.workspace = true

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use batata_client::HttpClientConfig;
 use batata_maintainer_client::MaintainerClient;
+use batata_maintainer_client::MaintainerClientConfig;
 use batata_maintainer_client::model::{
     AgentCard, AgentCardBasicInfo, ClusterInfo, ConfigCloneInfo, Instance, McpServerBasicInfo,
     SameConfigPolicy,
@@ -2360,4 +2361,33 @@ async fn test_plugin_availability() {
     assert!(avail.available);
     assert_eq!(avail.available_count, Some(1));
     assert_eq!(avail.total_count, Some(1));
+}
+
+/// TLS paths on `MaintainerClientConfig` must reach the reqwest builder.
+/// A missing CA file is surfaced as an error rather than silently ignored.
+#[tokio::test]
+async fn test_maintainer_tls_paths_are_forwarded() {
+    let missing_ca =
+        MaintainerClientConfig::default().with_tls("/this/path/does/not/exist/batata-ca.pem");
+    assert!(MaintainerClient::new(missing_ca).await.is_err());
+
+    let missing_identity = MaintainerClientConfig::default().with_mtls(
+        "/this/path/does/not/exist/batata-ca.pem",
+        "/this/path/does/not/exist/client.pem",
+        "/this/path/does/not/exist/client.key",
+    );
+    assert!(MaintainerClient::new(missing_identity).await.is_err());
+}
+
+#[test]
+fn test_maintainer_tls_builders() {
+    let config = MaintainerClientConfig::default().with_mtls("ca.pem", "client.pem", "client.key");
+    assert_eq!(config.tls_ca_cert_path.as_deref(), Some("ca.pem"));
+    assert_eq!(config.tls_client_cert_path.as_deref(), Some("client.pem"));
+    assert_eq!(config.tls_client_key_path.as_deref(), Some("client.key"));
+
+    let defaults = MaintainerClientConfig::default();
+    assert!(defaults.tls_ca_cert_path.is_none());
+    assert!(defaults.tls_client_cert_path.is_none());
+    assert!(defaults.tls_client_key_path.is_none());
 }

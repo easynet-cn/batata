@@ -23,6 +23,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::error::{ClientError, Result};
+use crate::tls::TlsOptions;
 
 /// Represents an established gRPC connection to a Batata server.
 pub struct GrpcConnection {
@@ -35,7 +36,11 @@ pub struct GrpcConnection {
 }
 
 impl GrpcConnection {
-    /// Establish a new gRPC connection to the specified server.
+    /// Establish a plaintext gRPC connection to the specified server.
+    ///
+    /// This is the backward-compatible entry point: TLS is disabled. Use
+    /// [`Self::connect_with_tls`] (or the higher-level `GrpcClient`, which
+    /// forwards its configuration) for encrypted channels.
     ///
     /// `server_addr` is the HTTP server address (e.g., `127.0.0.1:8848`).
     /// The gRPC port is computed as `http_port + 1000`.
@@ -53,14 +58,33 @@ impl GrpcConnection {
         access_token: Option<&str>,
         push_channel_capacity: usize,
     ) -> Result<(Self, mpsc::Receiver<Payload>)> {
-        let grpc_addr = compute_grpc_addr(server_addr)?;
+        Self::connect_with_tls(
+            server_addr,
+            module,
+            labels,
+            tenant,
+            access_token,
+            push_channel_capacity,
+            &TlsOptions::default(),
+        )
+        .await
+    }
 
-        info!("Connecting to gRPC server at {}", grpc_addr);
-
-        let channel = Channel::from_shared(grpc_addr.clone())
-            .map_err(|e| ClientError::Other(anyhow::anyhow!("Invalid gRPC address: {}", e)))?
-            .connect()
-            .await?;
+    /// Establish a gRPC connection with the given TLS settings.
+    ///
+    /// When `tls.enabled` is true the gRPC port is reached over `https://`
+    /// with a rustls client configuration built from `tls` (custom CA or
+    /// native roots, optional mTLS identity, optional SNI domain).
+    pub async fn connect_with_tls(
+        server_addr: &str,
+        module: &str,
+        labels: HashMap<String, String>,
+        tenant: &str,
+        access_token: Option<&str>,
+        push_channel_capacity: usize,
+        tls: &TlsOptions,
+    ) -> Result<(Self, mpsc::Receiver<Payload>)> {
+        let channel = build_channel(server_addr, tls).await?;
 
         // Step 1: Server check — get connection_id
         let connection_id = Self::server_check(&channel, access_token).await?;
@@ -100,7 +124,10 @@ impl GrpcConnection {
         all_labels.insert(LABEL_MODULE.to_string(), module.to_string());
 
         // Report client abilities
-        all_labels.insert("sdk_version".to_string(), "batata-rust-0.1.0".to_string());
+        all_labels.insert(
+            "sdk_version".to_string(),
+            concat!("batata-rust-", env!("CARGO_PKG_VERSION")).to_string(),
+        );
         all_labels.insert("support_config".to_string(), "true".to_string());
         all_labels.insert("support_naming".to_string(), "true".to_string());
         all_labels.insert("support_lock".to_string(), "true".to_string());
@@ -247,9 +274,32 @@ impl GrpcConnection {
     }
 }
 
+/// Build the tonic channel for a server address, honouring TLS settings.
+///
+/// An `https://` endpoint is only usable once a rustls client configuration
+/// has been attached, so both decisions (scheme and `tls_config`) are made
+/// here from the same `TlsOptions` value. Certificate/PEM failures are
+/// returned as errors rather than falling back to plaintext.
+async fn build_channel(server_addr: &str, tls: &TlsOptions) -> Result<Channel> {
+    let grpc_addr = compute_grpc_addr(server_addr, tls)?;
+
+    info!("Connecting to gRPC server at {}", grpc_addr);
+
+    let endpoint = Channel::from_shared(grpc_addr.clone())
+        .map_err(|e| ClientError::Other(anyhow::anyhow!("Invalid gRPC address: {}", e)))?;
+
+    let endpoint = match tls.to_tonic().await? {
+        Some(client_tls) => endpoint.tls_config(client_tls)?,
+        None => endpoint,
+    };
+
+    Ok(endpoint.connect().await?)
+}
+
 /// Compute the gRPC address from a server HTTP address.
-/// E.g., `127.0.0.1:8848` -> `http://127.0.0.1:9848`
-fn compute_grpc_addr(server_addr: &str) -> Result<String> {
+/// E.g., `127.0.0.1:8848` -> `http://127.0.0.1:9848`, or
+/// `https://127.0.0.1:9848` when TLS is enabled.
+fn compute_grpc_addr(server_addr: &str, tls: &TlsOptions) -> Result<String> {
     // Strip protocol prefix if present
     let addr = server_addr
         .trim_start_matches("http://")
@@ -269,7 +319,7 @@ fn compute_grpc_addr(server_addr: &str) -> Result<String> {
     let host = parts[1];
     let grpc_port = port + SDK_GRPC_PORT_DEFAULT_OFFSET;
 
-    Ok(format!("http://{}:{}", host, grpc_port))
+    Ok(format!("{}://{}:{}", tls.scheme(), host, grpc_port))
 }
 
 #[cfg(test)]
@@ -278,28 +328,53 @@ mod tests {
 
     #[test]
     fn test_compute_grpc_addr() {
+        let plain = TlsOptions::default();
         assert_eq!(
-            compute_grpc_addr("127.0.0.1:8848").unwrap(),
+            compute_grpc_addr("127.0.0.1:8848", &plain).unwrap(),
             "http://127.0.0.1:9848"
         );
         assert_eq!(
-            compute_grpc_addr("http://localhost:8848").unwrap(),
+            compute_grpc_addr("http://localhost:8848", &plain).unwrap(),
             "http://localhost:9848"
         );
         assert_eq!(
-            compute_grpc_addr("https://myhost:8848").unwrap(),
+            compute_grpc_addr("https://myhost:8848", &plain).unwrap(),
             "http://myhost:9848"
         );
     }
 
     #[test]
-    fn test_compute_grpc_addr_different_ports() {
+    fn test_compute_grpc_addr_tls_switches_scheme() {
+        let tls = TlsOptions::enabled(None);
         assert_eq!(
-            compute_grpc_addr("10.0.0.1:9848").unwrap(),
+            compute_grpc_addr("127.0.0.1:8848", &tls).unwrap(),
+            "https://127.0.0.1:9848"
+        );
+        assert_eq!(
+            compute_grpc_addr("https://myhost:8848", &tls).unwrap(),
+            "https://myhost:9848"
+        );
+        assert_eq!(
+            compute_grpc_addr("[::1]:8848", &tls).unwrap(),
+            "https://[::1]:9848"
+        );
+        // The same address must stay plaintext when TLS is off — this kills a
+        // mutant that always emits https.
+        assert_eq!(
+            compute_grpc_addr("127.0.0.1:8848", &TlsOptions::default()).unwrap(),
+            "http://127.0.0.1:9848"
+        );
+    }
+
+    #[test]
+    fn test_compute_grpc_addr_different_ports() {
+        let plain = TlsOptions::default();
+        assert_eq!(
+            compute_grpc_addr("10.0.0.1:9848", &plain).unwrap(),
             "http://10.0.0.1:10848"
         );
         assert_eq!(
-            compute_grpc_addr("10.0.0.1:80").unwrap(),
+            compute_grpc_addr("10.0.0.1:80", &plain).unwrap(),
             "http://10.0.0.1:1080"
         );
     }
@@ -308,27 +383,50 @@ mod tests {
     fn test_compute_grpc_addr_ipv6() {
         // IPv6 with port
         assert_eq!(
-            compute_grpc_addr("[::1]:8848").unwrap(),
+            compute_grpc_addr("[::1]:8848", &TlsOptions::default()).unwrap(),
             "http://[::1]:9848"
         );
     }
 
     #[test]
     fn test_compute_grpc_addr_invalid() {
-        assert!(compute_grpc_addr("no-port").is_err());
+        assert!(compute_grpc_addr("no-port", &TlsOptions::default()).is_err());
     }
 
     #[test]
     fn test_compute_grpc_addr_invalid_port() {
-        assert!(compute_grpc_addr("host:not-a-number").is_err());
+        assert!(compute_grpc_addr("host:not-a-number", &TlsOptions::default()).is_err());
     }
 
     #[test]
     fn test_compute_grpc_addr_hostname() {
         assert_eq!(
-            compute_grpc_addr("nacos.example.com:8848").unwrap(),
+            compute_grpc_addr("nacos.example.com:8848", &TlsOptions::default()).unwrap(),
             "http://nacos.example.com:9848"
         );
+    }
+
+    #[tokio::test]
+    async fn test_build_channel_fails_closed_on_bad_tls_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.pem");
+        let tls = TlsOptions::enabled(Some(missing.to_str().unwrap()));
+
+        // A missing CA must abort the connection instead of silently using
+        // native roots or plaintext.
+        let err = build_channel("127.0.0.1:8848", &tls).await.unwrap_err();
+        assert!(err.to_string().contains("TLS CA certificate"));
+    }
+
+    #[tokio::test]
+    async fn test_build_channel_rejects_partial_mtls() {
+        let tls = TlsOptions {
+            enabled: true,
+            client_cert_path: Some("client.pem".into()),
+            ..TlsOptions::default()
+        };
+        let err = build_channel("127.0.0.1:8848", &tls).await.unwrap_err();
+        assert!(err.to_string().contains("client key"));
     }
 
     #[test]
@@ -344,13 +442,19 @@ mod tests {
         let mut labels = HashMap::new();
         labels.insert(LABEL_SOURCE.to_string(), LABEL_SOURCE_SDK.to_string());
         labels.insert(LABEL_MODULE.to_string(), "config".to_string());
-        labels.insert("sdk_version".to_string(), "batata-rust-0.1.0".to_string());
+        labels.insert(
+            "sdk_version".to_string(),
+            concat!("batata-rust-", env!("CARGO_PKG_VERSION")).to_string(),
+        );
         labels.insert("support_config".to_string(), "true".to_string());
         labels.insert("support_naming".to_string(), "true".to_string());
         labels.insert("support_lock".to_string(), "true".to_string());
         labels.insert("client_type".to_string(), "rust".to_string());
 
-        assert_eq!(labels.get("sdk_version").unwrap(), "batata-rust-0.1.0");
+        assert_eq!(
+            labels.get("sdk_version").unwrap(),
+            concat!("batata-rust-", env!("CARGO_PKG_VERSION"))
+        );
         assert_eq!(labels.get("support_config").unwrap(), "true");
         assert_eq!(labels.get("support_naming").unwrap(), "true");
         assert_eq!(labels.get("support_lock").unwrap(), "true");

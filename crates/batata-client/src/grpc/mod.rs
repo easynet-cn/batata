@@ -23,6 +23,7 @@ use tokio::sync::{Notify, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{ClientError, Result};
+use crate::tls::TlsOptions;
 
 use self::auth::AuthProvider;
 use self::connection::GrpcConnection;
@@ -87,6 +88,8 @@ pub struct GrpcClientConfig {
     pub tls_client_key: Option<String>,
     /// Whether to enable TLS
     pub tls_enabled: bool,
+    /// Domain name used for gRPC SNI / certificate verification
+    pub tls_domain: Option<String>,
     /// gRPC request timeout in seconds. Default: 10.
     pub request_timeout_secs: u64,
     /// Push message channel capacity. Default: 256.
@@ -129,6 +132,28 @@ impl GrpcClientConfig {
         self.tls_client_key = Some(client_key.to_string());
         self
     }
+
+    /// Override the domain used for gRPC SNI / certificate verification.
+    /// Useful when `server_addrs` contains IP literals.
+    pub fn with_tls_domain(mut self, domain: &str) -> Self {
+        self.tls_domain = Some(domain.to_string());
+        self
+    }
+
+    /// Normalized TLS settings forwarded to the gRPC channel and HTTP login.
+    pub fn tls_options(&self) -> TlsOptions {
+        let mut tls = TlsOptions {
+            enabled: self.tls_enabled,
+            ca_cert_path: self.tls_ca_cert.clone(),
+            client_cert_path: self.tls_client_cert.clone(),
+            client_key_path: self.tls_client_key.clone(),
+            domain: None,
+        };
+        if let Some(domain) = &self.tls_domain {
+            tls = tls.with_domain(domain);
+        }
+        tls
+    }
 }
 
 impl Default for GrpcClientConfig {
@@ -145,6 +170,7 @@ impl Default for GrpcClientConfig {
             tls_client_cert: None,
             tls_client_key: None,
             tls_enabled: false,
+            tls_domain: None,
             request_timeout_secs: 10,
             push_channel_capacity: 256,
             auth_connect_timeout_secs: 5,
@@ -228,18 +254,23 @@ impl GrpcClient {
             labels: client_config.labels.clone(),
             tls_enabled: client_config.tls_enabled,
             tls_ca_cert: client_config.tls_ca_path.clone(),
+            tls_client_cert: client_config.tls_client_cert_path.clone(),
+            tls_client_key: client_config.tls_client_key_path.clone(),
+            tls_domain: client_config.tls_domain.clone(),
             ..Default::default()
         };
+        let tls = grpc_config.tls_options();
 
         let auth_provider = if client_config.has_jwt_auth() {
             let auth_url = client_config.full_auth_url(&client_config.server_addrs[0]);
             // Extract base URL (up to port) for auth provider
             let base_and_path = auth_url.rsplitn(2, "/v3/").last().unwrap_or(&auth_url);
-            AuthProvider::with_context_path(
+            AuthProvider::with_context_path_and_tls(
                 base_and_path,
                 "", // context_path already included in full_auth_url
                 &client_config.username,
                 &client_config.password,
+                &tls,
             )?
         } else {
             AuthProvider::none()
@@ -269,6 +300,7 @@ impl GrpcClient {
 
     /// Create a new GrpcClient with the given configuration.
     pub fn new(config: GrpcClientConfig) -> Result<Self> {
+        let tls = config.tls_options();
         let auth_provider = if config.username.is_empty() {
             AuthProvider::none()
         } else {
@@ -278,11 +310,12 @@ impl GrpcClient {
             } else {
                 format!("http://{}", config.server_addrs[0])
             };
-            AuthProvider::with_context_path(
+            AuthProvider::with_context_path_and_tls(
                 &auth_addr,
                 &config.context_path,
                 &config.username,
                 &config.password,
+                &tls,
             )?
         };
 
@@ -528,13 +561,14 @@ impl GrpcClient {
         let token = self.auth_provider.get_token().await?;
         let server_addr = format!("{}:{}", server_ip, server_port);
 
-        let (conn, push_rx) = GrpcConnection::connect(
+        let (conn, push_rx) = GrpcConnection::connect_with_tls(
             &server_addr,
             &self.config.module,
             self.config.labels.clone(),
             &self.config.tenant,
             token.as_deref(),
             self.config.push_channel_capacity,
+            &self.config.tls_options(),
         )
         .await?;
 
@@ -604,21 +638,24 @@ impl GrpcClient {
         start_index: usize,
         token: Option<&str>,
     ) -> Result<(GrpcConnection, mpsc::Receiver<Payload>, usize, String)> {
+        let tls = config.tls_options();
         try_failover(config, start_index, |addr| {
             let module = config.module.clone();
             let labels = config.labels.clone();
             let tenant = config.tenant.clone();
             let push_capacity = config.push_channel_capacity;
             let token = token.map(|s| s.to_string());
+            let tls = tls.clone();
             let addr = addr.to_string();
             async move {
-                GrpcConnection::connect(
+                GrpcConnection::connect_with_tls(
                     &addr,
                     &module,
                     labels,
                     &tenant,
                     token.as_deref(),
                     push_capacity,
+                    &tls,
                 )
                 .await
             }
@@ -1020,6 +1057,38 @@ mod tests {
         let cloned = config.clone();
         assert_eq!(cloned.server_addrs, config.server_addrs);
         assert_eq!(cloned.module, config.module);
+    }
+
+    #[test]
+    fn test_grpc_tls_builders_and_options() {
+        let config = GrpcClientConfig::default()
+            .with_mtls("ca.pem", "client.pem", "client.key")
+            .with_tls_domain("batata.example.com");
+        assert_eq!(
+            config.tls_options(),
+            TlsOptions::mtls(Some("ca.pem"), "client.pem", "client.key")
+                .with_domain("batata.example.com")
+        );
+
+        let native = GrpcClientConfig::default().with_tls("ca.pem");
+        assert_eq!(native.tls_options(), TlsOptions::enabled(Some("ca.pem")));
+        assert_eq!(
+            GrpcClientConfig::default().tls_options(),
+            TlsOptions::default()
+        );
+    }
+
+    #[test]
+    fn test_from_config_propagates_tls() {
+        let config = crate::ClientConfig::new("10.0.0.1:8848")
+            .with_mtls(Some("ca.pem"), "client.pem", "client.key")
+            .tls_domain("batata.example.com");
+        let client = GrpcClient::from_config(&config).unwrap();
+        assert_eq!(
+            client.config.tls_options(),
+            TlsOptions::mtls(Some("ca.pem"), "client.pem", "client.key")
+                .with_domain("batata.example.com")
+        );
     }
 
     #[test]

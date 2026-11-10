@@ -10,10 +10,24 @@ use batata_api::naming::model::CreateClusterForm;
 use batata_common::{
     ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
 };
-use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
+use batata_server_common::{
+    Secured, error, model::app_state::AppState, model::response::Result, secured,
+};
 
 use crate::ClusterStatistics;
 use batata_api::naming::NamingServiceProvider;
+
+use super::form::merge_form;
+
+/// Structured 400 for a request that carries neither a query nor a body form.
+fn missing_cluster_form() -> actix_web::HttpResponse {
+    Result::<bool>::http_response(
+        400,
+        error::PARAMETER_VALIDATE_ERROR.code,
+        "Required parameters 'serviceName' and 'clusterName' are missing".to_string(),
+        false,
+    )
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,8 +76,14 @@ async fn create_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<CreateClusterForm>,
+    query: Option<web::Query<CreateClusterForm>>,
+    body: Option<web::Form<CreateClusterForm>>,
 ) -> impl Responder {
+    // Nacos maintainer-client 3.3.0 GA moved cluster parameters into the URL
+    // query string; older versions used a form body. Accept both.
+    let Some(form) = merge_form(query, body) else {
+        return missing_cluster_form();
+    };
     let namespace_id = form
         .namespace_id
         .as_deref()
@@ -145,8 +165,12 @@ async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<UpdateClusterForm>,
+    query: Option<web::Query<UpdateClusterForm>>,
+    body: Option<web::Form<UpdateClusterForm>>,
 ) -> impl Responder {
+    let Some(form) = merge_form(query, body) else {
+        return missing_cluster_form();
+    };
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();
 

@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Admin/maintainer HTTP client for Batata/Nacos"
+readme = "README.md"
+keywords = ["nacos", "batata", "admin", "configuration", "microservices"]
+categories = ["network-programming", "config"]
+documentation = "https://docs.rs/batata-maintainer-client"
+homepage = "https://github.com/easynet-cn/batata"
+rust-version = "1.88"
 
 [dependencies]
 batata-client = { workspace = true }

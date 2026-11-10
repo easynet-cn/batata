@@ -48,8 +48,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # `protoc` is required by `batata-api`'s prost-build codegen (runs on the
-      # host, including for musl/zigbuild targets).
+      # `protoc` is required by `batata-server-api`'s prost-build codegen (runs
+      # on the host, including for musl/zigbuild targets). `batata-api` ships
+      # checked-in generated code and has no build script.
       - name: Install protoc (protobuf compiler)
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then

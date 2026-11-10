@@ -1,9 +1,11 @@
 # Nacos Feature Inventory
 
-Upstream baseline: **Nacos 3.3.0-SNAPSHOT** (local `~/work/github/easynet-cn/nacos`, develop).
+Upstream baseline: **Nacos 3.3.0 GA (released 2026-10-29)**. The inventory was
+originally labelled `3.3.0-SNAPSHOT` and later `3.3.0-RC`; see **Baseline
+alignment** below for how the GA source was verified.
 
 > Purpose & scope: track batata's Nacos **compatibility** implementation status.
-> Nacos exposes **three** contract surfaces:
+> Nacos exposes **four** contract surfaces:
 > 1. gRPC **data plane** (SDK / cluster, the service contract)
 > 2. HTTP **console/management plane** (`v3/console/**`, used by `console-ui-next`)
 > 3. HTTP **admin plane** (`v3/admin/**`, used by maintainer SDK / open platform)
@@ -15,7 +17,39 @@ Upstream baseline: **Nacos 3.3.0-SNAPSHOT** (local `~/work/github/easynet-cn/nac
 
 Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ missing`
 
-> Status source: verified against batata source code (`crates/`) on 2025-08-08. `batata impl` column references the implementing crate/module.
+> Status source: verified against batata source code (`crates/`) on 2025-08-08; the
+> maintainer/client SDK rows were re-verified on **2026-11-09** (see
+> `docs/compat/review-report.md`). The `batata impl` column is a **source anchor**:
+> for every `🟢` row it must name a crate/module that exists under `crates/`
+> (enforced by `scripts/compat_check.py`). A row is `🟡` when only part of the
+> upstream contract is exposed by the Rust SDK, even if the server implements it.
+
+## Baseline alignment (2026-11-09)
+
+**Alignment target: Nacos 3.3.0 GA** (released 2026-10-29, per the official
+release history). All three version statements in the repository now point at
+it:
+
+| Where | Version | Meaning |
+|-------|---------|---------|
+| `sdk-tests/nacos-java-tests/pom.xml:19` | `3.3.0` | Java SDK pinned in batata's E2E matrix |
+| `conf/application.yml` + `deploy/k8s/configmap.yaml` | `3.3.0` | Version batata reports as its Nacos compatibility target |
+| Local `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0-RC` (@ `1511b5a85`, 2026-10-14) | **Pre-release source snapshot**, not the GA tag |
+
+The local upstream checkout has no `3.3.0` tag and its `origin` is unreachable
+through the current proxy, so the GA contract was verified against the official
+`-sources.jar` for `nacos-api`, `nacos-client` and `nacos-maintainer-client`
+3.3.0 from Maven Central. Diffing GA against the RC snapshot shows the two are
+identical for `ConfigService`, `NamingService`, `LockService` and the whole
+`maintainer-client`; only the `api/ai` package changed (9 files modified, 4
+added: RAD discovery capability, `AgentConverter` SPI, `AgentPublishRequest`
+`autoSubmit`). The older `3.3.0-SNAPSHOT` heading was a stale 2025-08-08 label.
+
+Consequence: capabilities introduced in 3.3.0 (config 304 conditional GET, MCP
+version lifecycle, AI maintainer delegates, RAD routing) are listed here
+because they exist upstream, but the Rust SDKs do not expose all of them yet.
+The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
+`docs/compat/review-report.md` for commit hashes and the client-SDK gap list.
 
 ---
 
@@ -318,8 +352,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-NAC-MAINT-001 | ConfigMaintainerService (CRUD, history, beta, clone, listener, ops) | batata-maintainer-client | 🟢 | | wiremock tests in tests/client_test.rs |
 | F-NAC-MAINT-002 | NamingMaintainerService (service/instance/subscriber mgmt) | batata-maintainer-client | 🟢 | | |
 | F-NAC-MAINT-003 | CoreMaintainerService (server state, cluster, namespace, plugin) | batata-maintainer-client | 🟢 | | |
-| F-NAC-MAINT-004 | AiMaintainerService (MCP, A2A, prompt, skill, agentspec) | batata-maintainer-client/model/ai | 🟢 | | |
-| F-NAC-MAINT-005 | AgentMaintainerService (draft/publish/labels/offline/online) | batata-maintainer-client | 🟢 | | |
+| F-NAC-MAINT-004 | AiMaintainerService (MCP, A2A, prompt, skill, agentspec) | batata-maintainer-client/model/ai | 🟡 | | 2026-11-09 re-verified: only `mcp_server_*` CRUD + `agent_*` CRUD/list/search are exposed in `src/client.rs`; upstream `AiMaintainerService.mcp()/skill()/prompt()/agentSpec()/pipeline()` delegates, `listMcpServerVersions`, `submit/publish/forcePublish/redraft/online/offline` and ZIP uploads are **not** wrapped. `model/ai.rs` only holds 11 DTOs. |
+| F-NAC-MAINT-005 | AgentMaintainerService (draft/publish/labels/offline/online) | batata-maintainer-client | 🟡 | | 2026-11-09 re-verified: `src/client.rs` has register/get/update/delete/list/list_versions/search, but no `createDraft/updateDraft/submit/publish/forcePublish/redraft/online/offline/updateLabels`; `agent_get` has no `version` parameter. |
 
 ---
 
@@ -337,7 +371,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | B.2 Config console | 19 | 0 | 0 | 0 | 0 | 19 | 100% |
 | B.3 Naming console | 9 | 0 | 0 | 0 | 0 | 9 | 100% |
 | B.4 Auth | 7 | 0 | 0 | 0 | 0 | 7 | 100% |
-| B.5 AI console | 10 | 1 | 0 | 0 | 0 | 11 | 95% |
+| B.5 AI console | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | B.6 Client HTTP | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | B.7.1 Admin Config | 16 | 0 | 0 | 0 | 0 | 16 | 100% |
 | B.7.2 Admin Naming | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
@@ -345,7 +379,13 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | B.7.4 Admin Auth | 1 | 0 | 0 | 0 | 0 | 1 | 100% |
 | B.7.5 Admin AI | 8 | 0 | 0 | 0 | 0 | 8 | 100% |
 | B.7.6 Admin Legacy | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
-| B.8 Maintainer SDK | 5 | 0 | 0 | 0 | 0 | 5 | 100% |
-| **Total** | 178 | 0 | 0 | 0 | 3 | 181 | 98% |
+| B.8 Maintainer SDK | 3 | 2 | 0 | 0 | 0 | 5 | 60% |
+| **Total** | 176 | 2 | 0 | 0 | 3 | 181 | 97% |
 
-> Status verified against batata source code on 2025-08-08. gRPC type names must stay exact for interop. HTTP rows verified against `console-ui-next` (`src/api/*.ts`) and upstream test suite. Update statuses per actual implementation and sync this table.
+> Recomputed from the F-ID rows on 2026-11-09 (`scripts/compat_check.py` enforces
+> this table). Initial verification was 2025-08-08; the maintainer SDK rows were
+> re-verified against `crates/batata-maintainer-client/src/client.rs` on
+> 2026-11-09. Impl rate = 🟢 / Total. gRPC type names must stay exact for
+> interop; HTTP rows were verified against `console-ui-next` (`src/api/*.ts`)
+> and the upstream test suite. Update statuses per actual implementation and
+> sync this table.

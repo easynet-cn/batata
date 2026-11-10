@@ -48,26 +48,7 @@ async fn notify_subscribers(
     });
 }
 
-/// Merge a form deserialized from the URL query string and/or the request body.
-///
-/// The nacos maintainer client sends some admin operations (e.g. batch update
-/// metadata, partial update) as URL query parameters and others (batch delete
-/// metadata) as a form body. The nacos server binds these via a Spring form
-/// object that accepts both, so we do the same to stay compatible. When the
-/// query string is empty/missing the required fields `web::Query` fails to
-/// extract, yielding `None`, and we fall back to the body.
-fn merge_form<T: serde::de::DeserializeOwned>(
-    query: Option<web::Query<T>>,
-    body: Option<web::Form<T>>,
-) -> Option<T> {
-    if let Some(q) = query {
-        return Some(q.into_inner());
-    }
-    if let Some(b) = body {
-        return Some(b.into_inner());
-    }
-    None
-}
+use super::form::merge_form;
 
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 

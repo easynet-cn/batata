@@ -887,7 +887,7 @@ data:
     # =============================================================================
 
     # Nacos compatibility version (the Nacos version that Batata is compatible with)
-    nacos.version: 3.2.3
+    nacos.version: 3.3.0
   cluster.conf: |
     127.0.0.1:8848
     127.0.0.1:8858

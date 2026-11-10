@@ -19,6 +19,12 @@ pub struct MaintainerClientConfig {
     pub server_identity_key: String,
     /// Server identity header value
     pub server_identity_value: String,
+    /// Path to a PEM CA certificate for HTTPS admin endpoints
+    pub tls_ca_cert_path: Option<String>,
+    /// Path to the client certificate PEM (mTLS)
+    pub tls_client_cert_path: Option<String>,
+    /// Path to the client private key PEM (mTLS)
+    pub tls_client_key_path: Option<String>,
 }
 
 impl Default for MaintainerClientConfig {
@@ -32,6 +38,30 @@ impl Default for MaintainerClientConfig {
             context_path: "nacos".to_string(),
             server_identity_key: String::new(),
             server_identity_value: String::new(),
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
         }
+    }
+}
+
+impl MaintainerClientConfig {
+    /// Trust a private CA certificate for `https://` server addresses.
+    pub fn with_tls(mut self, ca_cert_path: &str) -> Self {
+        self.tls_ca_cert_path = Some(ca_cert_path.to_string());
+        self
+    }
+
+    /// Enable mutual TLS for `https://` server addresses.
+    pub fn with_mtls(
+        mut self,
+        ca_cert_path: &str,
+        client_cert_path: &str,
+        client_key_path: &str,
+    ) -> Self {
+        self.tls_ca_cert_path = Some(ca_cert_path.to_string());
+        self.tls_client_cert_path = Some(client_cert_path.to_string());
+        self.tls_client_key_path = Some(client_key_path.to_string());
+        self
     }
 }

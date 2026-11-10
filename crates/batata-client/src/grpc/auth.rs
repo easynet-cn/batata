@@ -10,6 +10,7 @@ use reqwest::Client;
 use tracing::debug;
 
 use crate::error::{ClientError, Result};
+use crate::tls::TlsOptions;
 
 /// Cached token info
 #[derive(Clone, Debug)]
@@ -66,12 +67,31 @@ impl AuthProvider {
         username: &str,
         password: &str,
     ) -> Result<Self> {
-        let http_client = Client::builder()
+        Self::with_context_path_and_tls(
+            server_addr,
+            context_path,
+            username,
+            password,
+            &TlsOptions::default(),
+        )
+    }
+
+    /// Create a new AuthProvider whose HTTP client honours the SDK TLS
+    /// settings (custom CA / mTLS identity), so login works against an
+    /// `https://` endpoint terminated with a private CA.
+    pub fn with_context_path_and_tls(
+        server_addr: &str,
+        context_path: &str,
+        username: &str,
+        password: &str,
+        tls: &TlsOptions,
+    ) -> Result<Self> {
+        let builder = Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
-            .no_proxy() // Skip system proxy for direct server communication
-            .build()
-            .map_err(|e| ClientError::Other(e.into()))?;
+            .no_proxy(); // Skip system proxy for direct server communication
+        let builder = tls.apply_to_reqwest(builder)?;
+        let http_client = builder.build().map_err(|e| ClientError::Other(e.into()))?;
 
         // Normalize context path: ensure it starts with "/" if non-empty, or is empty for root
         let normalized_context_path = if context_path.is_empty() || context_path == "/" {

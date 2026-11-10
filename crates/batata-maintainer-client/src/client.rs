@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use batata_client::model::OkOrBool;
-use batata_client::{BatataHttpClient, HttpClientConfig};
+use batata_client::{BatataHttpClient, HttpClientConfig, TlsOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -55,6 +55,16 @@ impl MaintainerClient {
             http_config = http_config
                 .with_server_identity(&config.server_identity_key, &config.server_identity_value);
         }
+
+        // HTTPS admin endpoints may be terminated with a private CA or require
+        // mutual TLS. The maintainer client is HTTP-only, so TLS is not enabled
+        // for a gRPC channel here — only the reqwest trust/identity settings.
+        http_config = http_config.with_tls(TlsOptions {
+            ca_cert_path: config.tls_ca_cert_path.clone(),
+            client_cert_path: config.tls_client_cert_path.clone(),
+            client_key_path: config.tls_client_key_path.clone(),
+            ..TlsOptions::default()
+        });
 
         let http_client = BatataHttpClient::new(http_config).await?;
         Ok(Self { http_client })

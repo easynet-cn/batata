@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-server"
 version.workspace = true
 authors.workspace = true
@@ -73,7 +74,7 @@ actix-files = { workspace = true }
 actix-rt = { workspace = true }
 
 # gRPC
-tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
+tonic = { workspace = true, features = ["transport", "tls-native-roots", "tls-aws-lc"] }
 prost = { workspace = true }
 tower = { workspace = true }
 http = { workspace = true }

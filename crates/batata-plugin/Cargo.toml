@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-plugin"
 version.workspace = true
 authors.workspace = true

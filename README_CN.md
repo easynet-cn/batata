@@ -1,6 +1,6 @@
 # Batata
 
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/easynet-cn/batata/ci.yml?branch=main)](https://github.com/easynet-cn/batata/actions)
 
@@ -61,6 +61,25 @@ Web 控制台是独立的前端项目：
 | `8848` | SDK HTTP | Nacos 兼容 REST API |
 | `9848` | SDK gRPC | 客户端 SDK 通信 |
 | `9849` | 集群 gRPC | 节点间 / Raft 通信 |
+
+## Rust SDK
+
+客户端 SDK 由本仓库发布到 [crates.io](https://crates.io)：
+
+| Crate | 用途 |
+|-------|------|
+| [`batata-client`](https://crates.io/crates/batata-client) | 配置管理、服务发现、支持 TLS/mTLS 的 gRPC、鉴权与故障转移 |
+| [`batata-maintainer-client`](https://crates.io/crates/batata-maintainer-client) | 基于 HTTP/HTTPS 的运维接口：集群、命名空间、配置、服务、AI、插件 |
+| [`batata-api`](https://crates.io/crates/batata-api) | 共享协议模型（传递依赖，一般无需直接引用） |
+
+```bash
+cargo add batata-client
+cargo add batata-maintainer-client
+```
+
+三个 crate 统一使用 `1.0.0` 版本，示例见各自 README。注意 `batata-client`
+1.0.0 是对早期独立仓库 `0.0.x` 的重写（旧版本已 yank，旧仓库已 archive），
+升级前请阅读其 README 与 CHANGELOG 中的迁移说明。
 
 ## 快速开始
 

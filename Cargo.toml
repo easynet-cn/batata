@@ -29,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Tianyu Liang <124244236@qq.com>"]
 edition = "2024"
 license = "Apache-2.0"
@@ -38,7 +38,7 @@ repository = "https://github.com/easynet-cn/batata"
 [workspace.dependencies]
 # Internal crates
 batata-common = { path = "crates/batata-common" }
-batata-api = { path = "crates/batata-api" }
+batata-api = { path = "crates/batata-api", version = "1.0.0" }
 batata-persistence = { path = "crates/batata-persistence" }
 batata-auth = { path = "crates/batata-auth" }
 batata-consistency = { path = "crates/batata-consistency" }
@@ -51,7 +51,7 @@ batata-plugin-apollo = { path = "crates/batata-plugin-apollo" }
 batata-plugin-cloud = { path = "crates/batata-plugin-cloud" }
 batata-console = { path = "crates/batata-console" }
 batata-server-common = { path = "crates/batata-server-common" }
-batata-client = { path = "crates/batata-client" }
+batata-client = { path = "crates/batata-client", version = "1.0.0" }
 batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
 batata-ai = { path = "crates/batata-ai" }

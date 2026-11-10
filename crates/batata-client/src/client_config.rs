@@ -133,7 +133,19 @@ pub struct ClientConfig {
     pub tls_enabled: bool,
 
     /// Path to CA certificate file (PEM format) for TLS verification.
+    /// When TLS is enabled but this is `None`, native root certificates are used.
     pub tls_ca_path: Option<String>,
+
+    /// Path to the client certificate PEM (mTLS).
+    pub tls_client_cert_path: Option<String>,
+
+    /// Path to the client private key PEM (mTLS).
+    pub tls_client_key_path: Option<String>,
+
+    /// Domain name used for gRPC SNI / certificate verification.
+    /// Needed when the server address is an IP literal but the certificate
+    /// is issued for a DNS name.
+    pub tls_domain: Option<String>,
 }
 
 impl ClientConfig {
@@ -170,6 +182,9 @@ impl ClientConfig {
             naming_push_empty_protection: false,
             tls_enabled: false,
             tls_ca_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            tls_domain: None,
         }
     }
 
@@ -317,11 +332,52 @@ impl ClientConfig {
         self
     }
 
-    /// Enable TLS with optional CA certificate path.
+    /// Enable TLS for the gRPC channel with an optional CA certificate path.
+    ///
+    /// `None` uses the platform's native root certificates. The CA and any
+    /// client identity are also applied to HTTP requests, which use the
+    /// scheme given in `server_addrs` (`https://...` for TLS).
     pub fn with_tls(mut self, ca_path: Option<&str>) -> Self {
         self.tls_enabled = true;
         self.tls_ca_path = ca_path.map(|s| s.to_string());
         self
+    }
+
+    /// Enable mutual TLS for the gRPC channel with a client certificate/key.
+    ///
+    /// `ca_path` may be `None` to verify the server against native roots.
+    pub fn with_mtls(
+        mut self,
+        ca_path: Option<&str>,
+        client_cert_path: &str,
+        client_key_path: &str,
+    ) -> Self {
+        self.tls_enabled = true;
+        self.tls_ca_path = ca_path.map(|s| s.to_string());
+        self.tls_client_cert_path = Some(client_cert_path.to_string());
+        self.tls_client_key_path = Some(client_key_path.to_string());
+        self
+    }
+
+    /// Override the domain used for gRPC SNI / certificate verification.
+    pub fn tls_domain(mut self, domain: &str) -> Self {
+        self.tls_domain = Some(domain.to_string());
+        self
+    }
+
+    /// Normalized TLS settings shared by the gRPC and HTTP transports.
+    pub fn tls_options(&self) -> crate::TlsOptions {
+        let mut tls = crate::TlsOptions {
+            enabled: self.tls_enabled,
+            ca_cert_path: self.tls_ca_path.clone(),
+            client_cert_path: self.tls_client_cert_path.clone(),
+            client_key_path: self.tls_client_key_path.clone(),
+            domain: None,
+        };
+        if let Some(domain) = &self.tls_domain {
+            tls = tls.with_domain(domain);
+        }
+        tls
     }
 
     // ===== Derived helpers =====
@@ -359,7 +415,11 @@ impl ClientConfig {
     }
 
     /// Build the gRPC endpoint address for a given server address.
+    ///
+    /// Uses `https://` when TLS is enabled, matching the channel built by
+    /// `GrpcConnection::connect_with_tls`.
     pub fn grpc_endpoint(&self, server_addr: &str) -> String {
+        let scheme = self.tls_options().scheme();
         let addr = server_addr
             .trim_start_matches("http://")
             .trim_start_matches("https://");
@@ -367,9 +427,9 @@ impl ClientConfig {
             && let Ok(port) = addr[colon_pos + 1..].parse::<u16>()
         {
             let host = &addr[..colon_pos];
-            return format!("http://{}:{}", host, port + self.grpc_port_offset);
+            return format!("{}://{}:{}", scheme, host, port + self.grpc_port_offset);
         }
-        format!("http://{}:{}", addr, 8848 + self.grpc_port_offset)
+        format!("{}://{}:{}", scheme, addr, 8848 + self.grpc_port_offset)
     }
 
     /// Whether JWT auth is configured.
@@ -382,8 +442,13 @@ impl ClientConfig {
         !self.access_key.is_empty() && !self.secret_key.is_empty()
     }
 
-    /// Build a reqwest Client with the configured proxy and timeout settings.
-    pub fn build_reqwest_client(&self) -> reqwest::Result<reqwest::Client> {
+    /// Build a reqwest Client with the configured proxy, timeout and TLS
+    /// settings (custom CA / mTLS identity).
+    ///
+    /// Returns an error when a configured PEM file cannot be read or parsed,
+    /// instead of silently building a client that would fail to verify the
+    /// server.
+    pub fn build_reqwest_client(&self) -> anyhow::Result<reqwest::Client> {
         let mut builder = reqwest::Client::builder()
             .connect_timeout(self.connect_timeout)
             .timeout(self.request_timeout);
@@ -402,7 +467,8 @@ impl ClientConfig {
             }
         }
 
-        builder.build()
+        let builder = self.tls_options().apply_to_reqwest(builder)?;
+        Ok(builder.build()?)
     }
 }
 
@@ -424,6 +490,11 @@ impl From<&crate::grpc::GrpcClientConfig> for ClientConfig {
             module: grpc.module.clone(),
             namespace: grpc.tenant.clone(),
             labels: grpc.labels.clone(),
+            tls_enabled: grpc.tls_enabled,
+            tls_ca_path: grpc.tls_ca_cert.clone(),
+            tls_client_cert_path: grpc.tls_client_cert.clone(),
+            tls_client_key_path: grpc.tls_client_key.clone(),
+            tls_domain: grpc.tls_domain.clone(),
             ..Self::default()
         }
     }
@@ -538,6 +609,54 @@ mod tests {
         let config = ClientConfig::new("localhost:8848");
         let client = config.build_reqwest_client();
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_tls_builders_and_options() {
+        let config = ClientConfig::new("localhost:8848")
+            .with_mtls(Some("ca.pem"), "client.pem", "client.key")
+            .tls_domain("batata.example.com");
+
+        assert_eq!(
+            config.tls_options(),
+            crate::TlsOptions::mtls(Some("ca.pem"), "client.pem", "client.key")
+                .with_domain("batata.example.com")
+        );
+        assert_eq!(
+            config.grpc_endpoint("10.0.0.1:8848"),
+            "https://10.0.0.1:9848"
+        );
+
+        let native = ClientConfig::new("localhost:8848").with_tls(None);
+        assert_eq!(native.tls_options(), crate::TlsOptions::enabled(None));
+        assert_eq!(
+            ClientConfig::new("localhost:8848").tls_options(),
+            crate::TlsOptions::default()
+        );
+    }
+
+    #[test]
+    fn test_build_reqwest_rejects_bad_tls_ca() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.pem");
+        std::fs::write(&bad, "not a pem").unwrap();
+
+        let config = ClientConfig::new("localhost:8848").with_tls(Some(bad.to_str().unwrap()));
+        let err = config.build_reqwest_client().unwrap_err();
+        assert!(err.to_string().contains("certificate") || err.to_string().contains("CA"));
+    }
+
+    #[test]
+    fn test_from_grpc_config_preserves_tls() {
+        let grpc = crate::grpc::GrpcClientConfig::default()
+            .with_mtls("ca.pem", "client.pem", "client.key")
+            .with_tls_domain("batata.example.com");
+        let config = ClientConfig::from(&grpc);
+        assert_eq!(
+            config.tls_options(),
+            crate::TlsOptions::mtls(Some("ca.pem"), "client.pem", "client.key")
+                .with_domain("batata.example.com")
+        );
     }
 
     #[test]

@@ -1,13 +1,62 @@
 # Nacos Test Inventory
 
-Upstream baseline: **Nacos 3.3.0-SNAPSHOT** (`~/work/github/easynet-cn/nacos`).
+Upstream baseline: **Nacos 3.3.0 GA (released 2026-10-29)**, verified against the
+official Maven Central `-sources.jar`. The local `~/work/github/easynet-cn/nacos`
+develop checkout is a `3.3.0-RC` pre-release snapshot. The batata E2E matrix is
+now pinned to Java SDK **3.3.0** (`sdk-tests/nacos-java-tests/pom.xml`); see
+`docs/compat/review-report.md`.
 
 > Maps upstream Nacos API contract tests to batata F-IDs.
-> Tests are the **source of truth** for compatibility — if upstream tests pass against batata, batata is compatible.
+> These T-IDs track **literal ports of upstream IT cases**. They are **not** a
+> statement about whether batata is tested: batata has its own, much larger E2E
+> suites under `sdk-tests/`, recorded in **Coverage evidence** below.
+> `⬜ not ported` therefore means "this upstream test class/method has not been
+> copied into the repository", **not** "untested" and **not** "failing".
 >
-> Port status: `⬜ not ported` | `🔄 in progress` | `✅ ported` | `⏭️ skip (feature ⚪/⛔)`
+> Port status: `⬜ not ported` | `🔄 in progress` | `✅ ported` | `⏭️ deferred`
+> (`⏭️` = upstream scenario intentionally deferred; the referenced F-IDs are
+> implemented, so this is test-debt, not a feature gap).
 >
 > Test type: `HTTP_API` (HTTP integration test) | `GRPC_API` (gRPC integration test) | `SDK_CLIENT` (SDK client API test)
+
+## Coverage evidence (batata's own E2E, 2026-11-10)
+
+Source: `reports/regression/20261110-072516/report.md` (full gate, all stages
+PASS, blockers=0, 3155 unit tests passed) and
+`reports/sdk/20261110-073645/results.tsv` (6 standalone/cluster ×
+rock/mysql/postgres combinations, 36 rows). This run uses Java SDK **3.3.0
+GA** at runtime: all six `nacos-java` logs resolve `nacos-client-3.3.0.jar`.
+The numbers below are therefore 3.3.0 GA coverage. The earlier
+`reports/sdk/20261109-163544` matrix ran against 3.2.4 and is historical only.
+
+| batata suite | Cases in matrix (per combo) | Result across 6 combos | Source |
+|--------------|-----------------------------|------------------------|--------|
+| `sdk-tests/nacos-java-tests` (Java SDK 3.3.0 GA at run time) | 531 standalone / 539 cluster | 3210 total, 3162 passed, 0 failed, 0 errors, 48 skipped | upstream `test/java-sdk-test` adapted |
+| `sdk-tests/batata-client-tests` (Rust SDK) | 125 | 750 total, 750 passed | `crates/batata-client` + `tests/` |
+| `sdk-tests/batata-maintainer-tests` (Rust maintainer SDK) | 77 | 462 total, 462 passed | `crates/batata-maintainer-client` |
+| `sdk-tests/batata-consul-client-tests` | 129 | 774 total, 774 passed | Consul contract, not Nacos |
+| `sdk-tests/apollo-java-tests` | 40 | 240 total, 240 passed | Apollo contract, not Nacos |
+| `sdk-tests/consul-go-tests` | 552 | 3312 total, 3168 passed, 144 skipped | Consul contract, not Nacos |
+| **Matrix total** | — | **8748 total / 8556 passed / 0 failed / 0 errors / 192 skipped** | |
+
+Counts declared in source: `nacos-java-tests` has 588 `@Test` methods;
+`batata-client-tests` 125, `batata-consul-client-tests` 129,
+`batata-maintainer-tests` 77 Rust `#[test]` cases. Crate-local unit tests:
+`batata-client` 359 in `src/` + 50 in `tests/`, `batata-maintainer-client`
+37 in `src/` + 111 in `tests/`.
+
+The GA re-run exposed one maintainer-client wire change: naming ADMIN
+create/update service and cluster parameters moved from a form body to URL
+query parameters. The first 3.3.0-pinned pass produced 7 errors per
+`nacos-java` combination; after the ADMIN handlers were taught to accept both
+query and body, the final run has 0 errors in all 36 rows. The fix is covered by
+this Java suite plus `crates/batata-server/tests/admin_naming_form_encoding.rs`
+(5 route-level cases, mutant-checked).
+
+**Not covered by these suites**: upstream 3.3.0 scenarios
+`BinaryCompatibility`, `UpgradeMigration`, `RadRouting`, `JsonAdapter` and
+`AgentDiscovery` have no equivalent in `sdk-tests/nacos-java-tests`; see the
+gap register in `docs/compat/review-report.md`.
 
 ---
 
@@ -542,16 +591,31 @@ Upstream baseline: **Nacos 3.3.0-SNAPSHOT** (`~/work/github/easynet-cn/nacos`).
 
 # Summary
 
-| Module | Test files | Test methods | Mapped T-IDs | ⏭️ Skip | ⬜ To port |
-|--------|-----------|-------------|-------------|---------|-----------|
-| 1. Admin API (HTTP) | 39 | ~115 | 80 | 6 | 74 |
-| 2. Console API (HTTP) | 28 | ~83 | 65 | 0 | 65 |
-| 3. Client API (HTTP) | 10 | ~51 | 29 | 4 | 25 |
-| 4. Java SDK (gRPC) | 5 | ~54 | 35 | 11 | 24 |
-| 5. Lock Service (gRPC) | 9 | ~62 | 57 | 0 | 57 |
-| 6. Maintainer SDK (HTTP) | 5 | ~38 | 38 | 0 | 38 |
-| **Total** | **91** | **~420** | **304** | **21** | **283** |
+Recomputed from the T-ID rows above on 2026-11-09; `scripts/compat_check.py`
+enforces these totals.
 
-> 21 tests marked ⏭️ skip because the corresponding F-ID is ⚪ (not implemented).
-> 283 tests are candidates for porting — all connect to a real server and verify API contracts.
-> Porting strategy: adapt each upstream test to point at batata server, skip tests for ⚪ features, fix batata bugs when tests fail.
+| Module | T-ID rows | ✅ ported | ⬜ not ported | ⏭️ deferred |
+|--------|-----------|-----------|---------------|-------------|
+| 1. Admin API (HTTP) | 111 | 0 | 105 | 6 |
+| 2. Console API (HTTP) | 83 | 0 | 83 | 0 |
+| 3. Client API (HTTP) | 51 | 0 | 47 | 4 |
+| 4. Java SDK (gRPC) | 57 | 0 | 46 | 11 |
+| 5. Lock Service (gRPC) | 61 | 0 | 61 | 0 |
+| 6. Maintainer SDK (HTTP) | 38 | 0 | 38 | 0 |
+| **Total** | **401** | **0** | **380** | **21** |
+
+> The 21 `⏭️` rows are **not** skipped because a feature is missing. They reference
+> `F-NAC-ADM-AUTH-001`, `F-NAC-ADM-AI-008`, `F-NAC-CLIENT-010`,
+> `F-NAC-CLIENT-011` and `F-NAC-AISDK-008`, all of which are `🟢` in
+> `features.md`; they are complex upstream scenarios (visibility grants, AI
+> importer, agent discovery/endpoints) deferred from literal porting.
+>
+> The 380 `⬜` rows are upstream IT cases that were never copied into this
+> repository. They are **not** a coverage measurement. batata's actual
+> compatibility results live in `reports/sdk/*/results.tsv` and are summarised in
+> **Coverage evidence** above.
+>
+> Porting strategy: adapt each upstream test to point at batata server, fix
+> batata bugs when tests fail, and refresh this table + the port-status column
+> together. Results are **not** stored in this file (there is no "Latest result"
+> column); use the regression report as the source of truth.

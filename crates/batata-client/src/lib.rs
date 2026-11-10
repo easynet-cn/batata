@@ -27,6 +27,7 @@ pub mod config;
 // Re-export unified entry points at crate root
 pub use client::BatataClient;
 pub use client_config::{ClientConfig, ProxyConfig};
+pub use tls::TlsOptions;
 pub mod error;
 pub mod grpc;
 pub mod http;
@@ -41,6 +42,7 @@ pub mod redo;
 pub mod retry;
 pub mod server_list;
 pub mod signing;
+pub mod tls;
 pub mod traits;
 pub mod transport;
 
@@ -58,6 +60,10 @@ pub use error::ClientError;
 pub use grpc::{GrpcClient, GrpcClientConfig};
 pub use lock::BatataLockService;
 pub use naming::BatataNamingService;
+
+// Shared wire model used by every naming API. Re-exported so applications do
+// not need a direct `batata-api` dependency just to build an `Instance`.
+pub use batata_api::naming::model::Instance;
 pub use redo::RedoService;
 
 // Config change parser

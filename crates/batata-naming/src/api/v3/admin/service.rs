@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use actix_web::{HttpRequest, Responder, delete, get, post, put, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::{Deserialize, Serialize};
 
 use batata_common::{
@@ -19,6 +19,8 @@ use batata_server_common::{
 use crate::service::DeleteServiceError;
 use crate::service::ServiceMetadata;
 use batata_api::naming::{NamingServiceProvider, ServiceFormData, normalize_json_text};
+
+use super::form::merge_form;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -80,6 +82,18 @@ struct ServiceForm {
     metadata: Option<String>,
     #[serde(default)]
     selector: Option<String>,
+}
+
+/// Structured 400 for a request that carries neither a query nor a body form.
+/// An actix extractor failure would answer with plain text, which the Java
+/// maintainer client cannot parse as a `Result` and reports as "Parse error".
+fn missing_service_form() -> HttpResponse {
+    Result::<bool>::http_response(
+        400,
+        error::PARAMETER_VALIDATE_ERROR.code,
+        "Required parameter 'serviceName' is missing".to_string(),
+        false,
+    )
 }
 
 impl ServiceForm {
@@ -481,16 +495,17 @@ async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<ServiceForm>,
+    query: Option<web::Query<ServiceForm>>,
+    body: Option<web::Form<ServiceForm>>,
 ) -> impl Responder {
+    // Nacos maintainer-client <= 3.2.4 posts these fields as a form body;
+    // 3.3.0 GA moved them into the URL query string. Accept both.
+    let Some(form) = merge_form(query, body) else {
+        return missing_service_form();
+    };
     let form = form.normalize();
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            false,
-        );
+        return missing_service_form();
     }
 
     let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
@@ -546,16 +561,15 @@ async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<ServiceForm>,
+    query: Option<web::Query<ServiceForm>>,
+    body: Option<web::Form<ServiceForm>>,
 ) -> impl Responder {
+    let Some(form) = merge_form(query, body) else {
+        return missing_service_form();
+    };
     let form = form.normalize();
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            false,
-        );
+        return missing_service_form();
     }
 
     let namespace_id = form.namespace_id_or_default(DEFAULT_NAMESPACE_ID);
@@ -809,8 +823,12 @@ async fn update_service_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Form<UpdateClusterForm>,
+    query: Option<web::Query<UpdateClusterForm>>,
+    body: Option<web::Form<UpdateClusterForm>>,
 ) -> impl Responder {
+    let Some(form) = merge_form(query, body) else {
+        return missing_service_form();
+    };
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();
 
@@ -917,6 +935,30 @@ mod serde_naming_contract {
         .unwrap();
         assert_eq!(form.service_name, "svc");
         assert_eq!(form.protect_threshold, Some(0.7));
+    }
+
+    /// Nacos maintainer-client 3.3.0 GA moved service create/update params
+    /// from a form body into the URL query string (`appendQuery`). The GA wire
+    /// shape must still deserialize into the same ServiceForm.
+    #[test]
+    fn ga_330_admin_service_query_shape_deserializes() {
+        let query = "namespaceId=public&groupName=DEFAULT_GROUP&serviceName=ga-svc\
+                     &metadata=%7B%7D&ephemeral=true&protectThreshold=0.8\
+                     &selector=%7B%22type%22%3A%22none%22%7D";
+        let form = web::Query::<ServiceForm>::from_query(query)
+            .expect("GA 3.3.0 query must deserialize")
+            .into_inner();
+        assert_eq!(form.service_name, "ga-svc");
+        assert_eq!(form.namespace_id.as_deref(), Some("public"));
+        assert_eq!(form.group_name.as_deref(), Some("DEFAULT_GROUP"));
+        assert_eq!(form.protect_threshold, Some(0.8));
+        assert_eq!(form.ephemeral, Some(true));
+        assert_eq!(form.metadata.as_deref(), Some("{}"));
+        assert_eq!(form.selector.as_deref(), Some(r#"{"type":"none"}"#));
+
+        let normalized = form.normalize();
+        assert_eq!(normalized.service_name, "ga-svc");
+        assert_eq!(normalized.metadata, Some("{}".to_string()));
     }
 
     /// ADMIN naming is form-encoded and carries metadata/selector as JSON

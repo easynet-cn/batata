@@ -335,7 +335,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | 13 legacy webapi | 0 | 0 | 0 | 22 | 0 | 22 | 0% |
 | 14 storage-layer | 0 | 0 | 0 | 2 | 0 | 2 | 0% |
 | 15 expanded openapi v1 | 18 | 0 | 0 | 0 | 0 | 18 | 100% |
-| **Total** | 169 | 3 | 0 | 27 | 0 | 199 | 86% |
+| **Total** | 169 | 3 | 0 | 27 | 0 | 199 | 85% |
 
 > Impl rate = (🟢 + 0.5×🟡) / Total. 2026-08-25 (P0–P5): LONGPOL-001/002, CFGSVC-007, META-001~003, ADMSVC-001..004, PORT-020/021/022 verified 🟢 after faithful-porting work (persisted notifications, enforced AccessKey, database-discovery metaservice + instance audit, real branch-entity model, OpenAPI namespace/appnamespace/lock endpoints).
 >

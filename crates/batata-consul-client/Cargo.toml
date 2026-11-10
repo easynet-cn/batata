@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "batata-consul-client"
 version.workspace = true
 authors.workspace = true
