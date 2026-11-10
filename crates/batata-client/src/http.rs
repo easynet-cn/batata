@@ -546,6 +546,36 @@ impl BatataHttpClient {
         .await
     }
 
+    /// Make a PUT request with both query parameters and a JSON body.
+    ///
+    /// The admin AI resource endpoints keep identity fields in `@RequestParam`s
+    /// while taking the resource definition from an `@RequestBody`, so a plain
+    /// `put_form` or `put_json` cannot express the wire shape on its own.
+    pub async fn put_json_with_query<
+        T: DeserializeOwned,
+        Q: Serialize + ?Sized,
+        B: Serialize + ?Sized,
+    >(
+        &self,
+        path: &str,
+        query: &Q,
+        body: &B,
+    ) -> anyhow::Result<T> {
+        self.request_with_retry(
+            |client, url, auth_header| async move {
+                client
+                    .put(&url)
+                    .header(&auth_header.0, &auth_header.1)
+                    .query(query)
+                    .json(body)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
+    }
+
     /// Make a GET request and return raw bytes
     pub async fn get_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let max_retries = self.config.server_addrs.len();

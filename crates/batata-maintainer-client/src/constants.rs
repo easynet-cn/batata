@@ -173,6 +173,22 @@ pub mod admin_api_path {
     pub const AI_MCP: &str = "/v3/admin/ai/mcp";
     /// The `AI_MCP_LIST` constant.
     pub const AI_MCP_LIST: &str = "/v3/admin/ai/mcp/list";
+    /// The `AI_MCP_VERSIONS` constant.
+    pub const AI_MCP_VERSIONS: &str = "/v3/admin/ai/mcp/versions";
+    /// The `AI_MCP_VERSION` constant.
+    pub const AI_MCP_VERSION: &str = "/v3/admin/ai/mcp/version";
+    /// The `AI_MCP_SUBMIT` constant.
+    pub const AI_MCP_SUBMIT: &str = "/v3/admin/ai/mcp/submit";
+    /// The `AI_MCP_PUBLISH` constant.
+    pub const AI_MCP_PUBLISH: &str = "/v3/admin/ai/mcp/publish";
+    /// The `AI_MCP_FORCE_PUBLISH` constant.
+    pub const AI_MCP_FORCE_PUBLISH: &str = "/v3/admin/ai/mcp/force-publish";
+    /// The `AI_MCP_REDRAFT` constant.
+    pub const AI_MCP_REDRAFT: &str = "/v3/admin/ai/mcp/redraft";
+    /// The `AI_MCP_ONLINE` constant.
+    pub const AI_MCP_ONLINE: &str = "/v3/admin/ai/mcp/online";
+    /// The `AI_MCP_OFFLINE` constant.
+    pub const AI_MCP_OFFLINE: &str = "/v3/admin/ai/mcp/offline";
 
     // AI Agent (A2A)
     /// The `AI_AGENT` constant.
@@ -181,6 +197,34 @@ pub mod admin_api_path {
     pub const AI_AGENT_VERSION_LIST: &str = "/v3/admin/ai/a2a/version/list";
     /// The `AI_AGENT_LIST` constant.
     pub const AI_AGENT_LIST: &str = "/v3/admin/ai/a2a/list";
+
+    // Protocol-neutral Agent (Nacos 3.3.0 `AgentMaintainerService`)
+    /// The `AI_AGENTS` constant.
+    pub const AI_AGENTS: &str = "/v3/admin/ai/agents";
+    /// The `AI_AGENTS_LIST` constant.
+    pub const AI_AGENTS_LIST: &str = "/v3/admin/ai/agents/list";
+    /// The `AI_AGENTS_VERSIONS` constant.
+    pub const AI_AGENTS_VERSIONS: &str = "/v3/admin/ai/agents/versions";
+    /// The `AI_AGENTS_VERSION` constant.
+    pub const AI_AGENTS_VERSION: &str = "/v3/admin/ai/agents/version";
+    /// The `AI_AGENTS_DRAFT` constant.
+    pub const AI_AGENTS_DRAFT: &str = "/v3/admin/ai/agents/draft";
+    /// The `AI_AGENTS_LABELS` constant.
+    pub const AI_AGENTS_LABELS: &str = "/v3/admin/ai/agents/labels";
+    /// The `AI_AGENTS_SCOPE` constant.
+    pub const AI_AGENTS_SCOPE: &str = "/v3/admin/ai/agents/scope";
+    /// The `AI_AGENTS_SUBMIT` constant.
+    pub const AI_AGENTS_SUBMIT: &str = "/v3/admin/ai/agents/submit";
+    /// The `AI_AGENTS_PUBLISH` constant.
+    pub const AI_AGENTS_PUBLISH: &str = "/v3/admin/ai/agents/publish";
+    /// The `AI_AGENTS_FORCE_PUBLISH` constant.
+    pub const AI_AGENTS_FORCE_PUBLISH: &str = "/v3/admin/ai/agents/force-publish";
+    /// The `AI_AGENTS_REDRAFT` constant.
+    pub const AI_AGENTS_REDRAFT: &str = "/v3/admin/ai/agents/redraft";
+    /// The `AI_AGENTS_ONLINE` constant.
+    pub const AI_AGENTS_ONLINE: &str = "/v3/admin/ai/agents/online";
+    /// The `AI_AGENTS_OFFLINE` constant.
+    pub const AI_AGENTS_OFFLINE: &str = "/v3/admin/ai/agents/offline";
 
     // Plugin Management
     /// The `PLUGIN_LIST` constant.

@@ -12,7 +12,7 @@ docs/compat/
 ├── README.md           # This file: conventions + metric definitions
 ├── review-report.md    # Source-code audit report (2026-11-09, client SDK focus)
 ├── nacos/
-│   ├── features.md     # Upstream feature × batata implementation status (181 F-IDs)
+│   ├── features.md     # Upstream feature × batata implementation status (194 F-IDs)
 │   └── tests.md        # Upstream test inventory (401 T-IDs mapped to F-IDs)
 ├── consul/
 │   ├── features.md     # 181 F-IDs
@@ -26,17 +26,17 @@ There is **no** `bugs.md`, `_index.md` or shell-based checker; the B-ID
 scheme below is reserved for future use, and ID validation is done by
 `scripts/compat_check.py`.
 
-## Global summary (2026-11-09)
+## Global summary (2026-11-10)
 
 Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 `scripts/compat_check.py`.
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 181      | 176 | 2  | 0 | 0  | 3  | 97%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 194      | 176 | 4  | 0 | 11 | 3  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **561** | **524** | **7** | **0** | **27** | **3** | **93%** | **1040** | |
+| **Total** | **574** | **524** | **9** | **0** | **38** | **3** | **91%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -51,13 +51,16 @@ snapshot distinct from the released version:
 |-------|---------|---------|
 | `sdk-tests/nacos-java-tests/pom.xml:19` | `3.3.0` | Java SDK pinned in batata's E2E matrix |
 | `conf/application.yml` + `deploy/k8s/configmap.yaml` | `3.3.0` | Nacos version batata reports as its compatibility target |
-| `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0-RC` (@ `1511b5a85`) | Pre-release source snapshot used for `git log -S` evidence |
+| `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0` (@ `d1b97bc3e`) | Post-GA develop snapshot; GA release commit `b64bc9118` is in local history, still zero local tags |
 
-The local checkout has no `3.3.0` tag and its `origin` is blocked by the
-network proxy, so GA was verified against the official Maven Central
-`-sources.jar` for `nacos-api` / `nacos-client` / `nacos-maintainer-client`
-3.3.0. GA and RC are byte-identical outside `api/ai` (9 files changed, 4
-added), so the inventory and the gap list remain valid. The full gate has since
+GA was verified against the official Maven Central `-sources.jar` for
+`nacos-api` / `nacos-client` / `nacos-maintainer-client` 3.3.0. GA and the
+older RC snapshot are byte-identical outside `api/ai` (9 files changed, 4
+added), so the inventory and the gap list remain valid for GA. The refreshed
+upstream HEAD is 11 commits past the GA release; four of those touch client
+SDK sources and are recorded separately as **develop drift** in
+`docs/compat/review-report.md` §8 — they do not change the declared GA target.
+The full gate has since
 been re-run with the 3.3.0-pinned Java SDK:
 `reports/regression/20261110-072516/report.md` (all stages PASS, blockers=0)
 and `reports/sdk/20261110-073645/results.tsv` (8748 total / 8556 passed /
@@ -72,32 +75,87 @@ guard #10 enforces that pom, server config, k8s configmap and the inventory
 headings all declare the same target. Consul tracks `2.1.0-dev`, Apollo the
 2025 master snapshots.
 
-### Known Rust client SDK gaps (2026-11-09)
+### Registered Rust client SDK gaps (2026-11-10)
 
 The audit in `review-report.md` compares `batata-client` /
 `batata-maintainer-client` with the upstream Nacos Java client. `🟢` rows that
-were falsely marked full have been downgraded; the following capabilities are
-**not** exposed by the Rust SDKs. Most are pure SDK wrapping gaps (the batata
-server/console routes already exist); `NamingSelector`, 304 conditional GET,
-OIDC and HTTP `requestId` additionally need client-side wire work:
+were falsely marked full have been downgraded. Every gap is now **registered as
+a `⚪ planned` F-ID** in `docs/compat/nacos/features.md` sections B.8/B.9, so
+the checker can detect a status that drifts from reality:
 
-| Area | Missing capability | Anchor |
-|------|--------------------|--------|
-| maintainer-client | MCP version lifecycle (draft/submit/publish/forcePublish/redraft/online/offline/listVersions) | `crates/batata-maintainer-client/src/client.rs` (98 `pub fn`, none of these) |
-| maintainer-client | `AiMaintainerService` delegates `skill()` / `prompt()` / `agentSpec()` / `pipeline()` + ZIP uploads | upstream `maintainer-client/.../ai/AiMaintainerService.java` |
-| maintainer-client | `AgentMaintainerService` draft/publish + `agent_get(version)` + cross-namespace `cloneConfig` | `crates/batata-maintainer-client/src/client.rs:3478` |
-| batata-client | `NamingSelector` subscribe overload | `crates/batata-client/src/traits.rs:239` |
-| batata-client | `LockService::renew` / watchdog | `crates/batata-client/src/lock.rs` (only lock/unlock/try_lock/lock_guard) |
-| batata-client | `AiService` sub-services + `AgentDiscoveryService` | `crates/batata-client/src/ai.rs` (10 methods, MCP/A2A query + cache only) |
-| batata-client | config 304 conditional GET (`localMd5`), OIDC, HTTP `requestId` correlation | `crates/batata-api/src`, `crates/batata-client/src/http.rs` |
+| Area | F-ID | Missing capability |
+|------|------|--------------------|
+| maintainer-client | F-NAC-MAINT-006 | MCP server version lifecycle |
+| maintainer-client | F-NAC-MAINT-007 | `AiMaintainerService` delegates + ZIP uploads |
+| maintainer-client | F-NAC-MAINT-008 | Agent draft/publish lifecycle + `agent_get(version)` |
+| batata-client | F-NAC-CSDK-001 | `NamingSelector` subscribe overload |
+| batata-client | F-NAC-CSDK-002 | `LockService::renew` / watchdog |
+| batata-client | F-NAC-CSDK-003 | `AiService` sub-services + `AgentDiscoveryService` |
+| batata-client | F-NAC-CSDK-004 | config 304 conditional GET (`localMd5`) |
+| batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` |
+| batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
+| batata-core | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys |
+| batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel (GA Java client) |
 
-One additional gap is **server-side**, not an SDK wrapper: Nacos 3.3.0 GA adds
-the `agentCardV1`, `mcpDraftRelease`, `radV1` and `radWatchV1` ability keys,
-which batata's `SetupAckRequest.ability_table` does not advertise. GA clients
-therefore fall back to the legacy RAD path. See `review-report.md` §5.
+`F-NAC-CSDK-007` is **deferred on purpose**: GA Java clients gate RAD gRPC
+routing on `radV1`/`radWatchV1`, and batata's AI handlers only cover
+`AgentSearchRpcRequest`, `AgentDiscoveryRpcRequest` and the two endpoint
+requests. Advertising the keys before those handlers exist would turn a
+working legacy fallback into a broken RAD call.
 
-These are **not yet registered as F-IDs**. Add them as `⚪ planned` rows before
-starting implementation, then promote to `⚡`/`🟢` with source anchors.
+**Batch 1 implemented (2026-11-10)**: `F-NAC-MAINT-006` is now `🟢` (eight MCP
+version-lifecycle methods + `McpServerVersionInfo` DTO in
+`crates/batata-maintainer-client`), and `F-NAC-CSDK-008` is `🟡` (GA
+`AgentCard` security fields in `crates/batata-client/src/ai.rs`; the post-GA
+wrapper is still pending). `F-NAC-LOCK-009` was downgraded from `🟢` to `⚪`
+because the claimed server-side `RENEW` branch does not exist. Details and
+mutant evidence are in `docs/compat/review-report.md` §8.5.
+
+**Batch 2 implemented (2026-11-10)**: `F-NAC-MAINT-008` is now `🟡` — the
+protocol-neutral `agents_*` facade on `/v3/admin/ai/agents` covers
+version reads, the six transitions, draft create/update/delete, labels and
+scope (7 mutant-checked wiremock cases). GA bytecode inspection found a
+broader server-side divergence: the 3.3.0 Java maintainer client sends
+POST/PUT admin AI parameters as a **form body**, while batata's AI ADMIN
+handlers read them from the query (and the agent draft/labels handlers
+additionally require JSON bodies). That is registered separately as
+`F-NAC-MAINT-010` rather than being counted as full compatibility; batata's
+own Rust SDK follows the batata wire and Spring `@RequestParam` accepts query,
+so the new methods work against both servers. TG-03 is closed: all 10
+`BatataAiService` public methods now have direct wiremock tests in
+`crates/batata-client/tests/ai_service_test.rs`. See
+`docs/compat/review-report.md` §9.
+
+Two earlier "gaps" were corrected on re-reading upstream source:
+cross-namespace `cloneConfig` is only a `default` interface method that throws
+`CLIENT_INVALID_PARAM` (`ConfigMaintainerService.java:548-560`), and
+`configSnapshotEnabled` **does** exist upstream in `PropertyKeyConst.java:96`
+— it is a real client-side switch gap, not an upstream-only feature.
+
+### Post-GA develop drift (not part of the GA baseline)
+
+The refreshed upstream HEAD `d1b97bc3e` is 11 commits past `b64bc9118`.
+Four client-facing commits are recorded in `review-report.md` §8 and as
+`F-NAC-MAINT-009` / `F-NAC-CSDK-008`: `publishConfig(changeMessage)` and
+`ConfigHistoryDetailInfo.changeMessage` (`4a11bd06b`), A2A 1.0
+`securityRequirements` on `AgentCard` / `AgentSkill` (`ff1bcc2e9`,
+`7c546cfda`), and offline `AgentRequestBuilder` helpers (`a55137012`).
+The ARD protocol change (#16014) touched markdown/spec files only — **zero Java
+files** — so `getAgentDiscoveryCapability`, `AgentConverter` and synchronous
+`Watch` are GA features, not new drift.
+
+### Test-coverage debt
+
+Registered in `review-report.md` §8 rather than as F-IDs (they are test gaps,
+not feature gaps): five upstream scenario families with no batata counterpart
+(`BinaryCompatibility`, `UpgradeMigration`, `RadRouting`, `JsonAdapter`,
+`AgentDiscovery`); `crates/batata-maintainer-client/src/traits.rs` declares three
+traits with no `impl ... for MaintainerClient` anywhere; and 14 `#[ignore]`
+cases in `crates/batata-client/tests/integration_test.rs` do not count as tests
+under project convention. **TG-03 is resolved** for `BatataAiService` itself:
+all 10 of its public methods are exercised by
+`crates/batata-client/tests/ai_service_test.rs`; the ~42 other untested
+`batata-client` public methods remain open.
 
 ### Nacos 3.3.0 GA runtime validation (2026-11-10)
 

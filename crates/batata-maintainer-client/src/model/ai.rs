@@ -5,6 +5,56 @@ use std::collections::HashMap;
 
 // ============== MCP Models ==============
 
+/// One MCP server version as returned by the ADMIN version endpoints.
+///
+/// Upstream answers with `McpServerVersionDetail`, whose nested specification
+/// sections are optional and vary with the version state. The shared fields are
+/// typed here; every other wire field is preserved in `extra` so a caller can
+/// still reach `serverSpecification`, `toolSpecification`, labels and so on
+/// without this crate having to guess the whole upstream DTO.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpServerVersionInfo {
+    /// Version string.
+    pub version: String,
+    /// Lifecycle status: `draft`, `reviewing`, `reviewed`, `online` or `offline`.
+    pub status: String,
+    /// Whether this is the latest published version.
+    pub latest: Option<bool>,
+    /// Namespace ID the version belongs to.
+    pub namespace_id: String,
+    /// MCP server name.
+    pub mcp_name: String,
+    /// Any additional fields returned by the server.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// One protocol-neutral agent version from the ADMIN `/agents` endpoints.
+///
+/// Nacos 3.3.0 answers with `AgentVersionSummary` / `AgentVersionDetail` while
+/// batata's admin layer answers with its own `VersionDetail`. The shared
+/// fields are typed here; every other wire field is preserved in `extra` so a
+/// caller can still reach labels, specifications and timestamps without this
+/// crate having to guess the whole upstream DTO.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentVersionInfo {
+    /// Version string.
+    pub version: String,
+    /// Lifecycle status, e.g. `draft`, `reviewing`, `online` or `offline`.
+    pub status: String,
+    /// Whether this is the latest published version.
+    pub latest: Option<bool>,
+    /// Namespace ID the version belongs to.
+    pub namespace_id: String,
+    /// Agent name.
+    pub agent_name: String,
+    /// Any additional fields returned by the server.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
 /// MCP server basic information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

@@ -2,9 +2,12 @@
 
 Upstream baseline: **Nacos 3.3.0 GA (released 2026-10-29)**, verified against the
 official Maven Central `-sources.jar`. The local `~/work/github/easynet-cn/nacos`
-develop checkout is a `3.3.0-RC` pre-release snapshot. The batata E2E matrix is
-now pinned to Java SDK **3.3.0** (`sdk-tests/nacos-java-tests/pom.xml`); see
-`docs/compat/review-report.md`.
+checkout now contains the GA release commit `b64bc9118` (`Prepare 3.3.0
+release`) and reports `<revision>3.3.0</revision>`; HEAD `d1b97bc3e` is 11
+commits past that release, so it is a **post-GA develop snapshot**, not the GA
+contract. It still has zero local tags. The batata E2E matrix is pinned to Java
+SDK **3.3.0** (`sdk-tests/nacos-java-tests/pom.xml`); see
+`docs/compat/review-report.md` §8 for the post-GA drift.
 
 > Maps upstream Nacos API contract tests to batata F-IDs.
 > These T-IDs track **literal ports of upstream IT cases**. They are **not** a
@@ -39,11 +42,19 @@ The numbers below are therefore 3.3.0 GA coverage. The earlier
 | `sdk-tests/consul-go-tests` | 552 | 3312 total, 3168 passed, 144 skipped | Consul contract, not Nacos |
 | **Matrix total** | — | **8748 total / 8556 passed / 0 failed / 0 errors / 192 skipped** | |
 
-Counts declared in source: `nacos-java-tests` has 588 `@Test` methods;
-`batata-client-tests` 125, `batata-consul-client-tests` 129,
-`batata-maintainer-tests` 77 Rust `#[test]` cases. Crate-local unit tests:
-`batata-client` 359 in `src/` + 50 in `tests/`, `batata-maintainer-client`
-37 in `src/` + 111 in `tests/`.
+Counts declared in source: `nacos-java-tests` has **539 `@Test` methods**
+(the old `588` figure counted all annotation tokens: 539 `@Test` + 48
+`@TestMethodOrder` + 1 `@TestInstance`); `batata-client-tests` 125,
+`batata-consul-client-tests` 129, `batata-maintainer-tests` 77 Rust `#[test]`
+cases. Crate-local unit tests (after the 2026-11-10 batch 1):
+`batata-client` **361** in `src/` + 50 in `tests/`,
+`batata-maintainer-client` 37 in `src/` + **115** in `tests/`. The 14
+`#[ignore]` cases in `crates/batata-client/tests/integration_test.rs` are
+excluded by project convention (an ignored test is not a test).
+
+Upstream source counts (2026-11-10 HEAD): `test/java-sdk-test` **123 `@Test`**
+(up from 120 at the GA release commit), `test/maintainer-sdk-test` 46,
+`test/lock-test` 62.
 
 The GA re-run exposed one maintainer-client wire change: naming ADMIN
 create/update service and cluster parameters moved from a form body to URL
@@ -619,3 +630,11 @@ enforces these totals.
 > batata bugs when tests fail, and refresh this table + the port-status column
 > together. Results are **not** stored in this file (there is no "Latest result"
 > column); use the regression report as the source of truth.
+>
+> **Rust SDK-native coverage (2026-11-10, batch 2)**: the 7 new agent-facade
+> wiremock cases in `crates/batata-maintainer-client/tests/client_test.rs`
+> (115 → 122) and the 2 new `BatataAiService` wiremock cases in
+> `crates/batata-client/tests/ai_service_test.rs` (covering all 10 public
+> methods, TG-03) are batata's own tests, not ported upstream IT cases, so by
+> the convention above they are **not** T-ID rows and do not change the 401
+> count. Mutant evidence is in `docs/compat/review-report.md` §9.3.

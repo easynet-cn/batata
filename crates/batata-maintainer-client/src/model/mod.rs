@@ -14,8 +14,8 @@ pub mod service;
 
 pub use ai::{
     AgentCard, AgentCardBasicInfo, AgentCardDetailInfo, AgentCardVersionInfo, AgentInterface,
-    AgentVersionDetail, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-    McpToolSpecification, ServerVersionDetail,
+    AgentVersionDetail, AgentVersionInfo, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
+    McpServerVersionInfo, McpToolSpecification, ServerVersionDetail,
 };
 pub use client::{ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo, ClientSummaryInfo};
 pub use cluster::{

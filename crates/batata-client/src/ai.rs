@@ -109,6 +109,20 @@ pub struct AgentCardInfo {
     #[serde(default)]
     /// Arbitrary metadata key-value pairs.
     pub metadata: HashMap<String, String>,
+    /// Named A2A security schemes. Upstream's `SecurityScheme` is a free-form
+    /// object, so its contents are kept as JSON values.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub security_schemes: HashMap<String, serde_json::Value>,
+    /// Legacy A2A 0.2 security requirements (kept for older cards).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security: Vec<HashMap<String, Vec<String>>>,
+    /// GA A2A 0.3 / Nacos 3.3.0 `securityRequirements` shape: each entry maps
+    /// a scheme name to its required scopes. The post-GA develop branch wraps
+    /// this in `SecurityRequirement { schemes: {..: StringList { list } } }`,
+    /// which is a different wire contract and is deliberately not modelled
+    /// here while the declared alignment target is 3.3.0 GA.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security_requirements: Vec<HashMap<String, Vec<String>>>,
 }
 
 /// Agent capabilities
@@ -398,6 +412,50 @@ mod tests {
         assert_eq!(info.agent_name, "test-agent");
         assert!(info.capabilities.streaming);
         assert_eq!(info.skills.len(), 1);
+    }
+
+    /// GA `AgentCard.securityRequirements` is a list of scheme -> scopes maps,
+    /// not the post-GA `SecurityRequirement`/`StringList` wrapper. Pin both the
+    /// deserialization and the camelCase serialization here.
+    #[test]
+    fn test_agent_card_ga_security_wire_shape() {
+        let json = r#"{
+            "agentName": "secure-agent",
+            "securitySchemes": {"oauth": {"type": "oauth2"}},
+            "security": [{"oauth": ["read"]}],
+            "securityRequirements": [{"oauth": ["read", "write"]}]
+        }"#;
+        let info: AgentCardInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.security_schemes.len(), 1);
+        assert_eq!(info.security[0]["oauth"], vec!["read"]);
+        assert_eq!(
+            info.security_requirements[0]["oauth"],
+            vec!["read", "write"]
+        );
+
+        let encoded = serde_json::to_string(&info).unwrap();
+        assert!(encoded.contains("\"securityRequirements\""), "{encoded}");
+        assert!(encoded.contains("\"securitySchemes\""), "{encoded}");
+        assert!(encoded.contains("\"security\""), "{encoded}");
+        // The develop-only wrapper must never appear on the GA wire.
+        assert!(!encoded.contains("\"schemes\""), "{encoded}");
+    }
+
+    /// Empty security sections are omitted, matching the batata server DTO and
+    /// keeping old cards byte-identical.
+    #[test]
+    fn test_agent_card_omits_empty_security_sections() {
+        let info = AgentCardInfo {
+            agent_name: "plain-agent".to_string(),
+            ..Default::default()
+        };
+        let encoded = serde_json::to_string(&info).unwrap();
+        for key in ["securityRequirements", "securitySchemes", "security"] {
+            assert!(
+                !encoded.contains(key),
+                "{key} unexpectedly present: {encoded}"
+            );
+        }
     }
 
     #[test]

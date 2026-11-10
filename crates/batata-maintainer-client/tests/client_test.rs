@@ -9,7 +9,7 @@ use batata_maintainer_client::model::{
     AgentCard, AgentCardBasicInfo, ClusterInfo, ConfigCloneInfo, Instance, McpServerBasicInfo,
     SameConfigPolicy,
 };
-use wiremock::matchers::{body_string_contains, method, path};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Create a MaintainerClient pointing at the wiremock server using identity auth
@@ -1937,6 +1937,151 @@ async fn test_mcp_server_delete() {
     assert!(result);
 }
 
+// ----------------------------------------------------------------------------
+// MCP server version lifecycle (GA maintainer contract)
+// ----------------------------------------------------------------------------
+
+fn version_detail_json() -> serde_json::Value {
+    serde_json::json!({
+        "version": "1.0",
+        "status": "draft",
+        "latest": false,
+        "namespaceId": "",
+        "mcpName": "my-mcp",
+        "serverSpecification": { "name": "my-mcp" }
+    })
+}
+
+#[tokio::test]
+async fn test_mcp_server_list_versions() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/mcp/versions"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("mcpName", "my-mcp"))
+        .and(query_param("status", "draft"))
+        .and(query_param("pageNo", "2"))
+        .and(query_param("pageSize", "5"))
+        .respond_with(api_ok_raw(page_json(&[version_detail_json()], 1)))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let page = client
+        .mcp_server_list_versions("", "my-mcp", Some("draft"), 2, 5)
+        .await
+        .unwrap();
+    assert_eq!(page.total_count, 1);
+    assert_eq!(page.page_items.len(), 1);
+    assert_eq!(page.page_items[0].version, "1.0");
+    assert_eq!(page.page_items[0].status, "draft");
+    assert!(
+        page.page_items[0].extra.contains_key("serverSpecification"),
+        "nested specification fields must be preserved"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_server_list_versions_omits_empty_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/mcp/versions"))
+        .and(query_param("mcpName", "my-mcp"))
+        .respond_with(api_ok_raw(page_json(&[] as &[serde_json::Value], 0)))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let page = client
+        .mcp_server_list_versions("", "my-mcp", None, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(page.total_count, 0);
+}
+
+#[tokio::test]
+async fn test_mcp_server_get_version() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/mcp/version"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("mcpName", "my-mcp"))
+        .and(query_param("version", "1.0"))
+        .respond_with(api_ok_raw(version_detail_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client
+        .mcp_server_get_version("", "my-mcp", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(detail.version, "1.0");
+    assert_eq!(detail.status, "draft");
+    assert_eq!(detail.mcp_name, "my-mcp");
+}
+
+/// Every transition must hit its own ADMIN path with the exact GA query shape.
+/// A wrong path or a dropped query parameter turns the wiremock request into a
+/// 404, so this is also the mutant guard for `mcp_server_transition`.
+#[tokio::test]
+async fn test_mcp_server_version_transitions() {
+    let server = MockServer::start().await;
+    let paths = [
+        "/v3/admin/ai/mcp/submit",
+        "/v3/admin/ai/mcp/publish",
+        "/v3/admin/ai/mcp/force-publish",
+        "/v3/admin/ai/mcp/redraft",
+        "/v3/admin/ai/mcp/online",
+        "/v3/admin/ai/mcp/offline",
+    ];
+    for route_path in paths {
+        Mock::given(method("POST"))
+            .and(path(route_path))
+            .and(query_param("namespaceId", ""))
+            .and(query_param("mcpName", "my-mcp"))
+            .and(query_param("version", "1.0"))
+            .respond_with(api_ok_raw(version_detail_json()))
+            .mount(&server)
+            .await;
+    }
+
+    let client = make_client(&server).await;
+    let results = [
+        (
+            "submit",
+            client.mcp_server_submit_version("", "my-mcp", "1.0").await,
+        ),
+        (
+            "publish",
+            client.mcp_server_publish_version("", "my-mcp", "1.0").await,
+        ),
+        (
+            "force-publish",
+            client
+                .mcp_server_force_publish_version("", "my-mcp", "1.0")
+                .await,
+        ),
+        (
+            "redraft",
+            client.mcp_server_redraft_version("", "my-mcp", "1.0").await,
+        ),
+        (
+            "online",
+            client.mcp_server_online_version("", "my-mcp", "1.0").await,
+        ),
+        (
+            "offline",
+            client.mcp_server_offline_version("", "my-mcp", "1.0").await,
+        ),
+    ];
+    for (name, result) in results {
+        let detail = result.unwrap_or_else(|e| panic!("transition {name} failed: {e}"));
+        assert_eq!(detail.version, "1.0", "transition {name}");
+        assert_eq!(detail.status, "draft", "transition {name}");
+    }
+}
+
 // ============================================================================
 // AI Agent (A2A) APIs
 // ============================================================================
@@ -2390,4 +2535,250 @@ fn test_maintainer_tls_builders() {
     assert!(defaults.tls_ca_cert_path.is_none());
     assert!(defaults.tls_client_cert_path.is_none());
     assert!(defaults.tls_client_key_path.is_none());
+}
+
+// ============================================================================
+// Protocol-neutral agent (ADMIN /v3/admin/ai/agents) wiremock coverage
+// ============================================================================
+
+fn agent_version_json() -> serde_json::Value {
+    serde_json::json!({
+        "version": "1.0",
+        "status": "online",
+        "latest": true,
+        "namespaceId": "",
+        "agentName": "my-agent",
+        "labels": { "latest": "1.0" }
+    })
+}
+
+#[tokio::test]
+async fn test_agents_get_and_get_version() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("version", "1.0"))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/version"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("version", "1.0"))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let detail = client
+        .agents_get("ns-1", "my-agent", Some("1.0"))
+        .await
+        .unwrap();
+    assert_eq!(detail.version, "1.0");
+    assert_eq!(detail.agent_name, "my-agent");
+    assert_eq!(detail.latest, Some(true));
+    assert!(detail.extra.contains_key("labels"));
+
+    let exact = client
+        .agents_get_version("ns-1", "my-agent", "1.0")
+        .await
+        .unwrap();
+    assert_eq!(exact.status, "online");
+}
+
+#[tokio::test]
+async fn test_agents_list_query_shape() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/list"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("bizTag", "chat"))
+        .and(query_param("scope", "public"))
+        .and(query_param("owner", "alice"))
+        .and(query_param("orderBy", "name"))
+        .and(query_param("pageNo", "2"))
+        .and(query_param("pageSize", "5"))
+        .respond_with(api_ok_raw(page_json(&[agent_version_json()], 1)))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let page = client
+        .agents_list("ns-1", "my-agent", "chat", "public", "alice", "name", 2, 5)
+        .await
+        .unwrap();
+    assert_eq!(page.total_count, 1);
+    assert_eq!(page.page_items[0].version, "1.0");
+}
+
+#[tokio::test]
+async fn test_agents_list_versions_forwards_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v3/admin/ai/agents/versions"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("status", "online"))
+        .and(query_param("pageNo", "1"))
+        .and(query_param("pageSize", "20"))
+        .respond_with(api_ok_raw(serde_json::json!([agent_version_json()])))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let versions = client
+        .agents_list_versions("", "my-agent", "online", 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0].version, "1.0");
+}
+
+#[tokio::test]
+async fn test_agents_create_and_update_draft_use_json_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v3/admin/ai/agents/draft"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(query_param("overwrite", "true"))
+        .and(body_string_contains("\"name\":\"my-agent\""))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents/draft"))
+        .and(query_param("namespaceId", "ns-1"))
+        .and(body_string_contains("\"name\":\"my-agent\""))
+        .respond_with(api_ok_raw(agent_version_json()))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let card = AgentCard {
+        basic_info: AgentCardBasicInfo {
+            name: "my-agent".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let created = client
+        .agents_create_draft("ns-1", &card, true)
+        .await
+        .unwrap();
+    assert_eq!(created.version, "1.0");
+    let updated = client.agents_update_draft("ns-1", &card).await.unwrap();
+    assert_eq!(updated.status, "online");
+}
+
+#[tokio::test]
+async fn test_agents_delete_draft() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/v3/admin/ai/agents/draft"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("version", "draft-1"))
+        .respond_with(api_ok_raw(serde_json::json!("ok")))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    assert!(
+        client
+            .agents_delete_draft("", "my-agent", "draft-1")
+            .await
+            .unwrap()
+    );
+}
+
+/// Each transition must hit its own ADMIN path with the exact GA query shape.
+/// A wrong path or a dropped query parameter turns the wiremock request into
+/// a 404, so this is also the mutant guard for `agent_version_transition`.
+#[tokio::test]
+async fn test_agents_version_transitions() {
+    let server = MockServer::start().await;
+    let paths = [
+        "/v3/admin/ai/agents/submit",
+        "/v3/admin/ai/agents/publish",
+        "/v3/admin/ai/agents/force-publish",
+        "/v3/admin/ai/agents/redraft",
+        "/v3/admin/ai/agents/online",
+        "/v3/admin/ai/agents/offline",
+    ];
+    for route_path in paths {
+        Mock::given(method("POST"))
+            .and(path(route_path))
+            .and(query_param("namespaceId", "ns-1"))
+            .and(query_param("agentName", "my-agent"))
+            .and(query_param("version", "1.0"))
+            .respond_with(api_ok_raw(agent_version_json()))
+            .mount(&server)
+            .await;
+    }
+
+    let client = make_client(&server).await;
+    let calls = [
+        client
+            .agents_submit_version("ns-1", "my-agent", "1.0")
+            .await,
+        client
+            .agents_publish_version("ns-1", "my-agent", "1.0")
+            .await,
+        client
+            .agents_force_publish_version("ns-1", "my-agent", "1.0")
+            .await,
+        client
+            .agents_redraft_version("ns-1", "my-agent", "1.0")
+            .await,
+        client
+            .agents_online_version("ns-1", "my-agent", "1.0")
+            .await,
+        client
+            .agents_offline_version("ns-1", "my-agent", "1.0")
+            .await,
+    ];
+    for (index, result) in calls.into_iter().enumerate() {
+        assert_eq!(result.unwrap().version, "1.0", "call {index} failed");
+    }
+}
+
+#[tokio::test]
+async fn test_agents_update_labels_and_scope() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents/labels"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("agentName", "my-agent"))
+        .and(body_string_contains("\"labels\""))
+        .and(body_string_contains("\"stable\":\"1.0\""))
+        .respond_with(api_ok_raw(serde_json::json!({"stable": "1.0"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/v3/admin/ai/agents/scope"))
+        .and(query_param("namespaceId", ""))
+        .and(query_param("agentName", "my-agent"))
+        .and(query_param("scope", "public"))
+        .respond_with(api_ok_raw(serde_json::json!("ok")))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let mut labels = HashMap::new();
+    labels.insert("stable".to_string(), "1.0".to_string());
+    let updated = client
+        .agents_update_labels("", "my-agent", &labels)
+        .await
+        .unwrap();
+    assert_eq!(updated.get("stable").map(String::as_str), Some("1.0"));
+    assert!(
+        client
+            .agents_update_scope("", "my-agent", "public")
+            .await
+            .unwrap()
+    );
 }

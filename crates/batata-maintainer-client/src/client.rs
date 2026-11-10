@@ -11,15 +11,15 @@ use crate::{
     constants::admin_api_path,
     model::common::ApiResponse,
     model::{
-        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentVersionDetail,
+        AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentVersionDetail, AgentVersionInfo,
         ClientPublisherInfo, ClientServiceInfo, ClientSubscriberInfo, ClientSummaryInfo,
         ClusterHealthResponse, ClusterHealthSummary, ClusterInfo, ConfigBasicInfo, ConfigCloneInfo,
         ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
         ConfigListenerInfo, ConnectionInfo, IdGeneratorInfo, ImportResult, Instance,
         InstanceMetadataBatchResult, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-        McpToolSpecification, Member, MetricsInfo, Namespace, Page, PluginAvailability,
-        PluginDetail, PluginInfo, SameConfigPolicy, SelfMemberResponse, ServerLoaderMetrics,
-        ServiceDetailInfo, ServiceView, SubscriberInfo,
+        McpServerVersionInfo, McpToolSpecification, Member, MetricsInfo, Namespace, Page,
+        PluginAvailability, PluginDetail, PluginInfo, SameConfigPolicy, SelfMemberResponse,
+        ServerLoaderMetrics, ServiceDetailInfo, ServiceView, SubscriberInfo,
     },
 };
 
@@ -40,6 +40,53 @@ fn ok_or_bool_to_string(value: OkOrBool) -> String {
     } else {
         String::new()
     }
+}
+
+/// Optional query values are omitted when blank, like upstream `putIfNotBlank`.
+fn non_empty(value: &str) -> Option<&str> {
+    Some(value).filter(|v| !v.is_empty())
+}
+
+/// Identity parameters shared by the protocol-neutral agent endpoints.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentIdentityQuery<'a> {
+    namespace_id: &'a str,
+    agent_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<&'a str>,
+}
+
+/// Target parameters shared by the agent version endpoints.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentVersionQuery<'a> {
+    namespace_id: &'a str,
+    agent_name: &'a str,
+    version: &'a str,
+}
+
+/// Query parameters for the agent list endpoint.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentListQuery<'a> {
+    namespace_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    biz_tag: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page_no: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page_size: Option<u64>,
 }
 
 impl MaintainerClient {
@@ -3425,6 +3472,206 @@ impl MaintainerClient {
         Ok(response.code == 0 || response.code == 200)
     }
 
+    /// List the version history of one MCP server.
+    ///
+    /// Wraps `GET /v3/admin/ai/mcp/versions`. `status` is forwarded verbatim and
+    /// the server validates it against its five lifecycle states.
+    pub async fn mcp_server_list_versions(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        status: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<McpServerVersionInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            mcp_name: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            status: Option<&'a str>,
+            page_no: u64,
+            page_size: u64,
+        }
+
+        let response: ApiResponse<Page<McpServerVersionInfo>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_MCP_VERSIONS,
+                &Query {
+                    namespace_id,
+                    mcp_name,
+                    status,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Fetch one exact MCP server version.
+    ///
+    /// Wraps `GET /v3/admin/ai/mcp/version`.
+    pub async fn mcp_server_get_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            mcp_name: &'a str,
+            version: &'a str,
+        }
+
+        let response: ApiResponse<McpServerVersionInfo> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_MCP_VERSION,
+                &Query {
+                    namespace_id,
+                    mcp_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Shared implementation of the six ADMIN MCP version transitions.
+    ///
+    /// All six endpoints take `namespaceId`, `mcpName` and `version` as query
+    /// parameters and no body; `post_with_query` supplies the content type the
+    /// actix handler needs to resolve its payload extractor.
+    async fn mcp_server_transition(
+        &self,
+        path: &str,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            mcp_name: &'a str,
+            version: &'a str,
+        }
+
+        let response: ApiResponse<McpServerVersionInfo> = self
+            .http_client
+            .post_with_query(
+                path,
+                &Query {
+                    namespace_id,
+                    mcp_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Submit a draft version for review (`draft` -> `reviewing`).
+    pub async fn mcp_server_submit_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_SUBMIT,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a reviewed version (`reviewing`/`reviewed` -> `online`).
+    pub async fn mcp_server_publish_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_PUBLISH,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a version bypassing the review gate.
+    pub async fn mcp_server_force_publish_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_FORCE_PUBLISH,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn mcp_server_redraft_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_REDRAFT,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
+    /// Bring an offline version back online.
+    pub async fn mcp_server_online_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_ONLINE,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
+    /// Take a version offline without deleting it.
+    pub async fn mcp_server_offline_version(
+        &self,
+        namespace_id: &str,
+        mcp_name: &str,
+        version: &str,
+    ) -> anyhow::Result<McpServerVersionInfo> {
+        self.mcp_server_transition(
+            admin_api_path::AI_MCP_OFFLINE,
+            namespace_id,
+            mcp_name,
+            version,
+        )
+        .await
+    }
+
     // ============================================================================
     // AI Agent (A2A) APIs
     // ============================================================================
@@ -3706,6 +3953,400 @@ impl MaintainerClient {
             )
             .await?;
         Ok(response.data)
+    }
+
+    // ============================================================================
+    // Protocol-neutral Agent APIs (Nacos 3.3.0 `AgentMaintainerService`)
+    // ============================================================================
+
+    /// Fetch an agent, optionally pinned to one exact version.
+    ///
+    /// Wraps `GET /v3/admin/ai/agents`. The optional `version` is the
+    /// `agent_get(version)` capability that the legacy `/v3/admin/ai/a2a`
+    /// facade cannot express; upstream GA exposes the version separately as
+    /// `getAgentVersion`, which maps to [`Self::agents_get_version`].
+    pub async fn agents_get(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTS,
+                &AgentIdentityQuery {
+                    namespace_id,
+                    agent_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List agents in the protocol-neutral GA agent view.
+    ///
+    /// Wraps `GET /v3/admin/ai/agents/list`. Blank filters are omitted, like
+    /// upstream `putIfNotBlank`. `bizTag`, `scope`, `owner` and `orderBy` are
+    /// forwarded for upstream parity; batata's admin handler ignores them.
+    pub async fn agents_list(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        biz_tag: &str,
+        scope: &str,
+        owner: &str,
+        order_by: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<AgentVersionInfo>> {
+        let response: ApiResponse<Page<AgentVersionInfo>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTS_LIST,
+                &AgentListQuery {
+                    namespace_id,
+                    agent_name: non_empty(agent_name),
+                    biz_tag: non_empty(biz_tag),
+                    scope: non_empty(scope),
+                    owner: non_empty(owner),
+                    order_by: non_empty(order_by),
+                    status: None,
+                    page_no: Some(page_no),
+                    page_size: Some(page_size),
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// List the versions of one agent.
+    ///
+    /// Wraps `GET /v3/admin/ai/agents/versions`. Batata's admin handler
+    /// returns a plain array of version details, whereas upstream GA returns
+    /// a `Page<AgentVersionSummary>`; the `status`/`pageNo`/`pageSize` query
+    /// fields are forwarded for upstream parity but batata does not paginate
+    /// this endpoint. Callers talking to a real Nacos server should use the
+    /// raw HTTP client until the paged shape is unified.
+    pub async fn agents_list_versions(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        status: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Vec<AgentVersionInfo>> {
+        let response: ApiResponse<Vec<AgentVersionInfo>> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTS_VERSIONS,
+                &AgentListQuery {
+                    namespace_id,
+                    agent_name: non_empty(agent_name),
+                    biz_tag: None,
+                    scope: None,
+                    owner: None,
+                    order_by: None,
+                    status: non_empty(status),
+                    page_no: Some(page_no),
+                    page_size: Some(page_size),
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Fetch one exact agent version definition.
+    ///
+    /// Wraps `GET /v3/admin/ai/agents/version`.
+    pub async fn agents_get_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::AI_AGENTS_VERSION,
+                &AgentVersionQuery {
+                    namespace_id,
+                    agent_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Create a draft version from an agent card.
+    ///
+    /// Wraps `POST /v3/admin/ai/agents/draft`. Batata's admin handler takes
+    /// the card as a JSON body plus `namespaceId`/`overwrite` in the query;
+    /// upstream GA sends the draft fields as a form body instead, so this
+    /// method follows the batata server wire. See `docs/compat/nacos/features.md`.
+    pub async fn agents_create_draft(
+        &self,
+        namespace_id: &str,
+        card: &AgentCard,
+        overwrite: bool,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DraftQuery<'a> {
+            namespace_id: &'a str,
+            overwrite: bool,
+        }
+
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .post_json_with_query(
+                admin_api_path::AI_AGENTS_DRAFT,
+                &DraftQuery {
+                    namespace_id,
+                    overwrite,
+                },
+                card,
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Replace the draft version currently being edited.
+    ///
+    /// Wraps `PUT /v3/admin/ai/agents/draft`; same JSON-body wire as
+    /// [`Self::agents_create_draft`].
+    pub async fn agents_update_draft(
+        &self,
+        namespace_id: &str,
+        card: &AgentCard,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DraftQuery<'a> {
+            namespace_id: &'a str,
+        }
+
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .put_json_with_query(
+                admin_api_path::AI_AGENTS_DRAFT,
+                &DraftQuery { namespace_id },
+                card,
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete a draft version.
+    ///
+    /// Wraps `DELETE /v3/admin/ai/agents/draft`.
+    pub async fn agents_delete_draft(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<bool> {
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .delete_with_query(
+                admin_api_path::AI_AGENTS_DRAFT,
+                &AgentVersionQuery {
+                    namespace_id,
+                    agent_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.code == 0 || response.code == 200)
+    }
+
+    /// Shared implementation of the six ADMIN agent version transitions.
+    ///
+    /// All six endpoints take `namespaceId`, `agentName` and `version` as
+    /// query parameters and no body, which is identical on upstream GA and on
+    /// the batata admin handlers.
+    async fn agent_version_transition(
+        &self,
+        path: &str,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        let response: ApiResponse<AgentVersionInfo> = self
+            .http_client
+            .post_with_query(
+                path,
+                &AgentVersionQuery {
+                    namespace_id,
+                    agent_name,
+                    version,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Submit a draft version for review.
+    pub async fn agents_submit_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_SUBMIT,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a reviewed version.
+    pub async fn agents_publish_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_PUBLISH,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Publish a version bypassing the review gate.
+    pub async fn agents_force_publish_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_FORCE_PUBLISH,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Move a version back to draft so it can be edited again.
+    pub async fn agents_redraft_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_REDRAFT,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Bring an offline version back online.
+    pub async fn agents_online_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_ONLINE,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Take an online version offline without deleting it.
+    pub async fn agents_offline_version(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        version: &str,
+    ) -> anyhow::Result<AgentVersionInfo> {
+        self.agent_version_transition(
+            admin_api_path::AI_AGENTS_OFFLINE,
+            namespace_id,
+            agent_name,
+            version,
+        )
+        .await
+    }
+
+    /// Replace the custom version labels, preserving the server-managed
+    /// `latest` label.
+    ///
+    /// Wraps `PUT /v3/admin/ai/agents/labels`. Batata's handler reads the
+    /// labels from a JSON body (`{"labels": {...}}`) plus identity fields in
+    /// the query; upstream GA sends `labels` as a JSON string inside a form.
+    pub async fn agents_update_labels(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        labels: &HashMap<String, String>,
+    ) -> anyhow::Result<HashMap<String, String>> {
+        #[derive(Serialize)]
+        struct LabelsBody<'a> {
+            labels: &'a HashMap<String, String>,
+        }
+
+        let response: ApiResponse<HashMap<String, String>> = self
+            .http_client
+            .put_json_with_query(
+                admin_api_path::AI_AGENTS_LABELS,
+                &AgentIdentityQuery {
+                    namespace_id,
+                    agent_name,
+                    version: None,
+                },
+                &LabelsBody { labels },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Change the visibility scope of an agent.
+    ///
+    /// Wraps `PUT /v3/admin/ai/agents/scope`. The handler reads every field
+    /// from the query; the empty JSON body keeps the request well-formed.
+    pub async fn agents_update_scope(
+        &self,
+        namespace_id: &str,
+        agent_name: &str,
+        scope: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ScopeQuery<'a> {
+            namespace_id: &'a str,
+            agent_name: &'a str,
+            scope: &'a str,
+        }
+
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .put_json_with_query(
+                admin_api_path::AI_AGENTS_SCOPE,
+                &ScopeQuery {
+                    namespace_id,
+                    agent_name,
+                    scope,
+                },
+                &serde_json::json!({}),
+            )
+            .await?;
+        Ok(response.code == 0 || response.code == 200)
     }
 
     // ============================================================================

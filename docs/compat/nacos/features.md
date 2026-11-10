@@ -34,16 +34,19 @@ it:
 |-------|---------|---------|
 | `sdk-tests/nacos-java-tests/pom.xml:19` | `3.3.0` | Java SDK pinned in batata's E2E matrix |
 | `conf/application.yml` + `deploy/k8s/configmap.yaml` | `3.3.0` | Version batata reports as its Nacos compatibility target |
-| Local `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0-RC` (@ `1511b5a85`, 2026-10-14) | **Pre-release source snapshot**, not the GA tag |
+| Local `~/work/github/easynet-cn/nacos` develop `pom.xml:91` | `3.3.0` (@ `d1b97bc3e`, 2026-11-09) | **Post-GA develop snapshot**; the GA release commit `b64bc9118` is now in local history, but there are still no local tags |
 
-The local upstream checkout has no `3.3.0` tag and its `origin` is unreachable
-through the current proxy, so the GA contract was verified against the official
-`-sources.jar` for `nacos-api`, `nacos-client` and `nacos-maintainer-client`
-3.3.0 from Maven Central. Diffing GA against the RC snapshot shows the two are
-identical for `ConfigService`, `NamingService`, `LockService` and the whole
+The GA contract was verified against the official `-sources.jar` for
+`nacos-api`, `nacos-client` and `nacos-maintainer-client` 3.3.0 from Maven
+Central, because the local checkout had no tag when the alignment was done.
+Diffing GA against the older RC snapshot shows the two are identical for
+`ConfigService`, `NamingService`, `LockService` and the whole
 `maintainer-client`; only the `api/ai` package changed (9 files modified, 4
 added: RAD discovery capability, `AgentConverter` SPI, `AgentPublishRequest`
-`autoSubmit`). The older `3.3.0-SNAPSHOT` heading was a stale 2025-08-08 label.
+`autoSubmit`). The refreshed checkout is 11 commits past the GA release; four
+of those commits touch client SDK sources and are recorded as **develop drift**
+in `docs/compat/review-report.md` §8 — they are *not* part of the declared GA
+baseline. The older `3.3.0-SNAPSHOT` heading was a stale 2025-08-08 label.
 
 Consequence: capabilities introduced in 3.3.0 (config 304 conditional GET, MCP
 version lifecycle, AI maintainer delegates, RAD routing) are listed here
@@ -128,7 +131,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-LOCK-006 | Non-reentrant lock | C→S | batata-core/lock.rs | 🟢 | | |
 | F-NAC-LOCK-007 | Wait queue (FIFO, timeout, cancel) | C↔S | batata-consistency/raft | 🟢 | | server-side waiter queue |
 | F-NAC-LOCK-008 | Connection cleanup releases locks | S→C | batata-core | 🟢 | | disconnect → force release |
-| F-NAC-LOCK-009 | Watchdog auto-renew | C↔S | batata-core/handler/lock.rs | 🟢 | | RENEW op + owner field + LockResult |
+| F-NAC-LOCK-009 | Watchdog auto-renew (`LockOperationEnum.RENEW`) | C↔S | batata-core/handler/lock.rs | ⚪ | | **False green corrected 2026-11-10**: `crates/batata-core/src/handler/lock.rs:94-139` handles only `ACQUIRE` and `RELEASE`; there is no `RENEW` branch anywhere in `batata-core` and no Raft renew request. Upstream `LockOperationEnum.RENEW` + `LockGrpcClient.java:279` are GA. Both the server op and the Rust client wrapper are still missing; see `F-NAC-CSDK-002` and `docs/compat/review-report.md` §8.2. |
 | F-NAC-LOCK-010 | Backward compat (old client without owner) | C→S | batata-core | 🟢 | | uses connectionId fallback |
 | F-NAC-LOCK-011 | HTTP admin `GET /v3/admin/core/lock/list` | — | batata-server/api/v3/admin/core/lock.rs | 🟢 | | lock list endpoint |
 
@@ -353,7 +356,29 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-MAINT-002 | NamingMaintainerService (service/instance/subscriber mgmt) | batata-maintainer-client | 🟢 | | |
 | F-NAC-MAINT-003 | CoreMaintainerService (server state, cluster, namespace, plugin) | batata-maintainer-client | 🟢 | | |
 | F-NAC-MAINT-004 | AiMaintainerService (MCP, A2A, prompt, skill, agentspec) | batata-maintainer-client/model/ai | 🟡 | | 2026-11-09 re-verified: only `mcp_server_*` CRUD + `agent_*` CRUD/list/search are exposed in `src/client.rs`; upstream `AiMaintainerService.mcp()/skill()/prompt()/agentSpec()/pipeline()` delegates, `listMcpServerVersions`, `submit/publish/forcePublish/redraft/online/offline` and ZIP uploads are **not** wrapped. `model/ai.rs` only holds 11 DTOs. |
-| F-NAC-MAINT-005 | AgentMaintainerService (draft/publish/labels/offline/online) | batata-maintainer-client | 🟡 | | 2026-11-09 re-verified: `src/client.rs` has register/get/update/delete/list/list_versions/search, but no `createDraft/updateDraft/submit/publish/forcePublish/redraft/online/offline/updateLabels`; `agent_get` has no `version` parameter. |
+| F-NAC-MAINT-005 | AgentMaintainerService (draft/publish/labels/offline/online) | batata-maintainer-client | 🟡 | | 2026-11-09 re-verified: the legacy `/v3/admin/ai/a2a` facade in `src/client.rs` has register/get/update/delete/list/list_versions/search, but no `createDraft/updateDraft/submit/publish/forcePublish/redraft/online/offline/updateLabels`; `agent_get` has no `version` parameter. Batch 2 added a separate protocol-neutral `agents_*` facade on `/v3/admin/ai/agents` (see `F-NAC-MAINT-008`); the legacy A2A facade is still partial. |
+| F-NAC-MAINT-006 | MCP server version lifecycle (listVersions / getVersion / submit / publish / forcePublish / redraft / online / offline) | batata-maintainer-client | 🟢 | | Implemented 2026-11-10 in `crates/batata-maintainer-client/src/client.rs`: `mcp_server_list_versions`, `mcp_server_get_version` and the six `mcp_server_*_version` transitions, backed by the ADMIN paths in `crates/batata-maintainer-client/src/constants.rs` and the server routes in `crates/batata-ai/src/api/mcp.rs`. Covered by 4 wiremock cases in `crates/batata-maintainer-client/tests/client_test.rs` (query shape and all six paths mutant-checked). |
+| F-NAC-MAINT-007 | `AiMaintainerService` delegates (`mcp()/skill()/prompt()/agentSpec()/pipeline()/a2a()`) + Skill/Prompt/AgentSpec ZIP uploads and precheck | batata-maintainer-client | ⚪ | | Registered 2026-11-10. Upstream `AiMaintainerService.java:47-73` and `.../ai/{Skill,Prompt,AgentSpec}MaintainerService.java`; console routes exist. Pure SDK wrapping gap. |
+| F-NAC-MAINT-008 | `AgentMaintainerService` draft lifecycle (`createDraft/updateDraft/submit/publish/forcePublish/redraft/online/offline/updateLabels`) + `agent_get(version)` | batata-maintainer-client | 🟡 | | Registered 2026-11-10; batch 2 implemented the protocol-neutral `agents_*` facade in `crates/batata-maintainer-client/src/client.rs`: `agents_get(version)`, `agents_list`, `agents_list_versions`, `agents_get_version`, create/update/delete draft, all six version transitions, `agents_update_labels`, `agents_update_scope`, backed by `crates/batata-maintainer-client/src/constants.rs` (`/v3/admin/ai/agents*`) and the server routes in `crates/batata-ai/src/api/agent.rs`. 7 wiremock cases in `tests/client_test.rs` mutant-check the query wire. **Still partial**: `createDraft`/`updateDraft`/`updateLabels` follow batata's JSON-body wire rather than the upstream GA form wire (`F-NAC-MAINT-010`), `listAgentVersions` returns a plain array on batata instead of GA's `Page`, and `updateAgent`/`deleteAgent`/`getRuntimeEndpoints` of the GA facade are not wrapped. |
+| F-NAC-MAINT-009 | `publishConfig(..., changeMessage)` + `ConfigHistoryDetailInfo.changeMessage` | batata-maintainer-client | ⚪ | | **Develop drift** (post-GA commit `4a11bd06b` / #15914), not part of the 3.3.0 GA baseline. `ConfigMaintainerService.java:203`. |
+| F-NAC-MAINT-010 | AI ADMIN POST/PUT parameter channel: GA maintainer client sends a form body, batata handlers read query only (and agent draft/labels require JSON bodies) | batata-ai | ⚪ | | Registered 2026-11-10, verified against GA bytecode (`~/.m2/.../nacos-maintainer-client-3.3.0.jar`): `ClientHttpProxy.executeSync` calls `postForm`/`putForm` for POST/PUT, and `AgentMaintainerServiceImpl` / `McpMaintainerServiceImpl` use `setParamValue`. `crates/batata-ai/src/api/mcp.rs:701` (`submit_version`) and `agent.rs:512` (`submit_agent`) take `web::Query` only; `agent.rs:432,459,668` require `web::Json<AgentCard>` / `web::Json<AgentLabelsForm>` while GA sends `AgentDraftCreateRequest` / `AgentLabelsUpdateRequest` form fields. A GA Java maintainer client therefore gets 400/415 on these endpoints. Batata's Rust SDK follows the batata wire (see `F-NAC-MAINT-008`) and Spring `@RequestParam` also accepts query, so this is a **server-side** gap. The GA runtime matrix does not cover it (`maintainer-sdk-test` focuses on config/naming). |
+
+## B.9. Client SDK gaps (`F-NAC-CSDK-`)
+
+> Explicitly registered on 2026-11-10 so that "documented but not implemented"
+> is machine-visible. All rows are `⚪ planned` until implementation lands;
+> the last row is post-GA develop drift, kept separate from the GA baseline.
+
+| ID | SDK capability | batata impl | Status | Tests | Notes |
+|----|----------------|-------------|--------|-------|-------|
+| F-NAC-CSDK-001 | `NamingService.subscribe(..., NamingSelector, ...)` overloads | batata-client | ⚪ | | Upstream `NamingService.java:576,589`; `crates/batata-client/src/traits.rs:239` has only the 4-arg form. Present in GA, so a true baseline gap. |
+| F-NAC-CSDK-002 | `LockService::renew` + watchdog | batata-client | ⚪ | | Upstream `LockService.java:85` (`@Since 3.3.0`) and `LockOperationEnum.RENEW`; `crates/batata-client/src/lock.rs` has only lock/unlock/try_lock/lock_guard. **Both sides are missing**: the server-side `RENEW` branch claimed by `F-NAC-LOCK-009` does not exist either, so the client wrapper alone would send an unsupported op. A correct fix needs `LockService::renew` (refresh TTL without incrementing the reentrant count) plus a Raft renew request variant. |
+| F-NAC-CSDK-003 | `AiService` sub-services (`mcp()/skill()/prompt()/agentSpec()/agent()`), `AgentDiscoveryService`, GA RAD capability | batata-client | ⚪ | | Upstream `AiService.java:67-120` + `api/ai/converter/`; `crates/batata-client/src/ai.rs` has 10 flat query methods only. |
+| F-NAC-CSDK-004 | config 304 conditional GET (`GetConfigRequest.localMd5`) | batata-client | ⚪ | | Upstream `GetConfigRequest.java:61`, commit `e2f806777`; needs a client-side wire field plus server handling. |
+| F-NAC-CSDK-005 | OIDC client auth and `configSnapshotEnabled` property switch | batata-client | ⚪ | | Upstream `client-basic/.../oidc/` (`c87f888fc`) and `PropertyKeyConst.java:96` (`0004ea910`); batata has only an internal `SnapShotSwitch` boolean. |
+| F-NAC-CSDK-006 | HTTP `requestId` correlation header | batata-client | ⚪ | | Upstream client HTTP proxy; gRPC has a UUID `request_id` but `src/http.rs` sends no request-id header. |
+| F-NAC-CSDK-007 | `SetupAckRequest.ability_table` GA keys `agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1` | batata-core | ⚪ | | Upstream `AbilityKey.java:62,76,86,92` declares 9 server keys; `crates/batata-core/src/handler/rpc.rs:838-851` advertises 5. **Deferred on purpose**: declaring `radV1`/`radWatchV1` makes GA Java clients switch to RAD gRPC requests that `crates/batata-ai/src/handler/ai_handler.rs` does not handle (`AgentPublishRpcRequest`, watch). Implement the handlers first. |
+| F-NAC-CSDK-008 | GA `AgentCard` security fields in the client DTO; post-GA `SecurityRequirement`/`StringList` wrapper and `AgentSkill.securityRequirements` | batata-client | 🟡 | | GA shape implemented 2026-11-10 in `crates/batata-client/src/ai.rs` (`AgentCardInfo.security_schemes` / `security` / `security_requirements`, 2 serde tests, mutant-checked), matching `crates/batata-common/src/model/ai/a2a.rs:107-112`. **Develop drift still missing**: at GA `securityRequirements` is `List<Map<String,List<String>>>`; `ff1bcc2e9` changed it to `List<SecurityRequirement>` with a `schemes`/`list` wrapper and `7c546cfda` added `AgentSkill.securityRequirements`. That is a breaking wire change requiring a server DTO change too. |
 
 ---
 
@@ -365,7 +390,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | A.2 Config gRPC | 10 | 0 | 0 | 0 | 0 | 10 | 100% |
 | A.3 Naming gRPC | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
 | A.4 Cluster gRPC | 4 | 0 | 0 | 0 | 1 | 5 | 80% |
-| A.5 Lock gRPC | 11 | 0 | 0 | 0 | 0 | 11 | 100% |
+| A.5 Lock gRPC | 10 | 0 | 0 | 1 | 0 | 11 | 91% |
 | A.6 AI gRPC SDK | 8 | 0 | 0 | 0 | 2 | 10 | 80% |
 | B.1 Console core | 15 | 0 | 0 | 0 | 0 | 15 | 100% |
 | B.2 Config console | 19 | 0 | 0 | 0 | 0 | 19 | 100% |
@@ -379,13 +404,17 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.7.4 Admin Auth | 1 | 0 | 0 | 0 | 0 | 1 | 100% |
 | B.7.5 Admin AI | 8 | 0 | 0 | 0 | 0 | 8 | 100% |
 | B.7.6 Admin Legacy | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
-| B.8 Maintainer SDK | 3 | 2 | 0 | 0 | 0 | 5 | 60% |
-| **Total** | 176 | 2 | 0 | 0 | 3 | 181 | 97% |
+| B.8 Maintainer SDK | 4 | 3 | 0 | 3 | 0 | 10 | 40% |
+| B.9 Client SDK gaps | 0 | 1 | 0 | 7 | 0 | 8 | 0% |
+| **Total** | 176 | 4 | 0 | 11 | 3 | 194 | 91% |
 
-> Recomputed from the F-ID rows on 2026-11-09 (`scripts/compat_check.py` enforces
+> Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were
 > re-verified against `crates/batata-maintainer-client/src/client.rs` on
-> 2026-11-09. Impl rate = 🟢 / Total. gRPC type names must stay exact for
+> 2026-11-09, and the 2026-11-10 upstream refresh added the 12 `⚪` rows in
+> B.8/B.9. Batch 2 promoted `F-NAC-MAINT-008` to `🟡` and registered the
+> GA-vs-batata agent draft form wire as `F-NAC-MAINT-010` (13th row).
+> Impl rate = 🟢 / Total. gRPC type names must stay exact for
 > interop; HTTP rows were verified against `console-ui-next` (`src/api/*.ts`)
 > and the upstream test suite. Update statuses per actual implementation and
 > sync this table.
