@@ -407,7 +407,9 @@ async fn create_draft(
     // draft editor fills them in.
     let card = draft_card(&form);
 
-    let result = agent_service.create_agent_draft(ns, &card, false).await;
+    let result = agent_service
+        .create_agent_draft(ns, &card, false, None)
+        .await;
     trace_write(
         &req,
         batata_common::ai_trace::RESOURCE_TYPE_AGENT,
@@ -522,7 +524,7 @@ async fn update_draft(
     let form = body.into_inner();
     let ns = normalize_namespace(&form.namespace_id);
     let card = draft_card(&form);
-    let result = agent_service.update_agent_draft(ns, &card).await;
+    let result = agent_service.update_agent_draft(ns, &card, None).await;
     trace_write(
         &req,
         batata_common::ai_trace::RESOURCE_TYPE_AGENT,

@@ -113,6 +113,10 @@ struct AgentWrite {
     card: AgentCard,
     namespace: String,
     overwrite: bool,
+    /// Definition-time call interfaces from the GA flat form (GA
+    /// `AgentVersionDetail.callInterfaces`). Absent on the nested `AgentCard`
+    /// wire and when the caller omits the field.
+    call_interfaces: Option<Vec<crate::model::a2a::AgentCallInterface>>,
 }
 
 fn invalid(detail: impl Into<String>) -> HttpResponse {
@@ -161,11 +165,38 @@ fn resolve_agent_write(
     } else {
         agent_card_from_form(&form, require_version)?
     };
+    let call_interfaces = parse_call_interfaces(form.call_interfaces.as_deref())?;
     Ok(AgentWrite {
         card,
         namespace,
         overwrite,
+        call_interfaces,
     })
+}
+
+/// Parse the GA `callInterfaces` JSON into the definition-time model.
+///
+/// GA's first-draft validator (`requireInitialDraftContent`) requires a non-null
+/// `callInterfaces`; batata stores whichever value was supplied. An absent or
+/// `null` field yields `None`; an explicit `[]` yields `Some(vec![])` so the
+/// round-trip preserves the "present but empty" distinction.
+fn parse_call_interfaces(
+    raw: Option<&str>,
+) -> std::result::Result<Option<Vec<crate::model::a2a::AgentCallInterface>>, HttpResponse> {
+    let raw = match raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "null")
+    {
+        Some(raw) => raw,
+        None => return Ok(None),
+    };
+    let parsed: Vec<crate::model::a2a::AgentCallInterface> =
+        serde_json::from_str(raw).map_err(|e| {
+            invalid(format!(
+                "callInterfaces must be a JSON array of AgentCallInterface: {e}"
+            ))
+        })?;
+    Ok(Some(parsed))
 }
 
 /// Build an `AgentCard` from the GA flat form. Fields with no A2A counterpart
@@ -193,15 +224,9 @@ fn agent_card_from_form(
         ));
     }
 
-    // Fail closed: the GA ARD call-interface model cannot be represented by
-    // an A2A AgentCard. Accepting and dropping it would register a dead agent.
-    if let Some(raw) = json_field(form.call_interfaces.as_deref())
-        && raw != "[]"
-    {
-        return Err(invalid(format!(
-            "callInterfaces needs GA's AgentCallInterface model, which batata does not implement: {raw}"
-        )));
-    }
+    // The GA ARD `callInterfaces` field is parsed at the route boundary (see
+    // `parse_call_interfaces`) and stored on the version definition; it is no
+    // longer rejected fail-closed.
 
     let mut card = AgentCard {
         name: name.to_string(),
@@ -625,7 +650,12 @@ async fn create_draft(
         Err(response) => return response,
     };
     match service
-        .create_agent_draft(&write.namespace, &write.card, write.overwrite)
+        .create_agent_draft(
+            &write.namespace,
+            &write.card,
+            write.overwrite,
+            write.call_interfaces,
+        )
         .await
     {
         Ok(detail) => HttpResponse::Ok().json(Result::success(detail)),
@@ -656,7 +686,7 @@ async fn update_draft(
         Err(response) => return response,
     };
     match service
-        .update_agent_draft(&write.namespace, &write.card)
+        .update_agent_draft(&write.namespace, &write.card, write.call_interfaces)
         .await
     {
         Ok(detail) => HttpResponse::Ok().json(Result::success(detail)),
@@ -1026,13 +1056,39 @@ mod tests {
     }
 
     #[test]
-    fn ga_call_interfaces_are_rejected_instead_of_dropped() {
-        let mut form = ga_form();
-        form.call_interfaces = Some(r#"[{"protocol":"JSONRPC"}]"#.to_string());
-        assert!(agent_card_from_form(&form, true).is_err());
-        // An empty list is harmless and must stay accepted.
-        form.call_interfaces = Some("[]".to_string());
-        assert!(agent_card_from_form(&form, true).is_ok());
+    fn ga_call_interfaces_are_accepted_and_parsed() {
+        // GA's `requireInitialDraftContent` needs a non-null `callInterfaces`; it
+        // must be accepted (not rejected fail-closed) and parsed onto the write.
+        let parsed = parse_call_interfaces(Some(r#"[{"protocol":"JSONRPC"}]"#)).unwrap();
+        let cis = parsed.expect("one interface");
+        assert_eq!(cis.len(), 1);
+        assert_eq!(cis[0].protocol, "JSONRPC");
+
+        // An explicit empty array is preserved as `Some(vec![])` so the
+        // round-trip keeps the "present but empty" distinction.
+        assert_eq!(parse_call_interfaces(Some("[]")).unwrap(), Some(vec![]));
+
+        // Absent or `null` yields `None`.
+        assert_eq!(parse_call_interfaces(Some("null")).unwrap(), None);
+        assert_eq!(parse_call_interfaces(None).unwrap(), None);
+
+        // Malformed JSON is rejected.
+        assert!(parse_call_interfaces(Some(r#"{"protocol":"JSONRPC"}"#)).is_err());
+    }
+
+    #[test]
+    fn ga_call_interfaces_round_trip_through_write() {
+        let req =
+            TestRequest::with_uri("/v3/admin/ai/agents/draft?namespaceId=ns-1&overwrite=true")
+                .insert_header(("content-type", "application/x-www-form-urlencoded"))
+                .to_http_request();
+        // callInterfaces = [{"protocol":"JSONRPC"}]
+        let body =
+            b"agentName=ci-agent&version=1.0.0&callInterfaces=%5B%7B%22protocol%22%3A%22JSONRPC%22%7D%5D";
+        let write = resolve_agent_write(&req, body, true).expect("write");
+        let cis = write.call_interfaces.expect("call interfaces parsed");
+        assert_eq!(cis.len(), 1);
+        assert_eq!(cis[0].protocol, "JSONRPC");
     }
 
     #[test]

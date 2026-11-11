@@ -33,10 +33,10 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 197      | 179 | 4  | 0 | 10 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 179 | 5  | 0 | 9 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **527** | **9** | **0** | **37** | **4** | **91%** | **1040** | |
+| **Total** | **577** | **527** | **10** | **0** | **36** | **4** | **91%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -97,7 +97,7 @@ B.10 (server AI ADMIN), so the checker can detect a status that drifts from real
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
 | batata-core | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys |
 | batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel — **closed in batch 5** (`🟢`); the ARD model divergence moved to `F-NAC-AISRV-001` |
-| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model (typed `AgentVersionDetail` / `AgentCallInterface`, `Page` responses, RAD endpoints, first-draft `callInterfaces`) — draft-created metadata closed in batch 6 |
+| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model — **Phase A partial (🟡, 2026-11-11)**: typed `AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` DTOs, `callInterfaces` stored in version detail + accepted on first draft (no longer fail-closed), GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>` list/version responses, `online_versions` / `status` reconciliation. RAD `GET /runtime-endpoints` live source deferred to `F-NAC-CSDK-007` |
 | batata-ai (server) | F-NAC-AISRV-002 | `/v3/admin/ai/import` controller — **false gap, closed in batch 6** (`🟢`, already in `batata-console`, also `F-NAC-ADM-AI-008`) |
 | batata-ai (server) | F-NAC-AISRV-003 | `/v3/admin/ai/pipelines` deprecated reads — **⛔ won't support** (GA returns 410 unless an opt-in compatibility flag is set) |
 
@@ -284,6 +284,8 @@ compile-safe mutants killed** guard the new branches and the absent-field
 baseline. `compat_check.py`, `cargo fmt`, `git diff --check`, clippy `-D warnings`
 and the route-test suite all pass. No `--full`, commit, push or publish was
 performed.
+
+**Batch 12 implemented (2026-11-11)**: `F-NAC-AISRV-001` is now `🟡` (partial). Phase A closes the GA ARD Agent model gap against Nacos 3.3.0 GA (`b64bc9118`): typed ARD DTOs (`AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` / `AgentVersionSummary` / `AgentSummary`) in `crates/batata-common/src/model/ai/a2a.rs`; `callInterfaces` stored in the version detail (`AgentCardDetailInfo.call_interfaces`, written by `build_detail`, read by `version_row`) and accepted on first draft via `parse_call_interfaces` → `resolve_agent_write` → `create_agent_draft(ns, &card, false, Some(cis))` (no longer fail-closed); `listAgents` / `listVersions` return GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>`; `AgentSummary.online_versions` surfaces the legacy `AgentCardVersionInfo.latest_published_version` so the catalog `latestVersion` resolves, and `AgentVersionSummary.status` uses the `online` / `draft` / `reviewing` lifecycle resolved via `Page.page_items`. All `batata-ai` + `batata-server` route-level callers were migrated to the new shapes (`.page_items`, no `is_latest`). `GET /runtime-endpoints` live support stays deferred to `F-NAC-CSDK-007` (needs Naming publication backend + RAD gRPC handlers), so the row is partial. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate 67%), Nacos Total `179🟢/5🟡/9⚪/4⛔/197` (rate 91% unchanged). `compat_check.py`, `cargo fmt` and `cargo check -p batata-ai --tests` pass; `batata-ai` lib + integration and `batata-server` route suites green. No `--full`, commit, push or publish was performed (commit/push handled separately).
 
 Batch 5 then made the four remaining Agent write handlers dual-wire:
 `crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's

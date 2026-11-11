@@ -1495,3 +1495,51 @@ the 🟡→🟢 flip.
 `-D warnings` and `cargo test -p batata-server --test skill_admin_routes`
 (13 passed) all pass. No `--full` matrix, commit, push, publish, yank, archive
 or tag was performed.
+
+## 19. Implementation batch 12 — GA ARD Agent model Phase A (`F-NAC-AISRV-001` → 🟡)
+
+### 19.1 GA sources and gap
+
+`F-NAC-AISRV-001` is the only genuine server-side AI gap (§13). GA
+`AgentAdminController` (18 endpoints) and batata `admin_routes()` (19) agree on
+paths but not on model: GA stores an ARD `AgentVersionDetail` with
+`callInterfaces` (`protocol`, `protocolVersion`, `endpointSets`,
+`nativeDescriptor`) and a `name`/`url` provider, whereas batata stores the A2A
+`AgentCard`. Batches 5–6 closed the form-field mapping and the draft-created
+metadata sub-gap; the remaining Phase A items were: typed ARD DTOs + storage,
+`Page`-shaped `listAgents` / `listVersions`, `AgentSummary` /
+`AgentVersionSummary` status semantics, and GA first-draft `callInterfaces`
+support (GA `requireInitialDraftContent` `b64bc9118:1171-1177` needs a
+non-null `callInterfaces`).
+
+### 19.2 Implementation
+
+| Area | Change |
+|---|---|
+| Model | `crates/batata-common/src/model/ai/a2a.rs`: added `AgentVersionDetail`, `AgentCallInterface`, `AgentProviderInfo`, `AgentVersionSummary`, `AgentSummary`, `AgentVersionInfo`, `Endpoint`, `EndpointSet`, `EndpointSource`, `RuntimeVersionBinding`, `RuntimeCallInterface`; `Default` on `AgentCardDetailInfo`, `PartialEq` on the ARD value types. |
+| Storage | `AgentCardDetailInfo.call_interfaces: Option<Vec<AgentCallInterface>>`; `build_detail` writes it; `version_row` reads it back for `AgentVersionDetail`. |
+| First-draft `callInterfaces` | `parse_call_interfaces` (form body) → `resolve_agent_write` → `create_agent_draft(ns, &card, false, Some(cis))` / `update_agent_draft(ns, &card, Some(cis))`; no longer fail-closed. |
+| List responses | `list_agents` → `Page<AgentSummary>`, `list_versions` → `Page<AgentVersionSummary>` (GA `Page.total_count` / `page_number` / `pages_available` / `page_items`). |
+| Catalog `latestVersion` | `to_agent_summary` surfaces the legacy `AgentCardVersionInfo.latest_published_version` as `AgentSummary.online_versions` (single `AgentVersionSummary`, `labels: ["latest"]`, `status: online`). |
+| Status semantics | `AgentVersionSummary.status` resolves `online` / `draft` / `reviewing` via `Page.page_items` (`status == "online"` then highest version), replacing the removed `is_latest` flag. |
+| Callers | `ai_handler.rs` (gRPC search/discovery/deregister), `agent_client.rs` (HTTP search/discover/deregister), `agent_watch.rs` (`resolve_version`), `ai_agent.rs` (console), `registry/a2a.rs` migrated to `.page_items` and the new summary shapes. |
+
+### 19.3 Guards
+
+`batata-ai` lib + `a2a_persistence` integration: `ga_call_interfaces_are_accepted_and_parsed` (protocol round-trip, `[]` / `null` / malformed), `ga_call_interfaces_round_trip_through_write`, `draft_stores_call_interfaces_and_round_trips` (create with `Some(cis)` → stored `call_interfaces == Some(cis)`; second draft `None` → `None`). `batata-server` route: `ga_call_interfaces_are_accepted_and_persisted_at_the_route` (200 + `callInterfaces` / `JSONRPC` echoed + stored card present). All new asserts are mutant-checked (compile-safe + assertion-red).
+
+### 19.4 Status and promotion
+
+`F-NAC-AISRV-001` → 🟡 (partial). `GET /runtime-endpoints` live support is
+deferred to `F-NAC-CSDK-007` (needs Naming publication backend + RAD gRPC
+handlers), so the row is partial, not 🟢. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate
+33%→67%); Nacos Total `179🟢/4🟡/10⚪/4⛔/197` → `179🟢/5🟡/9⚪/4⛔/197` (rate 91%
+unchanged). `features.md` B.10 and Summary Total, `README.md` global table and
+F-ID narrative updated.
+
+### 19.5 Validation and no-ops
+
+`cargo fmt --all -- --check`, `git diff --check`, `scripts/compat_check.py`,
+`cargo check -p batata-ai --tests` and the `batata-ai` + `batata-server` route
+suites all pass. No `--full` matrix, commit, push, publish, yank, archive or tag
+was performed (commit/push handled separately).

@@ -141,14 +141,21 @@ pub struct RuntimeEndpointSnapshot {
     pub agent_name: String,
     /// Agent version.
     pub version: String,
-    /// How the agent is called.
-    pub call_interface: AgentCallInterface,
+    /// How the agent is called (runtime/flat view; the deferred
+    /// `GET /runtime-endpoints` feature publishes every endpoint as one Naming
+    /// instance, so the definition-time `endpointSets` grouping is flattened).
+    pub call_interface: RuntimeCallInterface,
 }
 
-/// The protocol and endpoints of one call interface.
+/// The protocol and endpoints of one call interface, as observed at runtime.
+///
+/// This is the flat, Naming-backed view that batata's `GET /runtime-endpoints`
+/// returns. The GA *definition*-time call interface (`AgentCallInterface`) has a
+/// richer shape (`protocolVersion`, `descriptorMediaType`, `nativeDescriptor`,
+/// `endpointSets`); see the ARD model section below.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentCallInterface {
+pub struct RuntimeCallInterface {
     /// Requested protocol, e.g. `JSONRPC`.
     pub protocol: String,
     /// Endpoints currently registered.
@@ -276,6 +283,242 @@ pub struct AgentSkill {
     /// Example inputs
     #[serde(default)]
     pub examples: Vec<String>,
+}
+
+// =============================================================================
+// GA ARD (Agent Resource Definition) models — Nacos 3.3.0 GA
+//
+// These mirror `com.alibaba.nacos.api.ai.model.agent.*` (release `b64bc9118`).
+// They are the *definition*-time shape that GA's `AgentAdminController` stores
+// and serves, distinct from the A2A `AgentCard` batata registers at runtime.
+// `AgentVersionDetail.callInterfaces` is the field GA's first-draft validator
+// (`requireInitialDraftContent`) requires to be non-null.
+// =============================================================================
+
+/// Where an endpoint set came from: declared in the definition or observed at runtime.
+///
+/// Serialized exactly like the GA Java enum (`RUNTIME` / `DECLARED`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum EndpointSource {
+    /// Endpoints declared in the agent definition.
+    #[default]
+    Declared,
+    /// Endpoints discovered from the runtime registry.
+    Runtime,
+}
+
+/// One runtime implementation version and the version range it can serve.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeVersionBinding {
+    /// Runtime implementation version.
+    #[serde(default)]
+    pub runtime_version: String,
+    /// Agent version range the binding can serve.
+    #[serde(default)]
+    pub version_range: String,
+}
+
+/// One endpoint value, shared by declared and runtime agent views.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Endpoint {
+    /// Endpoint URI.
+    #[serde(default)]
+    pub uri: String,
+    /// Transport, e.g. `HTTP` or `GRPC`.
+    #[serde(default)]
+    pub transport: String,
+    /// Priority; lower values win. GA defaults to zero.
+    #[serde(default)]
+    pub priority: i32,
+    /// Weight among same-priority endpoints. GA defaults to one.
+    #[serde(default = "default_endpoint_weight")]
+    pub weight: f64,
+    /// Arbitrary endpoint metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+    /// Registration health; GA defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub healthy: Option<bool>,
+    /// Optional registration bindings (runtime reads may aggregate several).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<Vec<RuntimeVersionBinding>>,
+    /// Registration enablement; GA defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+fn default_endpoint_weight() -> f64 {
+    1.0
+}
+
+/// Snapshot of endpoints from one declared or runtime source.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointSet {
+    /// Source of the endpoints.
+    #[serde(default)]
+    pub source: EndpointSource,
+    /// Source revision marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision: Option<String>,
+    /// Nacos observation time (runtime queries only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated_time: Option<i64>,
+    /// Endpoints in this set.
+    #[serde(default)]
+    pub endpoints: Vec<Endpoint>,
+}
+
+/// Public provider information for an Agent (GA `AgentProvider`).
+///
+/// GA uses `name` + `url`; the A2A `AgentCard.provider` uses `organization` +
+/// `url` and is modelled separately by [`AgentProvider`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProviderInfo {
+    /// Provider name.
+    #[serde(default)]
+    pub name: String,
+    /// Provider URL.
+    #[serde(default)]
+    pub url: String,
+}
+
+/// The definition-time call interface of an agent version (GA `AgentCallInterface`).
+///
+/// Unlike [`RuntimeCallInterface`], this carries the declared protocol
+/// descriptor and the `endpointSets` grouping rather than a flat endpoint list.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCallInterface {
+    /// Requested protocol, e.g. `JSONRPC`.
+    #[serde(default)]
+    pub protocol: String,
+    /// Protocol version spoken on this interface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
+    /// Media type of `nativeDescriptor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor_media_type: Option<String>,
+    /// Protocol-native descriptor blob (free-form).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_descriptor: Option<serde_json::Value>,
+    /// Definition source preference; absent from discovery and runtime views.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_source_order: Option<Vec<EndpointSource>>,
+    /// Declared endpoint sets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_sets: Option<Vec<EndpointSet>>,
+}
+
+/// One agent version as returned by `GET /versions` (GA `AgentVersionSummary`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentVersionSummary {
+    /// Version string.
+    #[serde(default)]
+    pub version: String,
+    /// Custom labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+    /// Declared protocols.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocols: Option<Vec<String>>,
+    /// Lifecycle status.
+    #[serde(default)]
+    pub status: String,
+    /// Publish pipeline info (opaque).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_pipeline_info: Option<String>,
+    /// Author username.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Change description for this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_description: Option<String>,
+    /// Content digest of the definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<String>,
+    /// Creation time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<i64>,
+    /// Last update time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<i64>,
+}
+
+/// Version lifecycle, label mapping and online summaries for an agent
+/// (GA `AgentVersionInfo`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentVersionInfo {
+    /// Version currently being edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_version: Option<String>,
+    /// Version currently under review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewing_version: Option<String>,
+    /// Online version summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online_versions: Option<Vec<AgentVersionSummary>>,
+    /// Label map (e.g. `latest`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
+}
+
+/// Agent metadata shared by management and discovery catalog views
+/// (GA `AgentSummary`, extends `AbstractAgentMetadata`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSummary {
+    /// Agent name.
+    #[serde(default)]
+    pub agent_name: String,
+    /// Display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Icon URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Provider information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AgentProviderInfo>,
+    /// Tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    /// Opaque extension map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
+    /// Namespace ID.
+    #[serde(default)]
+    pub namespace_id: String,
+    /// Agent-level lifecycle status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Owner username.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Visibility scope (`PUBLIC` / `PRIVATE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Version lifecycle facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_info: Option<AgentVersionInfo>,
+    /// Extension optimistic-lock version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_version: Option<i64>,
+    /// Creation time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<i64>,
+    /// Last update time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<i64>,
 }
 
 // Note: Nacos A2A uses string-typed mode arrays (defaultInputModes, defaultOutputModes)
@@ -527,6 +770,42 @@ pub struct AgentVersionDetail {
     /// Optional description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+
+    /// Definition-time call interfaces (GA `AgentVersionDetail.callInterfaces`).
+    ///
+    /// GA's first-draft validator (`requireInitialDraftContent`) requires this
+    /// to be non-null. Batata stores whatever was supplied; an empty list is
+    /// distinct from `None` (absent on the wire).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_interfaces: Option<Vec<AgentCallInterface>>,
+
+    /// Custom labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+
+    /// Declared protocols.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocols: Option<Vec<String>>,
+
+    /// Author username.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+
+    /// Change description for this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_description: Option<String>,
+
+    /// Content digest of the definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<String>,
+
+    /// Creation time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<i64>,
+
+    /// Last update time (epoch millis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<i64>,
 }
 
 fn default_registration_type() -> String {
@@ -534,7 +813,7 @@ fn default_registration_type() -> String {
 }
 
 /// A2A agent per-version detail (stored in config group `agent-version`)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCardDetailInfo {
     /// Agent ID
@@ -574,6 +853,14 @@ pub struct AgentCardDetailInfo {
     /// Full agent card data (Batata extension)
     #[serde(default)]
     pub agent_card: Option<AgentCard>,
+
+    /// Definition-time call interfaces (GA `AgentVersionDetail.callInterfaces`).
+    ///
+    /// Stored verbatim from the admin write form so the definition survives a
+    /// `GET /version` round-trip. Added after initial release; old rows without
+    /// this key deserialize as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_interfaces: Option<Vec<AgentCallInterface>>,
 }
 
 /// Agent Registry statistics

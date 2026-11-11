@@ -204,7 +204,12 @@ impl A2aServerOperationService {
     }
 
     /// Build the per-version detail payload stored in `ai_resource_version.storage`.
-    fn build_detail(id: &str, card: &AgentCard, registration_type: &str) -> AgentCardDetailInfo {
+    fn build_detail(
+        id: &str,
+        card: &AgentCard,
+        registration_type: &str,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
+    ) -> AgentCardDetailInfo {
         AgentCardDetailInfo {
             id: id.to_string(),
             name: card.name.clone(),
@@ -216,6 +221,7 @@ impl A2aServerOperationService {
             skills: card.skills.clone(),
             provider: String::new(),
             agent_card: Some(card.clone()),
+            call_interfaces,
         }
     }
 
@@ -282,7 +288,7 @@ impl A2aServerOperationService {
             }],
         };
 
-        let detail_info = Self::build_detail(&id, card, registration_type);
+        let detail_info = Self::build_detail(&id, card, registration_type, None);
 
         let info = AiResourceInfo {
             id: 0,
@@ -463,7 +469,7 @@ impl A2aServerOperationService {
         } else {
             version_info.id.clone()
         };
-        let detail_info = Self::build_detail(&id, card, registration_type);
+        let detail_info = Self::build_detail(&id, card, registration_type, None);
         let storage_json = serde_json::to_string(&detail_info)?;
 
         let exists = self
@@ -587,8 +593,8 @@ impl A2aServerOperationService {
 
     /// List agents with pagination and search
     ///
-    /// Returns `Page<AgentCardVersionInfo>` to match Nacos A2aServerOperationService.listAgents()
-    /// which returns `Page<AgentCardVersionInfo>` (not full agent details).
+    /// Returns `Page<AgentSummary>` to match Nacos `AgentAdminController.listAgents()`
+    /// which returns `Page<AgentSummary>`.
     /// List agents visible to `user`.
     pub async fn list_agents(
         &self,
@@ -598,7 +604,7 @@ impl A2aServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentSummary>> {
         let page_no = page_no.max(1) as u64;
         let page_size_u64 = page_size as u64;
 
@@ -617,18 +623,71 @@ impl A2aServerOperationService {
             )
             .await?;
 
-        let version_infos: Vec<AgentCardVersionInfo> = page
-            .page_items
-            .iter()
-            .map(Self::parse_version_info)
-            .collect();
+        let summaries: Vec<AgentSummary> =
+            page.page_items.iter().map(Self::to_agent_summary).collect();
 
         Ok(batata_common::model::Page::new(
             page.total_count,
             page_no,
             page_size_u64,
-            version_infos,
+            summaries,
         ))
+    }
+
+    /// Project one `ai_resource` row onto the GA `AgentSummary` shape.
+    fn to_agent_summary(resource: &AiResourceInfo) -> AgentSummary {
+        let vi = version_lifecycle::parse_version_info(resource);
+        // The legacy register/update path stores an `AgentCardVersionInfo`
+        // index that carries `latest_published_version`; surface it as the
+        // online version so downstream catalog views can resolve "latest"
+        // without a second lookup.
+        let online_versions = match resource.version_info.as_ref() {
+            Some(json) => match serde_json::from_str::<AgentCardVersionInfo>(json) {
+                Ok(card_vi) if !card_vi.latest_published_version.is_empty() => {
+                    Some(vec![AgentVersionSummary {
+                        version: card_vi.latest_published_version.clone(),
+                        labels: Some(vec!["latest".to_string()]),
+                        protocols: None,
+                        status: version_status::ONLINE.to_string(),
+                        publish_pipeline_info: None,
+                        author: None,
+                        change_description: None,
+                        content_digest: None,
+                        create_time: None,
+                        update_time: None,
+                    }])
+                }
+                _ => None,
+            },
+            None => None,
+        };
+        let version_info = AgentVersionInfo {
+            editing_version: vi.editing_version.clone(),
+            reviewing_version: vi.reviewing_version.clone(),
+            online_versions,
+            labels: None,
+        };
+        AgentSummary {
+            agent_name: resource.name.clone(),
+            display_name: None,
+            description: resource.description.clone(),
+            icon_url: None,
+            provider: None,
+            tags: None,
+            extensions: None,
+            namespace_id: resource.namespace_id.clone(),
+            status: resource.status.clone(),
+            owner: if resource.owner.is_empty() {
+                None
+            } else {
+                Some(resource.owner.clone())
+            },
+            scope: Some(resource.scope.clone()),
+            version_info: Some(version_info),
+            meta_version: Some(resource.meta_version),
+            create_time: None,
+            update_time: None,
+        }
     }
 
     /// List versions for a specific agent
@@ -636,37 +695,51 @@ impl A2aServerOperationService {
         &self,
         namespace: &str,
         agent_name: &str,
-    ) -> anyhow::Result<Vec<VersionDetail>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentVersionSummary>> {
         // Derived from the version rows rather than the denormalised index in
         // `version_info`: a draft created through `/draft` only ever lands in
         // the version table, so reading the index would hide it.
-        let resource = match self
+        match self
             .persistence
             .ai_resource_find(namespace, agent_name, resource_type::AGENT)
             .await?
         {
-            Some(resource) => resource,
-            None => return Ok(Vec::new()),
+            Some(_) => {}
+            None => {
+                return Ok(batata_common::model::Page::empty());
+            }
         };
-        let latest = Self::parse_version_info(&resource).latest_published_version;
         let rows = self
             .persistence
             .ai_resource_version_list(namespace, agent_name, resource_type::AGENT)
             .await?;
 
-        let mut versions: Vec<VersionDetail> = rows
+        let mut summaries: Vec<AgentVersionSummary> = rows
             .iter()
-            .map(|row| VersionDetail {
+            .map(|row| AgentVersionSummary {
                 version: row.version.clone(),
-                release_date: String::new(),
-                is_latest: !latest.is_empty() && latest == row.version,
+                labels: None,
+                protocols: None,
+                status: row.status.clone(),
+                publish_pipeline_info: row.publish_pipeline_info.clone(),
+                author: row.author.clone(),
+                change_description: row.description.clone(),
+                content_digest: None,
+                create_time: None,
+                update_time: None,
             })
             .collect();
-        versions.sort_by(|a, b| {
+        summaries.sort_by(|a, b| {
             batata_common::model::ai::skill::compare_versions(&a.version, &b.version).reverse()
         });
 
-        Ok(versions)
+        let total = summaries.len() as u64;
+        Ok(batata_common::model::Page::new(
+            total,
+            1,
+            total.max(1),
+            summaries,
+        ))
     }
 
     // ========================================================================
@@ -691,12 +764,27 @@ impl A2aServerOperationService {
             version,
         )
         .await?;
+        // The definition-time call interfaces live in the per-version storage
+        // payload, not on the version row itself.
+        let detail: AgentCardDetailInfo = row
+            .storage
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<AgentCardDetailInfo>(json).ok())
+            .unwrap_or_default();
         Ok(AgentVersionDetail {
             namespace_id: row.namespace_id,
             name: row.name,
             version: row.version,
             status: row.status,
-            description: row.description,
+            description: row.description.clone(),
+            call_interfaces: detail.call_interfaces,
+            labels: None,
+            protocols: None,
+            author: row.author.clone(),
+            change_description: row.description.clone(),
+            content_digest: None,
+            create_time: None,
+            update_time: None,
         })
     }
 
@@ -961,6 +1049,7 @@ impl A2aServerOperationService {
         namespace: &str,
         card: &AgentCard,
         overwrite: bool,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail> {
         let name = &card.name;
         let version = &card.version;
@@ -992,7 +1081,7 @@ impl A2aServerOperationService {
                 .await?;
         }
 
-        let detail = Self::build_detail(&id, card, &registration_type);
+        let detail = Self::build_detail(&id, card, &registration_type, call_interfaces);
         let now = Utc::now().naive_utc().to_string();
         self.persistence
             .ai_resource_version_insert(&AiResourceVersionInfo {
@@ -1031,6 +1120,7 @@ impl A2aServerOperationService {
         &self,
         namespace: &str,
         card: &AgentCard,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail> {
         let name = &card.name;
         let version = &card.version;
@@ -1051,7 +1141,7 @@ impl A2aServerOperationService {
             );
         }
 
-        let detail = Self::build_detail(&id, card, &registration_type);
+        let detail = Self::build_detail(&id, card, &registration_type, call_interfaces);
         self.persistence
             .ai_resource_version_update_storage(
                 namespace,
@@ -1128,7 +1218,7 @@ impl A2aServerOperationService {
             self.ensure_agent_resource_shell(namespace, name).await?;
         }
 
-        let mut detail = self.create_agent_draft(namespace, card, true).await?;
+        let mut detail = self.create_agent_draft(namespace, card, true, None).await?;
 
         if detail.status == version_status::DRAFT && (first_version || auto_submit) {
             detail = self.submit_agent_version(namespace, name, version).await?;
@@ -1224,7 +1314,7 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentSummary>> {
         self.list_agents(namespace, agent_name, search_type, page_no, page_size, user)
             .await
     }
@@ -1233,7 +1323,7 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         &self,
         namespace: &str,
         agent_name: &str,
-    ) -> anyhow::Result<Vec<VersionDetail>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentVersionSummary>> {
         self.list_versions(namespace, agent_name).await
     }
 
@@ -1276,8 +1366,10 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         namespace: &str,
         card: &AgentCard,
         overwrite: bool,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.create_agent_draft(namespace, card, overwrite).await
+        self.create_agent_draft(namespace, card, overwrite, call_interfaces)
+            .await
     }
 
     async fn publish_agent_from_code(
@@ -1297,8 +1389,10 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
         &self,
         namespace: &str,
         card: &AgentCard,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail> {
-        self.update_agent_draft(namespace, card).await
+        self.update_agent_draft(namespace, card, call_interfaces)
+            .await
     }
 
     async fn delete_agent_draft(
@@ -1420,7 +1514,7 @@ impl super::traits::A2aAgentService for A2aServerOperationService {
                 namespace_id: namespace.to_string(),
                 agent_name: agent_name.to_string(),
                 version: version.to_string(),
-                call_interface: batata_common::model::ai::a2a::AgentCallInterface {
+                call_interface: batata_common::model::ai::a2a::RuntimeCallInterface {
                     protocol: protocol.to_string(),
                     endpoints: endpoints
                         .iter()
@@ -1478,6 +1572,7 @@ mod tests {
             skills: vec![],
             provider: String::new(),
             agent_card: None,
+            call_interfaces: None,
         };
 
         let json = serde_json::to_string(&info).unwrap();

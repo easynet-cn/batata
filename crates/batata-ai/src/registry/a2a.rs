@@ -673,7 +673,7 @@ impl batata_common::A2aAgentService for AgentRegistry {
         page_no: u32,
         page_size: u32,
         _user: Option<&str>,
-    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentSummary>> {
         let query = AgentListQuery {
             namespace_id: Some(namespace.to_string()),
             agent_name: agent_name.map(String::from),
@@ -681,23 +681,70 @@ impl batata_common::A2aAgentService for AgentRegistry {
             page_no: Some(page_no),
             page_size: Some(page_size),
         };
-        Ok(self.list_with_search(&query))
+        let page = self.list_with_search(&query);
+        let page_size = query.page_size.unwrap_or(20) as u64;
+        let summaries: Vec<AgentSummary> = page
+            .page_items
+            .into_iter()
+            .map(|info| AgentSummary {
+                agent_name: info.name.clone(),
+                display_name: None,
+                description: None,
+                icon_url: None,
+                provider: None,
+                tags: None,
+                extensions: None,
+                namespace_id: query.namespace_id.clone().unwrap_or_default(),
+                status: None,
+                owner: None,
+                scope: None,
+                version_info: Some(AgentVersionInfo {
+                    editing_version: None,
+                    reviewing_version: None,
+                    online_versions: None,
+                    labels: None,
+                }),
+                meta_version: None,
+                create_time: None,
+                update_time: None,
+            })
+            .collect();
+        Ok(batata_common::model::Page::new(
+            page.total_count,
+            page.page_number,
+            page_size,
+            summaries,
+        ))
     }
 
     async fn list_versions(
         &self,
         namespace: &str,
         agent_name: &str,
-    ) -> anyhow::Result<Vec<VersionDetail>> {
+    ) -> anyhow::Result<batata_common::model::Page<AgentVersionSummary>> {
         let agents = self.list_versions(namespace, agent_name);
-        Ok(agents
+        let summaries: Vec<AgentVersionSummary> = agents
             .into_iter()
-            .map(|a| VersionDetail {
+            .map(|a| AgentVersionSummary {
                 version: a.card.version.clone(),
-                release_date: String::new(),
-                is_latest: true,
+                labels: None,
+                protocols: None,
+                status: String::new(),
+                publish_pipeline_info: None,
+                author: None,
+                change_description: None,
+                content_digest: None,
+                create_time: None,
+                update_time: None,
             })
-            .collect())
+            .collect();
+        let total = summaries.len() as u64;
+        Ok(batata_common::model::Page::new(
+            total,
+            1,
+            total.max(1),
+            summaries,
+        ))
     }
 
     async fn find_by_skill(&self, skill: &str) -> anyhow::Result<Vec<RegisteredAgent>> {
@@ -716,6 +763,7 @@ impl batata_common::A2aAgentService for AgentRegistry {
         _namespace: &str,
         _card: &batata_common::model::ai::a2a::AgentCard,
         _overwrite: bool,
+        _call_interfaces: Option<Vec<batata_common::model::ai::a2a::AgentCallInterface>>,
     ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
         anyhow::bail!(VERSIONING_UNSUPPORTED)
     }
@@ -724,6 +772,7 @@ impl batata_common::A2aAgentService for AgentRegistry {
         &self,
         _namespace: &str,
         _card: &batata_common::model::ai::a2a::AgentCard,
+        _call_interfaces: Option<Vec<batata_common::model::ai::a2a::AgentCallInterface>>,
     ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
         anyhow::bail!(VERSIONING_UNSUPPORTED)
     }

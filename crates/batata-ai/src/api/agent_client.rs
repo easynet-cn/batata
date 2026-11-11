@@ -445,28 +445,47 @@ async fn search(
         .await
     {
         Ok(page) => {
-            // Convert Page<AgentCardVersionInfo> to Page<AgentCatalogEntry>
+            // Convert Page<AgentSummary> to Page<AgentCatalogEntry>
             let entries: Vec<AgentCatalogEntry> = page
                 .page_items
                 .iter()
-                .map(|v| AgentCatalogEntry {
-                    agent_name: v.name.clone(),
-                    display_name: Some(v.name.clone()),
-                    description: None,
-                    latest_version: v.latest_published_version.clone(),
-                    versions: v
-                        .version_details
-                        .iter()
-                        .map(|vd| AgentCatalogVersion {
-                            version: vd.version.clone(),
-                            release_date: if vd.release_date.is_empty() {
-                                None
-                            } else {
-                                Some(vd.release_date.clone())
-                            },
-                            is_latest: vd.is_latest,
+                .map(|v| {
+                    let online = v
+                        .version_info
+                        .as_ref()
+                        .and_then(|vi| vi.online_versions.as_ref());
+                    let latest_version = online
+                        .and_then(|ov| ov.first())
+                        .map(|s| s.version.clone())
+                        .or_else(|| {
+                            v.version_info
+                                .as_ref()
+                                .and_then(|vi| vi.editing_version.clone())
                         })
-                        .collect(),
+                        .unwrap_or_default();
+                    let mut idx = 0usize;
+                    let versions: Vec<AgentCatalogVersion> = online
+                        .map(|ov| {
+                            ov.iter()
+                                .map(|s| {
+                                    let is_latest = idx == 0;
+                                    idx += 1;
+                                    AgentCatalogVersion {
+                                        version: s.version.clone(),
+                                        release_date: None,
+                                        is_latest,
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    AgentCatalogEntry {
+                        agent_name: v.agent_name.clone(),
+                        display_name: v.display_name.clone(),
+                        description: v.description.clone(),
+                        latest_version,
+                        versions,
+                    }
                 })
                 .collect();
 
@@ -515,7 +534,12 @@ async fn discover(
                 );
             }
         };
-        match versions.iter().find(|v| v.is_latest) {
+        match versions
+            .page_items
+            .iter()
+            .find(|v| v.status == "online")
+            .or_else(|| versions.page_items.first())
+        {
             Some(v) => v.version.clone(),
             None => {
                 return Result::<()>::http_not_found(
@@ -538,7 +562,11 @@ async fn discover(
                 );
             }
         };
-        let available: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+        let available: Vec<&str> = versions
+            .page_items
+            .iter()
+            .map(|v| v.version.as_str())
+            .collect();
         match crate::service::version_range::select_version(&available, requested) {
             Some(v) => v.to_string(),
             None => {
@@ -694,7 +722,11 @@ async fn deregister_endpoints(
     // List all versions for this agent, then delete endpoints for each version
     match a2a_service.list_versions(ns, &form.agent_name).await {
         Ok(versions) => {
-            let catalog: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
+            let catalog: Vec<String> = versions
+                .page_items
+                .iter()
+                .map(|v| v.version.clone())
+                .collect();
             endpoint_service.deregister_agent_publication(
                 &client_id,
                 ns,
@@ -706,7 +738,7 @@ async fn deregister_endpoints(
                 namespace = %ns,
                 agent_name = %form.agent_name,
                 protocol = %form.protocol,
-                version_count = versions.len(),
+                version_count = versions.page_items.len(),
                 "Agent endpoints deregistered via client API"
             );
 

@@ -606,7 +606,7 @@ async fn agent_lifecycle_and_labels_accept_ga_form_body() {
         .await
         .expect("register agent");
     agent
-        .create_agent_draft(NS, &agent_card(DRAFT_VERSION), false)
+        .create_agent_draft(NS, &agent_card(DRAFT_VERSION), false, None)
         .await
         .expect("create agent draft");
     assert_eq!(
@@ -887,10 +887,11 @@ async fn agent_flat_form_update_does_not_require_a_version() {
     );
 }
 
-/// The GA ARD `callInterfaces` field cannot be represented by an A2A
-/// `AgentCard`; accepting and dropping it would register a dead agent.
+/// The GA ARD `callInterfaces` field is accepted (GA's
+/// `requireInitialDraftContent` needs it non-null) and persisted on the version
+/// definition; it round-trips through the draft response.
 #[actix_web::test]
-async fn ga_call_interfaces_fail_closed_at_the_route() {
+async fn ga_call_interfaces_are_accepted_and_persisted_at_the_route() {
     agent_form_app!(store, app, agent_svc);
     let _ = &agent_svc;
 
@@ -899,16 +900,24 @@ async fn ga_call_interfaces_fail_closed_at_the_route() {
         percent_encode(r#"[{"protocol":"JSONRPC"}]"#),
     );
     let (status, out) = post_form(&app, "/v3/admin/ai/agents/draft", &form).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400, got {out}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "callInterfaces must be accepted, got {out}"
+    );
     assert!(
         out.contains("callInterfaces"),
-        "structured 400 expected: {out}"
+        "the accepted draft must echo callInterfaces: {out}"
+    );
+    assert!(
+        out.contains("JSONRPC"),
+        "the call interface protocol must be preserved: {out}"
     );
     assert!(
         stored_agent_card(&store, FLAT_AGENT, FLAT_VERSION)
             .await
-            .is_none(),
-        "a rejected ARD draft must not be persisted"
+            .is_some(),
+        "an accepted ARD draft must be persisted"
     );
 }
 

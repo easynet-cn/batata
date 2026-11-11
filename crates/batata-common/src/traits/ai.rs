@@ -4,11 +4,10 @@
 use std::collections::HashMap;
 
 use crate::model::Page;
-use crate::model::ai::VersionDetail;
 use crate::model::ai::a2a::{
-    AgentCard, AgentCardVersionInfo, AgentRegistryStats, AgentVersionDetail,
-    BatchAgentRegistrationRequest, BatchRegistrationResponse, ConsoleRuntimeEndpointView,
-    RegisteredAgent,
+    AgentCallInterface, AgentCard, AgentRegistryStats, AgentSummary, AgentVersionDetail,
+    AgentVersionSummary, BatchAgentRegistrationRequest, BatchRegistrationResponse,
+    ConsoleRuntimeEndpointView, RegisteredAgent,
 };
 use crate::model::ai::agentspec::{AgentSpec, AgentSpecBasicInfo, AgentSpecMeta, AgentSpecSummary};
 use crate::model::ai::mcp::McpRegistryStats;
@@ -806,14 +805,14 @@ pub trait A2aAgentService: Send + Sync {
         page_no: u32,
         page_size: u32,
         user: Option<&str>,
-    ) -> anyhow::Result<Page<AgentCardVersionInfo>>;
+    ) -> anyhow::Result<Page<AgentSummary>>;
 
     /// The `list_versions` method.
     async fn list_versions(
         &self,
         namespace: &str,
         agent_name: &str,
-    ) -> anyhow::Result<Vec<VersionDetail>>;
+    ) -> anyhow::Result<Page<AgentVersionSummary>>;
 
     /// Find agents that provide a specific skill
     async fn find_by_skill(&self, skill: &str) -> anyhow::Result<Vec<RegisteredAgent>>;
@@ -840,6 +839,7 @@ pub trait A2aAgentService: Send + Sync {
         namespace: &str,
         card: &AgentCard,
         overwrite: bool,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail>;
 
     /// Update the draft version currently being edited.
@@ -847,6 +847,7 @@ pub trait A2aAgentService: Send + Sync {
         &self,
         namespace: &str,
         card: &AgentCard,
+        call_interfaces: Option<Vec<AgentCallInterface>>,
     ) -> anyhow::Result<AgentVersionDetail>;
 
     /// Delete a draft version.

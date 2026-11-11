@@ -850,27 +850,44 @@ impl PayloadHandler for AgentSearchRpcHandler {
                     let entries: Vec<AgentCatalogEntry> = page
                         .page_items
                         .iter()
-                        .map(|v| AgentCatalogEntry {
-                            agent_name: v.name.clone(),
-                            display_name: v.name.clone(),
-                            description: String::new(),
-                            icon_url: String::new(),
-                            provider: None,
-                            tags: vec![],
-                            latest_version: v.latest_published_version.clone(),
-                            versions: v
-                                .version_details
-                                .iter()
-                                .map(|vd| AgentCatalogVersion {
-                                    version: vd.version.clone(),
-                                    labels: if vd.is_latest {
-                                        vec!["latest".to_string()]
-                                    } else {
-                                        vec![]
-                                    },
-                                    protocols: vec!["a2a".to_string()],
+                        .map(|v| {
+                            let online = v
+                                .version_info
+                                .as_ref()
+                                .and_then(|vi| vi.online_versions.as_ref());
+                            let latest_version = online
+                                .and_then(|ov| ov.first())
+                                .map(|s| s.version.clone())
+                                .or_else(|| {
+                                    v.version_info
+                                        .as_ref()
+                                        .and_then(|vi| vi.editing_version.clone())
                                 })
-                                .collect(),
+                                .unwrap_or_default();
+                            let versions: Vec<AgentCatalogVersion> = online
+                                .map(|ov| {
+                                    ov.iter()
+                                        .map(|s| AgentCatalogVersion {
+                                            version: s.version.clone(),
+                                            labels: s.labels.clone().unwrap_or_default(),
+                                            protocols: s
+                                                .protocols
+                                                .clone()
+                                                .unwrap_or_else(|| vec!["a2a".to_string()]),
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            AgentCatalogEntry {
+                                agent_name: v.agent_name.clone(),
+                                display_name: v.display_name.clone().unwrap_or_default(),
+                                description: v.description.clone().unwrap_or_default(),
+                                icon_url: v.icon_url.clone().unwrap_or_default(),
+                                provider: None,
+                                tags: v.tags.clone().unwrap_or_default(),
+                                latest_version,
+                                versions,
+                            }
                         })
                         .collect();
 
@@ -1033,18 +1050,24 @@ impl PayloadHandler for AgentDiscoveryRpcHandler {
                 } else {
                     &reference.label
                 };
+                // The published "latest" is the online version; fall back to the
+                // highest version when no version has reached the online state.
+                let resolve_latest = || {
+                    versions
+                        .page_items
+                        .iter()
+                        .find(|v| v.status == "online")
+                        .or_else(|| versions.page_items.first())
+                        .map(|v| v.version.clone())
+                };
                 if label == "latest" {
-                    if let Some(latest) = versions.iter().find(|v| v.is_latest) {
-                        version = latest.version.clone();
-                    } else if let Some(first) = versions.first() {
-                        version = first.version.clone();
+                    if let Some(latest) = resolve_latest() {
+                        version = latest;
                     }
                 } else {
                     // Try to match by label (not yet supported; fallback to latest)
-                    if let Some(latest) = versions.iter().find(|v| v.is_latest) {
-                        version = latest.version.clone();
-                    } else if let Some(first) = versions.first() {
-                        version = first.version.clone();
+                    if let Some(latest) = resolve_latest() {
+                        version = latest;
                     }
                 }
             }
@@ -1298,7 +1321,7 @@ impl PayloadHandler for AgentEndpointDeregisterRpcHandler {
             && let Ok(versions) = svc.list_versions(namespace_id, &request.agent_name).await
             && let Some(ref ep_svc) = self.endpoint_service
         {
-            for vd in &versions {
+            for vd in &versions.page_items {
                 let endpoints =
                     ep_svc.get_agent_endpoints(namespace_id, &request.agent_name, &vd.version);
                 for ep in &endpoints {

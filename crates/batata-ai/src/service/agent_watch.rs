@@ -704,13 +704,22 @@ async fn resolve_version(
     use crate::service::version_range::{contains, is_range};
     if requested.is_empty() {
         let versions = a2a.list_versions(ns, name).await.ok()?;
+        // The published "latest" is the online version; fall back to the
+        // highest version (the list is sorted by version descending) when no
+        // version has reached the online state yet.
         versions
+            .page_items
             .iter()
-            .find(|v| v.is_latest)
+            .find(|v| v.status == "online")
+            .or_else(|| versions.page_items.first())
             .map(|v| v.version.clone())
     } else if is_range(requested) {
         let versions = a2a.list_versions(ns, name).await.ok()?;
-        let available: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+        let available: Vec<&str> = versions
+            .page_items
+            .iter()
+            .map(|v| v.version.as_str())
+            .collect();
         available
             .into_iter()
             .find(|v| contains(requested, v))
