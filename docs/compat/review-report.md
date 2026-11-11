@@ -1748,3 +1748,63 @@ row + Summary Total, `README.md` global table and F-ID narrative updated.
 (58 tests) and `cargo test -p batata-client --test ai_service_test` (2 tests)
 all pass. No `--full` matrix, commit, push, publish, yank, archive or tag was
 performed (commit/push handled separately).
+
+## 22. F-NAC-CSDK-006 — HTTP request-id correlation header (2026-11-11)
+
+### 22.1 Summary
+
+Nacos 3.3.0 GA adds a `Nacos-Request-Id` correlation header (a fresh UUID) to
+every outgoing client HTTP request through `RequestIdHttpClientRequestInterceptor`
+(`client-basic`), registered in both `ConfigHttpClientManager` and
+`NamingHttpClientManager`. The batata client set a UUID `request_id` only on the
+gRPC path; the HTTP layer (`crates/batata-client/src/http.rs`) sent no such
+header. This closes the HTTP-side gap so upstream/Grafana-style correlation
+matches GA.
+
+### 22.2 Implementation
+
+`crates/batata-client/src/http.rs`:
+- A module const `NACOS_REQUEST_ID = "Nacos-Request-Id"` and a free helper
+  `with_request_id(builder)` that appends `.header(NACOS_REQUEST_ID,
+  uuid::Uuid::new_v4().to_string())`.
+- `request_with_retry` now generates a fresh `request_id` per loop iteration
+  (i.e. per physical request, matching the per-request GA interceptor) and
+  passes it into each closure, which applies it alongside the auth header.
+- The retry-bypassing paths also attach the header: `authenticate()` (JWT
+  login), `post_json_with_headers()`, `get_bytes` / `get_bytes_with_query`,
+  `post_bytes`, and `post_multipart` / `post_multipart_with_query` /
+  `post_multipart_bytes`.
+
+### 22.3 Scope
+
+Client-only, no server change: the batata tracing middleware reads `x-request-id`
+on the server side, which is independent of this client egress header (the
+header is emitted for upstream/log-correlation parity). The standalone
+transports in `auth.rs` (`JwtAuthProvider::login`) and `server_list.rs`
+(`build_refresh_client`) are out of scope for this F-ID (they sit outside the
+registered gap file `src/http.rs`) and are noted as optional follow-ups.
+
+### 22.4 Guards
+
+3 wiremock cases in `crates/batata-client/tests/request_id_test.rs`:
+`get_carries_nacos_request_id` (GET), `post_json_carries_nacos_request_id`
+(POST) and `authenticate_carries_nacos_request_id` (JWT login). Each asserts the
+recorded request carries `Nacos-Request-Id` and that its value parses as a v4
+UUID and is not nil. All 3 are mutant-checked: removing the `.header(...)` from
+the GET closure makes `get_carries_nacos_request_id` panic with
+`missing Nacos-Request-Id`, confirming the tests bind to the guard rather than
+to incidental traffic.
+
+### 22.5 Status and promotion
+
+`F-NAC-CSDK-006` → 🟢. Counts: B.9 `3🟢/1🟡/4⚪/0⛔` (rate 25%→38%); Nacos Total
+`181🟢/5🟡/7⚪/4⛔/197` → `182🟢/5🟡/6⚪/4⛔/197` (rate 92% unchanged). `features.md`
+B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
+
+### 22.6 Validation and no-ops
+
+`cargo fmt -p batata-client -- --check`, `git diff --check`,
+`scripts/compat_check.py`, `cargo check -p batata-client --tests` and
+`cargo test -p batata-client` (372 lib + 2 ai + 11 tls + 25 unit + 3 request_id
++ 2 doctests) all pass. No `--full` matrix, commit, push, publish, yank, archive
+or tag was performed (commit/push handled separately).
