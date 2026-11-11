@@ -26,17 +26,17 @@ There is **no** `bugs.md`, `_index.md` or shell-based checker; the B-ID
 scheme below is reserved for future use, and ID validation is done by
 `scripts/compat_check.py`.
 
-## Global summary (2026-11-10)
+## Global summary (2026-11-11)
 
 Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 `scripts/compat_check.py`.
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 197      | 179 | 5  | 0 | 9 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 180 | 5  | 0 | 8 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **527** | **10** | **0** | **36** | **4** | **91%** | **1040** | |
+| **Total** | **577** | **528** | **10** | **0** | **35** | **4** | **92%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -75,7 +75,7 @@ guard #10 enforces that pom, server config, k8s configmap and the inventory
 headings all declare the same target. Consul tracks `2.1.0-dev`, Apollo the
 2025 master snapshots.
 
-### Registered Rust client SDK gaps (2026-11-10)
+### Registered Rust client SDK gaps (2026-11-11)
 
 The audit in `review-report.md` compares `batata-client` /
 `batata-maintainer-client` with the upstream Nacos Java client. `🟢` rows that
@@ -95,17 +95,22 @@ B.10 (server AI ADMIN), so the checker can detect a status that drifts from real
 | batata-client | F-NAC-CSDK-004 | config 304 conditional GET (`localMd5`) |
 | batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` |
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
-| batata-core | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys |
+| batata-core, batata-ai | F-NAC-CSDK-007 | GA `SetupAckRequest.ability_table` RAD keys — **closed in batch 13** (`🟢`): the four keys (`agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1`) are advertised in `crates/batata-core/src/handler/rpc.rs`, and the GA RAD v1 gRPC handlers (`AgentPublishRpcRequest` / `AgentSubscribeRpcRequest` / `AgentUnsubscribeRpcRequest`) are implemented in `crates/batata-ai/src/handler/ai_handler.rs` backed by `crates/batata-ai/src/service/agent_rad_watch.rs` |
 | batata-ai | F-NAC-MAINT-010 | AI ADMIN POST/PUT form-vs-query channel — **closed in batch 5** (`🟢`); the ARD model divergence moved to `F-NAC-AISRV-001` |
-| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model — **Phase A partial (🟡, 2026-11-11)**: typed `AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` DTOs, `callInterfaces` stored in version detail + accepted on first draft (no longer fail-closed), GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>` list/version responses, `online_versions` / `status` reconciliation. RAD `GET /runtime-endpoints` live source deferred to `F-NAC-CSDK-007` |
+| batata-ai (server) | F-NAC-AISRV-001 | GA ARD Agent model — **Phase A partial (🟡, 2026-11-11)**: typed `AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` DTOs, `callInterfaces` stored in version detail + accepted on first draft (no longer fail-closed), GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>` list/version responses, `online_versions` / `status` reconciliation. RAD `GET /runtime-endpoints` live source still deferred (needs Naming publication backend) |
 | batata-ai (server) | F-NAC-AISRV-002 | `/v3/admin/ai/import` controller — **false gap, closed in batch 6** (`🟢`, already in `batata-console`, also `F-NAC-ADM-AI-008`) |
 | batata-ai (server) | F-NAC-AISRV-003 | `/v3/admin/ai/pipelines` deprecated reads — **⛔ won't support** (GA returns 410 unless an opt-in compatibility flag is set) |
 
-`F-NAC-CSDK-007` is **deferred on purpose**: GA Java clients gate RAD gRPC
-routing on `radV1`/`radWatchV1`, and batata's AI handlers only cover
-`AgentSearchRpcRequest`, `AgentDiscoveryRpcRequest` and the two endpoint
-requests. Advertising the keys before those handlers exist would turn a
-working legacy fallback into a broken RAD call.
+`F-NAC-CSDK-007` was **deferred on purpose** (see above narrative) because GA
+Java clients gate RAD gRPC routing on `radV1`/`radWatchV1`: advertising the
+keys before the handlers existed would turn a working legacy fallback into a
+broken RAD call. **Batch 13 (2026-11-11) closed it** — batata's AI handlers now
+cover `AgentPublishRpcRequest`, `AgentSubscribeRpcRequest` and
+`AgentUnsubscribeRpcRequest` in addition to `AgentSearchRpcRequest`,
+`AgentDiscoveryRpcRequest` and the two endpoint requests, so the four GA keys
+are advertised and GA 3.4.0 clients negotiate RAD safely. The only remaining
+RAD sub-gap is the `GET /runtime-endpoints` live source, which needs the Naming
+publication backend and is tracked separately (outside `F-NAC-CSDK-007`).
 
 **Batch 1 implemented (2026-11-10)**: `F-NAC-MAINT-006` is now `🟢` (eight MCP
 version-lifecycle methods + `McpServerVersionInfo` DTO in

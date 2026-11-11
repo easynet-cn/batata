@@ -1530,9 +1530,10 @@ non-null `callInterfaces`).
 
 ### 19.4 Status and promotion
 
-`F-NAC-AISRV-001` → 🟡 (partial). `GET /runtime-endpoints` live support is
-deferred to `F-NAC-CSDK-007` (needs Naming publication backend + RAD gRPC
-handlers), so the row is partial, not 🟢. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate
+`F-NAC-AISRV-001` → 🟡 (partial). The `GET /runtime-endpoints` live-support
+sub-capability is still deferred (it needs the Naming publication backend; the
+RAD gRPC handlers it also needed landed in `F-NAC-CSDK-007`, now 🟢 per §20), so
+the row is partial, not 🟢. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate
 33%→67%); Nacos Total `179🟢/4🟡/10⚪/4⛔/197` → `179🟢/5🟡/9⚪/4⛔/197` (rate 91%
 unchanged). `features.md` B.10 and Summary Total, `README.md` global table and
 F-ID narrative updated.
@@ -1543,3 +1544,93 @@ F-ID narrative updated.
 `cargo check -p batata-ai --tests` and the `batata-ai` + `batata-server` route
 suites all pass. No `--full` matrix, commit, push, publish, yank, archive or tag
 was performed (commit/push handled separately).
+
+## 20. Implementation batch 13 — GA RAD v1 ability keys + gRPC handlers (`F-NAC-CSDK-007` → 🟢)
+
+### 20.1 GA contract and gap
+
+Nacos 3.3.0 GA declares nine server ability keys in
+`AbilityKey.java` (62, 76, 86, 92). batata advertised only five
+(`fuzzyWatch`, `lock`, `mcp`, `supportPersistentInstanceByGrpc`, plus one
+other), so GA 3.4.0 Java clients never negotiated the RAD v1 / RAD watch
+contract. `F-NAC-CSDK-007` was registered `⚪` on purpose: advertising
+`radV1` / `radWatchV1` makes GA clients switch to RAD gRPC request types
+(`AgentPublishRpcRequest`, `AgentSubscribeRpcRequest`, `AgentUnsubscribeRpcRequest`)
+that `batata-ai` did not handle — an unhandled request fails the GA client's
+handshake-fast-path and breaks the SDK. The fix is two-sided: advertise the
+keys **and** implement the handlers they enable.
+
+### 20.2 Implementation
+
+- **Ability keys** (`crates/batata-core/src/handler/rpc.rs`, `SERVER_ABILITIES`):
+  added `mcpDraftRelease`, `agentCardV1`, `radV1`, `radWatchV1` (all `true`);
+  `HashMap` capacity raised 5 → 9.
+- **Model structs** (`crates/batata-api/src/remote/model.rs`): new
+  `AgentPublishRequest` / `AgentPublishRpcRequest` / `AgentPublishRpcResponse`,
+  `AgentSubscribeRpcRequest` / `AgentSubscribeRpcResponse`,
+  `AgentUnsubscribeRpcRequest` / `AgentUnsubscribeRpcResponse`, all carrying the
+  `RequestTrait` / `ResponseTrait` impls so they round-trip through
+  `Payload{metadata.type, Any.body}` with the exact GA `type` strings.
+- **RAD handlers** (`crates/batata-ai/src/handler/ai_handler.rs`, mirroring the
+  existing `AgentSearchRpcHandler` / `AgentDiscoveryRpcHandler` patterns):
+  - `AgentPublishRpcHandler` — `can_handle()` → `"AgentPublishRpcRequest"`,
+    `auth_requirement()` → `Write`; builds an `AgentCard` from
+    `AgentPublishRequest` (mapping `provider` → `AgentProvider`), calls
+    `A2aAgentService::publish_agent_from_code`, returns
+    `AgentPublishRpcResponse { version_detail: Some(detail) }`.
+  - `AgentSubscribeRpcHandler` — `can_handle()` → `"AgentSubscribeRpcRequest"`,
+    `auth_requirement()` → `Read`; reads `connection_id` from
+    `connection.meta_info`, calls
+    `AgentRadWatchService::subscribe`, returns
+    `AgentSubscribeRpcResponse { watch_key, observed_fingerprint, refresh_required: false }`.
+  - `AgentUnsubscribeRpcHandler` — `can_handle()` →
+    `"AgentUnsubscribeRpcRequest"`, `auth_requirement()` → `Read`,
+    `resource_from_payload` → `None`; calls
+    `AgentRadWatchService::unsubscribe` and returns an empty
+    `AgentUnsubscribeRpcResponse`.
+- **RAD watch service** (`crates/batata-ai/src/service/agent_rad_watch.rs`, new):
+  `AgentRadWatchService` with a `WatchPusher` trait (blanket impl for
+  `ConnectionManager`, plus a test stub) so server-push is decoupled from the
+  connection map; `subscribe` / `unsubscribe` / `unsubscribe_all` / `size` /
+  `valid_client_watch_id` and a broadcast channel
+  (`publish_agent_change` / `subscribe_agent_changes`) that fans out a watch
+  notification only when the recomputed `DiscoveryProjector` fingerprint
+  differs from the observed one.
+- **Wiring** (`crates/batata-server/src/startup/grpc.rs`): `register_ai_handlers`
+  now takes `&mut AIServices`, constructs
+  `AgentRadWatchService::new(a2a_service.clone(), connection_manager.clone())`
+  when the A2A service is present, stores it on `AIServices.agent_rad_watch`
+  (new field, `None` in both `AIServices` constructors) and registers the three
+  handlers; `start_grpc_servers` likewise takes `&mut AIServices`.
+  `app_builder.rs` passes `as_mut()`.
+
+### 20.3 Guards
+
+`batata-ai` lib unit tests: three `can_handle()` assertions (one per RAD
+handler) plus three `#[tokio::test]` handler tests —
+`rad_publish_handler_returns_version_detail` (publish → `version_detail`),
+`rad_subscribe_handler_returns_watch_key_and_fingerprint` (subscribe →
+`watch_key` + `observed_fingerprint`), `rad_unsubscribe_handler_succeeds` —
+driven by `RadTestA2a` / `TestPusher` doubles. `agent_rad_watch.rs` adds five
+module tests: `client_watch_id_validation_matches_ga_constraint`,
+`subscribe_generates_watch_key_and_stores_registration`,
+`unsubscribe_all_clears_connection_watches`,
+`change_notifies_only_on_fingerprint_diff`,
+`change_via_global_broadcast_is_fanned_out`. All `AgentVersionDetail` /
+`AgentRegistryStats` / `BatchRegistrationResponse` gained `#[derive(Default)]`
+to support the doubles.
+
+### 20.4 Status and promotion
+
+`F-NAC-CSDK-007` → 🟢. Counts: B.9 `1🟢/1🟡/6⚪/0⛔` (rate 0%→13%); Nacos Total
+`179🟢/5🟡/9⚪/4⛔/197` → `180🟢/5🟡/8⚪/4⛔/197` (rate 91% unchanged). `features.md`
+B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
+The `GET /runtime-endpoints` live-support sub-capability stays deferred (needs
+the Naming publication backend) and is tracked outside this row.
+
+### 20.5 Validation and no-ops
+
+`cargo fmt --all -- --check`, `git diff --check`, `scripts/compat_check.py`,
+`cargo check -p batata-ai --tests -p batata-server --tests` and the `batata-ai`
+lib suite (`199` tests) all pass. No `--full` matrix, commit, push, publish,
+yank, archive or tag was performed (commit/push handled separately).

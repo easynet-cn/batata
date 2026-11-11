@@ -689,7 +689,7 @@ impl AppBuilder {
         info!("[Phase 7] Starting gRPC servers...");
 
         let app_state = self.app_state.as_ref().unwrap();
-        let ai_services = self.ai_services.as_ref().unwrap();
+        let ai_services = self.ai_services.as_mut().unwrap();
         let persistence_ctx = self.persistence_ctx.as_ref().unwrap();
         let config = self.configuration.as_ref().unwrap();
 

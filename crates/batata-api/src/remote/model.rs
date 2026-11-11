@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use prost_types::Any;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use batata_common::model::ai::a2a::{AgentCallInterface, AgentProviderInfo, AgentVersionDetail};
+
 use crate::{
     grpc::{Metadata, Payload},
     model::{INTERNAL_MODULE, Member},
@@ -1957,6 +1959,223 @@ impl_response_trait!(AgentEndpointOperationResponse);
 
 impl From<AgentEndpointOperationResponse> for Any {
     fn from(val: AgentEndpointOperationResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
+// AI-RAD v1: Publish / Subscribe (Watch) / Unsubscribe (Nacos 3.3.0 GA RAD)
+// =============================================================================
+
+/// Code-first agent definition publication body (GA `AgentPublishRequest`).
+///
+/// Wire-compatible: extends `AbstractAgentMetadata` (`agentName`, `displayName`,
+/// `description`, `iconUrl`, `provider`, `tags`, `extensions`) and
+/// `AbstractAgentDraftRequest` (`version`, `callInterfaces`, `author`,
+/// `changeDescription`, `basedOnVersion`), plus `autoSubmit`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentPublishRequest {
+    /// The `agent_name` field.
+    pub agent_name: String,
+    /// The `display_name` field.
+    pub display_name: String,
+    /// The `description` field.
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `icon_url` field.
+    pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `provider` field.
+    pub provider: Option<AgentProviderInfo>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// The `tags` field.
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `extensions` field.
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `version` field.
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// The `call_interfaces` field.
+    pub call_interfaces: Vec<AgentCallInterface>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `author` field.
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `change_description` field.
+    pub change_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `based_on_version` field.
+    pub based_on_version: Option<String>,
+    /// The `auto_submit` field.
+    pub auto_submit: bool,
+}
+
+/// gRPC request for code-first agent definition publication (GA `AgentPublishRpcRequest`).
+///
+/// Wire-compatible: `module` = "ai".
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentPublishRpcRequest {
+    #[serde(flatten)]
+    /// The `request` field.
+    pub request: Request,
+    /// The `module` field.
+    pub module: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `namespace_id` field.
+    pub namespace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `publish_request` field.
+    pub publish_request: Option<AgentPublishRequest>,
+}
+
+impl_request_trait!(AgentPublishRpcRequest, request);
+
+impl From<&Payload> for AgentPublishRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentPublishRpcRequest::from_payload(value)
+    }
+}
+
+/// gRPC response for code-first agent definition publication (GA `AgentPublishRpcResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPublishRpcResponse {
+    #[serde(flatten)]
+    /// The `response` field.
+    pub response: Response,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `version_detail` field.
+    pub version_detail: Option<AgentVersionDetail>,
+}
+
+impl AgentPublishRpcResponse {
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            version_detail: None,
+        }
+    }
+}
+
+impl_response_trait!(AgentPublishRpcResponse);
+
+impl From<AgentPublishRpcResponse> for Any {
+    fn from(val: AgentPublishRpcResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// gRPC request to install one connection-owned RAD Watch (GA `AgentSubscribeRpcRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSubscribeRpcRequest {
+    #[serde(flatten)]
+    /// The `request` field.
+    pub request: Request,
+    /// The `module` field.
+    pub module: String,
+    /// The `client_watch_id` field.
+    pub client_watch_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `discovery_request` field.
+    pub discovery_request: Option<AgentDiscoveryRequest>,
+    /// The `materialized_fingerprint` field.
+    pub materialized_fingerprint: String,
+}
+
+impl_request_trait!(AgentSubscribeRpcRequest, request);
+
+impl From<&Payload> for AgentSubscribeRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentSubscribeRpcRequest::from_payload(value)
+    }
+}
+
+/// gRPC response installing one connection-owned RAD Watch (GA `AgentSubscribeRpcResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSubscribeRpcResponse {
+    #[serde(flatten)]
+    /// The `response` field.
+    pub response: Response,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `watch_key` field.
+    pub watch_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `observed_fingerprint` field.
+    pub observed_fingerprint: Option<String>,
+    /// The `refresh_required` field.
+    pub refresh_required: bool,
+}
+
+impl AgentSubscribeRpcResponse {
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            watch_key: None,
+            observed_fingerprint: None,
+            refresh_required: false,
+        }
+    }
+}
+
+impl_response_trait!(AgentSubscribeRpcResponse);
+
+impl From<AgentSubscribeRpcResponse> for Any {
+    fn from(val: AgentSubscribeRpcResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// gRPC request to remove one connection-owned RAD Watch (GA `AgentUnsubscribeRpcRequest`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentUnsubscribeRpcRequest {
+    #[serde(flatten)]
+    /// The `request` field.
+    pub request: Request,
+    /// The `module` field.
+    pub module: String,
+    /// The `watch_key` field.
+    pub watch_key: String,
+}
+
+impl_request_trait!(AgentUnsubscribeRpcRequest, request);
+
+impl From<&Payload> for AgentUnsubscribeRpcRequest {
+    fn from(value: &Payload) -> Self {
+        AgentUnsubscribeRpcRequest::from_payload(value)
+    }
+}
+
+/// gRPC response removing one connection-owned RAD Watch (GA `AgentUnsubscribeRpcResponse`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUnsubscribeRpcResponse {
+    #[serde(flatten)]
+    /// The `response` field.
+    pub response: Response,
+}
+
+impl AgentUnsubscribeRpcResponse {
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl_response_trait!(AgentUnsubscribeRpcResponse);
+
+impl From<AgentUnsubscribeRpcResponse> for Any {
+    fn from(val: AgentUnsubscribeRpcResponse) -> Self {
         val.to_any()
     }
 }

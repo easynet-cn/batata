@@ -838,7 +838,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     static SERVER_ABILITIES: std::sync::LazyLock<
                                         HashMap<String, bool>,
                                     > = std::sync::LazyLock::new(|| {
-                                        let mut m = HashMap::with_capacity(5);
+                                        let mut m = HashMap::with_capacity(9);
                                         m.insert("fuzzyWatch".to_string(), true);
                                         m.insert("lock".to_string(), true);
                                         m.insert("mcp".to_string(), true);
@@ -847,6 +847,17 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                             "supportPersistentInstanceByGrpc".to_string(),
                                             true,
                                         );
+                                        // Nacos 3.3.0 GA server ability keys.
+                                        // `mcpDraftRelease`, `agentCardV1`, `radV1`
+                                        // and `radWatchV1` gate the GA RAD v1 gRPC
+                                        // contract (F-NAC-CSDK-007). The RAD handlers
+                                        // are implemented in `batata-ai`, so these
+                                        // can be advertised without breaking GA
+                                        // 3.4.0 Java clients that switch to RAD.
+                                        m.insert("mcpDraftRelease".to_string(), true);
+                                        m.insert("agentCardV1".to_string(), true);
+                                        m.insert("radV1".to_string(), true);
+                                        m.insert("radWatchV1".to_string(), true);
                                         m
                                     });
 

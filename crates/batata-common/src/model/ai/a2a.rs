@@ -643,7 +643,7 @@ pub struct BatchAgentRegistrationRequest {
 }
 
 /// Batch registration response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchRegistrationResponse {
     /// Number of successfully registered
@@ -748,7 +748,7 @@ pub struct AgentCardVersionInfo {
 ///
 /// Mirrors `McpServerVersionDetail` for MCP: the lifecycle endpoints answer
 /// with the version they just moved, so callers can assert the transition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentVersionDetail {
     /// Namespace ID.
@@ -864,7 +864,7 @@ pub struct AgentCardDetailInfo {
 }
 
 /// Agent Registry statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRegistryStats {
     /// The `total_agents` field.

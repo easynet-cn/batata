@@ -18,6 +18,9 @@ rust-version = "1.88"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Shared common types (AI resource DTOs reused by RAD gRPC models)
+batata-common = { path = "../batata-common" }
+
 # gRPC
 prost = { workspace = true }
 prost-types = { workspace = true }

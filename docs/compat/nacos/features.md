@@ -377,7 +377,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | F-NAC-CSDK-004 | config 304 conditional GET (`GetConfigRequest.localMd5`) | batata-client | ⚪ | | Upstream `GetConfigRequest.java:61`, commit `e2f806777`; needs a client-side wire field plus server handling. |
 | F-NAC-CSDK-005 | OIDC client auth and `configSnapshotEnabled` property switch | batata-client | ⚪ | | Upstream `client-basic/.../oidc/` (`c87f888fc`) and `PropertyKeyConst.java:96` (`0004ea910`); batata has only an internal `SnapShotSwitch` boolean. |
 | F-NAC-CSDK-006 | HTTP `requestId` correlation header | batata-client | ⚪ | | Upstream client HTTP proxy; gRPC has a UUID `request_id` but `src/http.rs` sends no request-id header. |
-| F-NAC-CSDK-007 | `SetupAckRequest.ability_table` GA keys `agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1` | batata-core | ⚪ | | Upstream `AbilityKey.java:62,76,86,92` declares 9 server keys; `crates/batata-core/src/handler/rpc.rs:838-851` advertises 5. **Deferred on purpose**: declaring `radV1`/`radWatchV1` makes GA Java clients switch to RAD gRPC requests that `crates/batata-ai/src/handler/ai_handler.rs` does not handle (`AgentPublishRpcRequest`, watch). Implement the handlers first. |
+| F-NAC-CSDK-007 | `SetupAckRequest.ability_table` GA keys `agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1` | batata-core, batata-ai | 🟢 | | Upstream `AbilityKey.java:62,76,86,92` declares 9 server keys; `crates/batata-core/src/handler/rpc.rs:838-851` now advertises all 9 (added `agentCardV1` / `mcpDraftRelease` / `radV1` / `radWatchV1`, capacity 5→9, 2026-11-11). Declaring `radV1`/`radWatchV1` makes GA 3.4.0 Java clients switch to the RAD v1 gRPC contract, so the matching handlers are implemented in `crates/batata-ai/src/handler/ai_handler.rs`: `AgentPublishRpcHandler` (`AgentPublishRpcRequest` → `AgentVersionDetail`), `AgentSubscribeRpcHandler` (`AgentSubscribeRpcRequest` → watch key + observed fingerprint) and `AgentUnsubscribeRpcHandler` (`AgentUnsubscribeRpcRequest`), backed by `crates/batata-ai/src/service/agent_rad_watch.rs` (`AgentRadWatchService` + `WatchPusher`). GA clients that negotiate RAD no longer hit unhandled request types. (The `GET /runtime-endpoints` live-support sub-capability remains a separate deferred item — it needs the Naming publication backend — and is tracked outside this row.) |
 | F-NAC-CSDK-008 | GA `AgentCard` security fields in the client DTO; post-GA `SecurityRequirement`/`StringList` wrapper and `AgentSkill.securityRequirements` | batata-client | 🟡 | | GA shape implemented 2026-11-10 in `crates/batata-client/src/ai.rs` (`AgentCardInfo.security_schemes` / `security` / `security_requirements`, 2 serde tests, mutant-checked), matching `crates/batata-common/src/model/ai/a2a.rs:107-112`. **Develop drift still missing**: at GA `securityRequirements` is `List<Map<String,List<String>>>`; `ff1bcc2e9` changed it to `List<SecurityRequirement>` with a `schemes`/`list` wrapper and `7c546cfda` added `AgentSkill.securityRequirements`. That is a breaking wire change requiring a server DTO change too. |
 
 ## B.10. Server AI ADMIN alignment (`F-NAC-AISRV-`)
@@ -419,9 +419,9 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 | B.7.5 Admin AI | 8 | 0 | 0 | 0 | 0 | 8 | 100% |
 | B.7.6 Admin Legacy | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | B.8 Maintainer SDK | 6 | 3 | 0 | 1 | 0 | 10 | 60% |
-| B.9 Client SDK gaps | 0 | 1 | 0 | 7 | 0 | 8 | 0% |
+| B.9 Client SDK gaps | 1 | 1 | 0 | 6 | 0 | 8 | 13% |
 | B.10 Server AI ADMIN | 1 | 1 | 0 | 0 | 1 | 3 | 67% |
-| **Total** | 179 | 5 | 0 | 9 | 4 | 197 | 91% |
+| **Total** | 180 | 5 | 0 | 8 | 4 | 197 | 91% |
 
 > Recomputed from the F-ID rows on 2026-11-10 (`scripts/compat_check.py` enforces
 > this table). Initial verification was 2025-08-08; the maintainer SDK rows were
@@ -467,6 +467,7 @@ The E2E matrix is now pinned to 3.3.0, so future runs can exercise them. See
 > /runtime-endpoints` live support is deferred to `F-NAC-CSDK-007`, so the row
 > is partial (`🟡`) not `🟢`. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate 67%),
 > Nacos Total `179🟢/5🟡/9⚪/4⛔/197` (rate 91% unchanged).
+> Batch 13 (2026-11-11) promoted `F-NAC-CSDK-007` from `⚪` to `🟢`: the four deferred GA server ability keys (`agentCardV1`, `mcpDraftRelease`, `radV1`, `radWatchV1`) are now advertised in `crates/batata-core/src/handler/rpc.rs` (`SERVER_ABILITIES` capacity 5→9), and the GA RAD v1 gRPC handlers they enable are implemented in `crates/batata-ai/src/handler/ai_handler.rs` — `AgentPublishRpcHandler` (`AgentPublishRpcRequest` → `AgentVersionDetail`), `AgentSubscribeRpcHandler` (`AgentSubscribeRpcRequest` → watch key + observed fingerprint) and `AgentUnsubscribeRpcHandler` (`AgentUnsubscribeRpcRequest`) — backed by `crates/batata-ai/src/service/agent_rad_watch.rs` (`AgentRadWatchService` + `WatchPusher`). GA 3.4.0 Java clients that negotiate RAD no longer hit unhandled request types. The `GET /runtime-endpoints` live-support sub-capability remains deferred (needs Naming publication backend) and is tracked separately. Counts: B.9 `1🟢/1🟡/6⚪/0⛔` (rate 13%), Nacos Total `180🟢/5🟡/8⚪/4⛔/197` (rate 91% unchanged).
 > Impl rate = 🟢 / Total. gRPC type names must stay exact for
 > interop; HTTP rows were verified against `console-ui-next` (`src/api/*.ts`)
 > and the upstream test suite. Update statuses per actual implementation and

@@ -6,8 +6,9 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tonic::service::InterceptorLayer;
 use tower::ServiceBuilder;
-use tracing::info;
+use tracing::{info, warn};
 
+use batata_ai::service::agent_rad_watch::AgentRadWatchService;
 use batata_api::model::Member;
 use batata_consistency::RaftNode;
 use batata_core::{
@@ -30,7 +31,8 @@ use crate::{
     service::{
         ai_handler::{
             AgentDiscoveryRpcHandler, AgentEndpointDeregisterRpcHandler, AgentEndpointHandler,
-            AgentEndpointRegisterRpcHandler, AgentSearchRpcHandler, McpServerEndpointHandler,
+            AgentEndpointRegisterRpcHandler, AgentPublishRpcHandler, AgentSearchRpcHandler,
+            AgentSubscribeRpcHandler, AgentUnsubscribeRpcHandler, McpServerEndpointHandler,
             QueryAgentCardHandler, QueryMcpServerHandler, QueryPromptHandler,
             ReleaseAgentCardHandler, ReleaseMcpServerHandler,
         },
@@ -427,7 +429,11 @@ fn register_lock_handlers(
 }
 
 /// Registers all AI handlers (MCP + A2A).
-fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices) {
+fn register_ai_handlers(
+    registry: &mut HandlerRegistry,
+    ai_services: &mut AIServices,
+    connection_manager: &Arc<ConnectionManager>,
+) {
     registry.register_handler(Arc::new(McpServerEndpointHandler {
         mcp_registry: ai_services.mcp_registry.clone(),
         mcp_service: ai_services.mcp_service.clone(),
@@ -474,6 +480,32 @@ fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices
         a2a_service: ai_services.a2a_service.clone(),
         endpoint_service: ai_services.endpoint_service.clone(),
     }));
+
+    // AI-RAD: Agent Publish / Subscribe / Unsubscribe (GA `radV1` / `radWatchV1`).
+    // The watch service is constructed here because it needs the gRPC
+    // `ConnectionManager` to push refresh hints. It is stored on `AIServices`
+    // so a later disconnect hook could prune connection-owned watches.
+    let rad_watch = ai_services.a2a_service.as_ref().map(|a2a| {
+        Arc::new(AgentRadWatchService::new(
+            a2a.clone(),
+            connection_manager.clone(),
+        ))
+    });
+    ai_services.agent_rad_watch = rad_watch.clone();
+
+    if let Some(ref rad_watch) = rad_watch {
+        registry.register_handler(Arc::new(AgentPublishRpcHandler {
+            a2a_service: ai_services.a2a_service.clone(),
+        }));
+        registry.register_handler(Arc::new(AgentSubscribeRpcHandler {
+            rad_watch: rad_watch.clone(),
+        }));
+        registry.register_handler(Arc::new(AgentUnsubscribeRpcHandler {
+            rad_watch: rad_watch.clone(),
+        }));
+    } else {
+        warn!("AI agent service unavailable; RAD publish/subscribe handlers not registered");
+    }
 
     // Prompt handler
     if let Some(ref prompt_service) = ai_services.prompt_service {
@@ -562,7 +594,7 @@ impl GrpcAuthRoleProvider for PersistenceRoleProvider {
 pub fn start_grpc_servers(
     app_state: Arc<AppState>,
     naming_service: Option<Arc<NamingService>>,
-    ai_services: &AIServices,
+    ai_services: &mut AIServices,
     sdk_server_port: u16,
     cluster_server_port: u16,
     raft_node: Option<Arc<RaftNode>>,
@@ -833,7 +865,7 @@ pub fn start_grpc_servers(
     );
 
     // Register AI handlers (MCP + A2A)
-    register_ai_handlers(&mut handler_registry, ai_services);
+    register_ai_handlers(&mut handler_registry, ai_services, &connection_manager);
 
     let handler_registry_arc = Arc::new(handler_registry);
 

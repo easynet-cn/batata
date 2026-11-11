@@ -16,7 +16,9 @@ use batata_api::{
         AgentDiscoveryResponse, AgentDiscoveryResult, AgentDiscoveryRpcRequest,
         AgentEndpointDeregisterRpcRequest, AgentEndpointInfo, AgentEndpointOperationResponse,
         AgentEndpointRegisterRpcRequest, AgentEndpointRequest, AgentEndpointResponse,
-        AgentSearchPage, AgentSearchResponse, AgentSearchRpcRequest, EndpointSet,
+        AgentPublishRpcRequest, AgentPublishRpcResponse, AgentSearchPage, AgentSearchResponse,
+        AgentSearchRpcRequest, AgentSubscribeRpcRequest, AgentSubscribeRpcResponse,
+        AgentUnsubscribeRpcRequest, AgentUnsubscribeRpcResponse, EndpointSet,
         McpServerEndpointRequest, McpServerEndpointResponse, QueryAgentCardRequest,
         QueryAgentCardResponse, QueryMcpServerRequest, QueryMcpServerResponse,
         ReleaseAgentCardRequest, ReleaseAgentCardResponse, ReleaseMcpServerRequest,
@@ -27,11 +29,12 @@ use batata_api::{
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 
 use crate::{
-    model::{AgentCard, AgentRegistrationRequest, McpServerRegistration},
+    model::{AgentCard, AgentProvider, AgentRegistrationRequest, McpServerRegistration},
     registry::a2a::AgentRegistry,
     registry::mcp::McpServerRegistry,
     service::{
         AiEndpointService,
+        agent_rad_watch::AgentRadWatchService,
         traits::{A2aAgentService, McpServerService},
     },
 };
@@ -1429,6 +1432,277 @@ fn default_agent_card() -> AgentCard {
 }
 
 // =============================================================================
+// AI-RAD: Agent Publish / Subscribe / Unsubscribe (Nacos 3.3.0 GA `radV1` / `radWatchV1`)
+// =============================================================================
+
+/// Handler for AgentPublishRpcRequest — code-first agent definition publication.
+///
+/// Mirrors GA `AgentPublishRequestHandler`. Builds an `AgentCard` from the wire
+/// `AgentPublishRequest` and delegates to `A2aAgentService::publish_agent_from_code`,
+/// returning the resulting `AgentVersionDetail`.
+#[derive(Clone)]
+pub struct AgentPublishRpcHandler {
+    /// Optional config-backed A2A agent service.
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentPublishRpcHandler {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let request = AgentPublishRpcRequest::from(payload);
+        let request_id = request.request_id();
+
+        let publish = match &request.publish_request {
+            Some(p) => p,
+            None => {
+                let response = batata_core::error_response!(
+                    AgentPublishRpcResponse,
+                    request_id,
+                    "publishRequest is required"
+                );
+                return Ok(response.build_payload());
+            }
+        };
+
+        let namespace_id = request
+            .namespace_id
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "public".to_string());
+
+        if publish.agent_name.is_empty() {
+            let response = batata_core::error_response!(
+                AgentPublishRpcResponse,
+                request_id,
+                "agentName is required"
+            );
+            return Ok(response.build_payload());
+        }
+
+        // Build an AgentCard from the GA wire request. The version detail
+        // (including callInterfaces) is produced by the code-first publish
+        // service, so the card only carries the declared metadata here.
+        let card = AgentCard {
+            name: publish.agent_name.clone(),
+            display_name: publish.display_name.clone(),
+            description: publish.description.clone(),
+            version: publish
+                .version
+                .clone()
+                .unwrap_or_else(|| "1.0.0".to_string()),
+            icon_url: publish.icon_url.clone(),
+            provider: publish.provider.as_ref().map(|p| AgentProvider {
+                organization: p.name.clone(),
+                url: p.url.clone(),
+            }),
+            tags: publish.tags.clone(),
+            ..Default::default()
+        };
+
+        match &self.a2a_service {
+            Some(svc) => {
+                match svc
+                    .publish_agent_from_code(&namespace_id, &card, publish.auto_submit)
+                    .await
+                {
+                    Ok(detail) => {
+                        let mut response = AgentPublishRpcResponse::new();
+                        response.response.request_id = request_id;
+                        response.version_detail = Some(detail);
+                        Ok(response.build_payload())
+                    }
+                    Err(e) => {
+                        let response = batata_core::error_response!(
+                            AgentPublishRpcResponse,
+                            request_id,
+                            format!("Failed to publish agent: {}", e)
+                        );
+                        Ok(response.build_payload())
+                    }
+                }
+            }
+            None => {
+                let response = batata_core::error_response!(
+                    AgentPublishRpcResponse,
+                    request_id,
+                    "AI agent service is unavailable"
+                );
+                Ok(response.build_payload())
+            }
+        }
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentPublishRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = AgentPublishRpcRequest::from(payload);
+        let namespace_id = request
+            .namespace_id
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "public".to_string());
+        let agent_name = request
+            .publish_request
+            .as_ref()
+            .map(|p| p.agent_name.clone())
+            .unwrap_or_default();
+        Some((
+            GrpcResource::ai(&namespace_id, &agent_name),
+            PermissionAction::Write,
+        ))
+    }
+}
+
+/// Handler for AgentSubscribeRpcRequest — install a connection-owned RAD Watch.
+///
+/// Mirrors GA `AgentSubscribeRpcRequestHandler`. Delegates to
+/// `AgentRadWatchService::subscribe`, returning the server-generated `watchKey`
+/// and the observed discovery fingerprint.
+#[derive(Clone)]
+pub struct AgentSubscribeRpcHandler {
+    /// RAD watch service that owns the installed watch intents.
+    pub rad_watch: Arc<AgentRadWatchService>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentSubscribeRpcHandler {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let request = AgentSubscribeRpcRequest::from(payload);
+        let request_id = request.request_id();
+        let connection_id = connection.meta_info.connection_id.clone();
+        let discovery = request.discovery_request.clone().unwrap_or_default();
+
+        match self
+            .rad_watch
+            .subscribe(
+                &connection_id,
+                &request.client_watch_id,
+                discovery,
+                &request.materialized_fingerprint,
+            )
+            .await
+        {
+            Ok((watch_key, observed_fingerprint)) => {
+                let mut response = AgentSubscribeRpcResponse::new();
+                response.response.request_id = request_id;
+                response.watch_key = Some(watch_key);
+                response.observed_fingerprint = Some(observed_fingerprint);
+                response.refresh_required = false;
+                Ok(response.build_payload())
+            }
+            Err(e) => {
+                let response =
+                    batata_core::error_response!(AgentSubscribeRpcResponse, request_id, e);
+                Ok(response.build_payload())
+            }
+        }
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentSubscribeRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = AgentSubscribeRpcRequest::from(payload);
+        let namespace_id = request
+            .discovery_request
+            .as_ref()
+            .and_then(|d| {
+                if d.namespace_id.is_empty() {
+                    None
+                } else {
+                    Some(d.namespace_id.clone())
+                }
+            })
+            .unwrap_or_else(|| "public".to_string());
+        let agent_name = request
+            .discovery_request
+            .as_ref()
+            .map(|d| d.reference.agent_name.clone())
+            .unwrap_or_default();
+        Some((
+            GrpcResource::ai(&namespace_id, &agent_name),
+            PermissionAction::Read,
+        ))
+    }
+}
+
+/// Handler for AgentUnsubscribeRpcRequest — remove one connection-owned RAD Watch.
+///
+/// Mirrors GA `AgentUnsubscribeRpcRequestHandler`. Delegates to
+/// `AgentRadWatchService::unsubscribe`.
+#[derive(Clone)]
+pub struct AgentUnsubscribeRpcHandler {
+    /// RAD watch service that owns the installed watch intents.
+    pub rad_watch: Arc<AgentRadWatchService>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for AgentUnsubscribeRpcHandler {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let request = AgentUnsubscribeRpcRequest::from(payload);
+        let request_id = request.request_id();
+        let connection_id = connection.meta_info.connection_id.clone();
+
+        self.rad_watch
+            .unsubscribe(&connection_id, &request.watch_key);
+        let mut response = AgentUnsubscribeRpcResponse::new();
+        response.response.request_id = request_id;
+        Ok(response.build_payload())
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "AgentUnsubscribeRpcRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(
+        &self,
+        _payload: &Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        // Unsubscribe operates on the caller's own watch_key; no agent-scoped
+        // resource is resolved on the read path.
+        None
+    }
+}
+
+// =============================================================================
 // Prompt Handlers
 // =============================================================================
 
@@ -1648,5 +1922,365 @@ mod tests {
         };
         assert_eq!(handler.can_handle(), "AgentEndpointDeregisterRpcRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+    }
+
+    // --- AI-RAD: Agent Publish / Subscribe / Unsubscribe (GA `radV1` / `radWatchV1`) ---
+
+    use crate::service::agent_rad_watch::{AgentRadWatchService, WatchPusher};
+    use batata_api::remote::model::{
+        AgentDiscoveryRequest, AgentPublishRequest, AgentReference, Request,
+    };
+    use batata_core::model::{AtomicLastActive, ConnectionMeta};
+    use std::collections::HashMap;
+
+    /// No-op `WatchPusher` used to construct a `AgentRadWatchService` in unit tests.
+    struct TestPusher;
+
+    #[async_trait::async_trait]
+    impl WatchPusher for TestPusher {
+        async fn push(&self, _connection_id: &str, _payload: batata_api::grpc::Payload) -> bool {
+            true
+        }
+    }
+
+    /// Test `A2aAgentService` double used to construct a `AgentRadWatchService`
+    /// in unit/integration tests. Returns one online version so the discovery
+    /// projector resolves an Available fingerprint, and a known version detail
+    /// from `publish_agent_from_code`.
+    struct RadTestA2a;
+
+    #[async_trait::async_trait]
+    impl crate::service::traits::A2aAgentService for RadTestA2a {
+        async fn register_agent(
+            &self,
+            _card: &batata_common::model::ai::a2a::AgentCard,
+            _namespace: &str,
+            _registration_type: &str,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        async fn get_agent_card(
+            &self,
+            _namespace: &str,
+            _agent_name: &str,
+            _version: Option<&str>,
+            _user: Option<&str>,
+        ) -> anyhow::Result<Option<batata_common::model::ai::a2a::RegisteredAgent>> {
+            Ok(None)
+        }
+        async fn update_agent_card(
+            &self,
+            _card: &batata_common::model::ai::a2a::AgentCard,
+            _namespace: &str,
+            _registration_type: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn delete_agent(
+            &self,
+            _namespace: &str,
+            _agent_name: &str,
+            _version: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list_agents(
+            &self,
+            _namespace: &str,
+            _agent_name: Option<&str>,
+            _search_type: &str,
+            _page_no: u32,
+            _page_size: u32,
+            _user: Option<&str>,
+        ) -> anyhow::Result<batata_common::model::Page<batata_common::model::ai::a2a::AgentSummary>>
+        {
+            Ok(Default::default())
+        }
+        async fn list_versions(
+            &self,
+            _namespace: &str,
+            _agent_name: &str,
+        ) -> anyhow::Result<
+            batata_common::model::Page<batata_common::model::ai::a2a::AgentVersionSummary>,
+        > {
+            Ok(batata_common::model::Page {
+                page_items: vec![batata_common::model::ai::a2a::AgentVersionSummary {
+                    version: "1.0.0".to_string(),
+                    status: "online".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+        }
+        async fn find_by_skill(
+            &self,
+            _skill: &str,
+        ) -> anyhow::Result<Vec<batata_common::model::ai::a2a::RegisteredAgent>> {
+            Ok(Vec::new())
+        }
+        async fn batch_register(
+            &self,
+            _request: batata_common::model::ai::a2a::BatchAgentRegistrationRequest,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
+            Ok(Default::default())
+        }
+        async fn stats(&self) -> anyhow::Result<batata_common::model::ai::a2a::AgentRegistryStats> {
+            Ok(Default::default())
+        }
+        async fn create_agent_draft(
+            &self,
+            _namespace: &str,
+            _card: &batata_common::model::ai::a2a::AgentCard,
+            _overwrite: bool,
+            _call_interfaces: Option<Vec<batata_common::model::ai::a2a::AgentCallInterface>>,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn update_agent_draft(
+            &self,
+            _namespace: &str,
+            _card: &batata_common::model::ai::a2a::AgentCard,
+            _call_interfaces: Option<Vec<batata_common::model::ai::a2a::AgentCallInterface>>,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn delete_agent_draft(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn submit_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn publish_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn force_publish_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn redraft_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn online_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn offline_agent_version(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(Default::default())
+        }
+        async fn update_agent_labels(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _labels: std::collections::HashMap<String, String>,
+        ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+            Ok(std::collections::HashMap::new())
+        }
+        async fn update_agent_scope(
+            &self,
+            _namespace: &str,
+            _name: &str,
+            _new_scope: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn get_runtime_endpoints(
+            &self,
+            _namespace: &str,
+            _agent_name: &str,
+            _protocol: &str,
+            _version: &str,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::ConsoleRuntimeEndpointView> {
+            Ok(Default::default())
+        }
+        async fn publish_agent_from_code(
+            &self,
+            _namespace: &str,
+            _card: &batata_common::model::ai::a2a::AgentCard,
+            _auto_submit: bool,
+        ) -> anyhow::Result<batata_common::model::ai::a2a::AgentVersionDetail> {
+            Ok(batata_common::model::ai::a2a::AgentVersionDetail {
+                namespace_id: "public".to_string(),
+                name: "my-agent".to_string(),
+                version: "1.0.0".to_string(),
+                status: "online".to_string(),
+                ..Default::default()
+            })
+        }
+    }
+
+    fn test_rad_watch() -> Arc<AgentRadWatchService> {
+        Arc::new(AgentRadWatchService::with_pusher(
+            Arc::new(RadTestA2a),
+            Arc::new(TestPusher),
+        ))
+    }
+
+    #[test]
+    fn test_agent_publish_rpc_handler_can_handle() {
+        let handler = AgentPublishRpcHandler { a2a_service: None };
+        assert_eq!(handler.can_handle(), "AgentPublishRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+    }
+
+    #[test]
+    fn test_agent_subscribe_rpc_handler_can_handle() {
+        let handler = AgentSubscribeRpcHandler {
+            rad_watch: test_rad_watch(),
+        };
+        assert_eq!(handler.can_handle(), "AgentSubscribeRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
+    }
+
+    #[test]
+    fn test_agent_unsubscribe_rpc_handler_can_handle() {
+        let handler = AgentUnsubscribeRpcHandler {
+            rad_watch: test_rad_watch(),
+        };
+        assert_eq!(handler.can_handle(), "AgentUnsubscribeRpcRequest");
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
+    }
+
+    /// Build a minimal `Connection` with a known `connection_id` for handler tests.
+    fn test_connection(connection_id: &str) -> Connection {
+        let mut meta = ConnectionMeta::default();
+        meta.connection_id = connection_id.to_string();
+        Connection {
+            traced: false,
+            ability_table: HashMap::new(),
+            meta_info: meta,
+            last_active: AtomicLastActive::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn rad_publish_handler_returns_version_detail() {
+        let handler = AgentPublishRpcHandler {
+            a2a_service: Some(Arc::new(RadTestA2a)),
+        };
+        let publish_request = AgentPublishRequest {
+            agent_name: "my-agent".to_string(),
+            display_name: "My Agent".to_string(),
+            description: "desc".to_string(),
+            icon_url: None,
+            provider: None,
+            tags: vec![],
+            extensions: None,
+            version: Some("1.0.0".to_string()),
+            call_interfaces: vec![],
+            author: None,
+            change_description: None,
+            based_on_version: None,
+            auto_submit: false,
+        };
+        let req = AgentPublishRpcRequest {
+            request: Request {
+                request_id: "r1".to_string(),
+                ..Default::default()
+            },
+            module: "ai".to_string(),
+            namespace_id: Some("public".to_string()),
+            publish_request: Some(publish_request),
+        };
+        let payload = req.to_payload(None);
+        let conn = test_connection("conn-pub");
+        let resp_payload = handler.handle(&conn, &payload).await.unwrap();
+
+        let body = resp_payload.body.as_ref().unwrap().value.clone();
+        let resp: AgentPublishRpcResponse = serde_json::from_slice(&body).unwrap();
+        let detail = resp.version_detail.expect("versionDetail must be present");
+        assert_eq!(detail.version, "1.0.0");
+        assert_eq!(detail.status, "online");
+    }
+
+    #[tokio::test]
+    async fn rad_subscribe_handler_returns_watch_key_and_fingerprint() {
+        let handler = AgentSubscribeRpcHandler {
+            rad_watch: test_rad_watch(),
+        };
+        let req = AgentSubscribeRpcRequest {
+            request: Request {
+                request_id: "r2".to_string(),
+                ..Default::default()
+            },
+            module: "ai".to_string(),
+            client_watch_id: "w1".to_string(),
+            discovery_request: Some(AgentDiscoveryRequest {
+                namespace_id: "public".to_string(),
+                reference: AgentReference {
+                    agent_name: "my-agent".to_string(),
+                    ..Default::default()
+                },
+                filter: None,
+            }),
+            materialized_fingerprint: String::new(),
+        };
+        let payload = req.to_payload(None);
+        let conn = test_connection("conn-sub");
+        let resp_payload = handler.handle(&conn, &payload).await.unwrap();
+
+        let body = resp_payload.body.as_ref().unwrap().value.clone();
+        let resp: AgentSubscribeRpcResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.watch_key.as_deref(), Some("conn-sub:w1"));
+        let fp = resp.observed_fingerprint.unwrap_or_default();
+        assert!(
+            fp.starts_with("sha256-canonical-json-v1:"),
+            "observed fingerprint is computed: {fp}"
+        );
+        assert!(!resp.refresh_required);
+    }
+
+    #[tokio::test]
+    async fn rad_unsubscribe_handler_succeeds() {
+        let handler = AgentUnsubscribeRpcHandler {
+            rad_watch: test_rad_watch(),
+        };
+        let req = AgentUnsubscribeRpcRequest {
+            request: Request {
+                request_id: "r3".to_string(),
+                ..Default::default()
+            },
+            module: "ai".to_string(),
+            watch_key: "conn-sub:w1".to_string(),
+        };
+        let payload = req.to_payload(None);
+        let conn = test_connection("conn-sub");
+        let resp_payload = handler.handle(&conn, &payload).await.unwrap();
+
+        let body = resp_payload.body.as_ref().unwrap().value.clone();
+        let resp: AgentUnsubscribeRpcResponse = serde_json::from_slice(&body).unwrap();
+        assert!(resp.response.success, "unsubscribe reports success");
     }
 }

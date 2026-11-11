@@ -2,6 +2,8 @@
 
 /// Config-backed operation service for A2A (Agent-to-Agent) agents.
 pub mod a2a_service;
+/// RAD gRPC Watch service (Nacos 3.3.0 GA `radWatchV1`).
+pub mod agent_rad_watch;
 /// Agent Watch long-poll subsystem (Nacos `AgentClientController.watch`).
 pub mod agent_watch;
 /// Persistence-backed operation service for AgentSpecs.
@@ -41,4 +43,5 @@ pub use skill_service::SkillOperationService;
 pub use traits::A2aAgentService;
 pub use traits::McpServerService;
 
+pub use agent_rad_watch::AgentRadWatchService;
 pub use agent_watch::{AgentHttpWatchService, WatchCapacityConfig, WatchHandle};

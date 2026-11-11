@@ -306,6 +306,8 @@ pub struct AIServices {
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
     /// `watch_service` field.
     pub watch_service: Option<Arc<batata_ai::service::agent_watch::AgentHttpWatchService>>,
+    /// `agent_rad_watch` field (Nacos 3.3.0 GA `radWatchV1` gRPC watch service).
+    pub agent_rad_watch: Option<Arc<batata_ai::service::agent_rad_watch::AgentRadWatchService>>,
     /// `mcp_index` field.
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
     /// `prompt_service` field.
@@ -345,6 +347,7 @@ impl AIServices {
             a2a_service: None,
             endpoint_service: None,
             watch_service: None,
+            agent_rad_watch: None,
             mcp_index: None,
             prompt_service: None,
             skill_service: None,
@@ -422,6 +425,7 @@ impl AIServices {
             a2a_service: Some(a2a_service),
             endpoint_service: Some(endpoint_service),
             watch_service: Some(watch_service),
+            agent_rad_watch: None,
             mcp_index: Some(mcp_index),
             prompt_service: Some(prompt_service),
             skill_service: Some(skill_service),
