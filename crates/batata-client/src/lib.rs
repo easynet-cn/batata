@@ -47,7 +47,14 @@ pub mod traits;
 pub mod transport;
 
 // AI/MCP client re-exports
-pub use ai::{AgentCardInfo, BatataAiService, McpServerBasicInfo, McpServerDetailInfo};
+pub use ai::{
+    AgentAiService, AgentCardInfo, AgentCardListener, AgentDiscoveryCapability,
+    AgentDiscoveryEvent, AgentDiscoveryFilter, AgentDiscoveryListener, AgentDiscoveryResult,
+    AgentDiscoveryService, AgentEndpointRegistrationBatch, AgentPublishRequest, AgentReference,
+    AgentSearchRequest, AgentSpecAiService, AgentSubscription, AgentSummary, AgentVersionDetail,
+    BatataAiService, ClientAgentCard, ClientLivenessInfo, Endpoint, McpAiService,
+    McpServerBasicInfo, McpServerDetailInfo, PromptAiService, SkillAiService,
+};
 
 // HTTP console client re-exports
 pub use api::BatataApiClient;

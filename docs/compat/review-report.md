@@ -1634,3 +1634,117 @@ the Naming publication backend) and is tracked outside this row.
 `cargo check -p batata-ai --tests -p batata-server --tests` and the `batata-ai`
 lib suite (`199` tests) all pass. No `--full` matrix, commit, push, publish,
 yank, archive or tag was performed (commit/push handled separately).
+
+## 21. Implementation batch 14 — `AiService` facade + `AgentDiscoveryService` (`F-NAC-CSDK-003` → 🟢)
+
+### 21.1 GA contract and gap
+
+Nacos 3.3.0 GA exposes the `AiService` facade (`mcp()` / `skill()` / `prompt()`
+/ `agentSpec()` / `agent()`) and the `AgentDiscoveryService` interface
+(`searchAgents`, `discoverAgent`, `subscribeAgent` / `unsubscribeAgent`,
+`registerAgentEndpoints`, `deregisterAgentEndpoints`, `publishAgent`), all
+`@Since("3.3.0")`). `batata-client` only had 10 flat console query methods in
+`crates/batata-client/src/ai.rs`; the facade, the typed sub-services and the RAD
+surface were unimplemented. `F-NAC-CSDK-003` was registered `⚪` on
+2026-11-10.
+
+### 21.2 Source-verified wire contract
+
+Every client DTO and path was read from the server handlers (not guessed):
+
+| Client facade method | Server route | Server handler |
+|---------------------|-------------|---------------|
+| `McpAiService.get` / `list_mcp_servers` (legacy flat) | `/v3/console/ai/mcp`, `/v3/console/ai/mcp/list` | `crates/batata-ai/src/api/mcp_client.rs::query_server` / `search` |
+| `McpAiService.search` (client) | `/v3/client/ai/mcp/search` | `mcp_client.rs` (client scope) |
+| `SkillAiService.get` | `/v3/client/ai/skills` → ZIP bytes | `skill.rs::client_query_skill` (returns `application/zip`) |
+| `SkillAiService.search` | `/v3/client/ai/skills/search` | `skill.rs::client_search_skills` → `Page<SkillSummary>` |
+| `AgentSpecAiService.get` / `search` | `/v3/client/ai/agentspecs`, `/…/search` | `agentspec.rs::client_query_agentspec` / `client_search_agentspecs` |
+| `PromptAiService.get` / `search` | `/v3/client/ai/prompt`, `/…/search` | `prompt.rs::client_query_prompt` / `client_search_prompts` |
+| `AgentDiscoveryService.search_agents` | `GET /v3/client/ai/agents/search` | `agent_client.rs::search` → `Page<AgentCatalogEntry>` |
+| `AgentDiscoveryService.discover_agent` | `GET /v3/client/ai/agents` | `agent_client.rs::discover` → `AgentDiscoveryResult` |
+| `subscribe_agent` (watch) | `POST /v3/client/ai/agents/watch` | `agent_client.rs::watch` (reads `clientId` header) |
+| `register_agent_endpoints` | `POST /v3/client/ai/agents/endpoints` | `agent_client.rs::register_endpoints` (reads `clientId` header) |
+| `deregister_agent_endpoints` | `DELETE /v3/client/ai/agents/endpoints` | `agent_client.rs::deregister_endpoints` (reads `clientId` header) |
+| `publish_agent` | `POST /v3/client/ai/agents` | `agent_client.rs::publish` (body = `AgentCard`) |
+
+Key wire facts confirmed by reading the handlers:
+
+- The response envelope is `Result<T>{code,message,data}` (identical shape to the
+  client `ApiResponse<T>`), and `Page<T>` serializes as
+  `{totalCount,pageNumber,pagesAvailable,pageItems}` (camelCase). `code == 0` is
+  success; the client decode helper surfaces a non-zero `code` as an error.
+- `AgentCatalogEntry` (the client `AgentSummary`) carries
+  `agentName` / `displayName?` / `description?` / `latestVersion` / `versions[]`;
+  this is **not** the GA `AgentSummary` POJO (which adds `status` / `owner` /
+  `scope`), so the client models the server projection exactly.
+- The watch body is `AgentWatchBatchForm` whose `watches` field is a **JSON
+  string** of `[{clientWatchId, discoveryRequest:{namespaceId?, reference:{
+  agentName, version?, label?}}, materializedFingerprint}]`; the response is
+  `{generation, changed, changedClientWatchIds?}`.
+- `POST /endpoints` accepts either a JSON body or a form whose `endpoints` is a
+  JSON string; it reads the `clientId` header (absent ⇒ admitted
+  unconditionally). The `version` field is the GA `runtimeVersion` alias.
+- `DELETE /endpoints` consumes `namespaceId` / `agentName` / `protocol` from the
+  query and drops whatever the client published; the concrete endpoint list is
+  not part of the wire (GA parity).
+
+Because `batata-client` does **not** depend on `batata-common`, all AI response
+DTOs are defined locally in `ai.rs` (`AgentSummary`, `AgentVersionSummary`,
+`AgentDiscoveryResult`, `Endpoint`, `AgentReference`, `AgentSearchRequest`,
+`AgentDiscoveryFilter`, `AgentEndpointRegistrationBatch`, `ClientLivenessInfo`,
+`SkillSummary`, `AgentSpec`, `AgentSpecSummary`, `Prompt`, `PromptMetaSummary`,
+`AgentVersionDetail`, `ClientAgentCard`). `AgentPublishRequest::from_agent_card_info`
+maps the legacy console `AgentCardInfo` onto the server `AgentCard` shape
+(supplying the required `protocolVersion`, `capabilities`, `skills`,
+`defaultInputModes` / `defaultOutputModes`, `metadata`).
+
+### 21.3 Implementation
+
+- `BatataAiService` keeps the two shared caches (`mcp_cache`, `agent_cache`) as
+  `Arc<DashMap<…>>` and lazily constructs the five sub-services via `OnceLock`
+  accessors returning `Arc<…>`, all cloning the same `Arc<BatataHttpClient>`.
+- The 10 legacy flat methods (`get_mcp_server`, `list_mcp_servers`,
+  `get_agent_card`, `list_agent_cards`, `get_cached_*`, `clear_cache`,
+  `*_cache_size`) are preserved; `get_mcp_server` / `list_mcp_servers` delegate
+  to `mcp()` and keep the **console** paths (`/v3/console/ai/mcp*`,
+  TG-03), while `mcp().search()` exercises the client path.
+- `AgentAiService` implements the `AgentDiscoveryService` trait (via
+  `async_trait` so it is usable as `dyn AgentDiscoveryService`); `BatataAiService`
+  also implements the trait by delegating to `agent()`. `subscribe_agent`
+  spawns a tokio task that loops the watch long-poll: on a
+  `changedClientWatchIds` hit it re-discovers, recomputes a
+  `sha256-canonical-json-v1:` fingerprint of the result, and invokes the
+  `AgentDiscoveryListener`; `AgentSubscription` exposes `unsubscribe()`
+  (`AtomicBool`) and `is_active()`.
+- A small `BatataHttpClient::post_json_with_headers` forwards an extra header
+  map (used for the `clientId` header) on top of the auth header.
+- RAD capability: `enum AgentDiscoveryCapability { Supported, NotSupported,
+  Unknown }` mirrors GA `AbilityStatus`; `get_agent_discovery_capability()`
+  returns `Supported` for the HTTP discovery transport and explicitly does
+  **not** claim the gRPC `radV1` / `radWatchV1` negotiation (that is
+  `F-NAC-CSDK-007`, now 🟢 via the gRPC handlers).
+
+### 21.4 Guards
+
+16 `ai.rs` unit tests cover camelCase serde round-trips and the exact on-wire
+field names for every new DTO (`AgentSummary`, `AgentDiscoveryResult`,
+`AgentSearchRequest`, `AgentEndpointRegistrationBatch` (`runtimeVersion` alias),
+`ClientAgentCard` from `AgentCardInfo`, `AgentVersionDetail`, `Endpoint`, the
+watch-body `watches`-as-JSON-string shape, fingerprint determinism). Two are
+mutant-checked: `decode` must reject a non-zero `code` (deleting the `code == 0`
+guard fails the test), and the capability mapping is asserted. The existing 10
+console-DTO tests and the TG-03 `tests/ai_service_test.rs` (2 cases) remain green.
+
+### 21.5 Status and promotion
+
+`F-NAC-CSDK-003` → 🟢. Counts: B.9 `2🟢/1🟡/5⚪/0⛔` (rate 13%→25%); Nacos Total
+`180🟢/5🟡/8⚪/4⛔/197` → `181🟢/5🟡/7⚪/4⛔/197` (rate 91%→92%). `features.md` B.9
+row + Summary Total, `README.md` global table and F-ID narrative updated.
+
+### 21.6 Validation and no-ops
+
+`cargo fmt --all -- --check`, `git diff --check`, `scripts/compat_check.py`,
+`cargo check -p batata-client --tests`, `cargo test -p batata-client --lib ai`
+(58 tests) and `cargo test -p batata-client --test ai_service_test` (2 tests)
+all pass. No `--full` matrix, commit, push, publish, yank, archive or tag was
+performed (commit/push handled separately).

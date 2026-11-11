@@ -5,7 +5,7 @@
 use bytes::Bytes;
 use reqwest::{Client, Response, StatusCode};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{sync::RwLock, time::Duration};
+use std::{collections::HashMap, sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 
 use crate::tls::TlsOptions;
@@ -429,6 +429,31 @@ impl BatataHttpClient {
             path,
         )
         .await
+    }
+
+    /// Make a POST request with a JSON body and additional custom headers.
+    ///
+    /// The auth header is always applied on top of `extra_headers`, so callers
+    /// only supply domain headers such as the RAD `clientId`. Retries across
+    /// servers are skipped because the request closure is not `Clone`.
+    pub async fn post_json_with_headers<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+        extra_headers: &HashMap<String, String>,
+    ) -> anyhow::Result<T> {
+        let url = self.build_url(path);
+        let auth_header = self.ensure_auth_header().await?;
+        let mut builder = self
+            .client
+            .post(&url)
+            .header(&auth_header.0, &auth_header.1)
+            .json(body);
+        for (k, v) in extra_headers {
+            builder = builder.header(k, v);
+        }
+        let response = builder.send().await?;
+        self.handle_response(response).await
     }
 
     /// Make a POST request with query parameters and a JSON body

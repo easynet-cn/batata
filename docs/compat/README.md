@@ -33,10 +33,10 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
-| Nacos    | 197      | 180 | 5  | 0 | 8 | 4  | 91%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
+| Nacos    | 197      | 181 | 5  | 0 | 7 | 4  | 92%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
 | Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **528** | **10** | **0** | **35** | **4** | **92%** | **1040** | |
+| **Total** | **577** | **529** | **10** | **0** | **34** | **4** | **92%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -91,7 +91,7 @@ B.10 (server AI ADMIN), so the checker can detect a status that drifts from real
 | maintainer-client | F-NAC-MAINT-008 | Legacy A2A facade + GA-only agent methods (query lifecycle landed in batch 2) |
 | batata-client | F-NAC-CSDK-001 | `NamingSelector` subscribe overload |
 | batata-client | F-NAC-CSDK-002 | `LockService::renew` / watchdog |
-| batata-client | F-NAC-CSDK-003 | `AiService` sub-services + `AgentDiscoveryService` |
+| batata-client | F-NAC-CSDK-003 | `AiService` sub-services + `AgentDiscoveryService` — **closed in batch 14** (`🟢`): the five `Arc<...>` sub-service accessors (`mcp/skill/prompt/agentSpec/agent`) plus the `AgentDiscoveryService` trait (search/discover/subscribe long-poll/register/deregister/publish) over `/v3/client/ai/**`, `AgentDiscoveryCapability::Supported` for the HTTP transport; 16 wire-shape tests + 2 mutants |
 | batata-client | F-NAC-CSDK-004 | config 304 conditional GET (`localMd5`) |
 | batata-client | F-NAC-CSDK-005 | OIDC auth + `configSnapshotEnabled` |
 | batata-client | F-NAC-CSDK-006 | HTTP `requestId` correlation |
@@ -291,6 +291,8 @@ and the route-test suite all pass. No `--full`, commit, push or publish was
 performed.
 
 **Batch 12 implemented (2026-11-11)**: `F-NAC-AISRV-001` is now `🟡` (partial). Phase A closes the GA ARD Agent model gap against Nacos 3.3.0 GA (`b64bc9118`): typed ARD DTOs (`AgentVersionDetail` / `AgentCallInterface` / `AgentProviderInfo` / `AgentVersionSummary` / `AgentSummary`) in `crates/batata-common/src/model/ai/a2a.rs`; `callInterfaces` stored in the version detail (`AgentCardDetailInfo.call_interfaces`, written by `build_detail`, read by `version_row`) and accepted on first draft via `parse_call_interfaces` → `resolve_agent_write` → `create_agent_draft(ns, &card, false, Some(cis))` (no longer fail-closed); `listAgents` / `listVersions` return GA-shaped `Page<AgentSummary>` / `Page<AgentVersionSummary>`; `AgentSummary.online_versions` surfaces the legacy `AgentCardVersionInfo.latest_published_version` so the catalog `latestVersion` resolves, and `AgentVersionSummary.status` uses the `online` / `draft` / `reviewing` lifecycle resolved via `Page.page_items`. All `batata-ai` + `batata-server` route-level callers were migrated to the new shapes (`.page_items`, no `is_latest`). `GET /runtime-endpoints` live support stays deferred to `F-NAC-CSDK-007` (needs Naming publication backend + RAD gRPC handlers), so the row is partial. Counts: B.10 `1🟢/1🟡/0⚪/1⛔` (rate 67%), Nacos Total `179🟢/5🟡/9⚪/4⛔/197` (rate 91% unchanged). `compat_check.py`, `cargo fmt` and `cargo check -p batata-ai --tests` pass; `batata-ai` lib + integration and `batata-server` route suites green. No `--full`, commit, push or publish was performed (commit/push handled separately).
+
+**Batch 14 implemented (2026-11-11)**: `F-NAC-CSDK-003` is now `🟢`. The GA `AiService` facade and `AgentDiscoveryService` are implemented in `crates/batata-client/src/ai.rs`: `BatataAiService` exposes `mcp()` / `skill()` / `prompt()` / `agent_spec()` / `agent()` returning `Arc<...>` sub-services that share the `Arc<BatataHttpClient>`, the 10 legacy flat query methods are preserved as delegates (TG-03 `crates/batata-client/tests/ai_service_test.rs` unchanged), and `AgentAiService` implements the `AgentDiscoveryService` trait over the server's `/v3/client/ai/**` endpoints — `search_agents` (`GET /agents/search`), `discover_agent` (`GET /agents`), `subscribe_agent` (HTTP long-poll `POST /agents/watch` with the `clientId` header, fingerprint-diff notification through `AgentDiscoveryListener`, cancellable `AgentSubscription`), `register_agent_endpoints` / `deregister_agent_endpoints` (`POST` / `DELETE /agents/endpoints`, `clientId` header) and `publish_agent` (`POST /agents` with a `ClientAgentCard` mapped from the existing `AgentCardInfo`). All client DTOs are source-verified against `crates/batata-ai` handlers and the GA release commit `b64bc9118`; `AgentDiscoveryCapability` mirrors GA `AbilityStatus` and `get_agent_discovery_capability()` returns `Supported` for the HTTP transport (the BATATA server exposes `/v3/client/ai/agents/*` unconditionally over HTTP), deliberately not claiming the gRPC `radV1`/`radWatchV1` negotiation (covered by `F-NAC-CSDK-007`). 16 wire-shape unit tests + 2 mutants guard the contract; `cargo fmt`, `cargo check -p batata-client --tests` and both the lib + `ai_service_test` suites pass. Counts: B.9 `2🟢/1🟡/5⚪/0⛔` (rate 13%→25%); Nacos Total `180🟢/5🟡/8⚪/4⛔/197` → `181🟢/5🟡/7⚪/4⛔/197` (rate 91%→92%). `features.md` B.9 + Summary Total, `README.md` global table and F-ID narrative updated. See `review-report.md` §21. No `--full`, commit, push or publish was performed (commit/push handled separately).
 
 Batch 5 then made the four remaining Agent write handlers dual-wire:
 `crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's
