@@ -221,6 +221,12 @@ pub struct ConfigQueryRequest {
     pub config_request: ConfigRequest,
     /// The `tag` field.
     pub tag: String,
+    /// Local cached MD5 for the GA 3.3.0 304 conditional GET.
+    ///
+    /// Serialized on the gRPC wire as `localMd5`. Empty means an unconditional
+    /// query: older servers and older clients simply omit the field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_md5: String,
 }
 
 impl ConfigQueryRequest {
@@ -648,6 +654,8 @@ pub struct ConfigQueryResponse {
 impl ConfigQueryResponse {
     /// The `CONFIG_NOT_FOUND` constant.
     pub const CONFIG_NOT_FOUND: i32 = 300;
+    /// The `CONFIG_NOT_MODIFIED` constant (GA 3.3.0 304 conditional GET).
+    pub const CONFIG_NOT_MODIFIED: i32 = 304;
     /// The `CONFIG_QUERY_CONFLICT` constant.
     pub const CONFIG_QUERY_CONFLICT: i32 = 400;
     /// The `NO_RIGHT` constant.
@@ -892,6 +900,46 @@ mod tests {
 
         assert_eq!(req.config_request.data_id, "app.properties");
         assert_eq!(req.config_request.tenant, "public");
+    }
+
+    #[test]
+    fn test_config_query_request_local_md5_wire_shape() {
+        // An unconditional query must not put the new field on the wire, so an
+        // older server that does not know `localMd5` sees an unchanged payload.
+        let plain = ConfigQueryRequest::new();
+        let plain_value = serde_json::to_value(&plain).unwrap();
+        assert!(plain_value.get("localMd5").is_none());
+
+        let mut conditional = ConfigQueryRequest::new();
+        conditional.local_md5 = "0123456789abcdef".to_string();
+        let value = serde_json::to_value(&conditional).unwrap();
+        assert_eq!(value["localMd5"], "0123456789abcdef");
+
+        // A payload produced by an older client has no field; default must win.
+        let mut legacy = plain_value;
+        legacy.as_object_mut().unwrap().remove("localMd5");
+        let decoded: ConfigQueryRequest = serde_json::from_value(legacy).unwrap();
+        assert!(decoded.local_md5.is_empty());
+    }
+
+    #[test]
+    fn test_config_query_request_local_md5_payload_roundtrip() {
+        use crate::remote::model::RequestTrait;
+
+        let mut req = ConfigQueryRequest::new();
+        req.config_request.data_id = "app.yaml".to_string();
+        req.config_request.group = "DEFAULT_GROUP".to_string();
+        req.local_md5 = "deadbeef".to_string();
+
+        let payload = req.build_server_push_payload();
+        let decoded = ConfigQueryRequest::from(&payload);
+        assert_eq!(decoded.local_md5, "deadbeef");
+        assert_eq!(decoded.config_request.data_id, "app.yaml");
+    }
+
+    #[test]
+    fn test_config_query_response_not_modified_constant() {
+        assert_eq!(ConfigQueryResponse::CONFIG_NOT_MODIFIED, 304);
     }
 
     #[test]

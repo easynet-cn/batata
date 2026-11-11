@@ -98,6 +98,12 @@ pub struct CacheData {
     pub content: String,
     /// MD5 hash of the current content.
     pub md5: String,
+    /// MD5 reported by the server for this content.
+    ///
+    /// Kept separately from `md5` because the latter is computed from the
+    /// post-filter content, while the server MD5 describes the stored content.
+    /// Only the server MD5 is valid as `localMd5` on a conditional GET.
+    pub server_md5: String,
     /// Config type (e.g., "properties", "yaml", "json") for change parsing
     pub config_type: String,
     /// Encrypted data key for encrypted configs
@@ -139,6 +145,7 @@ impl CacheData {
             tenant: tenant.to_string(),
             content: String::new(),
             md5: String::new(),
+            server_md5: String::new(),
             config_type: String::new(),
             encrypted_data_key: String::new(),
             listeners: Vec::new(),

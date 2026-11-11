@@ -200,6 +200,43 @@ pub async fn find_matching_gray_config(
     }
 }
 
+/// Apply the GA 3.3.0 304 conditional-GET contract to a successful query.
+///
+/// Upstream `ConfigQueryRequestHandler.buildNotModifiedResponse()` returns
+/// `ConfigQueryResponse.CONFIG_NOT_MODIFIED` with the md5 / contentType /
+/// lastModified metadata but no content when the client's `localMd5` matches
+/// the resolved server md5. GA's `Response.setErrorInfo()` sets a FAIL result
+/// code, a false success flag and the supplied error code, so a Java client
+/// sees `NacosException.NOT_MODIFIED` rather than an empty successful config.
+///
+/// Returns `true` when the response was converted to a 304.
+fn apply_conditional_get(response: &mut ConfigQueryResponse, local_md5: &str) -> bool {
+    if local_md5.is_empty() || response.md5.is_empty() || local_md5 != response.md5 {
+        return false;
+    }
+
+    response.response.result_code = ResponseCode::Fail.code();
+    response.response.error_code = ConfigQueryResponse::CONFIG_NOT_MODIFIED;
+    response.response.success = false;
+    response.response.message = "config not modified, use local cache".to_string();
+    // GA's 304 response carries md5 / contentType / lastModified only.
+    response.content.clear();
+    response.encrypted_data_key.clear();
+    true
+}
+
+/// Single exit point for a successful `ConfigQueryRequest` response.
+///
+/// Both the gray and the formal branches must go through here so the 304 guard
+/// cannot be skipped by one of them. The wiring test below asserts both calls.
+fn finalize_config_query_response(
+    mut response: ConfigQueryResponse,
+    local_md5: &str,
+) -> ConfigQueryResponse {
+    apply_conditional_get(&mut response, local_md5);
+    response
+}
+
 // Handler for ConfigQueryRequest - queries configuration by dataId, group, tenant
 #[derive(Clone)]
 /// `ConfigQueryHandler` data model.
@@ -217,6 +254,8 @@ impl PayloadHandler for ConfigQueryHandler {
     ) -> Result<Payload, Status> {
         let request = ConfigQueryRequest::from(payload);
         let request_id = request.request_id();
+        // GA 3.3.0 conditional GET: an empty value means an unconditional query.
+        let local_md5 = request.local_md5.clone();
 
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
@@ -305,7 +344,7 @@ impl PayloadHandler for ConfigQueryHandler {
             } else {
                 response.tag = Some(gray_name);
             }
-            return Ok(response.build_payload());
+            return Ok(finalize_config_query_response(response, &local_md5).build_payload());
         }
 
         // Fall through to formal config query
@@ -339,7 +378,7 @@ impl PayloadHandler for ConfigQueryHandler {
                 response.encrypted_data_key = config.encrypted_data_key;
                 response.last_modified = config.modified_time;
 
-                Ok(response.build_payload())
+                Ok(finalize_config_query_response(response, &local_md5).build_payload())
             }
             Ok(None) => {
                 let mut response = ConfigQueryResponse::new();
@@ -2026,6 +2065,99 @@ impl PayloadHandler for ClientConfigMetricHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_query_response() -> ConfigQueryResponse {
+        let mut response = ConfigQueryResponse::new();
+        response.response.request_id = "req-1".to_string();
+        response.content = "key=value".to_string();
+        response.md5 = "md5-1".to_string();
+        response.content_type = "properties".to_string();
+        response.encrypted_data_key = "edk-1".to_string();
+        response.last_modified = 1234;
+        response
+    }
+
+    #[test]
+    fn test_conditional_get_requires_matching_nonblank_md5() {
+        // No local MD5: unconditional query, GA never returns 304.
+        assert!(!apply_conditional_get(&mut sample_query_response(), ""));
+        // No server MD5: never claim a match.
+        let mut without_md5 = sample_query_response();
+        without_md5.md5.clear();
+        assert!(!apply_conditional_get(&mut without_md5, "md5-1"));
+        // Mismatch: full response must be returned.
+        assert!(!apply_conditional_get(
+            &mut sample_query_response(),
+            "md5-2"
+        ));
+        assert!(apply_conditional_get(&mut sample_query_response(), "md5-1"));
+    }
+
+    #[test]
+    fn test_conditional_get_304_response_shape() {
+        let response = finalize_config_query_response(sample_query_response(), "md5-1");
+
+        assert_eq!(
+            response.response.result_code,
+            ResponseCode::Fail.code(),
+            "GA setErrorInfo marks a FAIL result so Java clients get NOT_MODIFIED"
+        );
+        assert_eq!(
+            response.response.error_code,
+            ConfigQueryResponse::CONFIG_NOT_MODIFIED
+        );
+        assert!(!response.response.success);
+        assert_eq!(
+            response.response.message,
+            "config not modified, use local cache"
+        );
+        assert!(
+            response.content.is_empty(),
+            "304 must not carry config content"
+        );
+        assert!(
+            response.encrypted_data_key.is_empty(),
+            "GA buildNotModifiedResponse does not set encryptedDataKey"
+        );
+        // Metadata survives so the client can rebuild ConfigQueryResult.
+        assert_eq!(response.md5, "md5-1");
+        assert_eq!(response.content_type, "properties");
+        assert_eq!(response.last_modified, 1234);
+        assert_eq!(response.response.request_id, "req-1");
+    }
+
+    #[test]
+    fn test_conditional_get_mismatch_keeps_full_response() {
+        let response = finalize_config_query_response(sample_query_response(), "md5-2");
+
+        assert_eq!(response.response.result_code, ResponseCode::Success.code());
+        assert!(response.response.success);
+        assert_eq!(response.response.error_code, 0);
+        assert_eq!(response.content, "key=value");
+        assert_eq!(response.encrypted_data_key, "edk-1");
+        assert_eq!(response.md5, "md5-1");
+    }
+
+    /// The 304 guard is only real if both successful query branches consume it
+    /// and the wire field is actually read. Removing either call site, or
+    /// leaving `localMd5` bound-but-ignored, must turn this test red.
+    #[test]
+    fn test_conditional_get_is_wired_into_both_query_branches() {
+        const SOURCE: &str = include_str!("config_handler.rs");
+        // Split the needles so this test does not count its own source text.
+        const CALL: &str = concat!("finalize_config_query_response", "(response, &local_md5)");
+        const BINDING: &str = concat!("let local_md5 = request.local_md5", ".clone();");
+        assert_eq!(
+            SOURCE.matches(CALL).count(),
+            2,
+            "gray and formal query branches must both apply the 304 guard"
+        );
+        assert_eq!(
+            SOURCE.matches(BINDING).count(),
+            1,
+            "ConfigQueryRequest.localMd5 must be read by the handler"
+        );
+    }
 
     // Mutant-checkable for finding 12: a DB error (LookupFailed) must never be
     // reported as a change, and the missing-config sentinel must not fire for

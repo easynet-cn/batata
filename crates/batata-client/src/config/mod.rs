@@ -85,6 +85,65 @@ pub struct BatataConfigService {
     shutdown: Arc<AtomicBool>,
 }
 
+/// A (content, server-md5) pair captured before a conditional GET.
+///
+/// GA `ClientWorker.LocalConfigContent` retains the content at request time so
+/// a 304 can be answered without re-reading a cache that may have changed in
+/// between. This mirror keeps the same content/MD5 consistency guarantee.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LocalConfigContent {
+    content: String,
+    md5: String,
+    config_type: String,
+    encrypted_data_key: String,
+}
+
+/// Resolve a usable local representation for the 304 conditional GET.
+///
+/// GA refuses to send `localMd5` when no matching local content exists (a 304
+/// could not be restored) and skips encrypted configs, whose content/key
+/// pairing cannot be proven. An explicit MD5 that does not match the local
+/// representation also degrades to an unconditional query.
+fn resolve_local_content(cache: &CacheData, explicit_md5: &str) -> Option<LocalConfigContent> {
+    if !cache.encrypted_data_key.is_empty()
+        || cache.content.is_empty()
+        || cache.server_md5.is_empty()
+    {
+        return None;
+    }
+    if !explicit_md5.is_empty() && explicit_md5 != cache.server_md5 {
+        return None;
+    }
+    Some(LocalConfigContent {
+        content: cache.content.clone(),
+        md5: cache.server_md5.clone(),
+        config_type: cache.config_type.clone(),
+        encrypted_data_key: cache.encrypted_data_key.clone(),
+    })
+}
+
+/// Rebuild `ConfigQueryResult` from a 304 using the retained local content.
+///
+/// The 304 response carries md5 / contentType metadata but no content; GA
+/// restores the retained content and takes the remaining metadata from the
+/// response.
+fn restore_not_modified(
+    resp: &ConfigQueryResponse,
+    local: &LocalConfigContent,
+) -> crate::traits::ConfigQueryResult {
+    let config_type = if resp.content_type.is_empty() {
+        local.config_type.clone()
+    } else {
+        resp.content_type.clone()
+    };
+    crate::traits::ConfigQueryResult {
+        content: local.content.clone(),
+        md5: resp.md5.clone(),
+        config_type,
+        encrypted_data_key: local.encrypted_data_key.clone(),
+    }
+}
+
 impl BatataConfigService {
     /// Create a new config service with the given gRPC client.
     pub fn new(grpc_client: Arc<GrpcClient>) -> Self {
@@ -212,27 +271,68 @@ impl BatataConfigService {
     ) -> Result<crate::traits::ConfigQueryResult> {
         match self.get_config_full(data_id, group, tenant).await {
             Ok(result) => Ok(result),
-            Err(e) => {
-                // Try failover if available (offloaded to spawn_blocking).
-                if let Some(processor) = &self.local_processor
-                    && let Some(failover_content) = processor
-                        .get_failover_async(data_id, group, tenant)
-                        .await
-                        .ok()
-                        .flatten()
-                {
-                    warn!(
-                        "Using failover config for dataId={}, group={}, tenant={}",
-                        data_id, group, tenant
-                    );
-                    return Ok(crate::traits::ConfigQueryResult {
-                        content: failover_content,
-                        ..Default::default()
-                    });
-                }
-                Err(e)
+            Err(err) => {
+                self.failover_config_result(data_id, group, tenant, err)
+                    .await
             }
         }
+    }
+
+    /// Get a config using the extensible GA 3.3.0 request object.
+    ///
+    /// Rust has no overloads, so this is the named equivalent of
+    /// `ConfigService.getConfig(GetConfigRequest)`. Setting `local_md5`
+    /// enables the 304 conditional GET; a value that cannot be paired with a
+    /// usable local representation degrades to an unconditional query.
+    pub async fn get_config_with_request(
+        &self,
+        request: &crate::traits::GetConfigRequest,
+    ) -> Result<crate::traits::ConfigQueryResult> {
+        match self
+            .query_config(
+                &request.data_id,
+                &request.group,
+                &request.tenant,
+                &request.local_md5,
+                true,
+            )
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                self.failover_config_result(&request.data_id, &request.group, &request.tenant, err)
+                    .await
+            }
+        }
+    }
+
+    /// Shared failover fallback for metadata-returning config queries.
+    async fn failover_config_result(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        err: ClientError,
+    ) -> Result<crate::traits::ConfigQueryResult> {
+        // The lookup is offloaded to `spawn_blocking` so its sync disk IO never
+        // blocks a worker.
+        if let Some(processor) = &self.local_processor
+            && let Some(failover_content) = processor
+                .get_failover_async(data_id, group, tenant)
+                .await
+                .ok()
+                .flatten()
+        {
+            warn!(
+                "Using failover config for dataId={}, group={}, tenant={}",
+                data_id, group, tenant
+            );
+            return Ok(crate::traits::ConfigQueryResult {
+                content: failover_content,
+                ..Default::default()
+            });
+        }
+        Err(err)
     }
 
     /// Internal: get config with full metadata from server
@@ -242,13 +342,61 @@ impl BatataConfigService {
         group: &str,
         tenant: &str,
     ) -> Result<crate::traits::ConfigQueryResult> {
+        self.query_config(data_id, group, tenant, "", true).await
+    }
+
+    /// Query config with the GA 3.3.0 304 conditional GET.
+    ///
+    /// A local (content, server-md5) pair is captured **before** the request;
+    /// its MD5 is sent as `localMd5`. On 304 the retained content is reused
+    /// directly (GA `ClientWorker.queryConfigInner`), so content and MD5 can
+    /// never drift if the cache changes concurrently. Without a retained
+    /// representation GA retries unconditionally; `allow_304_retry` bounds
+    /// that fallback to one extra request.
+    async fn query_config(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        explicit_md5: &str,
+        allow_304_retry: bool,
+    ) -> Result<crate::traits::ConfigQueryResult> {
+        let key = build_cache_key(data_id, group, tenant);
+        let local = {
+            let entry = self.cache_map.get(&key);
+            entry
+                .as_ref()
+                .and_then(|cache| resolve_local_content(cache.value(), explicit_md5))
+        };
+
         let mut req = ConfigQueryRequest {
             config_request: make_config_request(data_id, group, tenant),
             tag: String::new(),
+            local_md5: local.as_ref().map(|l| l.md5.clone()).unwrap_or_default(),
         };
         req.config_request.request.request_id = uuid::Uuid::new_v4().to_string();
 
-        let resp: ConfigQueryResponse = self.grpc_client.request_typed(&req).await?;
+        let resp: ConfigQueryResponse = self
+            .grpc_client
+            .request_typed_allowing(&req, ConfigQueryResponse::CONFIG_NOT_MODIFIED)
+            .await?;
+
+        if resp.response.error_code == ConfigQueryResponse::CONFIG_NOT_MODIFIED {
+            if let Some(local) = local {
+                return Ok(restore_not_modified(&resp, &local));
+            }
+            if allow_304_retry {
+                warn!(
+                    "304 without retained local content; retrying unconditionally: dataId={}, group={}, tenant={}",
+                    data_id, group, tenant
+                );
+                return Box::pin(self.query_config(data_id, group, tenant, "", false)).await;
+            }
+            return Err(ClientError::ServerError {
+                code: ConfigQueryResponse::CONFIG_NOT_MODIFIED,
+                message: "config not modified without local content".to_string(),
+            });
+        }
 
         // Apply filter chain
         let mut filter_resp = FilterConfigResponse::new();
@@ -266,22 +414,25 @@ impl BatataConfigService {
         }
 
         let content = filter_resp.content;
-        let md5 = crate::config::cache::compute_md5(&content);
+        // GA `ConfigQueryResult.md5` is the server MD5, not a hash of the
+        // post-filter content; only the server value is valid as `localMd5`.
+        let md5 = resp.md5.clone();
 
         // Cache the content
-        let key = build_cache_key(data_id, group, tenant);
         self.cache_map
             .entry(key)
             .and_modify(|cache| {
                 cache.update_content(&content);
                 cache.encrypted_data_key = resp.encrypted_data_key.clone();
                 cache.config_type = resp.content_type.clone();
+                cache.server_md5 = resp.md5.clone();
             })
             .or_insert_with(|| {
                 let mut cache = CacheData::new(data_id, group, tenant);
                 cache.update_content(&content);
                 cache.encrypted_data_key = resp.encrypted_data_key.clone();
                 cache.config_type = resp.content_type.clone();
+                cache.server_md5 = resp.md5.clone();
                 cache
             });
 
@@ -1199,7 +1350,111 @@ impl crate::traits::ConfigService for BatataConfigService {
 mod tests {
     use std::sync::Arc;
 
+    use batata_api::config::model::ConfigQueryResponse;
+
     use super::cache::*;
+    use super::{LocalConfigContent, resolve_local_content, restore_not_modified};
+
+    #[test]
+    fn test_resolve_local_content_requires_restorable_pair() {
+        let mut cache = CacheData::new("id", "group", "");
+        cache.content = "k=v".to_string();
+        cache.md5 = compute_md5("k=v");
+        // No server MD5 yet: GA sends an unconditional query.
+        assert!(resolve_local_content(&cache, "").is_none());
+
+        cache.server_md5 = "server-md5".to_string();
+        cache.config_type = "properties".to_string();
+        let local = resolve_local_content(&cache, "").unwrap();
+        assert_eq!(local.md5, "server-md5");
+        assert_eq!(local.content, "k=v");
+        assert_eq!(local.config_type, "properties");
+
+        // An explicit MD5 that cannot be paired with local content must not be
+        // sent (GA resolveLocalConfigContentWithMd5 queries unconditionally).
+        assert!(resolve_local_content(&cache, "other-md5").is_none());
+        assert!(resolve_local_content(&cache, "server-md5").is_some());
+
+        // Encrypted configs cannot prove content/key pairing.
+        cache.encrypted_data_key = "edk".to_string();
+        assert!(resolve_local_content(&cache, "").is_none());
+
+        // Empty content cannot restore a 304.
+        cache.encrypted_data_key.clear();
+        cache.content.clear();
+        assert!(resolve_local_content(&cache, "").is_none());
+    }
+
+    #[test]
+    fn test_restore_not_modified_uses_retained_content() {
+        let local = LocalConfigContent {
+            content: "k=v".to_string(),
+            md5: "server-md5".to_string(),
+            config_type: "properties".to_string(),
+            encrypted_data_key: String::new(),
+        };
+        let mut resp = ConfigQueryResponse::new();
+        resp.response.error_code = ConfigQueryResponse::CONFIG_NOT_MODIFIED;
+        resp.md5 = "server-md5".to_string();
+        resp.content_type = "yaml".to_string();
+        resp.content = "MUST NOT BE USED".to_string();
+
+        let result = restore_not_modified(&resp, &local);
+        assert_eq!(result.content, "k=v");
+        assert_eq!(result.md5, "server-md5");
+        assert_eq!(result.config_type, "yaml");
+
+        // GA falls back to TEXT when contentType is blank; batata keeps the
+        // retained type because the content is unchanged.
+        resp.content_type.clear();
+        let result = restore_not_modified(&resp, &local);
+        assert_eq!(result.config_type, "properties");
+        assert_eq!(result.content, "k=v");
+    }
+
+    #[test]
+    fn test_get_config_request_builder() {
+        let req = crate::traits::GetConfigRequest::new("app.yaml", "DEFAULT_GROUP");
+        assert_eq!(req.data_id, "app.yaml");
+        assert_eq!(req.group, "DEFAULT_GROUP");
+        assert!(req.tenant.is_empty());
+        assert!(req.local_md5.is_empty());
+    }
+
+    /// A 304 contract is only real if the wire field is populated, the
+    /// response is decoded instead of erroring out, the retained content is
+    /// restored, and both cache branches persist the server MD5. Deleting any
+    /// of those call sites must turn this test red.
+    #[test]
+    fn test_conditional_get_is_wired_into_query_path() {
+        const SOURCE: &str = include_str!("mod.rs");
+        // Needles are split so this test never counts its own source text.
+        const ALLOW: &str = concat!(
+            "request_typed_allowing",
+            "(&req, ConfigQueryResponse::CONFIG_NOT_MODIFIED)"
+        );
+        const FIELD: &str = concat!("local_md5: local", ".as_ref()");
+        // Anchor on the production call site, not the plain helper calls in
+        // the tests above.
+        const RESTORE: &str = concat!("return Ok(restore_not_modified", "(&resp, &local));");
+        const SAVE: &str = concat!("cache.server_md5 = resp.md5", ".clone()");
+        assert_eq!(SOURCE.matches(ALLOW).count(), 1);
+        assert_eq!(
+            SOURCE.matches(FIELD).count(),
+            1,
+            "localMd5 must be put on the wire"
+        );
+        assert_eq!(
+            SOURCE.matches(RESTORE).count(),
+            1,
+            "304 must restore the retained content"
+        );
+        assert_eq!(
+            SOURCE.matches(SAVE).count(),
+            2,
+            "both cache branches must persist the server MD5"
+        );
+    }
 
     #[test]
     fn test_build_cache_key_empty_tenant() {

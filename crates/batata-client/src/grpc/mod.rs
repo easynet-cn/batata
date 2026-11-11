@@ -29,6 +29,17 @@ use self::auth::AuthProvider;
 use self::connection::GrpcConnection;
 use self::health::ConnectionHealthChecker;
 
+/// Decide whether a decoded application response is a fatal error.
+///
+/// `allowed_error_code` lets one non-fatal application code reach the caller as
+/// a decoded response. GA 3.3.0 config conditional GET returns a FAIL result
+/// with `errorCode = 304 CONFIG_NOT_MODIFIED` plus useful md5 / contentType /
+/// lastModified metadata, so the config service allows exactly that code.
+/// Passing `0` preserves the original `request_typed` behavior.
+fn is_fatal_response(result_code: i32, error_code: i32, allowed_error_code: i32) -> bool {
+    result_code != 200 && error_code != 0 && error_code != allowed_error_code
+}
+
 /// Deserialize a payload body into a concrete type.
 pub fn deserialize_payload<T>(payload: &Payload) -> T
 where
@@ -430,6 +441,26 @@ impl GrpcClient {
         Req: RequestTrait + serde::Serialize,
         Resp: for<'de> serde::Deserialize<'de> + Default + ResponseTrait,
     {
+        self.request_typed_allowing(req, 0).await
+    }
+
+    /// Send a typed request, letting one application-level error code reach
+    /// the caller as a decoded response instead of a `ClientError`.
+    ///
+    /// GA 3.3.0 config conditional GET answers with `resultCode = FAIL`,
+    /// `errorCode = 304` and no content, but carries md5 / contentType /
+    /// lastModified. The config service needs that metadata to rebuild the
+    /// result from its retained local content, so 304 is explicitly allowed
+    /// here. The 403 reLogin path and every other error stay untouched.
+    pub async fn request_typed_allowing<Req, Resp>(
+        &self,
+        req: &Req,
+        allowed_error_code: i32,
+    ) -> Result<Resp>
+    where
+        Req: RequestTrait + serde::Serialize,
+        Resp: for<'de> serde::Deserialize<'de> + Default + ResponseTrait,
+    {
         let resp_payload = self.request(req).await?;
 
         let resp: Resp = deserialize_payload(&resp_payload);
@@ -443,7 +474,7 @@ impl GrpcClient {
                 // Retry the request with new token
                 let resp_payload = self.request(req).await?;
                 let resp: Resp = deserialize_payload(&resp_payload);
-                if resp.result_code() != 200 && resp.error_code() != 0 {
+                if is_fatal_response(resp.result_code(), resp.error_code(), allowed_error_code) {
                     return Err(ClientError::ServerError {
                         code: resp.error_code(),
                         message: resp.message(),
@@ -454,7 +485,7 @@ impl GrpcClient {
         }
 
         // Check for server error
-        if resp.result_code() != 200 && resp.error_code() != 0 {
+        if is_fatal_response(resp.result_code(), resp.error_code(), allowed_error_code) {
             return Err(ClientError::ServerError {
                 code: resp.error_code(),
                 message: resp.message(),
@@ -1019,6 +1050,35 @@ fn compute_backoff_ms(config: &GrpcClientConfig, attempt: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_fatal_response_allows_only_the_requested_code() {
+        assert!(!is_fatal_response(200, 0, 0), "success response");
+        assert!(
+            !is_fatal_response(200, 304, 0),
+            "a successful result code wins over the error code"
+        );
+        assert!(
+            is_fatal_response(500, 300, 0),
+            "CONFIG_NOT_FOUND stays a real error"
+        );
+        assert!(
+            is_fatal_response(500, 304, 0),
+            "304 is fatal for callers that did not opt in"
+        );
+        assert!(
+            !is_fatal_response(500, 304, 304),
+            "304 must reach the config service as a decoded response"
+        );
+        assert!(
+            is_fatal_response(500, 403, 304),
+            "allowing 304 must not whitelist other error codes"
+        );
+        assert!(
+            !is_fatal_response(500, 0, 304),
+            "no application error code means no error"
+        );
+    }
 
     #[test]
     fn test_grpc_client_config_default() {

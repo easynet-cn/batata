@@ -15,6 +15,7 @@ fn test_config_query_request_serialization() {
     req.config_request.group = "DEFAULT_GROUP".to_string();
     req.config_request.tenant = "public".to_string();
     req.tag = "v1".to_string();
+    req.local_md5 = "abc123".to_string();
 
     // Serialize to Payload
     let payload = req.build_server_push_payload();
@@ -31,6 +32,7 @@ fn test_config_query_request_serialization() {
     assert_eq!(deserialized.config_request.group, "DEFAULT_GROUP");
     assert_eq!(deserialized.config_request.tenant, "public");
     assert_eq!(deserialized.tag, "v1");
+    assert_eq!(deserialized.local_md5, "abc123");
 }
 
 #[test]

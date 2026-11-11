@@ -1901,3 +1901,124 @@ B.9 row + Summary Total, `README.md` global table and F-ID narrative updated.
 `cargo test -p batata-client` (384 lib + 2 ai + 3 request_id + 11 tls + 25 unit
 + 2 doctests, 0 failed) all pass. No `--full` matrix, commit, push, publish,
 yank, archive or tag was performed (commit/push handled separately).
+
+## 24. Batch 17 — `F-NAC-CSDK-004` config 304 conditional GET
+
+### 24.1 GA baseline and scope
+
+Source-verified at release commit `b64bc9118` (Nacos 3.3.0 GA), using `git
+show` against the tagged baseline rather than the local post-GA develop head:
+
+| GA source | Contract |
+|-----------|----------|
+| `api/.../config/GetConfigRequest.java:61` | optional `localMd5` on the extensible request |
+| `api/.../remote/request/ConfigQueryRequest.java:40` | optional `localMd5` on the gRPC wire |
+| `api/.../remote/response/ConfigQueryResponse.java:38` | `CONFIG_NOT_MODIFIED = 304` |
+| `config/.../ConfigQueryRequestHandler.java:121-136,229-239` | md5 match → `buildNotModifiedResponse` (`setErrorInfo(304, ...)`, md5 / contentType / lastModified retained, no content) |
+| `config/.../service/query/handler/FormalHandler.java:58-68` | short-circuits the content read on an md5 match (post-read comparison is declared equivalent) |
+| `config/.../service/query/handler/GrayRuleMatchHandler.java:66-74` | same 304 status for gray/tag configs |
+| `config/.../DefaultChainRequestExtractor.java:71-74` | "HTTP conditional GET (304) is not part of this change" — **gRPC only** |
+| `client/.../NacosConfigService.java:115-135,210-222` | `getConfig(GetConfigRequest)` → `ConfigQueryResult`; explicit MD5 that cannot be paired with local content degrades to an unconditional query |
+| `client/.../ClientWorker.java:1529-1585` | sends `localMd5`, and on 304 reuses the `LocalConfigContent` captured before the request; retries unconditionally when none is available |
+
+BATATA's config transport is gRPC (`batata-api` `ConfigQueryRequest` /
+`ConfigQueryResponse` over `Payload`), so the GA gRPC-only scope maps directly.
+The HTTP `/v3/client/config` API is deliberately left unchanged.
+
+### 24.2 Wire contract (`batata-api`)
+
+`crates/batata-api/src/config/model.rs` adds
+`ConfigQueryRequest.local_md5: String` with `#[serde(default,
+skip_serializing_if = "String::is_empty")]`, serialized as `localMd5` by the
+existing container-level `rename_all = "camelCase"`. Omitting empty values keeps
+the payload byte-identical for older servers and older clients; a missing field
+deserializes to an empty string. `ConfigQueryResponse::CONFIG_NOT_MODIFIED =
+304` joins the existing `CONFIG_NOT_FOUND = 300` / `CONFIG_QUERY_CONFLICT =
+400` constants.
+
+### 24.3 Server (`batata-config`)
+
+`crates/batata-config/src/handler/config_handler.rs` reads
+`request.local_md5` once at the top of `ConfigQueryHandler::handle` and routes
+**both** successful branches (gray and formal) through the single exit point
+`finalize_config_query_response`. `apply_conditional_get` returns false for a
+blank local MD5, a blank server MD5 or a mismatch; otherwise it reproduces
+`Response.setErrorInfo`: `resultCode = FAIL`, `errorCode = 304`,
+`success = false`, `message = "config not modified, use local cache"`, while
+clearing `content` / `encrypted_data_key` and keeping `md5`, `content_type`,
+`last_modified` and `request_id`. Keeping the FAIL result code matters for
+cross-language interop: a GA Java client checks `response.isSuccess()` and
+would otherwise treat a content-less 200 as an empty config.
+
+### 24.4 Client (`batata-client`)
+
+`crates/batata-client/src/config/mod.rs`:
+- `GetConfigRequest` (in `traits.rs`, re-exported at the crate root) is the
+  Rust equivalent of GA's extensible request; `get_config_with_request()` is
+  the named overload of GA `getConfig(GetConfigRequest)`.
+- `CacheData.server_md5` stores the authoritative server MD5 separately from
+  the locally computed `md5` (the latter hashes post-filter content and is not
+  valid on the wire).
+- `resolve_local_content` captures a `(content, server_md5, config_type, key)`
+  pair before the request, refusing encrypted configs (content/key pairing
+  cannot be proven, matching GA's conservative rule), empty content, an empty
+  server MD5, and an explicit MD5 that does not match the local pair.
+- `query_config` sends `local_md5` only when such a pair exists, and on 304
+  calls `restore_not_modified` to reuse the retained content with the response
+  metadata. A 304 with no retained content triggers one bounded unconditional
+  retry (`allow_304_retry`), matching GA's fallback.
+- `ConfigQueryResult.md5` now returns the server MD5 rather than a hash of the
+  post-filter content, so it is valid both for CAS publish and as the next
+  `local_md5`.
+- `GrpcClient::request_typed_allowing(req, 304)` (`grpc/mod.rs`) delegates from
+  the unchanged `request_typed` with an allow-list of `0`. Only 304 is
+  allowed to reach the caller as a decoded response; the 403 reLogin retry and
+  every other application error keep their original behavior.
+
+### 24.5 Mutants
+
+13 compile-safe mutants across the three crates were all killed by real
+assertion failures (no compile-error false positives):
+
+| Mutant | Change |
+|--------|--------|
+| A1 | `localMd5` serialized even when empty (backward compatibility lost) |
+| A2 | `CONFIG_NOT_MODIFIED` set to 300 |
+| S1 | md5 equality guard deleted |
+| S2 | 304 still carries content |
+| S3 | 304 error code not set |
+| S4 | gray branch bypasses `finalize_config_query_response` |
+| S5 | `request.local_md5` bound but ignored |
+| G1 | allowed error code ignored by `is_fatal_response` |
+| C1 | explicit-MD5 mismatch check deleted |
+| C2 | empty server MD5 accepted as a valid local pair |
+| C3 | 304 restores response content instead of retained content |
+| C4 | `local_md5` never put on the wire |
+| C5 | server MD5 not persisted in one cache branch |
+
+Because there is no lightweight `AppState` fixture (the existing real-handler
+integration test is `#[ignore = "requires running gRPC server"]`), the server
+tests use a pure single-exit function plus an `include_str!` wiring assertion
+that counts both `finalize_config_query_response(response, &local_md5)` call
+sites and the `request.local_md5` read. The client has an equivalent wiring
+assertion over `request_typed_allowing`, the `localMd5` assignment, the
+`restore_not_modified` call and both `server_md5` writes. This satisfies the
+"declaration != call site" rule: deleting a call site turns a test red.
+
+### 24.6 Status and promotion
+
+`F-NAC-CSDK-004` → 🟢. Counts: B.9 `4🟢/1🟡/3⚪/0⛔` → `5🟢/1🟡/2⚪/0⛔`
+(rate 50%→63%); Nacos Total `183🟢/5🟡/5⚪/4⛔/197` →
+`184🟢/5🟡/4⚪/4⛔/197` (rate 93% unchanged). `features.md` B.9 row +
+Summary Total + Batch 17 prose, `README.md` global table + F-ID narrative
+updated.
+
+### 24.7 Validation and no-ops
+
+`cargo fmt --all`, `git diff --check`, `scripts/compat_check.py`,
+`cargo check --workspace --exclude batata-integration-tests --tests`,
+`cargo test -p batata-api -p batata-client -p batata-config` (56 / 389 lib +
+2 ai + 3 request_id + 11 tls + 25 unit / 117, 0 failed), the integration gRPC
+config suite (4 passed, 1 ignored) and clippy on all changed files (0 new
+warnings) pass. No `--full` matrix, commit, push, publish, yank, archive or tag
+was performed (commit/push handled separately).

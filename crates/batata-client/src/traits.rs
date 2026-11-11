@@ -36,6 +36,38 @@ pub struct ConfigQueryResult {
     pub encrypted_data_key: String,
 }
 
+/// Extensible config query request, matching Nacos Java `GetConfigRequest`.
+///
+/// GA 3.3.0 added `localMd5` for the 304 conditional GET. Rust has no method
+/// overloading, so `BatataConfigService::get_config_with_request` is the named
+/// equivalent of `ConfigService.getConfig(GetConfigRequest)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GetConfigRequest {
+    /// Config data ID.
+    pub data_id: String,
+    /// Config group.
+    pub group: String,
+    /// Namespace / tenant. Empty means `public`.
+    pub tenant: String,
+    /// Local cached MD5 used for the 304 conditional GET.
+    ///
+    /// When it matches a usable local representation and the server-side MD5,
+    /// the server answers 304 and the retained content is reused. When it does
+    /// not match any local representation, GA queries unconditionally.
+    pub local_md5: String,
+}
+
+impl GetConfigRequest {
+    /// Create a request for the given data ID and group.
+    pub fn new(data_id: impl Into<String>, group: impl Into<String>) -> Self {
+        Self {
+            data_id: data_id.into(),
+            group: group.into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// Paginated list result.
 ///
 /// Matches Nacos Java `ListView<T>`.
