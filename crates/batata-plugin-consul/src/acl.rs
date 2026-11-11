@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::RwLock;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use base64::Engine;
@@ -27,6 +28,33 @@ pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
 pub const CONSUL_TOKEN_QUERY: &str = "token";
 /// Well-known accessor ID for the bootstrap management token
 pub const BOOTSTRAP_ACCESSOR_ID: &str = "00000000-0000-0000-0000-000000000001";
+
+/// Canonical agent ACL token targets for `PUT /v1/agent/token/{target}`.
+///
+/// Mirrors the target switch in Consul's `agent/agent_endpoint.go:AgentToken`.
+pub const AGENT_TOKEN_TARGETS: &[&str] = &[
+    "default",
+    "agent",
+    "agent_recovery",
+    "replication",
+    "config_file_service_registration",
+    "dns",
+];
+
+/// Resolve a wire target (including legacy aliases) to its canonical name.
+///
+/// Returns `None` for unknown targets, which Consul rejects with 404.
+pub fn canonical_agent_token_target(target: &str) -> Option<&'static str> {
+    match target {
+        "acl_token" | "default" => Some("default"),
+        "acl_agent_token" | "agent" => Some("agent"),
+        "acl_agent_master_token" | "agent_master" | "agent_recovery" => Some("agent_recovery"),
+        "acl_replication_token" | "replication" => Some("replication"),
+        "config_file_service_registration" => Some("config_file_service_registration"),
+        "dns_token" | "dns" => Some("dns"),
+        _ => None,
+    }
+}
 
 // Cache for validated tokens (60-second TTL, cluster-safe default)
 static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
@@ -372,6 +400,11 @@ pub struct AclService {
     store: AclStore,
     /// Optional Raft writer for cluster-mode replication
     raft_node: Option<Arc<ConsulRaftWriter>>,
+    /// Runtime agent ACL tokens set through `PUT /v1/agent/token/{target}`.
+    ///
+    /// Wrapped in `Arc` so clones of the service (actix `web::Data`, Raft
+    /// helpers) share the same values as the authorization path.
+    agent_tokens: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl Default for AclService {
@@ -389,6 +422,7 @@ impl AclService {
             default_policy: RulePolicy::Deny,
             store,
             raft_node: None,
+            agent_tokens: Arc::new(RwLock::new(HashMap::new())),
         };
         svc.init_bootstrap(None);
         svc
@@ -403,6 +437,7 @@ impl AclService {
             default_policy: RulePolicy::Deny,
             store,
             raft_node: None,
+            agent_tokens: Arc::new(RwLock::new(HashMap::new())),
         };
         svc.init_bootstrap(Some(token));
         svc
@@ -415,6 +450,7 @@ impl AclService {
             default_policy: RulePolicy::Write,
             store: AclStore::memory(),
             raft_node: None,
+            agent_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -437,6 +473,7 @@ impl AclService {
             default_policy: RulePolicy::Deny,
             store,
             raft_node: None,
+            agent_tokens: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Only create bootstrap token/policy if not already in RocksDB
@@ -485,6 +522,32 @@ impl AclService {
     /// Get a reference to the underlying store (for callers that need direct access).
     pub fn store(&self) -> &AclStore {
         &self.store
+    }
+
+    /// Store the runtime token for a canonical agent token target.
+    ///
+    /// An empty token clears the entry, matching Consul's ability to unset an
+    /// agent token through the same endpoint.
+    pub fn set_agent_token(&self, target: &str, token: &str) {
+        let Some(canonical) = canonical_agent_token_target(target) else {
+            return;
+        };
+        let mut guard = self.agent_tokens.write().unwrap_or_else(|e| e.into_inner());
+        if token.is_empty() {
+            guard.remove(canonical);
+        } else {
+            guard.insert(canonical.to_string(), token.to_string());
+        }
+    }
+
+    /// Read the runtime token for a canonical agent token target.
+    pub fn agent_token(&self, target: &str) -> Option<String> {
+        let canonical = canonical_agent_token_target(target)?;
+        self.agent_tokens
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(canonical)
+            .cloned()
     }
 
     fn init_bootstrap(&mut self, initial_management_token: Option<String>) {
@@ -1420,9 +1483,16 @@ query_prefix "" { policy = "write" }
             return AuthzResult::allowed();
         }
 
+        // Consul's `default` agent token (`PUT /v1/agent/token/default`) is the
+        // identity used when a request carries no explicit token. Only fall back
+        // when the endpoint has explicitly configured one; otherwise the legacy
+        // "no token -> deny" behavior is unchanged.
         let secret_id = match Self::extract_token(req) {
             Some(t) => t,
-            None => return AuthzResult::denied("ACL token required"),
+            None => match self.agent_token("default") {
+                Some(t) if !t.is_empty() => t,
+                _ => return AuthzResult::denied("ACL token required"),
+            },
         };
 
         let token = match self.get_token(&secret_id) {
@@ -4292,5 +4362,90 @@ service_prefix "web" { policy = "read" }
         );
         assert!(role.node_identities.is_some());
         assert_eq!(role.node_identities.as_ref().unwrap()[0].node_name, "node1");
+    }
+
+    #[test]
+    fn test_agent_token_target_whitelist() {
+        for canonical in AGENT_TOKEN_TARGETS {
+            assert_eq!(
+                canonical_agent_token_target(canonical),
+                Some(*canonical),
+                "canonical target {canonical} must resolve to itself"
+            );
+        }
+        let aliases = [
+            ("acl_token", "default"),
+            ("acl_agent_token", "agent"),
+            ("acl_agent_master_token", "agent_recovery"),
+            ("agent_master", "agent_recovery"),
+            ("acl_replication_token", "replication"),
+            ("dns_token", "dns"),
+        ];
+        for (alias, expected) in aliases {
+            assert_eq!(canonical_agent_token_target(alias), Some(expected));
+        }
+        assert_eq!(canonical_agent_token_target("not-a-target"), None);
+        assert_eq!(canonical_agent_token_target(""), None);
+    }
+
+    #[test]
+    fn test_agent_token_storage_shared_by_clones() {
+        let service = AclService::new();
+        let clone = service.clone();
+        assert_eq!(service.agent_token("default"), None);
+
+        // Legacy alias resolves to the canonical key used by the auth path.
+        service.set_agent_token("acl_token", "runtime-secret");
+        assert_eq!(
+            clone.agent_token("default"),
+            Some("runtime-secret".to_string())
+        );
+        assert_eq!(
+            clone.agent_token("acl_token"),
+            Some("runtime-secret".to_string())
+        );
+
+        // An empty token clears the entry, matching Consul's unset behavior.
+        service.set_agent_token("default", "");
+        assert_eq!(clone.agent_token("default"), None);
+
+        service.set_agent_token("unknown", "should-not-be-stored");
+        assert_eq!(service.agent_token("unknown"), None);
+    }
+
+    #[test]
+    fn test_default_agent_token_authorization_fallback() {
+        let service = AclService::with_initial_management_token("mgmt-secret".to_string());
+        let plain = actix_web::test::TestRequest::default().to_http_request();
+        assert!(
+            !service
+                .authorize_request(&plain, ResourceType::Agent, "", true)
+                .allowed
+        );
+
+        service.set_agent_token("default", "mgmt-secret");
+        assert!(
+            service
+                .authorize_request(&plain, ResourceType::Agent, "", true)
+                .allowed,
+            "a configured default token must authorize a request without an explicit token"
+        );
+
+        // An explicit token always wins over the default identity.
+        let explicit = actix_web::test::TestRequest::default()
+            .insert_header((X_CONSUL_TOKEN, "wrong-token"))
+            .to_http_request();
+        assert!(
+            !service
+                .authorize_request(&explicit, ResourceType::Agent, "", true)
+                .allowed
+        );
+
+        service.set_agent_token("default", "");
+        assert!(
+            !service
+                .authorize_request(&plain, ResourceType::Agent, "", true)
+                .allowed
+        );
     }
 }

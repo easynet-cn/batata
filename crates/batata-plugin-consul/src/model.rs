@@ -2121,6 +2121,18 @@ pub struct AgentVersion {
     pub fips: String,
 }
 
+/// `PUT /v1/agent/token/{target}` request body.
+///
+/// Mirrors Go's `api.AgentToken{Token string}`: Consul expects a JSON object
+/// with a PascalCase `Token` field so more fields can be added later.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct AgentTokenUpdate {
+    #[serde(default)]
+    /// The `token` field.
+    pub token: String,
+}
+
 /// Agent maintenance mode request
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentMaintenanceRequest {

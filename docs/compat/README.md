@@ -34,9 +34,9 @@ Recomputed from F-ID / T-ID rows (table header rows excluded) and enforced by
 | Protocol | Features | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Impl rate | Test cases | Test types |
 |----------|----------|----|----|---|----|----|-----------|------------|------------|
 | Nacos    | 197      | 184 | 5  | 0 | 4 | 4  | 93%       | 401        | HTTP_API, GRPC_API, SDK_CLIENT |
-| Consul   | 181      | 179 | 2  | 0 | 0  | 0  | 99%       | 251        | HTTP_API, SDK_CLIENT |
+| Consul   | 181      | 181 | 0  | 0 | 0  | 0  | 100%      | 251        | HTTP_API, SDK_CLIENT |
 | Apollo   | 199      | 169 | 3  | 0 | 27 | 0  | 85%       | 388        | HTTP_API, SDK_CLIENT, INTERNAL |
-| **Total** | **577** | **532** | **10** | **0** | **31** | **4** | **92%** | **1040** | |
+| **Total** | **577** | **534** | **8** | **0** | **31** | **4** | **93%** | **1040** | |
 
 `Impl rate = round(100 * 🟢 / Features)`. `Test cases` counts **data T-ID rows**,
 not the upstream test methods they were derived from and not batata's own E2E
@@ -299,6 +299,35 @@ performed.
 **Batch 16 implemented (2026-11-11)**: `F-NAC-CSDK-001` is now `🟢`. GA `b64bc9118` source-verified: `NamingService.java:524,530` declare the two `NamingSelector` subscribe overloads, and `NamingSelectorWrapper.buildListenerEvent` applies the selector to the current instance list and the added/removed/modified diff buckets before the listener runs — a purely client-side filter with no server wire change. `crates/batata-client/src/naming/selector.rs` ports `NamingContext`, the `NamingSelector` trait, `DefaultNamingSelector`, `NamingSelectorFactory` (empty / healthy / cluster / IP whole-string regex / metadata all-or-any / `get_unique_cluster_string`) and `SelectorEventListener`. `crates/batata-client/src/naming/mod.rs` adds `subscribe_with_selector` + `subscribe_with_selector_default_group`, which register the wrapper and filter the returned initial snapshot through the same `filter_event` path; `crates/batata-client/src/traits.rs` adds both contract methods with default implementations, and the existing 4-arg `subscribe` is untouched. 12 tests (11 selector unit + 1 real `handle_notify_subscriber` push-dispatch path) with **4/4 compile-safe mutants killed**; `cargo fmt` and `cargo test -p batata-client` pass (384 lib + 2 ai + 3 request_id + 11 tls + 25 unit + 2 doctests). Counts: B.9 `4🟢/1🟡/3⚪/0⛔` (rate 38%→50%); Nacos Total `182🟢/5🟡/6⚪/4⛔/197` → `183🟢/5🟡/5⚪/4⛔/197` (rate 92%→93%). `features.md` B.9 + Summary Total, `README.md` global table and F-ID narrative updated. See `review-report.md` §23. No `--full`, commit, push or publish was performed (commit/push handled separately).
 
 **Batch 17 implemented (2026-11-11)**: `F-NAC-CSDK-004` is now `🟢`. GA `b64bc9118` source-verified: `GetConfigRequest.java:61` and `ConfigQueryRequest.java:40` add the optional `localMd5`; `ConfigQueryRequestHandler.buildNotModifiedResponse()` answers `304 CONFIG_NOT_MODIFIED` with md5/contentType/lastModified but no content when the MD5 matches, `ClientWorker.queryConfigInner()` reuses the local content captured before the request (falling back to an unconditional query when none is restorable), and `DefaultChainRequestExtractor.java:71` **explicitly excludes HTTP** — the contract is gRPC-only. Batata now covers all three sides: `crates/batata-api/src/config/model.rs` adds `ConfigQueryRequest.local_md5` (wire key `localMd5`, omitted when empty so old peers see an unchanged payload) and `ConfigQueryResponse::CONFIG_NOT_MODIFIED = 304`; `crates/batata-config/src/handler/config_handler.rs` routes both the gray and formal success branches through `finalize_config_query_response`, which emits the GA-shaped 304 (`resultCode=FAIL`, `errorCode=304`, `success=false`, content cleared, metadata retained); `crates/batata-client/src/config/mod.rs` adds the `GetConfigRequest` DTO and `get_config_with_request()`, stores the authoritative server MD5 in `CacheData.server_md5`, sends `localMd5` only when `resolve_local_content` finds a restorable (non-encrypted) pair, and rebuilds the result from that retained content on 304 via `restore_not_modified`. A bounded one-shot unconditional retry handles a 304 with no retained content. `GrpcClient::request_typed_allowing` lets exactly 304 reach the caller as a decoded response without weakening the 403 reLogin path; `ConfigQueryResult.md5` now uses the server MD5 (correct for CAS and reusable as the next `local_md5`). HTTP config endpoints are deliberately untouched. 3 API serde/wire tests, 4 server tests (including an `include_str!` wiring assertion over both handler branches), 5 client tests and 1 integration payload round-trip; **13/13 compile-safe mutants killed** across all three crates — covering the MD5 equality guard, content clearing, the 304 error code, both handler call sites, bound-but-ignored `localMd5`, missing `localMd5` on the wire, and unpersisted server MD5. `cargo check --workspace --exclude batata-integration-tests --tests`, `cargo test -p batata-api -p batata-client -p batata-config` (56 / 389 lib + 41 integration / 117, 0 failed), the integration gRPC config suite and clippy on all changed files pass. Counts: B.9 `5🟢/1🟡/2⚪/0⛔` (rate 50%→63%); Nacos Total `183🟢/5🟡/5⚪/4⛔/197` → `184🟢/5🟡/4⚪/4⛔/197` (rate 93% unchanged). `features.md` B.9 + Summary Total, `README.md` global table and F-ID narrative updated. See `review-report.md` §24. No `--full`, commit, push or publish was performed (commit/push handled separately).
+
+**Batch 18 implemented (2026-11-11)**: Consul `F-CON-AGNT-024` and
+`F-CON-AGNT-025` are now `🟢`, taking Consul to **181/181 (100%)**. Both
+endpoints were already wired (`crates/batata-plugin-consul/src/api/v1/agent.rs`)
+but their inventory notes were inaccurate. `agent.rs:1511` (`agent_reload`)
+is not a no-op: it re-schedules owned active health checks
+(`reload_active_checks`), surfaces log-level reload through core `/ops/log`,
+and warns about restart-only settings; a real-dispatch unit test plus a
+`include_str!` wiring assertion now guard this. `agent.rs:2085`
+(`update_agent_token`) previously acknowledged every request without even
+binding the body. Source-verified against Consul
+`agent/agent_endpoint.go:1568-1640` and `api/agent.go:540` (`api.AgentToken`),
+it now decodes the PascalCase `{"Token": ...}` body (400 on a bad body),
+resolves the six canonical targets plus legacy aliases (404 on unknown), and
+persists the value in `AclService` via an `Arc<RwLock<HashMap>>` shared by all
+clones. `authorize_request` falls back to the `default` token only when the
+request carries no explicit `X-Consul-Token` / Bearer / `?token=`, and still
+resolves it against the ACL store — so this endpoint cannot grant arbitrary
+privileges, and behavior is unchanged until it is called. 3 new HTTP route
+cases (legacy alias / unknown target / missing body), 2 reload unit cases, 2
+`include_str!` wiring assertions and 4 ACL unit cases; **11/11 compile-safe
+mutants killed** (whitelist alias, empty-token clearing, canonical storage
+key, default fallback, explicit-token precedence, body decode, target
+rejection, persistence, both reload guards, reload call site). Agent module
+96%→100%, Consul 99%→100%, global `532🟢/10🟡/31⚪` → `534🟢/8🟡/31⚪`
+(92%→93%); T-ID counts unchanged (401 / 1040). `features.md` Consul Agent
+rows + Summary Total + Batch 18 prose, `README.md` global table and F-ID
+narrative updated. See `review-report.md` §25. No `--full` gate, commit, push
+or publish was performed (commit/push handled separately).
 
 Batch 5 then made the four remaining Agent write handlers dual-wire:
 `crates/batata-ai/src/api/agent.rs` (`resolve_agent_write`) decodes either batata's

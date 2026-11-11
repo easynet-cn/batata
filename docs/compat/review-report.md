@@ -2022,3 +2022,91 @@ updated.
 config suite (4 passed, 1 ignored) and clippy on all changed files (0 new
 warnings) pass. No `--full` matrix, commit, push, publish, yank, archive or tag
 was performed (commit/push handled separately).
+
+---
+
+## 25. Batch 18 — Consul agent reload / token closeout (`F-CON-AGNT-024/025` → 🟢)
+
+### 25.1 Source verification
+
+The two remaining Consul 🟡 rows were both already routed
+(`crates/batata-plugin-consul/src/api/v1/agent.rs:119` `#[put("/reload")]` and
+`:191` `#[put("/token/{token_type}")]`, registered at `:455` and `:460`), but
+their notes did not match the code:
+
+- `F-CON-AGNT-024` said "no-op: batata has no config file to reload".
+  `src/agent.rs:1511` `agent_reload` performs three steps: ACL authorization,
+  `reload_active_checks(&health_service)` (re-schedules every owned active
+  health check), `reload_log_level()`, and
+  `warn_non_reloadable_config(&dc_config)`. Not a no-op.
+- `F-CON-AGNT-025` said "stored, not applied to gossip". `src/agent.rs:2087`
+  bound only `web::Path<String>` — no request body, no storage at all — and
+  returned 200 for every target. Less than the note claimed.
+
+Upstream Consul 2.1.0-dev (`~/work/github/easynet-cn/consul`) was read
+directly: `api/agent.go:540` defines `api.AgentToken{Token string}` and
+`:1591` sends it as a JSON object to `PUT /v1/agent/token/{target}`;
+`agent/agent_endpoint.go:1568` `AgentToken` decodes the body (400 on decode
+failure), maps six target groups (`default`/`acl_token`,
+`agent`/`acl_agent_token`, `agent_recovery`/`agent_master`/`acl_agent_master_token`,
+`replication`/`acl_replication_token`, `config_file_service_registration`,
+`dns`/`dns_token`), returns 404 `Token %q is unknown` otherwise, and routes
+`default` to `UpdateUserToken` — the identity used when a request carries no
+explicit token. `authorize_request` in `src/acl.rs` previously denied any
+request without an explicit token.
+
+### 25.2 Implementation
+
+`src/acl.rs` gains `AGENT_TOKEN_TARGETS`,
+`canonical_agent_token_target()`, an `agent_tokens:
+Arc<RwLock<HashMap<String, String>>>` field (initialized in all four struct
+literals so clones share state), `set_agent_token()` / `agent_token()`, and a
+fallback in `authorize_request`: when `extract_token()` returns `None` and a
+`default` token was explicitly configured, that value is used as the secret
+id. The value is still resolved through `get_token()` against the ACL store,
+so the endpoint cannot mint privileges; explicit `X-Consul-Token` / Bearer /
+`?token=` still wins. Without a configured default, behavior is byte-for-byte
+the legacy "no token → deny".
+
+`src/model.rs` adds `AgentTokenUpdate` with the single PascalCase `Token`
+wire key. `src/agent.rs` `update_agent_token` now binds `web::Bytes`, decodes
+it with `serde_json::from_slice` (400 with the upstream message on failure),
+validates the target (404), stores the canonical value and keeps the existing
+200 + `X-Consul-Default-ACL-Policy` response. The route shim in
+`api/v1/agent.rs` forwards the body. `reload` needed no code change.
+
+### 25.3 Tests and mutants
+
+`route/tests.rs`: the two pre-existing token tests now send a real body; new
+cases cover the legacy `acl_token` alias (200), an unknown target (404) and a
+missing body (400). `agent.rs` tests: `reload_active_checks` re-schedules
+exactly the owned active check (foreign and TTL checks excluded), the
+no-scheduler path is a safe no-op, and two `include_str!` wiring assertions
+cover the three `agent_reload` steps and the decode/validate/store call sites
+— "declaration != call site" is enforced. `acl.rs` tests: target whitelist,
+clone-shared storage + empty-token clearing, and the default-token
+authorization fallback including explicit-token precedence and clearing.
+
+**11/11 compile-safe mutants killed** by real assertion failures: legacy
+alias dropped, empty token not clearing, non-canonical storage key, default
+fallback removed, explicit token overridden, body ignored, unknown target
+accepted, token not persisted, active-check guard removed, ownership guard
+removed, reload call site removed.
+
+### 25.4 Status and promotion
+
+`F-CON-AGNT-024` → 🟢 (note corrected with source-verified behavior and a
+crate anchor), `F-CON-AGNT-025` → 🟢. Consul Agent module
+`24🟢/2🟡/26` (96%) → `26🟢/0🟡/26` (100%); Consul Total
+`179🟢/2🟡/181` (99%) → `181🟢/0🟡/181` (**100%**); global
+`532🟢/10🟡/31⚪/577` (92%) → `534🟢/8🟡/31⚪/577` (93%). T-ID counts
+unchanged (401 Nacos / 251 Consul / 388 Apollo = 1040).
+
+### 25.5 Validation and no-ops
+
+`cargo fmt --all`, `cargo check --workspace --exclude
+batata-integration-tests --tests`, `cargo test -p batata-plugin-consul --lib`
+(708 passed, 0 failed), all agent HTTP route tests (38 passed),
+`scripts/compat_check.py` and clippy on changed files pass. No `--full`
+matrix, commit, push, publish, yank, archive or tag was performed
+(commit/push handled separately).

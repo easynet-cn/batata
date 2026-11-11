@@ -42,8 +42,8 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | F-CON-AGNT-021 | PUT `/v1/agent/force-leave/{node}?prune=` | | 🟢 | | force leave |
 | F-CON-AGNT-022 | PUT `/v1/agent/service/maintenance/{serviceID}?enable=&reason=` | | 🟢 | | service maintenance |
 | F-CON-AGNT-023 | PUT `/v1/agent/maintenance?enable=&reason=` | | 🟢 | | node maintenance |
-| F-CON-AGNT-024 | PUT `/v1/agent/reload` | | 🟡 | | reload config (no-op: batata has no config file to reload) |
-| F-CON-AGNT-025 | PUT `/v1/agent/token/{target}` | | 🟡 | | set agent token (stored, not applied to gossip) |
+| F-CON-AGNT-024 | PUT `/v1/agent/reload` | `crates/batata-plugin-consul/src/agent.rs:1511` | 🟢 | | ACL-gated reload: re-schedules owned active health checks, surfaces log-level reload through core `/ops/log`, warns about restart-only settings. No Consul config file to re-read (batata config is server-managed); previously mis-described as a no-op. |
+| F-CON-AGNT-025 | PUT `/v1/agent/token/{target}` | `crates/batata-plugin-consul/src/agent.rs:2085`, `crates/batata-plugin-consul/src/acl.rs:47` | 🟢 | | PascalCase `{"Token": ...}` body decoded; 6 canonical targets + legacy aliases; unknown target 404, bad body 400. Tokens stored in `AclService`, and `default` becomes the fallback identity for requests without an explicit token (still resolved against the ACL store). Previously acknowledged-only. |
 | F-CON-AGNT-026 | GET `/v1/agent/monitor?loglevel=` | | 🟢 | | continuous log stream via broadcast channel + MonitorLayer |
 
 ## 2. Catalog — central directory (`F-CON-CAT-`)
@@ -291,7 +291,7 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 
 | Module | 🟢 | 🟡 | ⚡ | ⚪ | ⛔ | Total | Impl rate |
 |--------|----|----|----|----|----|-------|-----------|
-| Agent | 24 | 2 | 0 | 0 | 0 | 26 | 96% |
+| Agent | 26 | 0 | 0 | 0 | 0 | 26 | 100% |
 | Catalog | 10 | 0 | 0 | 0 | 0 | 10 | 100% |
 | Health | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
 | KV | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
@@ -306,6 +306,18 @@ Status: `🟢 full` | `🟡 partial` | `⚡ in-progress` | `⚪ planned` | `⛔ 
 | Internal API | 15 | 0 | 0 | 0 | 0 | 15 | 100% |
 | Filter expressions | 3 | 0 | 0 | 0 | 0 | 3 | 100% |
 | Blocking contract | 6 | 0 | 0 | 0 | 0 | 6 | 100% |
-| **Total** | 179 | 2 | 0 | 0 | 0 | 181 | 99% |
+| **Total** | 181 | 0 | 0 | 0 | 0 | 181 | 100% |
 
+> **Batch 18 (2026-11-11)**: `F-CON-AGNT-024` + `F-CON-AGNT-025` → 🟢. Both
+> endpoints were already routed (`api/v1/agent.rs:119` and `:191`), but their notes
+> were wrong: reload is not a no-op (it re-schedules active checks), and the
+> token handler never bound its `{"Token": ...}` body. Source-verified against
+> Consul `agent/agent_endpoint.go:1568-1640` (`api.AgentToken`, six target
+> groups with legacy aliases, 404 for unknown targets, `default` →
+> `UpdateUserToken`). `AclService` now keeps runtime agent tokens shared across
+> clones; `authorize_request` falls back to `default` only when no explicit
+> `X-Consul-Token` / Bearer / `?token=` is present, and still resolves the
+> value against the ACL store, so the endpoint cannot grant privileges.
+> 11/11 compile-safe mutants killed; Agent module 96%→100%, protocol 99%→100%.
+>
 > HTTP paths verified against `api/*.go`; blocking-query + header contract is the hard interop dependency for Consul SDKs. gRPC/8502 + gossip out of scope. Update statuses per actual implementation and sync this table.

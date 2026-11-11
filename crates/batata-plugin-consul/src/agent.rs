@@ -10,7 +10,7 @@ use sysinfo::System;
 use batata_common::{ClusterManager, MemberState};
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 
-use crate::acl::{AclService, ResourceType};
+use crate::acl::{AclService, ResourceType, canonical_agent_token_target};
 use crate::check_index::ConsulCheckIndex;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::health::ConsulHealthService;
@@ -18,7 +18,7 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
-    AgentServiceWithChecks, AgentStats, AgentVersion, CONSUL_INTERNAL_CLUSTER,
+    AgentServiceWithChecks, AgentStats, AgentTokenUpdate, AgentVersion, CONSUL_INTERNAL_CLUSTER,
     CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE, CheckRegistration, ConsulDatacenterConfig,
     ConsulError, ConsulErrorBody, Coordinate, CounterMetric, GaugeMetric, HealthCheck, HostCPU,
     HostDisk, HostInfo, HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric,
@@ -2083,9 +2083,15 @@ pub async fn agent_metrics_stream(
 }
 
 /// PUT /v1/agent/token/{type}
-/// Updates the ACL token for the agent
+///
+/// Mirrors Consul's `agent/agent_endpoint.go:AgentToken`: the body is a
+/// PascalCase `{"Token": ...}` object, unknown targets are rejected with 404,
+/// and `default` becomes the identity used by requests that carry no explicit
+/// token. Token values are kept in `AclService` and are still resolved against
+/// the ACL store, so this endpoint cannot grant arbitrary privileges.
 pub async fn update_agent_token(
     req: HttpRequest,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -2098,15 +2104,25 @@ pub async fn update_agent_token(
         return HttpResponse::Forbidden().consul_error(ConsulError::new(&authz.reason));
     }
 
-    // Consul supports updating: default, agent, replication, config_file_service_registration tokens.
-    // Batata uses its own auth system (JWT/RBAC) instead of Consul ACL tokens,
-    // so token updates are acknowledged but not applied.
-    // Return 200 OK (matching Consul's response format) to avoid breaking clients,
-    // but include a warning header.
-    tracing::info!(
-        token_type = %token_type,
-        "Agent token update: acknowledged (Batata uses its own auth system)"
-    );
+    let update: AgentTokenUpdate = match serde_json::from_slice(&body) {
+        Ok(update) => update,
+        Err(err) => {
+            return HttpResponse::BadRequest()
+                .consul_error(ConsulError::new(format!("Request decode failed: {err}")));
+        }
+    };
+
+    let canonical = match canonical_agent_token_target(&token_type) {
+        Some(canonical) => canonical,
+        None => {
+            return HttpResponse::NotFound()
+                .consul_error(ConsulError::new(format!("Token {token_type:?} is unknown")));
+        }
+    };
+
+    acl_service.set_agent_token(canonical, &update.token);
+    tracing::info!(token_type = %canonical, "Agent token update applied at runtime");
+
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     consul_ok(&meta)
         .insert_header(("X-Consul-Default-ACL-Policy", "allow"))
@@ -2115,8 +2131,131 @@ pub async fn update_agent_token(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
     use super::*;
+    use batata_naming::healthcheck::registry::{
+        CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig,
+    };
     use batata_naming::service::NamingService;
+
+    fn check_config(
+        check_id: &str,
+        node: &str,
+        check_type: RegistryCheckType,
+    ) -> InstanceCheckConfig {
+        InstanceCheckConfig {
+            check_id: check_id.to_string(),
+            name: check_id.to_string(),
+            check_type,
+            namespace: CONSUL_INTERNAL_NAMESPACE.to_string(),
+            group_name: CONSUL_INTERNAL_GROUP.to_string(),
+            service_name: "svc".to_string(),
+            ip: "127.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: CONSUL_INTERNAL_CLUSTER.to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            db_url: None,
+            script: None,
+            args: None,
+            docker_container_id: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(1),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            initial_status: CheckStatus::Passing,
+            notes: String::new(),
+            service_tags: vec![],
+            node: node.to_string(),
+        }
+    }
+
+    fn reload_test_health_service() -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
+            NamingService::new(),
+        )));
+        let health =
+            ConsulHealthService::new(Arc::clone(&registry), Arc::new(ConsulCheckIndex::new()))
+                .with_node_name("test-node".to_string());
+        (health, registry)
+    }
+
+    #[test]
+    fn test_reload_active_checks_reschedules_only_owned_active_checks() {
+        let (health, registry) = reload_test_health_service();
+        let owned_active = check_config("owned-http", "test-node", RegistryCheckType::Http);
+        let owned_key = owned_active.registry_key();
+        registry.register_check(owned_active);
+        registry.register_check(check_config(
+            "foreign-http",
+            "other-node",
+            RegistryCheckType::Http,
+        ));
+        registry.register_check(check_config(
+            "owned-ttl",
+            "test-node",
+            RegistryCheckType::Ttl,
+        ));
+
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = Arc::clone(&calls);
+        health.set_check_scheduler(Arc::new(move |key| {
+            sink.lock().unwrap().push(key.to_string());
+        }));
+
+        assert_eq!(reload_active_checks(&health), 1);
+        assert_eq!(*calls.lock().unwrap(), vec![owned_key]);
+    }
+
+    #[test]
+    fn test_reload_active_checks_without_scheduler_is_a_noop() {
+        let (health, registry) = reload_test_health_service();
+        registry.register_check(check_config(
+            "owned-http",
+            "test-node",
+            RegistryCheckType::Http,
+        ));
+        assert_eq!(reload_active_checks(&health), 0);
+    }
+
+    /// `agent_reload` must actually invoke all three reload steps. Guards the
+    /// call sites, not just the helper bodies (a declared-but-unused helper
+    /// would otherwise leave the endpoint a silent no-op).
+    #[test]
+    fn test_agent_reload_wires_all_reload_steps() {
+        const SOURCE: &str = include_str!("agent.rs");
+        let start = SOURCE
+            .find("pub async fn agent_reload(")
+            .expect("agent_reload must exist");
+        let end = SOURCE[start..].find("\n}\n").expect("function end");
+        let body = &SOURCE[start..start + end];
+        assert!(
+            body.contains(concat!("reload_active_checks", "(&health_service)")),
+            "agent_reload must re-schedule active checks"
+        );
+        assert!(body.contains(concat!("reload_log_level", "()")));
+        assert!(body.contains(concat!("warn_non_reloadable_config", "(&dc_config)")));
+    }
+
+    /// The token handler must consume the decoded body and persist it, not
+    /// just return 200 (the pre-fix behavior).
+    #[test]
+    fn test_agent_token_handler_wires_body_decode_and_storage() {
+        const SOURCE: &str = include_str!("agent.rs");
+        let start = SOURCE
+            .find("pub async fn update_agent_token(")
+            .expect("update_agent_token must exist");
+        let end = SOURCE[start..].find("\n}\n").expect("function end");
+        let body = &SOURCE[start..start + end];
+        assert!(body.contains(concat!("serde_json::", "from_slice(&body)")));
+        assert!(body.contains(concat!("canonical_agent_token_target", "(&token_type)")));
+        assert!(body.contains(concat!("set_agent_token", "(canonical, &update.token)")));
+    }
 
     #[test]
     fn test_consul_agent_service_creation() {

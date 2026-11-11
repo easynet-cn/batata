@@ -191,11 +191,12 @@ async fn agent_monitor(
 #[put("/token/{token_type}")]
 async fn update_agent_token(
     req: HttpRequest,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::update_agent_token(req, acl_service, path, index_provider).await
+    crate::agent::update_agent_token(req, body, acl_service, path, index_provider).await
 }
 
 // ============================================================================

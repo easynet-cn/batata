@@ -1959,8 +1959,10 @@ async fn test_http_agent_health_by_name_nonexistent() {
 async fn test_http_agent_update_token() {
     let app = create_test_app().await;
 
+    // Consul's AgentToken endpoint requires a PascalCase {"Token": ...} body.
     let req = test::TestRequest::put()
         .uri("/v1/agent/token/default")
+        .set_payload(r#"{"Token":"runtime-default-token"}"#)
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
@@ -1972,9 +1974,46 @@ async fn test_http_agent_update_token_agent() {
 
     let req = test::TestRequest::put()
         .uri("/v1/agent/token/agent")
+        .set_payload(r#"{"Token":"runtime-agent-token"}"#)
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
+}
+
+#[actix_web::test]
+async fn test_http_agent_update_token_legacy_alias() {
+    let app = create_test_app().await;
+
+    // `acl_token` is the legacy alias of the canonical `default` target.
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/token/acl_token")
+        .set_payload(r#"{"Token":"runtime-default-token"}"#)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+}
+
+#[actix_web::test]
+async fn test_http_agent_update_token_unknown_target() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/token/not-a-target")
+        .set_payload(r#"{"Token":"runtime-token"}"#)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_http_agent_update_token_missing_body() {
+    let app = create_test_app().await;
+
+    let req = test::TestRequest::put()
+        .uri("/v1/agent/token/default")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
 }
 
 #[actix_web::test]
